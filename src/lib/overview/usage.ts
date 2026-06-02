@@ -6,9 +6,10 @@
 // zero that masks an empty state, and never a NaN.
 //
 // Framework-free (no Svelte/Tauri imports) so it is trivially unit-tested. The
-// real subagent-usage source is Stage 2 (the Rust subagent parse + watcher); this
-// module consumes a plain `SubagentUsage[]` so the Overview can wire either a stub
-// (now) or the live list (Stage 2) without touching this core.
+// subagent-usage source is the live Stage 2 subagent list (the Rust subagent parse
+// + watcher): Overview.svelte projects `subagents.usageList` into the aggregate.
+// This module consumes a plain `SubagentUsage[]`, so it stays decoupled from that
+// store's shape and depends only on each record's `cost`.
 
 import type { AgentRow } from './roster';
 import type { Snapshot } from '../usage/snapshots.svelte';

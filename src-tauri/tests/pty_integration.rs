@@ -542,13 +542,17 @@ fn channel_gone_stops_the_read_loop() {
     let _ = rx.recv_timeout(Duration::from_secs(5));
     drop(rx);
 
-    // The read loop should notice the send failure and stop. We kill to be
-    // sure the child dies, then assert the read thread joined (no leak/spin).
-    manager.kill(id).expect("kill should succeed");
+    // The read loop should notice the send failure and stop on its own. Assert
+    // the read thread joined (no leak/spin) via `join_reader` — which also removes
+    // the pane from the registry. We do this BEFORE `kill` because `kill` now
+    // removes+drops the pane (taking its reader handle), so a join must observe
+    // the thread first.
     assert!(
         manager.join_reader(id, Duration::from_secs(10)),
         "read loop did not terminate after the channel was dropped"
     );
+    // `kill` after the pane is already gone is an idempotent no-op (returns Ok).
+    manager.kill(id).expect("kill on an absent pane is a no-op");
 }
 
 // === Requirement: Process Lifecycle And No Orphans ===

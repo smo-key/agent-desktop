@@ -214,20 +214,6 @@ export class WorkspaceStore {
     entry.ws = { ...entry.ws, focusedId: id };
   }
 
-  // ---- Lifecycle -----------------------------------------------------------
-
-  /**
-   * Seed the store with the first workspace. Its single pane runs `claude` in
-   * the given cwd; its registry entry is recorded so a future restore/serialize
-   * is symmetric. Called once from the route on mount. Idempotent-ish: replaces
-   * any existing list with a single fresh workspace.
-   */
-  init(initialPaneId: string, cwd: string | null) {
-    const entry = makeEntry('Session 1', 'claude', cwd, initialPaneId);
-    this.workspaces = [entry];
-    this.activeWorkspaceId = entry.id;
-  }
-
   // ---- Workspace (rail) actions --------------------------------------------
 
   /**
@@ -513,6 +499,21 @@ export class WorkspaceStore {
     if (!entry) return null;
     const leaf = findLeaf(entry.ws.root, entry.ws.focusedId);
     return leaf ? leaf.paneId : null;
+  }
+
+  /**
+   * The union of every pane id across ALL open workspaces (each workspace's
+   * registry keys). This is the set of panes the app still owns; the usage store
+   * prunes any snapshot whose pane_id is NOT in this set (a closed pane's ghost).
+   * Reading `workspaces` (and each `registry`) makes a caller's `$effect` re-run
+   * whenever a pane is added/removed or a workspace changes.
+   */
+  allPaneIds(): Set<string> {
+    const ids = new Set<string>();
+    for (const entry of this.workspaces) {
+      for (const paneId of Object.keys(entry.registry)) ids.add(paneId);
+    }
+    return ids;
   }
 
   /**

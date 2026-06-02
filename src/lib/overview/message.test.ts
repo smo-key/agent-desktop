@@ -8,14 +8,23 @@ import type { TerminalHandle } from '../layout/terminals';
 // registry (a lookup fn) so no Svelte/Tauri/xterm wiring is needed — the real PTY
 // write path lives in TerminalPane's `send` handle (terminals.ts), confirmed live.
 
-/** A fake TerminalHandle that records every `send` it receives. */
-function fakeHandle() {
+/**
+ * A fake TerminalHandle that records every `send` it receives. `send` reports a
+ * boolean exactly like the real handle: `true` for a live PTY (default), `false`
+ * for a dead one — pass `{ alive: false }` to simulate an exited process.
+ */
+function fakeHandle(opts: { alive?: boolean } = {}) {
+  const alive = opts.alive ?? true;
   const sent: string[] = [];
   const handle: TerminalHandle = {
     getSelection: () => '',
     hasSelection: () => false,
     paste: () => {},
-    send: (text: string) => sent.push(text)
+    send: (text: string): boolean => {
+      if (!alive) return false;
+      sent.push(text);
+      return true;
+    }
   };
   return { handle, sent };
 }
@@ -31,6 +40,13 @@ describe('message — Message An Agent', () => {
     // The dispatcher hands the EXACT text to the handle's send (which is the path
     // that appends the single carriage return when it writes to the PTY).
     expect(sent).toEqual(['hello there']);
+
+    // A DEAD pane (process exited -> send reports false) yields false, so the
+    // caller never reports a false success against an agent that can't receive it.
+    const dead = fakeHandle({ alive: false });
+    const deadLookup = (id: string) => (id === 'pane-d' ? dead.handle : undefined);
+    expect(messageAgent('pane-d', 'are you there?', deadLookup)).toBe(false);
+    expect(dead.sent).toEqual([]);
   });
 
   // No handle for the pane (its session ended / never registered) => no-op, no throw.

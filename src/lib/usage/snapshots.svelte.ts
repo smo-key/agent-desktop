@@ -106,6 +106,25 @@ export class SnapshotsStore {
   }
 
   /**
+   * Prune ghost snapshots: drop every `byPane` entry whose key (the `pane_id`) is
+   * NOT in `liveIds` (the union of pane ids that still exist across all open
+   * workspaces). A pane that closed leaves a stale snapshot behind otherwise,
+   * which would show up as a ghost agent, inflate cost totals, and keep its
+   * (now-dead) session in the foreign exclude-set. Idempotent: when every key is
+   * live this leaves the map (and its reference) untouched, so it never triggers a
+   * spurious reactive update.
+   */
+  retain(liveIds: Set<string>): void {
+    const dead = Object.keys(this.byPane).filter((paneId) => !liveIds.has(paneId));
+    if (dead.length === 0) return;
+    const next: SnapshotMap = {};
+    for (const [paneId, snap] of Object.entries(this.byPane)) {
+      if (liveIds.has(paneId)) next[paneId] = snap;
+    }
+    this.byPane = next;
+  }
+
+  /**
    * Seed the store from the current snapshot set via the `usage_snapshots`
    * command (so panes that already have a snapshot render immediately, before
    * any event). Folds each through the pure reducer. Resolves to the count

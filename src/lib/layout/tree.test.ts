@@ -319,6 +319,29 @@ describe('Drag-Resize A Gutter Adjusts Only Adjacent Siblings', () => {
     expect(s2.ratios[1]).toBeCloseTo(0.05, 10);
     expect(s2.ratios[0]).toBeCloseTo(0.95, 10);
   });
+
+  it('resizeAdjacent is a no-op when the pair is too small to honor the minimum', () => {
+    // The adjacent pair sums to exactly 2*minRatio (0.06 with minRatio 0.03), so
+    // any move would push one side below the minimum. The clamp range inverts
+    // (lo > hi), so resizeAdjacent must return the tree UNCHANGED rather than
+    // clamp into the inverted range.
+    const root = split(
+      'S1',
+      'row',
+      [leaf('A', 'pa'), leaf('B', 'pb'), leaf('C', 'pc')],
+      [0.03, 0.03, 0.94]
+    );
+    const next = resizeAdjacent(root, 'S1', 0, 0.5, 0.03) as Split;
+    // Ratios are exactly preserved (no clamp, no inverted range).
+    expect(next.ratios).toEqual([0.03, 0.03, 0.94]);
+
+    // Also a no-op in the negative drag direction.
+    const next2 = resizeAdjacent(root, 'S1', 0, -0.5, 0.03) as Split;
+    expect(next2.ratios).toEqual([0.03, 0.03, 0.94]);
+
+    // The input tree itself is never mutated.
+    expect((root as Split).ratios).toEqual([0.03, 0.03, 0.94]);
+  });
 });
 
 // ---------------------------------------------------------------------------

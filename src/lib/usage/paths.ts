@@ -28,8 +28,3 @@ export function getUsagePaths(): Promise<UsagePaths | null> {
   }
   return cached;
 }
-
-/** Test-only: clear the memoized promise so each test starts cold. */
-export function _resetUsagePathsCache(): void {
-  cached = undefined;
-}

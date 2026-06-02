@@ -18,8 +18,12 @@ export interface TerminalHandle {
    * agent-overview "message an agent" action to deliver the user's text to a pane
    * without navigating to it. Sends ONLY the given text — it never synthesizes a
    * slash command or any other input on the user's behalf.
+   *
+   * Returns `true` when the text was written to a live PTY, `false` when there is
+   * nothing to write to (the pane's process has exited / no PTY is wired) so the
+   * caller never reports a false success against a dead agent.
    */
-  send(text: string): void;
+  send(text: string): boolean;
 }
 
 const handles = new Map<string, TerminalHandle>();

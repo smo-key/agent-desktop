@@ -369,6 +369,13 @@ export function resizeAdjacent(
   const b = split.ratios[j];
   const pairSum = a + b;
 
+  // Degenerate guard: if the pair is too small to honor the minimum on BOTH sides
+  // (pairSum <= 2*minRatio), the clamp range [minRatio, pairSum - minRatio]
+  // inverts (lo > hi) and any clamp would push a pane BELOW minRatio. There is no
+  // valid move, so return the tree UNCHANGED (a no-op resize) rather than clamp
+  // into an inverted range.
+  if (pairSum <= 2 * minRatio) return cloned;
+
   // Clamp the new value of ratios[i] into [minRatio, pairSum - minRatio] so
   // neither side crosses the minimum and the pair sum is exactly conserved.
   const lo = minRatio;

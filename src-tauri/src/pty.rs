@@ -236,15 +236,24 @@ impl PtyManager {
             .map_err(|e| format!("get_size failed: {e}"))
     }
 
-    /// Kill a pane's child via its cloned killer (callable from any thread).
-    /// The read loop then observes EOF and reaps the child. Errors (without
-    /// panic) if the pane does not exist.
+    /// Kill a pane's child via its cloned killer (callable from any thread) AND
+    /// remove the pane from the registry so its master/writer fds are dropped
+    /// (closing them) rather than leaking until quit. The read loop then observes
+    /// EOF and reaps the child. A no-op (returns `Ok`) if the pane does not exist.
+    ///
+    /// The pane is REMOVED from the map while the lock is held, then killed after
+    /// the lock is released (mirroring `kill_all`'s single-id semantics — we never
+    /// hold the registry lock while operating on the killer / joining a reader).
     pub fn kill(&self, id: PaneId) -> Result<(), String> {
-        let mut panes = self.panes.lock().unwrap();
-        let pane = panes
-            .get_mut(&id)
-            .ok_or_else(|| format!("no live pane with id {id}"))?;
-        pane.killer.kill().map_err(|e| format!("kill failed: {e}"))
+        let pane = self.panes.lock().unwrap().remove(&id);
+        let Some(mut pane) = pane else {
+            return Ok(()); // absent: nothing to kill (idempotent).
+        };
+        let result = pane.killer.kill().map_err(|e| format!("kill failed: {e}"));
+        // Dropping `pane` here closes the master + writer fds. We do NOT join the
+        // reader thread (it unwinds on its own once the master is gone); this also
+        // avoids holding anything across a join.
+        result
     }
 
     /// Kill and reap every live pane (wired into Tauri `CloseRequested`), so no

@@ -97,6 +97,17 @@
     void subagents.seed(currentSessionRefs());
   });
 
+  // Prune GHOST snapshots: whenever the set of open panes changes (a pane closes,
+  // a workspace closes, or one is added/restored), drop any usage snapshot whose
+  // pane_id no longer maps to a live pane. Otherwise a closed pane leaves a stale
+  // snapshot that shows as a ghost agent, inflates the aggregate cost total, and
+  // keeps its dead session in the foreign exclude-set. `allPaneIds()` reads
+  // `workspace.workspaces` (+ each registry) reactively, so this re-runs on every
+  // such change; `retain` is a no-op (no reactive write) when nothing is stale.
+  $effect(() => {
+    snapshots.retain(workspace.allPaneIds());
+  });
+
   // Map the active workspace's focused pane cwd into the title bar subtitle.
   const focusedCwd = $derived.by(() => {
     const entry = workspace.active;
@@ -166,6 +177,12 @@
       view.toggleWorkflow();
       return;
     }
+
+    // The remaining shortcuts MUTATE the active workspace's pane layout/focus, so
+    // they are GRID-ONLY: in the Overview or Workflow view there is no live grid to
+    // act on (and the user expects those keys inert). The view-level shortcuts
+    // above (N/O/Shift-K) already returned, so they keep working in every view.
+    if (!view.isGrid) return;
 
     // Ignore the remaining (pane) shortcuts before the store is seeded.
     if (!workspace.active) return;
@@ -238,10 +255,10 @@
       type="button"
       class="view-toggle"
       data-tauri-drag-region="false"
-      title={view.isOverview ? 'Go to terminal grid (⌘O)' : 'Go to overview (⌘O)'}
+      title={view.isGrid ? 'Go to overview (⌘O)' : 'Go to terminal grid (⌘O)'}
       onclick={() => view.toggle()}
     >
-      {view.isOverview ? 'Grid' : 'Overview'}
+      {view.isGrid ? 'Overview' : 'Grid'}
     </button>
 
     <!-- Workflow board toggle (read-only board for the focused pane's repo).
@@ -260,6 +277,11 @@
     <span class="subtitle">{focusedCwd}</span>
   </header>
 
+  <!-- Hold off rendering the workspace area (grid + overview + workflow) until the
+       persisted layout has loaded (or fallen back to fresh), so we never flash a
+       throwaway workspace whose PTYs we'd immediately tear down. The title bar
+       above stays visible throughout; this only gates the body/views. -->
+  {#if restored}
   <!-- The terminal-grid surface (rail + panes + usage bar). Kept MOUNTED at all
        times so every workspace's xterm/PTY survives a view switch; hidden (not
        unmounted) while the Overview is the active top-level view. -->
@@ -302,6 +324,11 @@
   {#if view.isWorkflow}
     <WorkflowBoard />
   {/if}
+  {:else}
+    <!-- Minimal splash while the persisted layout is restoring; replaced by the
+         workspace area as soon as `restored` flips true. -->
+    <div class="restoring">Restoring…</div>
+  {/if}
 </div>
 
 <!-- Single app-wide pane context menu (right-click). Position:fixed, so it can
@@ -315,6 +342,11 @@
 
 <style>
   .app {
+    /* Positioned ancestor for the absolutely-positioned Overview / WorkflowBoard
+       (position:absolute;inset:0). Without this they'd resolve their containing
+       block to the viewport and cover the title bar; with .app relative they sit
+       within the app area, below the title bar. */
+    position: relative;
     display: flex;
     flex-direction: column;
     height: 100vh;
@@ -386,6 +418,20 @@
   }
   .grid-view.hidden {
     display: none;
+  }
+
+  /* Minimal "Restoring…" splash shown until the persisted layout resolves. Fills
+     the area below the title bar and centers a dim label. */
+  .restoring {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6e7681;
+    font-size: 13px;
+    font-family:
+      ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   }
 
   .subtitle {

@@ -432,6 +432,12 @@ where
 
     let tasks_base_owned = tasks_base.to_path_buf();
     let tmp_dir_owned = tmp_dir.to_path_buf();
+    // Candidate prefixes for the path filter: both the raw base AND its
+    // canonicalized form, because notify reports canonicalized event paths on
+    // macOS (e.g. `/private/var/...`) while the watched base may be the symlinked
+    // `/var/...`. Matching either keeps the filter correct across that difference.
+    let tasks_prefixes = base_prefixes(&tasks_base_owned);
+    let tmp_prefixes = base_prefixes(&tmp_dir_owned);
     let emit = Mutex::new(EmitState::default());
 
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
@@ -442,6 +448,19 @@ where
             event.kind,
             EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
         ) {
+            return;
+        }
+        // FILTER by path before doing any work (no lock, no full walk for an
+        // irrelevant event). macOS FSEvents fires for many unrelated files; we
+        // only recompute when an event touches a real foreign-session source:
+        //   - under the tmp/bridge dir: a `claude-ctx-*.json` context bridge file
+        //   - under the tasks base: any `*.json` task entry
+        // An event carrying no relevant path is skipped entirely.
+        if !event
+            .paths
+            .iter()
+            .any(|p| is_relevant_event_path(p, &tasks_prefixes, &tmp_prefixes))
+        {
             return;
         }
         // Snapshot the shared exclude-set, then recompute against the filesystem.
@@ -478,6 +497,59 @@ where
         _watcher: watcher,
         tasks_base: tasks_base.to_path_buf(),
     })
+}
+
+/// The distinct prefix candidates for a watched base: the base itself plus its
+/// canonicalized form when that differs (notify reports canonicalized event paths
+/// on macOS, e.g. `/private/var/...`, while the base may be the symlinked
+/// `/var/...`). Used by [`is_relevant_event_path`] to match either spelling.
+fn base_prefixes(base: &Path) -> Vec<PathBuf> {
+    let mut out = vec![base.to_path_buf()];
+    if let Ok(canon) = std::fs::canonicalize(base) {
+        if canon != *base {
+            out.push(canon);
+        }
+    }
+    out
+}
+
+/// Whether an fs-event `path` is a real foreign-session source worth recomputing
+/// for. Relevant when it is:
+///   - under any `tmp_prefixes` AND its file name matches `claude-ctx-*.json` (a
+///     context bridge file — note the wrapper writes a dot-prefixed `.tmp` sibling
+///     which does NOT match, so a half-written bridge is ignored), or
+///   - under any `tasks_prefixes` AND it is a `*.json` file (a task entry).
+///
+/// Each base contributes both its raw and canonicalized spelling (see
+/// [`base_prefixes`]). Any other path (unrelated file, or a `.tmp`/non-json) is
+/// irrelevant.
+fn is_relevant_event_path(
+    path: &Path,
+    tasks_prefixes: &[PathBuf],
+    tmp_prefixes: &[PathBuf],
+) -> bool {
+    let is_json = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+
+    // Bridge file directly under the tmp dir: claude-ctx-*.json.
+    if tmp_prefixes.iter().any(|p| path.starts_with(p)) {
+        if !is_json {
+            return false;
+        }
+        return path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| name.starts_with("claude-ctx-"));
+    }
+
+    // Task entry under the tasks base: any *.json.
+    if tasks_prefixes.iter().any(|p| path.starts_with(p)) {
+        return is_json;
+    }
+
+    false
 }
 
 /// Lock the shared app-session set, recovering from poisoning (a prior panic on
@@ -930,6 +1002,68 @@ mod tests {
         assert_eq!(derive_task_for_session(base, "../etc"), None);
         assert_eq!(derive_task_for_session(base, "a/b"), None);
         assert_eq!(derive_task_for_session(base, ""), None);
+    }
+
+    /// The event-path relevance filter only triggers a recompute for real
+    /// foreign-session sources: a `*.json` under the tasks base, or a
+    /// `claude-ctx-*.json` under the tmp/bridge dir. Everything else is skipped.
+    #[test]
+    fn relevant_event_path_filters_noise() {
+        let tasks = vec![PathBuf::from("/base/tasks")];
+        let tmp = vec![PathBuf::from("/base/tmp")];
+        let t = || Path::new("/base/tasks");
+        let m = || Path::new("/base/tmp");
+
+        // Task entries under the tasks base: relevant only when *.json.
+        assert!(is_relevant_event_path(
+            &t().join("sess-a").join("1.json"),
+            &tasks,
+            &tmp
+        ));
+        assert!(!is_relevant_event_path(
+            &t().join("sess-a").join("1.txt"),
+            &tasks,
+            &tmp
+        ));
+        // The session dir itself (no extension) is not a json entry -> skipped.
+        assert!(!is_relevant_event_path(&t().join("sess-a"), &tasks, &tmp));
+
+        // Bridge files under the tmp dir: relevant only when claude-ctx-*.json.
+        assert!(is_relevant_event_path(
+            &m().join("claude-ctx-sess-a.json"),
+            &tasks,
+            &tmp
+        ));
+        // A dot-prefixed half-written tmp sibling -> not json -> skipped.
+        assert!(!is_relevant_event_path(
+            &m().join(".claude-ctx-sess-a.123.tmp"),
+            &tasks,
+            &tmp
+        ));
+        // Some other json in the tmp dir (not a bridge file) -> skipped.
+        assert!(!is_relevant_event_path(
+            &m().join("something-else.json"),
+            &tasks,
+            &tmp
+        ));
+
+        // A path under neither root is always irrelevant.
+        assert!(!is_relevant_event_path(
+            Path::new("/elsewhere/x.json"),
+            &tasks,
+            &tmp
+        ));
+
+        // Multiple prefixes (raw + canonical) both match.
+        let tasks_multi = vec![
+            PathBuf::from("/var/t/tasks"),
+            PathBuf::from("/private/var/t/tasks"),
+        ];
+        assert!(is_relevant_event_path(
+            Path::new("/private/var/t/tasks/sess/1.json"),
+            &tasks_multi,
+            &tmp
+        ));
     }
 
     /// End-to-end (headless): the foreign watcher recomputes + emits the filtered

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { apply, type Snapshot, type SnapshotMap } from './snapshots.svelte';
+import { apply, SnapshotsStore, type Snapshot, type SnapshotMap } from './snapshots.svelte';
 
 // Tests for the PURE snapshot reducer that backs the runes `snapshots` store.
 // The `it(...)` titles are the EXACT `#### Scenario:` names from the
@@ -77,5 +77,34 @@ describe('snapshots reducer', () => {
       expect(next).toBe(base);
     }
     expect(base).toEqual({ 'pane-a': snap('pane-a', { ts: 100 }) });
+  });
+
+  // Ghost-snapshot pruning: retain() keeps only the snapshots whose pane_id is in
+  // the live set and drops the rest, so a closed pane's stale snapshot can't show
+  // as a ghost agent, inflate cost totals, or linger in the foreign exclude-set.
+  it('retain prunes snapshots for panes that no longer exist', () => {
+    const store = new SnapshotsStore();
+    store.ingest(snap('pane-a', { ts: 1 }));
+    store.ingest(snap('pane-b', { ts: 2 }));
+    store.ingest(snap('pane-c', { ts: 3 }));
+    expect(Object.keys(store.byPane).sort()).toEqual(['pane-a', 'pane-b', 'pane-c']);
+
+    // Only pane-a and pane-c are still live; pane-b closed -> its snapshot is dropped.
+    store.retain(new Set(['pane-a', 'pane-c']));
+    expect(Object.keys(store.byPane).sort()).toEqual(['pane-a', 'pane-c']);
+    expect(store.get('pane-b')).toBeUndefined();
+    // The surviving entries are untouched.
+    expect(store.get('pane-a')?.ts).toBe(1);
+    expect(store.get('pane-c')?.ts).toBe(3);
+
+    // Idempotent + no spurious change when every key is already live: the same map
+    // reference is kept (no reactive churn).
+    const before = store.byPane;
+    store.retain(new Set(['pane-a', 'pane-c']));
+    expect(store.byPane).toBe(before);
+
+    // A live set that covers nothing drops everything.
+    store.retain(new Set());
+    expect(store.byPane).toEqual({});
   });
 });

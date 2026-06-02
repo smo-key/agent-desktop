@@ -25,8 +25,10 @@ export type HandleLookup = (paneId: string) => TerminalHandle | undefined;
  *  - Returns `false` when no handle is registered for `paneId` (its session ended
  *    or never mounted) — never throws.
  *  - Otherwise hands the EXACT, VERBATIM text to `handle.send` (which appends the
- *    single carriage return as it writes to the PTY) and returns `true`. A message
- *    that begins with `/` is the USER's text and is passed through unchanged.
+ *    single carriage return as it writes to the PTY) and returns whatever `send`
+ *    reports: `true` when it wrote to a live PTY, `false` when the pane's process
+ *    has exited (so a dead agent never yields a false success). A message that
+ *    begins with `/` is the USER's text and is passed through unchanged.
  *
  * @param paneId  the target pane (the snapshot/roster key)
  * @param text    the user-entered message (sent verbatim)
@@ -41,6 +43,7 @@ export function messageAgent(
   if (text.trim().length === 0) return false;
   const handle = lookup(paneId);
   if (!handle) return false;
-  handle.send(text);
-  return true;
+  // Return whatever `send` reports: false when the pane's PTY is dead (process
+  // exited), so the caller never reports a false success against a dead agent.
+  return handle.send(text);
 }

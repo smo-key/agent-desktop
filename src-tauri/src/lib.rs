@@ -208,7 +208,14 @@ pub fn install_usage_assets_in(base: &std::path::Path) -> Result<UsagePaths, Str
     fs::create_dir_all(&bin).map_err(|e| format!("create_dir_all {bin:?}: {e}"))?;
 
     let wrapper = bin.join(WRAPPER_FILE);
-    let tmp = wrapper.with_extension("js.tmp");
+    // Unique per-call tmp name (pid + a nanosecond timestamp), mirroring the
+    // wrapper's own `.tmp` naming, so two concurrent installs (e.g. setup + a
+    // `usage_paths` call) can never collide on the same tmp path before rename.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = bin.join(format!("{WRAPPER_FILE}.{}.{nanos}.tmp", std::process::id()));
     fs::write(&tmp, STATUSLINE_WRAPPER_SRC).map_err(|e| format!("write {tmp:?}: {e}"))?;
 
     // Make the wrapper executable (it runs via its `#!/usr/bin/env node` shebang).

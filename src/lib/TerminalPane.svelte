@@ -229,6 +229,11 @@
           term.write(new Uint8Array(msg.bytes));
         } else {
           exited = true;
+          // Clear the backend pane id so input/paste/send (and the registered
+          // `send` handle) all treat this pane as dead: nothing is written to a
+          // PTY that no longer exists, and `send` reports false rather than a
+          // false success.
+          ptyId = undefined;
           note(`[process exited${msg.code !== 0 ? ` (code ${msg.code})` : ''}]`);
         }
       };
@@ -280,13 +285,16 @@
         },
         // Message-an-agent (agent-overview): write the EXACT user text plus a
         // single carriage return through the same pty_write path. Sends ONLY the
-        // given text — nothing is synthesized on the user's behalf.
-        send: (text: string) => {
-          if (ptyId === undefined || !text) return;
+        // given text — nothing is synthesized on the user's behalf. Returns false
+        // when there is no live PTY to write to (the process exited / never wired),
+        // so the caller never reports a false success against a dead agent.
+        send: (text: string): boolean => {
+          if (ptyId === undefined) return false;
           void invoke('pty_write', {
             id: ptyId,
             data: Array.from(new TextEncoder().encode(text + '\r'))
           }).catch(() => {});
+          return true;
         }
       });
 
