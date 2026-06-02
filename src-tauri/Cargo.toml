@@ -1,0 +1,32 @@
+[package]
+name = "agent-desktop"
+version = "0.1.0"
+description = "A Tauri + SvelteKit desktop terminal for running and watching Claude Code sessions."
+authors = ["Arthur Pachachura"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.2" }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.2" }
+tauri-plugin-log = "2"
+
+# PTY-backed terminal core (Milestone 1+). Pinned at the crate's confirmed
+# minor; the compiler validates the exact API surface in later stages.
+portable-pty = "0.9"
+
+# Filesystem watcher for the snapshot/task directories (Milestone 3+).
+notify = "8"

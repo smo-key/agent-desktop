@@ -3,3 +3,12 @@
 
 # OS
 .DS_Store
+
+# Node / SvelteKit
+node_modules/
+build/
+.svelte-kit/
+dist/
+
+# Tauri / Rust
+src-tauri/target/
