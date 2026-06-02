@@ -23,23 +23,23 @@ Cover every scenario in `specs/terminal-core/spec.md`. Write the failing test fi
 
 Cover every scenario in `specs/tiling-layout/spec.md`.
 
-- [ ] 3.1 Pure pane-tree module + tests (highest bug density): `Workspace`, `Split`, `Leaf`; `findParent`, `normalize`, `validateTree`. (D4)
-- [ ] 3.2 `splitLeaf` with same-direction flatten. Covers *Split A Pane Horizontally Or Vertically* and *Same-Direction Split Flatten*.
-- [ ] 3.3 `closeLeaf` (remove → collapse single-child parent → normalize) and `resize` (adjacent ratios only, sum conserved). Covers *Close A Pane With Collapse And Rebalance* and *Drag-Resize A Gutter Adjusts Only Adjacent Siblings*.
-- [ ] 3.4 Recursive `PaneNode.svelte` (flexbox `flex-basis: ratio%`), `Gutter.svelte` (Pointer Events + `setPointerCapture` + `touch-action:none`, rAF-throttle, defer `fit()` to drag-end). Terminal keyed `{#key paneId}`. Covers *Terminal Identity Preserved On Restructure*.
-- [ ] 3.5 Focus navigation (click + cyclic + directional). Covers *Focus Navigation By Click And Keyboard*.
-- [ ] 3.6 Workspace session rail (left vertical tabs) + switching. Covers *Workspace Session Rail And Switching*.
-- [ ] 3.7 `npm run check` green for `tiling-layout`.
+- [x] 3.1 Pure pane-tree module + tests (highest bug density): `Workspace`, `Split`, `Leaf`; `findParent`, `normalize`, `validateTree`. (D4)
+- [x] 3.2 `splitLeaf` with same-direction flatten. Covers *Split A Pane Horizontally Or Vertically* and *Same-Direction Split Flatten*.
+- [x] 3.3 `closeLeaf` (remove → collapse single-child parent → normalize) and `resize` (adjacent ratios only, sum conserved). Covers *Close A Pane With Collapse And Rebalance* and *Drag-Resize A Gutter Adjusts Only Adjacent Siblings*.
+- [x] 3.4 Recursive `PaneNode.svelte` (flexbox `flex-basis: ratio%`), `Gutter.svelte` (Pointer Events + `setPointerCapture` + `touch-action:none`, rAF-throttle, defer `fit()` to drag-end). Terminal keyed `{#key paneId}`. Covers *Terminal Identity Preserved On Restructure*.
+- [x] 3.5 Focus navigation (click + cyclic + directional). Covers *Focus Navigation By Click And Keyboard*.
+- [x] 3.6 Workspace session rail (left vertical tabs) + switching. Covers *Workspace Session Rail And Switching*.
+- [x] 3.7 `npm run check` green for `tiling-layout`.
 
 ## 4. Capability: `layout-persistence` (Milestone 2)
 
 Cover every scenario in `specs/layout-persistence/spec.md`.
 
-- [ ] 4.1 Serialize workspaces + pane trees + session registry (`paneId → {cwd, shell}`) to app-support JSON; debounced + on-quit flush. Covers *Serialize Workspace Layout And Session Registry* and *Debounced And On-Quit Persistence Writes*. (D8)
-- [ ] 4.2 Restore: parse → `validateTree()` (invariants) → version migration. Covers *Restore With Invariant Validation* and *Version-Keyed Migration*.
-- [ ] 4.3 Re-spawn a PTY per leaf with saved shell+cwd (no live state); optional `addon-serialize` scrollback repaint. Covers *PTY Re-Spawn With Shell And Cwd Only* and *Optional Scrollback Repaint*.
-- [ ] 4.4 Corrupt/unmigratable layout → fresh single-pane workspace, no crash. Covers *Graceful Fallback On Corrupt State*.
-- [ ] 4.5 `npm run check` green for `layout-persistence`.
+- [x] 4.1 Serialize workspaces + pane trees + session registry (`paneId → {cwd, shell}`) to app-support JSON; debounced + on-quit flush. Covers *Serialize Workspace Layout And Session Registry* and *Debounced And On-Quit Persistence Writes*. (D8)
+- [x] 4.2 Restore: parse → `validateTree()` (invariants) → version migration. Covers *Restore With Invariant Validation* and *Version-Keyed Migration*.
+- [x] 4.3 Re-spawn a PTY per leaf with saved shell+cwd (no live state); optional `addon-serialize` scrollback repaint. Covers *PTY Re-Spawn With Shell And Cwd Only* and *Optional Scrollback Repaint*.
+- [x] 4.4 Corrupt/unmigratable layout → fresh single-pane workspace, no crash. Covers *Graceful Fallback On Corrupt State*.
+- [x] 4.5 `npm run check` green for `layout-persistence`.
 
 ## 5. Capability: `usage-dashboard` (Milestone 3)
 
