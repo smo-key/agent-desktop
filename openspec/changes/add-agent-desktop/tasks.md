@@ -67,11 +67,11 @@ Cover every scenario in `specs/task-detection/spec.md`. (D7)
 
 Cover every scenario in `specs/session-launcher/spec.md`.
 
-- [ ] 7.1 New-session flow: folder picker + recent-folders list (persisted) + optional initial prompt. Covers *Launch New Session With Folder Picker And Recents*, *Optional Initial Prompt*, *Recent-Folders Persistence Across Restarts*.
-- [ ] 7.2 Spawn `claude` in chosen cwd with the wrapper `--settings` override + `AGENT_DESKTOP_PANE` (joins the dashboard). Covers *Spawn Claude With Wrapper Override And Pane Env*.
-- [ ] 7.3 Placement: new workspace/tab or split the focused pane. Covers *Placement As New Tab Or Split Of Focused Pane*.
-- [ ] 7.4 Guarantee no auto-run of `/workflow:*` or any slash command. Covers *No Auto-Run Of Slash Commands*.
-- [ ] 7.5 `npm run check` green for `session-launcher`.
+- [x] 7.1 New-session flow: folder picker + recent-folders list (persisted) + optional initial prompt. Covers *Launch New Session With Folder Picker And Recents*, *Optional Initial Prompt*, *Recent-Folders Persistence Across Restarts*.
+- [x] 7.2 Spawn `claude` in chosen cwd with the wrapper `--settings` override + `AGENT_DESKTOP_PANE` (joins the dashboard). Covers *Spawn Claude With Wrapper Override And Pane Env*.
+- [x] 7.3 Placement: new workspace/tab or split the focused pane. Covers *Placement As New Tab Or Split Of Focused Pane*.
+- [x] 7.4 Guarantee no auto-run of `/workflow:*` or any slash command. Covers *No Auto-Run Of Slash Commands*.
+- [x] 7.5 `npm run check` green for `session-launcher`.
 
 ## 8. Capability: `workflow-board` (Milestone 6)
 
