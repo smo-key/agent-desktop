@@ -57,6 +57,7 @@ fn spawn_with_seeded_environment_in_target_cwd() {
         cwd: Some("/tmp".into()),
         cols: 80,
         rows: 24,
+        ..Default::default()
     };
     let id = manager
         .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))
@@ -81,6 +82,56 @@ fn spawn_with_seeded_environment_in_target_cwd() {
     assert_eq!(code, Some(0));
 }
 
+/// #### Scenario: Caller env merges after the seed and wins on collision
+///
+/// The optional `SpawnConfig::env` is applied AFTER `seed_env`, so a
+/// caller-supplied var (the usage-dashboard `AGENT_DESKTOP_PANE` /
+/// `AGENT_DESKTOP_SNAPSHOT_DIR`) reaches the child, and a caller value for a
+/// seeded key (here `TERM`) overrides the seeded default.
+#[test]
+fn caller_env_merges_after_seed_and_wins_on_collision() {
+    let manager = PtyManager::new();
+    let (tx, rx) = mpsc::channel();
+    let cfg = SpawnConfig {
+        program: "/bin/sh".into(),
+        args: vec![
+            "-c".into(),
+            "printf 'PANE=%s\\n' \"$AGENT_DESKTOP_PANE\"; \
+             printf 'SNAP=%s\\n' \"$AGENT_DESKTOP_SNAPSHOT_DIR\"; \
+             printf 'TERM=%s\\n' \"$TERM\""
+                .into(),
+        ],
+        cwd: None,
+        cols: 80,
+        rows: 24,
+        env: vec![
+            ("AGENT_DESKTOP_PANE".into(), "pane-abc".into()),
+            ("AGENT_DESKTOP_SNAPSHOT_DIR".into(), "/snap/dir".into()),
+            // Collides with a seeded key: the caller value must win.
+            ("TERM".into(), "caller-term".into()),
+        ],
+    };
+    manager
+        .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))
+        .expect("spawn should succeed");
+
+    let (data, code) = drain_until_exit(&rx, Duration::from_secs(10));
+    let text = String::from_utf8_lossy(&data);
+    assert!(
+        text.contains("PANE=pane-abc"),
+        "AGENT_DESKTOP_PANE not passed, got: {text:?}"
+    );
+    assert!(
+        text.contains("SNAP=/snap/dir"),
+        "AGENT_DESKTOP_SNAPSHOT_DIR not passed, got: {text:?}"
+    );
+    assert!(
+        text.contains("TERM=caller-term"),
+        "caller env must win over seeded TERM, got: {text:?}"
+    );
+    assert_eq!(code, Some(0));
+}
+
 /// #### Scenario: Slave dropped so EOF is deliverable
 ///
 /// If the slave fd were retained, the master read loop would never observe
@@ -96,6 +147,7 @@ fn slave_dropped_so_eof_is_deliverable() {
         cwd: None,
         cols: 80,
         rows: 24,
+        ..Default::default()
     };
     manager
         .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))
@@ -122,6 +174,7 @@ fn raw_bytes_forwarded_in_order_over_the_channel() {
         cwd: None,
         cols: 80,
         rows: 24,
+        ..Default::default()
     };
     manager
         .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))
@@ -163,6 +216,7 @@ fn split_multibyte_sequence_reassembled_by_xterm() {
         cwd: None,
         cols: 80,
         rows: 24,
+        ..Default::default()
     };
     manager
         .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))
@@ -205,6 +259,7 @@ fn read_loop_runs_on_a_native_thread() {
         cwd: None,
         cols: 80,
         rows: 24,
+        ..Default::default()
     };
     let start = Instant::now();
     manager
@@ -238,6 +293,7 @@ fn bulk_output_is_batched() {
         cwd: None,
         cols: 80,
         rows: 24,
+        ..Default::default()
     };
     manager
         .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))
@@ -295,6 +351,7 @@ fn keystroke_reaches_the_pty_writer() {
         cwd: None,
         cols: 80,
         rows: 24,
+        ..Default::default()
     };
     let id = manager
         .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))
@@ -370,6 +427,7 @@ fn pane_resize_propagates_new_dimensions_to_the_child() {
         cwd: None,
         cols: 80,
         rows: 24,
+        ..Default::default()
     };
     let id = manager
         .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))
@@ -400,6 +458,7 @@ fn fit_guarded_against_zero_sized_container() {
         cwd: None,
         cols: 80,
         rows: 24,
+        ..Default::default()
     };
     let id = manager
         .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))
@@ -446,6 +505,7 @@ fn exit_code_surfaced_on_child_termination() {
         cwd: None,
         cols: 80,
         rows: 24,
+        ..Default::default()
     };
     manager
         .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))
@@ -472,6 +532,7 @@ fn channel_gone_stops_the_read_loop() {
         cwd: None,
         cols: 80,
         rows: 24,
+        ..Default::default()
     };
     let id = manager
         .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))
@@ -504,6 +565,7 @@ fn closing_a_pane_kills_its_process() {
         cwd: None,
         cols: 80,
         rows: 24,
+        ..Default::default()
     };
     let id = manager
         .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))
@@ -532,6 +594,7 @@ fn app_quit_reaps_all_children() {
             cwd: None,
             cols: 80,
             rows: 24,
+            ..Default::default()
         };
         manager
             .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))

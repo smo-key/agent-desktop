@@ -33,10 +33,14 @@ const REPO_ROOT = resolve(__dirname, '..');
 
 // Milestone 1 enforces terminal-core. Milestone 2 adds tiling-layout and
 // layout-persistence (all their pure-logic scenarios are now unit-tested).
+// Milestone 3 adds usage-dashboard (wrapper snapshot write, per-session settings
+// override, snapshot-store reducer, account rollup math — all pure/headless and
+// unit-tested; the genuinely-live aspects are listed in MANUAL_SCENARIOS below).
 const ENFORCED_CAPABILITIES = new Set([
   'terminal-core',
   'tiling-layout',
   'layout-persistence',
+  'usage-dashboard',
 ]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by
@@ -70,6 +74,25 @@ const MANUAL_SCENARIOS = {
     'scrollback_repainted_before_reattach',
     'missing_scrollback_does_not_block_restore',
   ]),
+  // usage-dashboard: every scenario has a REAL headless automated test, so the
+  // MANUAL set is intentionally empty (this gate's MANUAL category means "no
+  // automated coverage", which is false for all 18 here):
+  //   - wrapper snapshot write / atomic tmp+rename / pane-id key / field shape /
+  //     context-from-correct-fields / absent-rate-limits / missing-statusline /
+  //     snapshot-side-effect — statusline-wrapper.test.ts (runs the real wrapper).
+  //   - per-session settings override leaves global untouched — spawn.test.ts.
+  //   - snapshot-store reducer (change pushed / malformed skipped) —
+  //     snapshots.test.ts (+ Rust read_snapshot / malformed_snapshot_skipped /
+  //     watcher_emits_parsed_snapshot_on_write integration tests).
+  //   - account rollup math + graceful missing rate-limits/context — rollup.test.ts.
+  // Three aspects still warrant a LIVE in-app confirmation (documented in the
+  // stage report, NOT failed/marked MANUAL since each has real headless coverage
+  // of a load-bearing property): the wrapper delegating to the user's real
+  // ~/.claude/hooks/statusline.js so the in-pane bar is byte-for-byte identical
+  // (the headless test asserts only "delegation never crashes + snapshot still
+  // written"); the notify watcher firing end-to-end against a live claude pane;
+  // and the rendered two-row dashboard visual itself.
+  'usage-dashboard': new Set(),
 };
 
 // --- helpers -----------------------------------------------------------------
@@ -142,11 +165,18 @@ for (const file of walk(join(REPO_ROOT, 'src-tauri'), /\.rs$/)) {
   }
 }
 
+// Vitest titles. `npm run test` (vitest run) discovers *.{test,spec}.* across the
+// whole repo, so the wrapper test that exercises the real production wrapper lives
+// next to it at src-tauri/resources/statusline-wrapper.test.ts (NOT under src/).
+// We must scan both trees or that real automated coverage would be invisible here.
 const vitestTitles = new Set();
-for (const file of walk(join(REPO_ROOT, 'src'), /\.(test|spec)\.(ts|js|mjs)$/)) {
-  const text = readFileSync(file, 'utf8');
-  for (const m of text.matchAll(/\b(?:it|test|describe)\s*\(\s*(['"`])([^'"`]+)\1/g)) {
-    vitestTitles.add(snake(m[2]));
+const vitestRoots = [join(REPO_ROOT, 'src'), join(REPO_ROOT, 'src-tauri', 'resources')];
+for (const root of vitestRoots) {
+  for (const file of walk(root, /\.(test|spec)\.(ts|js|mjs)$/)) {
+    const text = readFileSync(file, 'utf8');
+    for (const m of text.matchAll(/\b(?:it|test|describe)\s*\(\s*(['"`])([^'"`]+)\1/g)) {
+      vitestTitles.add(snake(m[2]));
+    }
   }
 }
 

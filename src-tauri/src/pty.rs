@@ -51,7 +51,7 @@ pub enum PtyEvent {
 }
 
 /// Parameters for spawning a pane's PTY-backed process.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SpawnConfig {
     /// Program to execute (e.g. `claude`, `/bin/sh`).
     pub program: String,
@@ -63,6 +63,12 @@ pub struct SpawnConfig {
     pub cols: u16,
     /// Initial terminal rows.
     pub rows: u16,
+    /// Extra environment entries merged into the child env AFTER the seeded
+    /// `TERM`/`COLORTERM`/`PATH`/`HOME`/`LANG`, so a caller-supplied value (e.g.
+    /// the usage-dashboard `AGENT_DESKTOP_PANE`/`AGENT_DESKTOP_SNAPSHOT_DIR`)
+    /// wins on a key collision. Defaults to empty, so existing callers (and the
+    /// shell panes) spawn with exactly the seeded env and nothing extra.
+    pub env: Vec<(String, String)>,
 }
 
 /// Live per-pane state held in the manager's registry.
@@ -135,6 +141,12 @@ impl PtyManager {
             cmd.cwd(cwd);
         }
         seed_env(&mut cmd);
+        // Caller-supplied env wins: applied AFTER the seeded base so an explicit
+        // override (or a `claude` pane's AGENT_DESKTOP_PANE/SNAPSHOT_DIR) takes
+        // precedence over any seeded key of the same name.
+        for (key, val) in &cfg.env {
+            cmd.env(key, val);
+        }
 
         let child = pair
             .slave

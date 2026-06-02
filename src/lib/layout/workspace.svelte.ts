@@ -410,6 +410,38 @@ export class WorkspaceStore {
     this.dragging = active;
   }
 
+  // ---- Pane-id lookup (usage dashboard) ------------------------------------
+  // Snapshots key on the frontend `paneId` (== `AGENT_DESKTOP_PANE`), so the
+  // usage bar resolves a snapshot back to its leaf to read focus / activate it.
+
+  /**
+   * The `paneId` of the active workspace's focused leaf, or null before init /
+   * when the focus can't be resolved. The usage bar reads this to pick which
+   * pane's git fills the bottom row.
+   */
+  get focusedPaneId(): string | null {
+    const entry = this.active;
+    if (!entry) return null;
+    const leaf = findLeaf(entry.ws.root, entry.ws.focusedId);
+    return leaf ? leaf.paneId : null;
+  }
+
+  /**
+   * Best-effort focus/activate the pane carrying `paneId` (clicking a session
+   * card). Searches every workspace for a leaf with that paneId; if found,
+   * activates that workspace (if needed) and focuses the leaf. No-op when the
+   * pane no longer exists (its session may have ended) — never throws.
+   */
+  focusPane(paneId: string): void {
+    for (const entry of this.workspaces) {
+      const leaf = leafByPaneId(entry.ws.root, paneId);
+      if (leaf) {
+        this.setFocusIn(entry.id, leaf.id);
+        return;
+      }
+    }
+  }
+
   // ---- Internal helpers ----------------------------------------------------
 
   /** The cwd of the active workspace's focused pane (for new-session inherit). */

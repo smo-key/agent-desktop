@@ -5,6 +5,8 @@
   import type { WebglAddon } from '@xterm/addon-webgl';
   import { Channel, invoke } from '@tauri-apps/api/core';
   import { registerTerminal, unregisterTerminal } from './layout/terminals';
+  import { getUsagePaths } from './usage/paths';
+  import { buildSpawnOverride } from './usage/spawn';
 
   // PtyEvent — the exact wire shape the Rust backend streams over the per-pane
   // Channel (internally tagged on `event`):
@@ -208,14 +210,30 @@
         }
       };
 
-      // Spawn the PTY-backed process. Arg name `onEvent` is the camelCase of the
-      // Rust param `on_event`; the command name stays verbatim.
-      const id = await invoke<number>('pty_spawn', {
+      // Wire `claude` panes THROUGH the statusline wrapper (per-session
+      // `--settings` override + AGENT_DESKTOP_PANE/SNAPSHOT_DIR env), leaving the
+      // global ~/.claude/settings.json untouched. Shell panes spawn unchanged.
+      // `getUsagePaths()` is memoized (one round-trip across all panes) and
+      // resolves to null on failure, in which case `claude` spawns unwrapped.
+      const usagePaths = program === 'claude' ? await getUsagePaths() : null;
+      if (disposed) return;
+      const { args: spawnArgs, env: spawnEnv } = buildSpawnOverride({
         program,
         args,
+        paneId,
+        usagePaths
+      });
+
+      // Spawn the PTY-backed process. Arg name `onEvent` is the camelCase of the
+      // Rust param `on_event`; the command name stays verbatim. `env` is omitted
+      // for shell panes (undefined → backend default empty), set only for claude.
+      const id = await invoke<number>('pty_spawn', {
+        program,
+        args: spawnArgs,
         cwd,
         cols: term.cols,
         rows: term.rows,
+        env: spawnEnv,
         onEvent: channel
       });
       if (disposed) {

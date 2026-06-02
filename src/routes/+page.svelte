@@ -6,6 +6,8 @@
   import { workspace } from '$lib/layout/workspace.svelte';
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
   import { restorePersistedLayout, watchAndPersist } from '$lib/layout/store-backend.svelte';
+  import { snapshots } from '$lib/usage/snapshots.svelte';
+  import UsageBar from '$lib/usage/UsageBar.svelte';
   import { findLeaf, type SpatialDir } from '$lib/layout/tree';
 
   const cwd = '/Users/arthur/git/agent-desktop';
@@ -25,7 +27,19 @@
       restored = true;
       stopWatching = watchAndPersist();
     });
-    return () => stopWatching?.();
+
+    // Seed the usage-dashboard snapshots store from the current set, then
+    // subscribe to live `usage://snapshot` pushes from the Rust watcher. The
+    // unlisten fn is captured and called on teardown.
+    let unlistenSnapshots: (() => void) | undefined;
+    void snapshots.start().then((unlisten) => {
+      unlistenSnapshots = unlisten;
+    });
+
+    return () => {
+      stopWatching?.();
+      unlistenSnapshots?.();
+    };
   });
 
   // Map the active workspace's focused pane cwd into the title bar subtitle.
@@ -133,6 +147,10 @@
       {/each}
     </main>
   </div>
+
+  <!-- Two-row usage dashboard, pinned full-width at the bottom below the body.
+       Reads the snapshots store + workspace focus; all rollup math is pure. -->
+  <UsageBar />
 </div>
 
 <!-- Single app-wide pane context menu (right-click). Position:fixed, so it can
