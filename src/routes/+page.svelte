@@ -10,10 +10,10 @@
 </script>
 
 <div class="app">
-  <header class="titlebar">
-    <span class="dot dot-r"></span>
-    <span class="dot dot-y"></span>
-    <span class="dot dot-g"></span>
+  <!-- Custom title bar. With macOS titleBarStyle "Overlay" the native traffic
+       lights float over the left of this bar, so we pad-left to clear them and
+       make the whole bar a drag region instead of drawing our own dots. -->
+  <header class="titlebar" data-tauri-drag-region>
     <span class="title">agent-desktop</span>
     <span class="subtitle">{cwd}</span>
   </header>
@@ -41,35 +41,19 @@
     gap: 8px;
     height: 32px;
     flex: 0 0 32px;
-    padding: 0 12px;
+    padding: 0 12px 0 80px;
     background: #161b22;
     border-bottom: 1px solid #21262d;
     user-select: none;
     -webkit-user-select: none;
   }
 
-  .dot {
-    width: 11px;
-    height: 11px;
-    border-radius: 50%;
-    flex: 0 0 auto;
-  }
-  .dot-r {
-    background: #ff5f57;
-  }
-  .dot-y {
-    background: #febc2e;
-  }
-  .dot-g {
-    background: #28c840;
-  }
-
   .title {
-    margin-left: 8px;
     font-size: 13px;
     font-weight: 600;
     color: #e6edf3;
     letter-spacing: -0.01em;
+    pointer-events: none;
   }
 
   .subtitle {
@@ -82,6 +66,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 60%;
+    pointer-events: none;
   }
 
   .surface {
