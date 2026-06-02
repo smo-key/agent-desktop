@@ -42,6 +42,12 @@ empirical research appendix this proposal relies on).
   scripts (read verbs only); the user drives the `/workflow:*` commands themselves.
 - **Layout persistence:** serialize workspaces/pane trees + a session registry and
   restore on launch (re-spawn shell+cwd; tmux-resurrect semantics).
+- **Agent overview (mission control):** a primary top-level view that rosters every
+  agent (pane) with live status/task/context/cost, lets you message or answer any agent
+  straight from the overview (writes to its PTY), click to jump to its pane, kick off a
+  new agent via the launcher, and surfaces the subagents an agent spawns (Task-tool /
+  workflow agents read from `~/.claude/projects/<project>/<session>/`), with a usage
+  rollup across agents and subagents.
 
 Net-new project — no existing functionality to migrate or break.
 
@@ -69,6 +75,10 @@ Net-new project — no existing functionality to migrate or break.
 - `layout-persistence`: serialize and restore workspaces, pane trees, and the session
   registry — invariant-validated, version-migrated, re-spawning shell+cwd with graceful
   fallback on corrupt state.
+- `agent-overview`: a primary "mission control" view listing every agent (pane) with
+  status/task/context/cost, message-or-answer any agent without navigating, click-to-
+  navigate to its pane, kick off a new agent via the launcher, and surfacing of the
+  subagents an agent spawns (with a usage rollup across agents + subagents).
 
 ### Modified Capabilities
 (none — net-new project)
