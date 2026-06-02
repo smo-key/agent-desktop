@@ -2,6 +2,7 @@ pub mod pty;
 pub mod subagents;
 pub mod task;
 pub mod usage;
+pub mod workflow;
 
 use std::fs;
 use std::path::PathBuf;
@@ -15,6 +16,9 @@ use pty::{PaneId, PtyEvent, PtyManager, SpawnConfig};
 use subagents::{SessionRef, Subagent, SubagentsWatcher, SUBAGENTS_EVENT};
 use task::{ForeignSession, ForeignWatcher, FOREIGN_EVENT};
 use usage::{Snapshot, SnapshotWatcher, SNAPSHOT_EVENT};
+use workflow::{Capability, IssueType, WorkflowError};
+
+use std::path::Path;
 
 use std::collections::HashMap;
 
@@ -369,6 +373,67 @@ fn start_subagents_watcher(
     })
 }
 
+// ---------------------------------------------------------------------------
+// Workflow board (Milestone 6, D6) — detection + read-only runner commands.
+//
+// All five run commands are READ-ONLY by construction: they delegate to the typed
+// helpers in `workflow.rs`, whose only allowlisted verbs are `next.sh`, `list`,
+// and `get`. There is deliberately no command that takes a free-form verb, so the
+// write verbs (`create/update/transition/rank/delete`) have no IPC entry point.
+// Each returns a structured `WorkflowError` (carrying stderr + exit code on a
+// script failure) rather than an empty board.
+// ---------------------------------------------------------------------------
+
+/// Classify a repo as workflow-capable (`.claude/commands/workflow` and/or
+/// `.claude/skills/workflow`). Pure filesystem probe — never spawns a script.
+#[tauri::command]
+fn workflow_detect(repo: String) -> Capability {
+    workflow::detect(Path::new(&repo))
+}
+
+/// `next.sh [epic]` — return the script's Markdown stdout verbatim (the board's
+/// "next" view). `epic` optionally scopes it to one epic key.
+#[tauri::command]
+fn workflow_next(repo: String, epic: Option<String>) -> Result<String, WorkflowError> {
+    workflow::next(Path::new(&repo), epic.as_deref())
+}
+
+/// `epics.sh list` — the epics array, parsed from the jira_output temp file.
+#[tauri::command]
+fn workflow_epics_list(repo: String) -> Result<serde_json::Value, WorkflowError> {
+    workflow::epics_list(Path::new(&repo))
+}
+
+/// `epics.sh get <key>` — one epic with its children rollup.
+#[tauri::command]
+fn workflow_epic_get(repo: String, key: String) -> Result<serde_json::Value, WorkflowError> {
+    workflow::epic_get(Path::new(&repo), &key)
+}
+
+/// `issues.sh <type> list [epic]` — the issues array for `type`
+/// (`feature|task|bug|request`), optionally scoped to one epic. An unknown type is
+/// rejected before any script runs.
+#[tauri::command]
+fn workflow_issues_list(
+    repo: String,
+    r#type: String,
+    epic: Option<String>,
+) -> Result<serde_json::Value, WorkflowError> {
+    let issue_type = IssueType::parse(&r#type)?;
+    workflow::issues_list(Path::new(&repo), issue_type, epic.as_deref())
+}
+
+/// `issues.sh <type> get <key>` — one issue with assignee + link fields.
+#[tauri::command]
+fn workflow_issue_get(
+    repo: String,
+    r#type: String,
+    key: String,
+) -> Result<serde_json::Value, WorkflowError> {
+    let issue_type = IssueType::parse(&r#type)?;
+    workflow::issue_get(Path::new(&repo), issue_type, &key)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -446,7 +511,13 @@ pub fn run() {
             usage_paths,
             usage_snapshots,
             foreign_sessions,
-            subagents_for
+            subagents_for,
+            workflow_detect,
+            workflow_next,
+            workflow_epics_list,
+            workflow_epic_get,
+            workflow_issues_list,
+            workflow_issue_get
         ])
         .on_window_event(|window, event| {
             // Kill + reap every pane on app quit so no zombie/orphan processes

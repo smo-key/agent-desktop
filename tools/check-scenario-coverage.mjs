@@ -60,6 +60,16 @@ const REPO_ROOT = resolve(__dirname, '..');
 // MANUAL aspect is the end-to-end new-agent launch (the live launcher dialog +
 // spawn-in-folder + the new pane appearing as a roster row), which needs a real
 // window + PTY (listed in MANUAL_SCENARIOS below).
+// Milestone 6 adds workflow-board (STAGE 1: backend detection + the read-only
+// runner). Every spec scenario is exercised headlessly in Rust (src-tauri/src/
+// workflow.rs) against fake bash fixtures under a tempdir — capability detection
+// (capable/commands-only/not-capable), the cwd=repo guarantee, repo-resolved auth,
+// next.sh markdown passthrough (+ epic scope), the jira_output temp-file parse for
+// epics/issues list+get, temp-file cleanup (success AND parse-failure), the
+// read-only allowlist rejecting every write verb, no slash-command execution, the
+// auth/exit-code error surface (missing settings / empty token), and on-demand
+// refresh re-running the read script. No scenario here is GPU/DOM/live-TUI bound
+// (the board UI is a later stage), so the MANUAL set is empty.
 const ENFORCED_CAPABILITIES = new Set([
   'terminal-core',
   'tiling-layout',
@@ -67,6 +77,7 @@ const ENFORCED_CAPABILITIES = new Set([
   'usage-dashboard',
   'task-detection',
   'session-launcher',
+  'workflow-board',
   'agent-overview',
 ]);
 
