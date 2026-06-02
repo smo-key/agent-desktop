@@ -7,7 +7,8 @@
   import { registerTerminal, unregisterTerminal } from './layout/terminals';
   import { getUsagePaths } from './usage/paths';
   import { buildSpawnOverride } from './usage/spawn';
-  import { InitialInputSender } from './launcher/initialInput';
+  import { InitialInputSender, SUBMIT_DELAY_MS } from './launcher/initialInput';
+  import { noteOutput, noteExit, clearRuntime } from './overview/runtime';
 
   // PtyEvent — the exact wire shape the Rust backend streams over the per-pane
   // Channel (internally tagged on `event`):
@@ -183,6 +184,26 @@
     // spawn-time value; later prop changes must not re-send it).
     initialInputSender = new InitialInputSender(initialInput);
 
+    // Initial-prompt delivery is gated on claude's FIRST output (its TUI is up)
+    // and attempted at most once. Writing the prompt before the TUI is ready left
+    // the line typed-but-unsubmitted (the trailing Enter was swallowed), so we
+    // wait for the first byte, write the verbatim text, then write the submitting
+    // Enter as a SEPARATE write after a short settle (see initialInput.ts).
+    let firstOutputSeen = false;
+    let initialAttempted = false;
+    const deliverInitial = () => {
+      if (initialAttempted) return;
+      if (!firstOutputSeen || ptyId === undefined) return;
+      initialAttempted = true;
+      initialInputSender?.deliver(
+        (data) => {
+          if (ptyId === undefined) return;
+          void invoke('pty_write', { id: ptyId, data }).catch(() => {});
+        },
+        (run) => setTimeout(run, SUBMIT_DELAY_MS)
+      );
+    };
+
     (async () => {
       // Dynamic-import the heavy/DOM-only modules so SSR + the static build stay
       // clean (these touch `window`/WebGL and must not run at build time).
@@ -227,8 +248,18 @@
         if (msg.event === 'data') {
           // Raw bytes, verbatim — xterm reassembles split codepoints / escapes.
           term.write(new Uint8Array(msg.bytes));
+          // Record PTY activity for the agent-overview status (working vs waiting)
+          // and, on the first byte, deliver any pending initial prompt now that
+          // claude's TUI has begun rendering.
+          noteOutput(paneId, Date.now());
+          if (!firstOutputSeen) {
+            firstOutputSeen = true;
+            deliverInitial();
+          }
         } else {
           exited = true;
+          // Record the exit for the overview status (finished vs errored, by code).
+          noteExit(paneId, msg.code);
           // Clear the backend pane id so input/paste/send (and the registered
           // `send` handle) all treat this pane as dead: nothing is written to a
           // PTY that no longer exists, and `send` reports false rather than a
@@ -270,6 +301,10 @@
         return;
       }
       ptyId = id;
+      // If claude's first output already arrived while we were awaiting the spawn
+      // round-trip, deliver the pending initial prompt now (the data handler's own
+      // attempt was a no-op because ptyId was not yet set).
+      deliverInitial();
 
       // Expose a Copy/Paste handle for the pane context menu (decoupled from the
       // xterm instance). Unregistered in onDestroy.
@@ -326,15 +361,9 @@
       // during the async spawn.
       safeFit();
 
-      // Deliver the OPTIONAL initial prompt — AFTER the PTY is spawned and the
-      // input/output wiring is live — exactly once. The sender encodes the user's
-      // text VERBATIM + a single carriage return (never an app-synthesized slash
-      // command) and latches so a re-render can't double-send. A no-prompt pane
-      // writes nothing, leaving claude at an idle interactive prompt.
-      initialInputSender?.trySend((data) => {
-        if (ptyId === undefined) return;
-        void invoke('pty_write', { id: ptyId, data }).catch(() => {});
-      });
+      // NB: the OPTIONAL initial prompt is delivered by `deliverInitial()` —
+      // gated on claude's first output (TUI up), with the text and the submitting
+      // Enter sent as two separate writes — not here, so the Enter actually submits.
     })();
 
     // onMount's returned cleanup runs synchronously on destroy; we set the flag so
@@ -350,6 +379,9 @@
     // → term.dispose() → close channel → pty_kill. Leaves no leaked DOM nodes,
     // listeners, or WebGL contexts, and kills the still-running child.
     unregisterTerminal(paneId);
+    // Drop this pane's overview runtime entry so a closed pane leaves no stale
+    // status behind (a removed pane should simply vanish from the roster).
+    clearRuntime(paneId);
 
     ro?.disconnect();
     ro = undefined;

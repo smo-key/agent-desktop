@@ -25,18 +25,20 @@
   import { launcher } from '$lib/launcher/launcherStore.svelte';
   import { leavesInOrder } from '$lib/layout/tree';
   import { buildRoster, type RosterWorkspace, type AgentStatus } from './roster';
+  import { runtimeMap } from './runtime';
   import { aggregate } from './usage';
   import { messageAgent } from './message';
   import { navigateTarget, type NavWorkspace } from './navigate';
   import { subagents, type Subagent } from './subagents.svelte';
   import { view } from './view.svelte';
 
-  // A 1-second heartbeat clock so a card flips live -> idle when its snapshot
-  // stops arriving, with no new event. Unix SECONDS to match snapshot `ts`.
-  let nowSeconds = $state(Math.floor(Date.now() / 1000));
+  // A 1-second clock so a card flips working -> waiting (and reflects exits) as the
+  // live terminal goes quiet, with no new event needed. Epoch MS to match the
+  // runtime registry's `lastOutputAt`.
+  let nowMs = $state(Date.now());
   $effect(() => {
     const id = setInterval(() => {
-      nowSeconds = Math.floor(Date.now() / 1000);
+      nowMs = Date.now();
     }, 1000);
     return () => clearInterval(id);
   });
@@ -63,8 +65,11 @@
   );
 
   // The live roster, recomputed when workspaces, snapshots, or the clock change.
+  // `runtimeMap()` is a plain (non-reactive) read of the imperative PTY-activity
+  // registry; the 1-second `nowMs` tick re-runs this derived, so each agent's
+  // working/waiting/finished/error status stays current without per-byte reactivity.
   const rows = $derived(
-    buildRoster(snapshots.byPane, rosterWorkspaces, nowSeconds)
+    buildRoster(snapshots.byPane, rosterWorkspaces, runtimeMap(), nowMs)
   );
 
   // The header usage rollup: every agent's cost + every available subagent's
@@ -133,8 +138,23 @@
   }
 
   function statusLabel(status: AgentStatus): string {
-    if (status === 'needs-attention') return 'needs attention';
-    return status;
+    switch (status) {
+      case 'working':
+        return 'working';
+      case 'waiting':
+        return 'needs input';
+      case 'finished':
+        return 'finished';
+      case 'error':
+        return 'errored';
+      default:
+        return 'idle';
+    }
+  }
+
+  /** Statuses that demand the user's attention (prominent card highlight). */
+  function isAttention(status: AgentStatus): boolean {
+    return status === 'waiting' || status === 'error';
   }
 
   /** A subagent's compact usage label: cost if present, else tokens, else "—". */
@@ -191,7 +211,7 @@
              propagation so typing/sending never triggers navigation. -->
         <div
           class="card"
-          class:needs-attention={row.status === 'needs-attention'}
+          class:needs-attention={isAttention(row.status)}
           role="button"
           tabindex="0"
           onclick={() => openAgent(row.paneId)}
@@ -203,7 +223,14 @@
           }}
         >
           <div class="card-head">
-            <span class="status-pill" class:live={row.status === 'live'} class:idle={row.status === 'idle'} class:attn={row.status === 'needs-attention'}>
+            <span
+              class="status-pill"
+              class:working={row.status === 'working'}
+              class:waiting={row.status === 'waiting'}
+              class:finished={row.status === 'finished'}
+              class:error={row.status === 'error'}
+              class:idle={row.status === 'idle'}
+            >
               <span class="status-dot" aria-hidden="true"></span>
               {statusLabel(row.status)}
             </span>
@@ -472,17 +499,42 @@
     border-radius: 50%;
     background: currentColor;
   }
-  .status-pill.live {
+  /* working — green, actively streaming. */
+  .status-pill.working {
     color: #3fb950;
     background: rgba(63, 185, 80, 0.12);
   }
+  /* waiting (needs input) — amber, the prominent "look at me" state. */
+  .status-pill.waiting {
+    color: #f0b429;
+    background: rgba(210, 153, 34, 0.16);
+  }
+  /* finished — blue, the session ended cleanly. */
+  .status-pill.finished {
+    color: #58a6ff;
+    background: rgba(88, 166, 255, 0.12);
+  }
+  /* error — red, the process exited non-zero. */
+  .status-pill.error {
+    color: #f85149;
+    background: rgba(248, 81, 73, 0.14);
+  }
+  /* idle — gray, no runtime info yet. */
   .status-pill.idle {
     color: #8b949e;
     background: rgba(139, 148, 158, 0.1);
   }
-  .status-pill.attn {
-    color: #f0b429;
-    background: rgba(210, 153, 34, 0.16);
+
+  /* The prominent error highlight reuses needs-attention's ring but in red. */
+  .card.needs-attention:has(.status-pill.error) {
+    box-shadow:
+      inset 0 0 0 1px #f85149,
+      0 0 0 1px rgba(248, 81, 73, 0.35),
+      0 0 18px rgba(248, 81, 73, 0.15);
+    background: #1d1413;
+  }
+  .card.needs-attention:has(.status-pill.error):hover {
+    background: #241715;
   }
 
   .model {

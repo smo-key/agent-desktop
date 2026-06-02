@@ -17,11 +17,11 @@ removed the canvas renderer (fallback is DOM).
   vertical session tabs.
 - A persistent usage bar aggregating context/task/model per session and rate-limits /
   cost / git account-wide — across all running instances.
-- Per-session task detection; a folder launcher; a read-only `/workflow` board.
+- Per-session task detection; a folder launcher.
 
 **Non-Goals:**
 - Never modify the user's global `~/.claude/settings.json` or relocate the config dir.
-- Never mutate `/workflow` state or auto-run `/workflow:*` (the user drives + closes).
+- Never auto-run `/workflow:*` or any slash command on the user's behalf.
 - No restore of live process state on relaunch (shell + cwd only).
 - Not targeting the Mac App Store sandbox (Developer-ID signing assumed).
 
@@ -63,13 +63,6 @@ never remounts it (preserves scrollback + the PTY).
 background, and register `onContextLoss` → DOM. `@xterm/addon-canvas` is not used (gone
 in xterm 6).
 
-**D6 — Workflow board is generic and read-only.** Detect `.claude/{commands,skills}/
-workflow/`; render by running the **repo's own** scripts with `cwd=repo` (`next.sh` →
-markdown; `epics.sh`/`issues.sh` → a temp-file path via the `jira_output` pattern, read
-+ parse + delete). Read verbs only — never `create/transition/done`. Auth from the
-repo's `.claude/settings.local.json`. This honors the skill's closure-ownership rule and
-keeps integration repo-agnostic.
-
 **D7 — Task source is `~/.claude/tasks/`, snapshot-primary for app sessions.** The
 wrapper computes `task` (newest `in_progress` → `activeForm`) and embeds it in the
 snapshot, so app-launched sessions need no extra watch. A fallback directly watches
@@ -85,7 +78,7 @@ layout falls back to a fresh single-pane workspace rather than crashing.
 
 **D9 — Phasing (walking skeleton first).** M1 terminal-core → M2 tiling-layout (+
 persistence) → M3 usage-dashboard → M4 task-detection → M5 session-launcher → M6
-workflow-board. Each milestone is independently demoable.
+agent-overview. Each milestone is independently demoable.
 
 ## Risks / Trade-offs
 

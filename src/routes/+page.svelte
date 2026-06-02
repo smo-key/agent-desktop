@@ -13,8 +13,6 @@
   import { appSessionIds } from '$lib/usage/appSessions';
   import UsageBar from '$lib/usage/UsageBar.svelte';
   import Overview from '$lib/overview/Overview.svelte';
-  import WorkflowBoard from '$lib/workflow/WorkflowBoard.svelte';
-  import { board } from '$lib/workflow/board.svelte';
   import { view } from '$lib/overview/view.svelte';
   import { subagents, type SessionRef } from '$lib/overview/subagents.svelte';
   import { appSessionRefs } from '$lib/overview/sessionRefs';
@@ -117,19 +115,6 @@
     return workspace.session(leaf.paneId).cwd ?? cwd;
   });
 
-  // Workflow board (workflow-board STAGE 2): while the board is the active view,
-  // keep it pointed at the focused pane's repo. `setRepo` runs detection (a pure fs
-  // probe) and — only if capable — the read-only scripts; pointing it at the same
-  // repo it already shows is a refresh, but the store's request-token guard makes a
-  // re-entrant call cheap/idempotent. We only sync WHILE the board is showing so we
-  // never spawn workflow scripts in the background for a hidden view; the explicit
-  // Refresh button + Cmd-Shift-K re-run on demand (spec: On-Demand Board Refresh).
-  $effect(() => {
-    if (view.isWorkflow) {
-      void board.setRepo(focusedCwd);
-    }
-  });
-
   // Keyboard shortcuts (macOS):
   //   Cmd-N            open the session LAUNCHER (folder picker + recents +
   //                    optional prompt + placement). The deliberate, full-flow
@@ -169,19 +154,10 @@
       return;
     }
 
-    // Cmd-Shift-K toggles the read-only Workflow board for the focused pane's repo
-    // (workflow-board STAGE 2). Available regardless of store state; the board's
-    // own $effect points it at the focused cwd and runs detection when shown.
-    if (meta && e.shiftKey && (key === 'k' || key === 'K')) {
-      e.preventDefault();
-      view.toggleWorkflow();
-      return;
-    }
-
     // The remaining shortcuts MUTATE the active workspace's pane layout/focus, so
-    // they are GRID-ONLY: in the Overview or Workflow view there is no live grid to
-    // act on (and the user expects those keys inert). The view-level shortcuts
-    // above (N/O/Shift-K) already returned, so they keep working in every view.
+    // they are GRID-ONLY: in the Overview there is no live grid to act on (and the
+    // user expects those keys inert). The view-level shortcuts above (N/O) already
+    // returned, so they keep working in every view.
     if (!view.isGrid) return;
 
     // Ignore the remaining (pane) shortcuts before the store is seeded.
@@ -261,19 +237,6 @@
       {view.isGrid ? 'Overview' : 'Grid'}
     </button>
 
-    <!-- Workflow board toggle (read-only board for the focused pane's repo).
-         Cmd-Shift-K does the same. Highlighted while the board is the active view. -->
-    <button
-      type="button"
-      class="view-toggle"
-      class:active={view.isWorkflow}
-      data-tauri-drag-region="false"
-      title={view.isWorkflow ? 'Back to grid (⌘⇧K)' : 'Workflow board (⌘⇧K)'}
-      onclick={() => view.toggleWorkflow()}
-    >
-      Workflow
-    </button>
-
     <span class="subtitle">{focusedCwd}</span>
   </header>
 
@@ -316,14 +279,6 @@
   {#if view.isOverview}
     <Overview />
   {/if}
-
-  <!-- The read-only WORKFLOW board (workflow-board STAGE 2). Rendered only while it
-       is the active top-level view; the grid above stays mounted (hidden) so its
-       PTYs are untouched. It describes the focused pane's repo (synced via the
-       $effect above) and runs only read-only scripts. -->
-  {#if view.isWorkflow}
-    <WorkflowBoard />
-  {/if}
   {:else}
     <!-- Minimal splash while the persisted layout is restoring; replaced by the
          workspace area as soon as `restored` flips true. -->
@@ -342,9 +297,9 @@
 
 <style>
   .app {
-    /* Positioned ancestor for the absolutely-positioned Overview / WorkflowBoard
-       (position:absolute;inset:0). Without this they'd resolve their containing
-       block to the viewport and cover the title bar; with .app relative they sit
+    /* Positioned ancestor for the absolutely-positioned Overview
+       (position:absolute;inset:0). Without this it'd resolve its containing
+       block to the viewport and cover the title bar; with .app relative it sits
        within the app area, below the title bar. */
     position: relative;
     display: flex;
@@ -399,12 +354,6 @@
     background: #1c2128;
     color: #e6edf3;
     border-color: #58a6ff;
-  }
-  /* Active state for the Workflow toggle while its board is the live view. */
-  .view-toggle.active {
-    background: #1f6feb;
-    color: #ffffff;
-    border-color: #1f6feb;
   }
 
   /* The grid-view wrapper fills the region below the title bar (body + usage bar)

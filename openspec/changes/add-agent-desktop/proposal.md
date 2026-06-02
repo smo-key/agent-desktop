@@ -2,12 +2,12 @@
 
 There is no purpose-built way to run and supervise many concurrent Claude Code
 sessions. Today the user juggles separate terminal tabs, has no aggregated view of
-account-wide usage (rate limits, cost, context) across instances, cannot see at a
-glance what each agent is doing, and switches tools to check `/workflow` state. This
+account-wide usage (rate limits, cost, context) across instances, and cannot see at a
+glance what each agent is doing. This
 change introduces **agent-desktop**: a Tauri v2 + SvelteKit desktop terminal built
 for Claude Code — a real daily-driver terminal (true PTY, recursive tiling, vertical
-session tabs) with three Claude-aware layers on top: an aggregated usage dashboard, per
--session task detection, and a read-only `/workflow` board. It is distilled from, and
+session tabs) with two Claude-aware layers on top: an aggregated usage dashboard and
+per-session task detection. It is distilled from, and
 supersedes, the brainstorming design doc at
 `docs/superpowers/specs/2026-05-30-agent-desktop-design.md` (which carries the full
 empirical research appendix this proposal relies on).
@@ -37,9 +37,6 @@ empirical research appendix this proposal relies on).
 - **Session launcher:** start Claude in a chosen project folder (picker + recents),
   optional initial prompt, as a new tab or a split of the focused pane. Never auto-runs
   slash commands.
-- **Workflow board:** generic, **read-only**. Detects a repo's
-  `.claude/{commands,skills}/workflow/`, renders state by running that repo's own
-  scripts (read verbs only); the user drives the `/workflow:*` commands themselves.
 - **Layout persistence:** serialize workspaces/pane trees + a session registry and
   restore on launch (re-spawn shell+cwd; tmux-resurrect semantics).
 - **Agent overview (mission control):** a primary top-level view that rosters every
@@ -69,9 +66,6 @@ Net-new project — no existing functionality to migrate or break.
 - `session-launcher`: start a Claude session in a chosen project folder (picker +
   recents, optional prompt) with the correct override/env, placed as a new tab or a
   split — with no auto-run of slash commands.
-- `workflow-board`: generic, read-only `/workflow` board that detects a repo's workflow
-  tooling and renders state by running the repo's own scripts (read verbs only), with
-  auth/error surfacing and temp-file cleanup.
 - `layout-persistence`: serialize and restore workspaces, pane trees, and the session
   registry — invariant-validated, version-migrated, re-spawning shell+cwd with graceful
   fallback on corrupt state.
@@ -96,10 +90,11 @@ Net-new project — no existing functionality to migrate or break.
   (already installed).
 - **Filesystem touchpoints (read/observe only):** the user's
   `~/.claude/hooks/statusline.js` (delegated to, never modified),
-  `~/.claude/tasks/<session>/*.json`, `$TMPDIR/claude-ctx-*.json`, and per-repo
-  `.claude/skills/workflow/*` scripts + `.claude/settings.local.json`. The global
-  `~/.claude/settings.json` is **never** written.
+  `~/.claude/tasks/<session>/*.json`, `$TMPDIR/claude-ctx-*.json`, and the per-session
+  `~/.claude/projects/<project>/<session>/` run records (for subagent surfacing). The
+  global `~/.claude/settings.json` is **never** written.
 - **New app-managed files:** a `statusline-wrapper.js` and a `snapshots/` dir under the
   app-support directory; a persisted layout + session-registry JSON.
-- **Safety:** the workflow board uses **read verbs only**; the app never transitions or
-  closes tickets and never auto-runs `/workflow:*` (closure-ownership preserved).
+- **Safety:** sessions are launched with a per-session `--settings` override only; the
+  app never mutates global config and never auto-runs `/workflow:*` or any slash command
+  on the user's behalf.

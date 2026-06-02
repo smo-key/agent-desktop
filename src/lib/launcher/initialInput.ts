@@ -33,34 +33,75 @@ export function encodeInitialInput(
   return Array.from(new TextEncoder().encode(`${input}\r`));
 }
 
+/**
+ * Verbatim bytes for the prompt TEXT alone — the user's text with NO trailing
+ * carriage return — or `null` when there is no prompt (undefined/null/blank).
+ * The submitting Enter is delivered as a SEPARATE write (see [`SUBMIT_BYTES`] and
+ * [`InitialInputSender.deliver`]); keeping the text and the submit apart is what
+ * fixes the "line typed but not sent" symptom on launch.
+ */
+export function encodeInitialText(input: string | null | undefined): number[] | null {
+  if (typeof input !== 'string') return null;
+  if (input.trim() === '') return null;
+  return Array.from(new TextEncoder().encode(input));
+}
+
+/** The single byte a TUI reads as "submit this line": a carriage return. */
+export const SUBMIT_BYTES: number[] = [0x0d];
+
+/**
+ * Default delay (ms) between writing the prompt text and writing the submitting
+ * Enter. The app additionally gates the whole delivery on claude's first output
+ * (the TUI is up); this short settle then lets the typed line register before the
+ * Enter submits it.
+ */
+export const SUBMIT_DELAY_MS = 250;
+
 /** Sink that forwards encoded bytes to the PTY (TerminalPane passes `pty_write`). */
 export type WriteFn = (data: number[]) => void;
 
+/** Defers the submitting Enter (the app passes `setTimeout`; tests pass a sink). */
+export type ScheduleFn = (run: () => void) => void;
+
 /**
- * Stateful, single-shot sender that guards against double-send across re-renders.
- * Construct once per pane with the `initialInput` prop; call `trySend(write)`
- * after the PTY is wired. The FIRST call with a non-empty prompt writes the
- * encoded bytes and latches `done`; every subsequent call is a no-op. A
- * no-prompt sender also latches immediately so it can never fire later.
+ * Stateful, single-shot sender that delivers an optional initial prompt in TWO
+ * phases and guards against double-send across re-renders. Construct once per pane
+ * with the `initialInput` prop; call `deliver(write, schedule)` once the PTY is
+ * wired and claude has started rendering.
+ *
+ * The FIRST `deliver` with a non-empty prompt writes the verbatim TEXT, then asks
+ * `schedule` to run a follow-up that writes a lone carriage return — so the submit
+ * is a distinct keystroke rather than the tail of a pasted block (a combined
+ * `text\r` into a still-initializing TUI leaves the line entered but unsubmitted).
+ * It then latches; every subsequent `deliver` is a no-op. A no-prompt sender
+ * latches immediately and never writes or schedules.
  */
 export class InitialInputSender {
-  private done = false;
-  private readonly payload: number[] | null;
+  private delivered = false;
+  private readonly text: number[] | null;
 
   constructor(input: string | null | undefined) {
-    this.payload = encodeInitialInput(input);
+    this.text = encodeInitialText(input);
+  }
+
+  /** Whether there is a non-empty prompt to deliver. */
+  get hasPrompt(): boolean {
+    return this.text !== null;
   }
 
   /**
-   * Send the initial input exactly once. Returns `true` iff this call performed
-   * the write (a non-empty prompt, not yet sent); `false` on every no-op (already
-   * sent, or nothing to send). Idempotent — safe to call on every re-render.
+   * Deliver the initial prompt exactly once. Returns `true` iff this call
+   * performed the (text) write — a non-empty prompt, not yet delivered; `false`
+   * on every no-op (already delivered, or nothing to send). Idempotent — safe to
+   * call on every re-render. The submitting Enter is written when `schedule` runs
+   * its callback (never synchronously here).
    */
-  trySend(write: WriteFn): boolean {
-    if (this.done) return false;
-    this.done = true; // latch first, so a throwing `write` can't cause a re-send
-    if (this.payload === null) return false;
-    write(this.payload);
+  deliver(write: WriteFn, schedule: ScheduleFn): boolean {
+    if (this.delivered) return false;
+    this.delivered = true; // latch first, so a throwing `write` can't re-send
+    if (this.text === null) return false;
+    write(this.text);
+    schedule(() => write(SUBMIT_BYTES));
     return true;
   }
 }

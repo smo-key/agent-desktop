@@ -34,37 +34,4 @@ describe('view — Overview As A Primary View', () => {
     v.show('overview');
     expect(v.mode).toBe('overview');
   });
-
-  // workflow-board STAGE 2: the third surface. Reached via its own toggle, NOT the
-  // two-way overview<->grid alternation.
-  it('Toggle the workflow board independently of overview/grid', () => {
-    const v = new ViewStore();
-    expect(v.isWorkflow).toBe(false);
-
-    // toggleWorkflow opens the board from any surface...
-    v.toggleWorkflow();
-    expect(v.mode).toBe('workflow');
-    expect(v.isWorkflow).toBe(true);
-    expect(v.isOverview).toBe(false);
-    expect(v.isGrid).toBe(false);
-
-    // ...and pressing it again returns to the grid (where the focused pane lives).
-    v.toggleWorkflow();
-    expect(v.mode).toBe('grid');
-
-    // The overview<->grid toggle stays exactly two-way and never reaches workflow.
-    v.show('workflow');
-    v.toggle();
-    expect(v.mode).toBe('grid'); // from workflow, toggle drops back into the grid
-    v.toggle();
-    expect(v.mode).toBe('overview');
-    v.toggle();
-    expect(v.mode).toBe('grid');
-
-    // show() can still set workflow explicitly (idempotent).
-    v.show('workflow');
-    expect(v.mode).toBe('workflow');
-    v.show('workflow');
-    expect(v.mode).toBe('workflow');
-  });
 });

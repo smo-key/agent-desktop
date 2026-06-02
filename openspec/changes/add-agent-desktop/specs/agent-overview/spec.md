@@ -1,17 +1,18 @@
 ## ADDED Requirements
 
 ### Requirement: Agent Roster Overview
-The system SHALL provide an Overview surface that lists every running agent (each terminal pane running a Claude session) with its name/cwd, model, current task, context percentage, cost, and a live/idle/needs-attention status, derived from each agent's latest usage snapshot.
+The system SHALL provide an Overview surface that lists every running agent (each terminal pane running a Claude session) with its name/cwd, model, current task, context percentage, cost (from the agent's latest usage snapshot), and a working/needs-input/finished/errored status derived from the agent's live terminal activity and process state.
 
 #### Scenario: Roster reflects running agents
 - **WHEN** the overview is shown and one or more panes are running Claude sessions
 - **THEN** it lists one entry per agent showing that agent's model, current task (the in-progress `activeForm`), context percentage, and cost taken from its latest snapshot
 
-#### Scenario: Agent status derives from heartbeat and activity
-- **WHEN** an agent's latest snapshot heartbeat is fresh
-- **THEN** its status is `live`
-- **AND** when the heartbeat is older than the idle threshold its status is `idle`
-- **AND** when it is alive but has had no in-progress task and no snapshot update for the attention threshold its status is `needs-attention`
+#### Scenario: Agent status reflects working, waiting, finished, and errored
+- **WHEN** an agent's terminal produced output within the working window (claude is streaming)
+- **THEN** its status is `working`
+- **AND** when it is alive but its terminal has been quiet past the working window its status is `waiting` (needs the user's input)
+- **AND** when its process has exited with a zero/unknown code its status is `finished`
+- **AND** when its process has exited with a non-zero code its status is `error`
 
 ### Requirement: Navigate To An Agent
 The system SHALL let the user open an agent from the overview, switching to the terminal grid with that agent's workspace active and its pane focused.

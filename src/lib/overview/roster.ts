@@ -1,19 +1,56 @@
 // PURE roster view-model for the agent-overview surface (Stage 1, tasks.md 10.1;
-// design D3/D7). Given the live `pane_id -> snapshot` map plus a framework-free
-// projection of the workspace list, it produces ONE `AgentRow` per app (claude)
-// pane: its name/cwd, model, current task, context %, cost, and a live/idle/
-// needs-attention status derived from the snapshot heartbeat + activity.
+// design D3/D7). Given the live `pane_id -> snapshot` map, a framework-free
+// projection of the workspace list, and the per-pane RUNTIME state (PTY output
+// activity + process exit), it produces ONE `AgentRow` per app (claude) pane: its
+// name/cwd, model, current task, context %, cost, and a working/waiting/finished/
+// errored status.
+//
+// Status is derived from the LIVE terminal — not the statusline snapshot. The
+// statusline wrapper only writes a snapshot when claude re-renders its status bar,
+// which is sparse and stops entirely while claude waits at a prompt, so a
+// heartbeat-based status read "idle" almost always. The PTY byte stream, by
+// contrast, flows continuously while claude works (its spinner/token output) and
+// falls silent the instant it stops — a far truer "is it working" signal — and
+// the process exit code distinguishes a clean finish from an error.
 //
 // Framework-free (no Svelte/Tauri imports) so it is trivially unit-tested. The
 // Overview component is the thin reactive wrapper that projects the workspace
-// store's `WorkspaceEntry[]` into `RosterWorkspace[]`, calls `buildRoster(...)`,
-// and renders the rows. Every "missing" value rolls up to `null`, NEVER `NaN`.
+// store's `WorkspaceEntry[]` into `RosterWorkspace[]`, feeds the runtime registry
+// in, calls `buildRoster(...)`, and renders the rows. Every "missing" value rolls
+// up to `null`, NEVER `NaN`.
 
-import { IDLE_AFTER_SECONDS } from '../usage/rollup';
 import type { Snapshot, SnapshotMap } from '../usage/snapshots.svelte';
 
-/** The live/idle/needs-attention status of an agent. */
-export type AgentStatus = 'live' | 'idle' | 'needs-attention';
+/**
+ * An agent's live status, derived from its terminal activity + process state:
+ *  - `working`  — the PTY produced output within the working window (streaming).
+ *  - `waiting`  — alive but quiet: claude is at the prompt, needing YOUR input.
+ *  - `finished` — the process exited cleanly (code 0 / unknown).
+ *  - `error`    — the process exited with a non-zero code.
+ *  - `idle`     — no runtime info yet (pane not wired).
+ */
+export type AgentStatus = 'working' | 'waiting' | 'finished' | 'error' | 'idle';
+
+/** Per-pane runtime state captured from the live terminal (framework-free). */
+export interface PaneRuntime {
+  /** Epoch ms of the most recent PTY output, or null if none seen yet. */
+  lastOutputAt: number | null;
+  /** Whether the pane's process has exited. */
+  exited: boolean;
+  /** The process exit code once exited, else null (and null for an unknown code). */
+  exitCode: number | null;
+}
+
+/** The live `pane_id -> runtime` map the Overview feeds into `buildRoster`. */
+export type RuntimeMap = Record<string, PaneRuntime>;
+
+/**
+ * Output newer than this (ms) counts as "working". It must exceed claude's
+ * spinner/token cadence (it re-renders several times a second while working) so
+ * an active agent stays `working`, yet be short enough that going quiet flips to
+ * `waiting` promptly.
+ */
+export const WORKING_WINDOW_MS = 2500;
 
 /** One pane in a workspace, as the roster needs it (framework-free projection). */
 export interface RosterPane {
@@ -63,36 +100,31 @@ function finiteOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-/** Whether a task string is a real, non-blank in-progress task. */
-function hasTask(task: string | null | undefined): boolean {
-  return typeof task === 'string' && task.trim().length > 0;
-}
-
 /**
- * PURE status heuristic for one agent, from its latest snapshot + "now":
+ * PURE status for one agent, from its live runtime state + "now" (epoch ms):
  *
- *  - `live`            — the heartbeat is FRESH (`now - ts <= idleAfter`) AND the
- *                        agent has a non-empty in-progress task (it is working).
- *  - `needs-attention` — the heartbeat is FRESH but there is NO in-progress task
- *                        (the agent is idling at a prompt / waiting on the user /
- *                        asking a question — it wants your attention).
- *  - `idle`            — the heartbeat is STALE (older than `idleAfter`), OR there
- *                        is no snapshot at all yet (a freshly-launched pane whose
- *                        wrapper has not written a heartbeat).
+ *  - process exited, non-zero code            → `error`   (crashed / failed)
+ *  - process exited, code 0 or unknown        → `finished`(session ended cleanly)
+ *  - alive, output within the working window  → `working` (streaming right now)
+ *  - alive, output older than the window      → `waiting` (quiet — needs input)
+ *  - alive, no output yet                     → `working` (just spawned, starting)
+ *  - no runtime at all                        → `idle`    (pane not wired yet)
  *
- * A snapshot with a non-finite `ts` is treated as fresh (ts=0 only matters
- * relative to `now`, so callers pass a real `now`). Never throws.
+ * Exit state takes precedence over activity (a dead process is never "working").
+ * Never throws.
  */
-export function statusOf(
-  snapshot: Snapshot | undefined,
-  nowSeconds: number,
-  idleAfter: number = IDLE_AFTER_SECONDS
+export function deriveStatus(
+  runtime: PaneRuntime | undefined,
+  nowMs: number,
+  workingWindowMs: number = WORKING_WINDOW_MS
 ): AgentStatus {
-  if (!snapshot) return 'idle';
-  const ts = finiteOrNull(snapshot.ts) ?? 0;
-  const fresh = nowSeconds - ts <= idleAfter;
-  if (!fresh) return 'idle';
-  return hasTask(snapshot.task) ? 'live' : 'needs-attention';
+  if (!runtime) return 'idle';
+  if (runtime.exited) {
+    const code = finiteOrNull(runtime.exitCode);
+    return code !== null && code !== 0 ? 'error' : 'finished';
+  }
+  if (runtime.lastOutputAt === null) return 'working';
+  return nowMs - runtime.lastOutputAt <= workingWindowMs ? 'working' : 'waiting';
 }
 
 /** The last path segment of a cwd (e.g. `/home/u/parser` -> `parser`), or null. */
@@ -112,17 +144,18 @@ function displayName(wsName: string, cwd: string | null, paneId: string): string
 }
 
 /**
- * Build one `AgentRow` for an app pane from its (possibly absent) snapshot. The
- * name/cwd come from the workspace projection; the model/task/context/cost from
- * the snapshot; the status from the heartbeat heuristic.
+ * Build one `AgentRow` for an app pane. The name/cwd come from the workspace
+ * projection; the model/task/context/cost from the (possibly absent) snapshot;
+ * the status from the live runtime state (PTY activity + process exit).
  */
 function rowFor(
   workspaceId: string,
   wsName: string,
   pane: RosterPane,
   snapshot: Snapshot | undefined,
-  nowSeconds: number,
-  idleAfter: number
+  runtime: PaneRuntime | undefined,
+  nowMs: number,
+  workingWindowMs: number
 ): AgentRow {
   return {
     paneId: pane.paneId,
@@ -133,34 +166,38 @@ function rowFor(
     task: snapshot?.task ?? null,
     contextPct: finiteOrNull(snapshot?.context_pct),
     cost: finiteOrNull(snapshot?.cost),
-    status: statusOf(snapshot, nowSeconds, idleAfter)
+    status: deriveStatus(runtime, nowMs, workingWindowMs)
   };
 }
 
 /**
  * The whole roster: ONE `AgentRow` per app pane across every workspace, in
  * workspace-then-pane (tree) order. Non-app (shell) panes are skipped entirely.
- * An app pane with no snapshot yet still rosters (its status is `idle` until a
- * heartbeat arrives), so a freshly-launched agent is never silently dropped.
+ * An app pane with no runtime yet still rosters (status `idle` until its terminal
+ * wires up), so a freshly-launched agent is never silently dropped.
  *
- * Pure: reads the map + workspaces + `now`, returns fresh rows, mutates nothing.
+ * Pure: reads the maps + workspaces + `now`, returns fresh rows, mutates nothing.
  *
- * @param map         the live pane_id -> snapshot map
+ * @param map         the live pane_id -> snapshot map (model/task/context/cost)
  * @param workspaces  the framework-free workspace projection
- * @param nowSeconds  "now" in unix seconds, for the live/idle heartbeat
- * @param idleAfter   staleness threshold in seconds (default IDLE_AFTER_SECONDS)
+ * @param runtime     the live pane_id -> runtime map (PTY activity + exit), for status
+ * @param nowMs       "now" in epoch ms, for the output-activity window
+ * @param workingWindowMs  activity window in ms (default WORKING_WINDOW_MS)
  */
 export function buildRoster(
   map: SnapshotMap,
   workspaces: RosterWorkspace[],
-  nowSeconds: number,
-  idleAfter: number = IDLE_AFTER_SECONDS
+  runtime: RuntimeMap,
+  nowMs: number,
+  workingWindowMs: number = WORKING_WINDOW_MS
 ): AgentRow[] {
   const rows: AgentRow[] = [];
   for (const ws of workspaces) {
     for (const pane of ws.panes) {
       if (!pane.isApp) continue;
-      rows.push(rowFor(ws.id, ws.name, pane, map[pane.paneId], nowSeconds, idleAfter));
+      rows.push(
+        rowFor(ws.id, ws.name, pane, map[pane.paneId], runtime[pane.paneId], nowMs, workingWindowMs)
+      );
     }
   }
   return rows;
