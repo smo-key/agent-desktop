@@ -57,11 +57,11 @@ Cover every scenario in `specs/usage-dashboard/spec.md`. **Confirm the wrapper i
 
 Cover every scenario in `specs/task-detection/spec.md`. (D7)
 
-- [ ] 6.1 Derive current task = newest `in_progress` → `activeForm` from `~/.claude/tasks/<session>/<N>.json`; tolerate schema drift (fall back `subject`/`content`). Covers *Derive Current Task From Live Tasks Directory* and *Tolerate Task Schema Variations And Fallback Fields*.
-- [ ] 6.2 App-launched sessions read task from the snapshot (already watched). Covers *Snapshot Is The Primary Task Source For App-Launched Sessions*.
-- [ ] 6.3 Fallback watcher of `~/.claude/tasks/` + `$TMPDIR/claude-ctx-*.json` for foreign sessions. Covers *Direct-Watch Fallback For Foreign Sessions*.
-- [ ] 6.4 Live/idle from snapshot `ts` heartbeat; surface per-pane badge + card. Covers *Derive Live Versus Idle From Snapshot Heartbeat* and *Surface Task Per Pane*.
-- [ ] 6.5 `npm run check` green for `task-detection`.
+- [x] 6.1 Derive current task = newest `in_progress` → `activeForm` from `~/.claude/tasks/<session>/<N>.json`; tolerate schema drift (fall back `subject`/`content`). Covers *Derive Current Task From Live Tasks Directory* and *Tolerate Task Schema Variations And Fallback Fields*.
+- [x] 6.2 App-launched sessions read task from the snapshot (already watched). Covers *Snapshot Is The Primary Task Source For App-Launched Sessions*.
+- [x] 6.3 Fallback watcher of `~/.claude/tasks/` + `$TMPDIR/claude-ctx-*.json` for foreign sessions. Covers *Direct-Watch Fallback For Foreign Sessions*.
+- [x] 6.4 Live/idle from snapshot `ts` heartbeat; surface per-pane badge + card. Covers *Derive Live Versus Idle From Snapshot Heartbeat* and *Surface Task Per Pane*.
+- [x] 6.5 `npm run check` green for `task-detection`.
 
 ## 7. Capability: `session-launcher` (Milestone 5)
 
