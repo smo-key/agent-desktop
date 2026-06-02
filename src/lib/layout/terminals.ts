@@ -12,6 +12,14 @@ export interface TerminalHandle {
   hasSelection(): boolean;
   /** Write text into the pane's PTY (used for paste). */
   paste(text: string): void;
+  /**
+   * Send `text` to the pane's PTY as a message: the EXACT text followed by a
+   * SINGLE carriage return (`\r`), via the same `pty_write` path. Used by the
+   * agent-overview "message an agent" action to deliver the user's text to a pane
+   * without navigating to it. Sends ONLY the given text — it never synthesizes a
+   * slash command or any other input on the user's behalf.
+   */
+  send(text: string): void;
 }
 
 const handles = new Map<string, TerminalHandle>();

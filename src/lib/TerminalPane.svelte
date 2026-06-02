@@ -277,6 +277,16 @@
             id: ptyId,
             data: Array.from(new TextEncoder().encode(text))
           }).catch(() => {});
+        },
+        // Message-an-agent (agent-overview): write the EXACT user text plus a
+        // single carriage return through the same pty_write path. Sends ONLY the
+        // given text — nothing is synthesized on the user's behalf.
+        send: (text: string) => {
+          if (ptyId === undefined || !text) return;
+          void invoke('pty_write', {
+            id: ptyId,
+            data: Array.from(new TextEncoder().encode(text + '\r'))
+          }).catch(() => {});
         }
       });
 

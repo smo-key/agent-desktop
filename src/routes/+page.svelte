@@ -12,6 +12,10 @@
   import { foreign } from '$lib/usage/foreign.svelte';
   import { appSessionIds } from '$lib/usage/appSessions';
   import UsageBar from '$lib/usage/UsageBar.svelte';
+  import Overview from '$lib/overview/Overview.svelte';
+  import { view } from '$lib/overview/view.svelte';
+  import { subagents, type SessionRef } from '$lib/overview/subagents.svelte';
+  import { appSessionRefs } from '$lib/overview/sessionRefs';
   import { findLeaf, type SpatialDir } from '$lib/layout/tree';
 
   const cwd = '/Users/arthur/git/agent-desktop';
@@ -49,12 +53,28 @@
       unlistenForeign = unlisten;
     });
 
+    // Seed the SUBAGENTS store (agent-overview) with the app's current app-pane
+    // session refs ({sessionId, cwd}), then subscribe to live `overview://subagents`
+    // pushes from the Rust subagent watcher. A separate $effect (below) re-seeds the
+    // watched-set whenever the app's session set changes.
+    let unlistenSubagents: (() => void) | undefined;
+    void subagents.start(currentSessionRefs()).then((unlisten) => {
+      unlistenSubagents = unlisten;
+    });
+
     return () => {
       stopWatching?.();
       unlistenSnapshots?.();
       unlistenForeign?.();
+      unlistenSubagents?.();
     };
   });
+
+  // The app's app-pane session refs ({sessionId, cwd}), joining each snapshot's
+  // Claude session id with its pane cwd from the workspace registry (pure helper).
+  function currentSessionRefs(): SessionRef[] {
+    return appSessionRefs(snapshots.byPane, (paneId) => workspace.session(paneId).cwd);
+  }
 
   // Keep the foreign-session exclude-set current: whenever the app's set of
   // launched session ids changes (a new pane reports a snapshot, or one ends),
@@ -64,6 +84,15 @@
   $effect(() => {
     const ids = ourSessionIds;
     void foreign.seed(ids);
+  });
+
+  // Keep the SUBAGENTS watched-set current too: whenever the app's session refs
+  // change (a new app pane reports a session id, a cwd resolves, or one ends),
+  // re-seed the Rust `subagents_for` watcher so it watches exactly our sessions.
+  // Keyed on the session ids (sorted, stable) so it only fires on a real change.
+  $effect(() => {
+    void ourSessionIds; // re-run when the app's session set changes
+    void subagents.seed(currentSessionRefs());
   });
 
   // Map the active workspace's focused pane cwd into the title bar subtitle.
@@ -102,6 +131,15 @@
     if (meta && (key === 'n' || key === 'N')) {
       e.preventDefault();
       launcher.show();
+      return;
+    }
+
+    // Cmd-O toggles the top-level view between the Overview (mission control) and
+    // the terminal grid. Available regardless of store state — the overview is the
+    // default surface and is meaningful even before any pane is seeded.
+    if (meta && (key === 'o' || key === 'O')) {
+      e.preventDefault();
+      view.toggle();
       return;
     }
 
@@ -168,9 +206,27 @@
        make the whole bar a drag region instead of drawing our own dots. -->
   <header class="titlebar" data-tauri-drag-region>
     <span class="title">agent-desktop</span>
+
+    <!-- Top-level view toggle: Overview (mission control) <-> terminal grid.
+         Cmd-O does the same. data-tauri-drag-region is OFF on the button so the
+         click registers instead of dragging the window. -->
+    <button
+      type="button"
+      class="view-toggle"
+      data-tauri-drag-region="false"
+      title={view.isOverview ? 'Go to terminal grid (⌘O)' : 'Go to overview (⌘O)'}
+      onclick={() => view.toggle()}
+    >
+      {view.isOverview ? 'Grid' : 'Overview'}
+    </button>
+
     <span class="subtitle">{focusedCwd}</span>
   </header>
 
+  <!-- The terminal-grid surface (rail + panes + usage bar). Kept MOUNTED at all
+       times so every workspace's xterm/PTY survives a view switch; hidden (not
+       unmounted) while the Overview is the active top-level view. -->
+  <div class="grid-view" class:hidden={!view.isGrid}>
   <div class="body">
     <!-- Left vertical session rail (fixed width). Switches the active workspace;
          never renders panes itself. -->
@@ -189,9 +245,18 @@
     </main>
   </div>
 
-  <!-- Two-row usage dashboard, pinned full-width at the bottom below the body.
-       Reads the snapshots store + workspace focus; all rollup math is pure. -->
-  <UsageBar />
+    <!-- Two-row usage dashboard, pinned full-width at the bottom below the body.
+         Reads the snapshots store + workspace focus; all rollup math is pure. -->
+    <UsageBar />
+  </div>
+
+  <!-- The primary OVERVIEW (mission control) surface. Rendered only while it is
+       the active top-level view; the grid above stays mounted (hidden) so its
+       PTYs are untouched. The overview reads the snapshots + workspace + subagent
+       stores (all pure view-model math) and drives navigation back into the grid. -->
+  {#if view.isOverview}
+    <Overview />
+  {/if}
 </div>
 
 <!-- Single app-wide pane context menu (right-click). Position:fixed, so it can
@@ -232,6 +297,44 @@
     color: #e6edf3;
     letter-spacing: -0.01em;
     pointer-events: none;
+  }
+
+  /* Top-level view toggle button. pointer-events re-enabled (the bar is a drag
+     region) so the click lands; sits just right of the title. */
+  .view-toggle {
+    pointer-events: auto;
+    height: 20px;
+    padding: 0 10px;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    background: #0d1117;
+    color: #adbac7;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition:
+      background 0.12s ease,
+      color 0.12s ease,
+      border-color 0.12s ease;
+  }
+  .view-toggle:hover {
+    background: #1c2128;
+    color: #e6edf3;
+    border-color: #58a6ff;
+  }
+
+  /* The grid-view wrapper fills the region below the title bar (body + usage bar)
+     as a flex column. Hidden (not unmounted) while the Overview is active so every
+     workspace's xterm/PTY survives the switch untouched. */
+  .grid-view {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .grid-view.hidden {
+    display: none;
   }
 
   .subtitle {

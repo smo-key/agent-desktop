@@ -50,6 +50,16 @@ const REPO_ROOT = resolve(__dirname, '..');
 // the DOM-rendered recents picker, and the actual spawn-in-folder (statusline
 // override + pane env + global-settings-untouched) — are listed in
 // MANUAL_SCENARIOS below.
+// Milestone 10 adds agent-overview: the roster view-model (one row per app pane,
+// status from heartbeat+activity), per-agent + aggregate usage, the message-an-
+// agent dispatch (verbatim text + single \r, never a synthesized command), the
+// navigate-target resolver (paneId -> {workspaceId, leafId}), the top-level view
+// toggle (overview <-> grid), and the Rust subagent reader (subagents under their
+// parent; partial metadata tolerated) — all pure/headless and unit-tested
+// (src/lib/overview/*.test.ts + src-tauri/src/subagents.rs tests). The single
+// MANUAL aspect is the end-to-end new-agent launch (the live launcher dialog +
+// spawn-in-folder + the new pane appearing as a roster row), which needs a real
+// window + PTY (listed in MANUAL_SCENARIOS below).
 const ENFORCED_CAPABILITIES = new Set([
   'terminal-core',
   'tiling-layout',
@@ -57,6 +67,7 @@ const ENFORCED_CAPABILITIES = new Set([
   'usage-dashboard',
   'task-detection',
   'session-launcher',
+  'agent-overview',
 ]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by
@@ -154,6 +165,26 @@ const MANUAL_SCENARIOS = {
     'spawn_carries_the_statusline_override_and_pane_env',
     'global_settings_are_not_mutated',
   ]),
+  // agent-overview: every PURE scenario has a REAL headless test under exactly one
+  // title each —
+  //   - roster.test.ts: roster_reflects_running_agents /
+  //     agent_status_derives_from_heartbeat_and_activity.
+  //   - usage.test.ts: per_agent_usage_reflects_the_snapshot /
+  //     aggregate_usage_sums_agents_and_subagents.
+  //   - message.test.ts: sending_a_message_writes_to_the_agent_pty /
+  //     only_user_entered_text_is_ever_sent.
+  //   - navigate.test.ts: selecting_an_agent_focuses_its_pane (the PURE target
+  //     resolution paneId -> {workspaceId, leafId}; the live store mutation + view
+  //     switch is the MANUAL part of the same flow, confirmed in-app).
+  //   - view.svelte.test.ts: toggle_between_overview_and_grid.
+  //   - subagents.rs (Rust): subagents_appear_under_their_parent_agent /
+  //     partial_subagent_metadata_does_not_break_the_roster.
+  // The single MANUAL aspect is the end-to-end new-agent launch — the live launcher
+  // dialog + spawn-in-folder + the freshly-created pane appearing as a roster row.
+  // The launcher itself (plan/recents/initial-input) has headless coverage under
+  // session-launcher; what is live here is the overview's "＋ New agent" opening it
+  // and the resulting pane rostering, which needs a real window + PTY.
+  'agent-overview': new Set(['new_agent_action_launches_and_rosters']),
 };
 
 // --- helpers -----------------------------------------------------------------

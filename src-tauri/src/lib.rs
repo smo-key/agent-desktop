@@ -1,4 +1,5 @@
 pub mod pty;
+pub mod subagents;
 pub mod task;
 pub mod usage;
 
@@ -11,8 +12,11 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
 use pty::{PaneId, PtyEvent, PtyManager, SpawnConfig};
+use subagents::{SessionRef, Subagent, SubagentsWatcher, SUBAGENTS_EVENT};
 use task::{ForeignSession, ForeignWatcher, FOREIGN_EVENT};
 use usage::{Snapshot, SnapshotWatcher, SNAPSHOT_EVENT};
+
+use std::collections::HashMap;
 
 /// Basename of the persisted layout file under the app-data directory.
 const LAYOUT_FILE: &str = "layout.json";
@@ -310,6 +314,61 @@ fn start_foreign_watcher(
     })
 }
 
+/// The shared set of sessions the subagents watcher recomputes for, held in
+/// Tauri-managed state. The frontend keeps it current via the `subagents_for`
+/// command (passing its app-launched panes' `{sessionId, cwd}`); the watcher reads
+/// it on every recompute so a newly-launched session starts surfacing its
+/// subagents without restarting the watch.
+#[derive(Default)]
+struct WatchedSessionsState(subagents::WatchedSessions);
+
+/// Return the `session_id -> [Subagent]` map for the caller's app-launched
+/// sessions, after updating the shared watched-set to `sessions`. Each session
+/// supplies its `{sessionId, cwd}`; the cwd locates the Claude project dir
+/// (`~/.claude/projects/<encoded-cwd>/<sessionId>/`). Reads the live
+/// `workflows/*.json` run records, tolerating absent/partial/malformed ones. Used
+/// both to SEED the frontend on mount and to push the watched-set whenever the
+/// app's session set changes (subsequent live updates arrive over the
+/// `overview://subagents` event). A session with no subagents maps to an empty
+/// list; a missing projects dir yields an empty map, never an error.
+#[tauri::command]
+fn subagents_for(
+    state: State<'_, WatchedSessionsState>,
+    sessions: Vec<SessionRef>,
+) -> Result<HashMap<String, Vec<Subagent>>, String> {
+    // Update the shared watched-set so the watcher's next recompute uses it too.
+    {
+        let mut guard = state
+            .0
+            .lock()
+            .map_err(|_| "watched-sessions lock poisoned")?;
+        *guard = sessions.clone();
+    }
+    let projects_base =
+        subagents::default_projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
+    Ok(subagents::subagents_for_sessions(&projects_base, &sessions))
+}
+
+/// Start the subagents watcher over `~/.claude/projects/`, emitting the
+/// recomputed per-session subagent map to the frontend over
+/// `overview://subagents`. Shares the watched-session set with the
+/// `subagents_for` command so it is always current. The returned
+/// [`SubagentsWatcher`] is held in managed state for the app's lifetime and
+/// dropped cleanly on exit.
+fn start_subagents_watcher(
+    app: &AppHandle,
+    sessions: subagents::WatchedSessions,
+) -> Result<SubagentsWatcher, String> {
+    let projects_base =
+        subagents::default_projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
+    let handle = app.clone();
+    subagents::start_subagents_watcher(&projects_base, sessions, move |map| {
+        if let Err(e) = handle.emit(SUBAGENTS_EVENT, &map) {
+            log::warn!("emit {SUBAGENTS_EVENT} failed: {e}");
+        }
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -357,10 +416,24 @@ pub fn run() {
                 }
                 Err(e) => log::warn!("start_foreign_watcher failed: {e}"),
             }
+            // Start the subagents watcher over ~/.claude/projects/, sharing the
+            // watched-session set with the `subagents_for` command so a session
+            // launched after startup begins surfacing its subagents. Held in
+            // managed state for the app's lifetime; failure is logged but
+            // non-fatal — the frontend still seeds via `subagents_for` and simply
+            // won't receive live `overview://subagents` pushes.
+            let watched = app.state::<WatchedSessionsState>().0.clone();
+            match start_subagents_watcher(app.handle(), watched) {
+                Ok(watcher) => {
+                    app.manage(watcher);
+                }
+                Err(e) => log::warn!("start_subagents_watcher failed: {e}"),
+            }
             Ok(())
         })
         .manage(Arc::new(PtyManager::new()))
         .manage(AppSessionsState::default())
+        .manage(WatchedSessionsState::default())
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
             pty_write,
@@ -372,7 +445,8 @@ pub fn run() {
             recents_save,
             usage_paths,
             usage_snapshots,
-            foreign_sessions
+            foreign_sessions,
+            subagents_for
         ])
         .on_window_event(|window, event| {
             // Kill + reap every pane on app quit so no zombie/orphan processes
