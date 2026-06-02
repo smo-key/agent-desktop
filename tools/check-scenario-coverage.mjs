@@ -58,6 +58,10 @@ const MANUAL_SCENARIOS = {
     'switch_to_another_workspace_via_the_rail',
     'switching_workspaces_does_not_remount_terminals',
     'resize_does_not_remount_terminals_mid_drag',
+    // Pane context menu: the action-dispatch + disabled-state scenarios are pure
+    // unit tests (enforced via paneMenu.test.ts); these two are gesture/DOM bound.
+    'right_click_opens_the_menu_at_the_cursor_and_focuses_the_pane',
+    'menu_dismisses_on_escape_outside_click_or_after_an_action',
   ]),
   // layout-persistence: serialize/validate/migrate/respawn/fallback/debounce are
   // all enforced unit tests. Only the OPTIONAL addon-serialize scrollback repaint

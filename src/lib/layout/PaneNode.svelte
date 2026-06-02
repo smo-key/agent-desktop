@@ -14,7 +14,10 @@
   import PaneNode from './PaneNode.svelte';
   import { workspace } from './workspace.svelte';
   import { setRect, clearRect } from './rects.svelte';
-  import type { Node } from './tree';
+  import { buildPaneMenu } from './paneMenu';
+  import { contextMenu } from './contextmenu.svelte';
+  import { getTerminal } from './terminals';
+  import { leavesInOrder, type Node } from './tree';
 
   let {
     node,
@@ -74,6 +77,34 @@
   function focusThis() {
     if (node.type === 'leaf') workspace.setFocusIn(workspaceId, node.id);
   }
+
+  // Right-click a leaf: focus it (also activates its workspace, so split/close
+  // act on it), then open the pane context menu at the cursor.
+  function openMenu(e: MouseEvent) {
+    if (node.type !== 'leaf') return;
+    e.preventDefault();
+    workspace.setFocusIn(workspaceId, node.id);
+    const handle = getTerminal(node.paneId);
+    const canClose = leavesInOrder(workspace.root).length > 1;
+    const sections = buildPaneMenu({
+      split: (dir, where) => workspace.split(dir, where),
+      close: () => workspace.closeFocused(),
+      newSession: () => workspace.newWorkspace(),
+      copy: () => {
+        const sel = handle?.getSelection() ?? '';
+        if (sel) void navigator.clipboard?.writeText(sel).catch(() => {});
+      },
+      paste: () => {
+        void navigator.clipboard
+          ?.readText()
+          .then((t) => handle?.paste(t))
+          .catch(() => {});
+      },
+      canClose,
+      hasSelection: handle?.hasSelection() ?? false
+    });
+    contextMenu.show(e.clientX, e.clientY, sections);
+  }
 </script>
 
 {#if node.type === 'leaf'}
@@ -85,6 +116,7 @@
     bind:this={leafEl}
     role="presentation"
     onpointerdown={focusThis}
+    oncontextmenu={openMenu}
   >
     {#key node.paneId}
       <TerminalPane

@@ -4,6 +4,7 @@
   import type { FitAddon } from '@xterm/addon-fit';
   import type { WebglAddon } from '@xterm/addon-webgl';
   import { Channel, invoke } from '@tauri-apps/api/core';
+  import { registerTerminal, unregisterTerminal } from './layout/terminals';
 
   // PtyEvent — the exact wire shape the Rust backend streams over the per-pane
   // Channel (internally tagged on `event`):
@@ -224,6 +225,20 @@
       }
       ptyId = id;
 
+      // Expose a Copy/Paste handle for the pane context menu (decoupled from the
+      // xterm instance). Unregistered in onDestroy.
+      registerTerminal(paneId, {
+        getSelection: () => term?.getSelection() ?? '',
+        hasSelection: () => term?.hasSelection() ?? false,
+        paste: (text: string) => {
+          if (ptyId === undefined || !text) return;
+          void invoke('pty_write', {
+            id: ptyId,
+            data: Array.from(new TextEncoder().encode(text))
+          }).catch(() => {});
+        }
+      });
+
       // Input: forward raw encoded bytes to the PTY writer.
       const enc = new TextEncoder();
       onDataSub = term.onData((d) => {
@@ -265,6 +280,8 @@
     // Ordered teardown (per spec): ResizeObserver.disconnect() → webgl.dispose()
     // → term.dispose() → close channel → pty_kill. Leaves no leaked DOM nodes,
     // listeners, or WebGL contexts, and kills the still-running child.
+    unregisterTerminal(paneId);
+
     ro?.disconnect();
     ro = undefined;
 

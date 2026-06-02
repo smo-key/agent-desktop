@@ -95,3 +95,22 @@ The system SHALL key each terminal on its leaf's stable `paneId` (`{#key paneId}
 #### Scenario: Restructure never detaches the PTY or loses scrollback
 - **WHEN** the pane tree is restructured by any split, close, collapse, or reparent operation
 - **THEN** every terminal whose `paneId` survives the operation keeps its existing xterm instance mounted, retaining its scrollback buffer and its attached PTY
+
+### Requirement: Pane Context Menu
+The system SHALL provide a right-click context menu on each pane offering split (right, down, left, up), close pane, new session, and copy/paste, with each action operating on the right-clicked pane.
+
+#### Scenario: Context menu actions dispatch the matching pane operation
+- **WHEN** a context-menu item is invoked (split right/down/left/up, close pane, new session, copy, or paste)
+- **THEN** the corresponding pane operation runs on the right-clicked pane: split with the matching direction and placement, close the focused pane, open a new workspace, or copy/paste through the pane's terminal
+
+#### Scenario: Context menu disables copy without a selection and close on the only pane
+- **WHEN** the right-clicked pane has no text selection, or it is the only pane in its workspace
+- **THEN** the Copy item is disabled when there is no selection and the Close Pane item is disabled when it is the only pane, while the remaining items stay enabled
+
+#### Scenario: Right-click opens the menu at the cursor and focuses the pane
+- **WHEN** the user right-clicks inside a pane
+- **THEN** the default browser menu is suppressed, that pane becomes focused, and the menu opens anchored at the cursor, nudged inward to stay within the viewport
+
+#### Scenario: Menu dismisses on Escape, outside click, or after an action
+- **WHEN** the menu is open and the user presses Escape, clicks outside it, or selects an item
+- **THEN** the menu closes

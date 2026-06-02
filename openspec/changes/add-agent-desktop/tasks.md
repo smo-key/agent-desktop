@@ -30,6 +30,7 @@ Cover every scenario in `specs/tiling-layout/spec.md`.
 - [x] 3.5 Focus navigation (click + cyclic + directional). Covers *Focus Navigation By Click And Keyboard*.
 - [x] 3.6 Workspace session rail (left vertical tabs) + switching. Covers *Workspace Session Rail And Switching*.
 - [x] 3.7 `npm run check` green for `tiling-layout`.
+- [x] 3.8 Pane right-click context menu: split right/down/left/up, close pane, new session, copy/paste; pure menu model (`paneMenu.ts`) unit-tested, reactive menu store + renderer, wired on each leaf. Covers *Pane Context Menu*.
 
 ## 4. Capability: `layout-persistence` (Milestone 2)
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import PaneNode from '$lib/layout/PaneNode.svelte';
+  import PaneContextMenu from '$lib/layout/PaneContextMenu.svelte';
   import SessionRail from '$lib/layout/SessionRail.svelte';
   import { workspace } from '$lib/layout/workspace.svelte';
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
@@ -133,6 +134,10 @@
     </main>
   </div>
 </div>
+
+<!-- Single app-wide pane context menu (right-click). Position:fixed, so it can
+     live at the markup root. -->
+<PaneContextMenu />
 
 <style>
   .app {
