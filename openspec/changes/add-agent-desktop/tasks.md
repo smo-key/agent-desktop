@@ -46,11 +46,11 @@ Cover every scenario in `specs/layout-persistence/spec.md`.
 
 Cover every scenario in `specs/usage-dashboard/spec.md`. **Confirm the wrapper in a live in-app pane here** (the one non-headless gate). (D3)
 
-- [ ] 5.1 Install `statusline-wrapper.js` to app-support `bin/`: delegates to `~/.claude/hooks/statusline.js` (stdin teed) for the unchanged in-pane bar; atomically (tmp+rename) writes `snapshots/<AGENT_DESKTOP_PANE>.json` = `{pane_id, session_id, model, task, context_pct, rate_limits, cost, git, ts}`. Integration test pipes a synthetic payload → asserts snapshot. Covers *Statusline Wrapper Dual Behavior* and *Atomic Per-Pane Snapshot Write*.
-- [ ] 5.2 Launch sessions with `AGENT_DESKTOP_PANE=<uuid> claude --settings '{"statusLine":{...wrapper...}}'`; assert global `~/.claude/settings.json` is byte-identical after. Covers *Per-Session Statusline Override Without Touching Global Config*.
-- [ ] 5.3 Rust `SnapshotWatcher` (`notify`) → emit changes to frontend; skip malformed snapshots. Covers *Snapshot Directory Watching and Push*.
-- [ ] 5.4 Two-row dashboard UI: per-session cards (model · context bar · task · live/idle) + account row (5h/7d limits · summed cost · focused-pane git). Context from `used_percentage`/`remaining_percentage`/`context_window_size`. Covers *Two-Row Dashboard Content* and *Account-Wide Rollup Math*.
-- [ ] 5.5 Absent `rate_limits`/context render as `null`, never crash/NaN. Covers *Graceful Handling of Missing Rate Limits and Context*.
+- [x] 5.1 Install `statusline-wrapper.js` to app-support `bin/`: delegates to `~/.claude/hooks/statusline.js` (stdin teed) for the unchanged in-pane bar; atomically (tmp+rename) writes `snapshots/<AGENT_DESKTOP_PANE>.json` = `{pane_id, session_id, model, task, context_pct, rate_limits, cost, git, ts}`. Integration test pipes a synthetic payload → asserts snapshot. Covers *Statusline Wrapper Dual Behavior* and *Atomic Per-Pane Snapshot Write*.
+- [x] 5.2 Launch sessions with `AGENT_DESKTOP_PANE=<uuid> claude --settings '{"statusLine":{...wrapper...}}'`; assert global `~/.claude/settings.json` is byte-identical after. Covers *Per-Session Statusline Override Without Touching Global Config*.
+- [x] 5.3 Rust `SnapshotWatcher` (`notify`) → emit changes to frontend; skip malformed snapshots. Covers *Snapshot Directory Watching and Push*.
+- [x] 5.4 Two-row dashboard UI: per-session cards (model · context bar · task · live/idle) + account row (5h/7d limits · summed cost · focused-pane git). Context from `used_percentage`/`remaining_percentage`/`context_window_size`. Covers *Two-Row Dashboard Content* and *Account-Wide Rollup Math*.
+- [x] 5.5 Absent `rate_limits`/context render as `null`, never crash/NaN. Covers *Graceful Handling of Missing Rate Limits and Context*.
 - [ ] 5.6 Live in-app pane confirms wrapper renders + writes a snapshot; `npm run check` green for `usage-dashboard`.
 
 ## 6. Capability: `task-detection` (Milestone 4)
