@@ -17,6 +17,9 @@ use usage::{Snapshot, SnapshotWatcher, SNAPSHOT_EVENT};
 /// Basename of the persisted layout file under the app-data directory.
 const LAYOUT_FILE: &str = "layout.json";
 
+/// Basename of the persisted recent-folders file (sibling of `layout.json`).
+const RECENTS_FILE: &str = "recents.json";
+
 /// The statusline wrapper source, version-controlled under `src-tauri/resources`
 /// and baked into the binary. Installed verbatim to `<app_data_dir>/bin/` on
 /// setup so a session can be launched with
@@ -103,24 +106,23 @@ fn pty_kill(manager: State<'_, Arc<PtyManager>>, id: PaneId) -> Result<(), Strin
     manager.kill(id)
 }
 
-/// Resolve the absolute path to the layout file, creating the app-data dir if
-/// needed. Errors are stringified for the frontend (which falls back to a fresh
-/// workspace on any failure).
-fn layout_path(app: &AppHandle) -> Result<PathBuf, String> {
+/// Resolve the absolute path to an app-data file named `file`, creating the
+/// app-data dir if needed. Errors are stringified for the frontend (which falls
+/// back gracefully on any failure).
+fn app_data_file(app: &AppHandle, file: &str) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("app_data_dir: {e}"))?;
     fs::create_dir_all(&dir).map_err(|e| format!("create_dir_all {dir:?}: {e}"))?;
-    Ok(dir.join(LAYOUT_FILE))
+    Ok(dir.join(file))
 }
 
-/// Load the persisted layout JSON, or `None` when no layout file exists yet.
-/// A read error (other than not-found) is surfaced so the frontend can fall
-/// back to a fresh workspace rather than crash.
-#[tauri::command]
-fn layout_load(app: AppHandle) -> Result<Option<String>, String> {
-    let path = layout_path(&app)?;
+/// Read an app-data JSON file, or `None` when it does not exist yet. A read
+/// error (other than not-found) is surfaced so the frontend can fall back rather
+/// than crash.
+fn read_app_data_json(app: &AppHandle, file: &str) -> Result<Option<String>, String> {
+    let path = app_data_file(app, file)?;
     match fs::read_to_string(&path) {
         Ok(text) => Ok(Some(text)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -128,16 +130,44 @@ fn layout_load(app: AppHandle) -> Result<Option<String>, String> {
     }
 }
 
-/// Atomically persist the layout JSON: write a sibling temp file then rename it
-/// over the target, so a crash mid-write never leaves a truncated/corrupt
-/// layout file (the frontend always reads either the old or the new whole file).
-#[tauri::command]
-fn layout_save(app: AppHandle, json: String) -> Result<(), String> {
-    let path = layout_path(&app)?;
+/// Atomically write `json` to an app-data file: write a sibling temp file then
+/// rename it over the target, so a crash mid-write never leaves a truncated file
+/// (a reader always sees either the old or the new whole file).
+fn write_app_data_json(app: &AppHandle, file: &str, json: &str) -> Result<(), String> {
+    let path = app_data_file(app, file)?;
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, json.as_bytes()).map_err(|e| format!("write {tmp:?}: {e}"))?;
     fs::rename(&tmp, &path).map_err(|e| format!("rename {tmp:?} -> {path:?}: {e}"))?;
     Ok(())
+}
+
+/// Load the persisted layout JSON, or `None` when no layout file exists yet.
+/// A read error (other than not-found) is surfaced so the frontend can fall
+/// back to a fresh workspace rather than crash.
+#[tauri::command]
+fn layout_load(app: AppHandle) -> Result<Option<String>, String> {
+    read_app_data_json(&app, LAYOUT_FILE)
+}
+
+/// Atomically persist the layout JSON (see [`write_app_data_json`]).
+#[tauri::command]
+fn layout_save(app: AppHandle, json: String) -> Result<(), String> {
+    write_app_data_json(&app, LAYOUT_FILE, &json)
+}
+
+/// Load the persisted recent-folders JSON (sibling `recents.json`), or `None`
+/// when no file exists yet. The frontend parses tolerantly (empty list on any
+/// malformed input), so a read error other than not-found is the only failure
+/// surfaced here.
+#[tauri::command]
+fn recents_load(app: AppHandle) -> Result<Option<String>, String> {
+    read_app_data_json(&app, RECENTS_FILE)
+}
+
+/// Atomically persist the recent-folders JSON (see [`write_app_data_json`]).
+#[tauri::command]
+fn recents_save(app: AppHandle, json: String) -> Result<(), String> {
+    write_app_data_json(&app, RECENTS_FILE, &json)
 }
 
 /// Resolve `<app_data_dir>`, creating it if needed.
@@ -283,6 +313,10 @@ fn start_foreign_watcher(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Native dialogs (the session launcher's folder picker uses
+        // `open({ directory: true })`). Granted `dialog:allow-open` in
+        // capabilities/default.json.
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -334,6 +368,8 @@ pub fn run() {
             pty_kill,
             layout_load,
             layout_save,
+            recents_load,
+            recents_save,
             usage_paths,
             usage_snapshots,
             foreign_sessions

@@ -19,6 +19,7 @@
   import { contextMenu } from './contextmenu.svelte';
   import { getTerminal } from './terminals';
   import { leavesInOrder, type Node } from './tree';
+  import { launcher } from '$lib/launcher/launcherStore.svelte';
 
   let {
     node,
@@ -90,7 +91,7 @@
     const sections = buildPaneMenu({
       split: (dir, where) => workspace.split(dir, where),
       close: () => workspace.closeFocused(),
-      newSession: () => workspace.newWorkspace(),
+      newSession: () => launcher.show(),
       copy: () => {
         const sel = handle?.getSelection() ?? '';
         if (sel) void navigator.clipboard?.writeText(sel).catch(() => {});
@@ -124,6 +125,7 @@
         paneId={node.paneId}
         program={session?.program ?? '/bin/zsh'}
         cwd={session?.cwd ?? null}
+        initialInput={session?.initialInput}
         active={webglActive}
         deferFit={activeWorkspace && workspace.dragging}
         visible={activeWorkspace}

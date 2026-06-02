@@ -30,3 +30,4 @@ portable-pty = "0.9"
 
 # Filesystem watcher for the snapshot/task directories (Milestone 3+).
 notify = "8"
+tauri-plugin-dialog = "2.7.1"

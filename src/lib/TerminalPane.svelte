@@ -7,6 +7,7 @@
   import { registerTerminal, unregisterTerminal } from './layout/terminals';
   import { getUsagePaths } from './usage/paths';
   import { buildSpawnOverride } from './usage/spawn';
+  import { InitialInputSender } from './launcher/initialInput';
 
   // PtyEvent — the exact wire shape the Rust backend streams over the per-pane
   // Channel (internally tagged on `event`):
@@ -46,7 +47,17 @@
      * true so single-workspace callers are unaffected. (Spec: re-fit the active
      * workspace panes on switch.)
      */
-    visible = true
+    visible = true,
+    /**
+     * OPTIONAL user-supplied initial prompt (session-launcher spec). After the
+     * PTY is spawned and the input/output wiring is live, this text is written
+     * to the PTY VERBATIM followed by a single carriage return, exactly ONCE
+     * (guarded against double-send on re-render via `InitialInputSender`).
+     * Empty/undefined sends nothing — `claude` starts at an idle prompt. The app
+     * NEVER synthesizes a slash command; a prompt beginning with `/` is passed
+     * through verbatim. See src/lib/launcher/initialInput.ts.
+     */
+    initialInput = undefined as string | undefined
   }: {
     paneId: string;
     program?: string;
@@ -55,7 +66,15 @@
     active?: boolean;
     deferFit?: boolean;
     visible?: boolean;
+    initialInput?: string;
   } = $props();
+
+  // Single-shot sender for the optional initial prompt. Constructed in onMount
+  // from the LAUNCH-TIME prop value (an initial prompt is delivered once, at
+  // spawn — never re-sent on a later prop change); `trySend` is idempotent across
+  // re-renders so the prompt is delivered at most once (guard against
+  // double-send). The app never synthesizes a command — only the user's text.
+  let initialInputSender: InitialInputSender | undefined;
 
   // The host element xterm renders into.
   let host: HTMLDivElement;
@@ -159,6 +178,10 @@
 
   onMount(() => {
     let disposed = false;
+
+    // Capture the launch-time initial prompt once (an initial prompt is a
+    // spawn-time value; later prop changes must not re-send it).
+    initialInputSender = new InitialInputSender(initialInput);
 
     (async () => {
       // Dynamic-import the heavy/DOM-only modules so SSR + the static build stay
@@ -284,6 +307,16 @@
       // One more fit now that input/resize wiring is live, in case layout settled
       // during the async spawn.
       safeFit();
+
+      // Deliver the OPTIONAL initial prompt — AFTER the PTY is spawned and the
+      // input/output wiring is live — exactly once. The sender encodes the user's
+      // text VERBATIM + a single carriage return (never an app-synthesized slash
+      // command) and latches so a re-render can't double-send. A no-prompt pane
+      // writes nothing, leaving claude at an idle interactive prompt.
+      initialInputSender?.trySend((data) => {
+        if (ptyId === undefined) return;
+        void invoke('pty_write', { id: ptyId, data }).catch(() => {});
+      });
     })();
 
     // onMount's returned cleanup runs synchronously on destroy; we set the flag so

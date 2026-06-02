@@ -41,6 +41,14 @@ export interface PaneSession {
   program: string;
   /** Working directory for the child; `null` inherits the app cwd. */
   cwd: string | null;
+  /**
+   * OPTIONAL one-shot initial prompt delivered to this pane's PTY VERBATIM, once,
+   * right after spawn (session-launcher). It is a LAUNCH-TIME value only: it is
+   * NOT persisted (the serializer re-projects the registry to {program, cwd}) and
+   * never re-sent — `TerminalPane`'s `InitialInputSender` latches on first mount.
+   * Absent for every pane except one freshly created by the launcher.
+   */
+  initialInput?: string;
 }
 
 /**
@@ -103,13 +111,14 @@ function makeEntry(
   name: string,
   program: string,
   cwd: string | null,
-  paneId: string = nextPaneId()
+  paneId: string = nextPaneId(),
+  initialInput?: string
 ): WorkspaceEntry {
   return {
     id: nextWorkspaceId(),
     name,
     ws: freshWorkspace(paneId, nextNodeId),
-    registry: { [paneId]: { program, cwd } }
+    registry: { [paneId]: { program, cwd, initialInput } }
   };
 }
 
@@ -229,10 +238,11 @@ export class WorkspaceStore {
    */
   newWorkspace(
     program: string = 'claude',
-    cwd: string | null = this.activeCwd()
+    cwd: string | null = this.activeCwd(),
+    initialInput?: string
   ): string {
     const name = this.nextSessionName();
-    const entry = makeEntry(name, program, cwd);
+    const entry = makeEntry(name, program, cwd, nextPaneId(), initialInput);
     this.workspaces = [...this.workspaces, entry];
     this.activeWorkspaceId = entry.id;
     return entry.id;
@@ -283,10 +293,14 @@ export class WorkspaceStore {
    * returning the id. New split panes default to the login shell, inheriting the
    * focused pane's cwd so a split lands "next to" you in the same directory.
    */
-  spawnPaneId(program: string = loginShell(), cwd: string | null = null): string {
+  spawnPaneId(
+    program: string = loginShell(),
+    cwd: string | null = null,
+    initialInput?: string
+  ): string {
     const entry = this.requireActive();
     const id = nextPaneId();
-    entry.registry = { ...entry.registry, [id]: { program, cwd } };
+    entry.registry = { ...entry.registry, [id]: { program, cwd, initialInput } };
     return id;
   }
 
@@ -319,6 +333,81 @@ export class WorkspaceStore {
       root,
       focusedId: newLeaf ? newLeaf.id : entry.ws.focusedId
     });
+  }
+
+  /**
+   * Split the focused leaf in `direction` (placing the new pane `where`), where
+   * the NEW pane runs `program` in `cwd` with an OPTIONAL one-shot `initialInput`
+   * — instead of the login-shell default `split` uses. The existing focused
+   * pane's terminal is NOT remounted (only a new leaf is grafted in beside it);
+   * focus moves to the new pane. Returns the new pane's `paneId`, or `null` when
+   * there is no focused leaf to split. Used by the launcher's split placements.
+   */
+  splitWith(
+    direction: Direction,
+    program: string,
+    cwd: string | null,
+    initialInput?: string,
+    where: SplitWhere = 'after'
+  ): string | null {
+    const entry = this.active;
+    if (!entry) return null;
+    if (!findLeaf(entry.ws.root, entry.ws.focusedId)) return null;
+    const newPaneId = this.spawnPaneId(program, cwd, initialInput);
+
+    const root = splitLeaf(
+      entry.ws.root,
+      entry.ws.focusedId,
+      direction,
+      newPaneId,
+      where,
+      nextNodeId
+    );
+
+    const newLeaf = leafByPaneId(root, newPaneId);
+    this.commitActive({
+      version: 1,
+      root,
+      focusedId: newLeaf ? newLeaf.id : entry.ws.focusedId
+    });
+    return newPaneId;
+  }
+
+  /**
+   * Execute a launcher launch plan: spawn a `claude` session in `plan.cwd` with
+   * the optional verbatim `plan.initialInput`, placed per `plan.placement`:
+   *
+   *  - `'tab'`         -> a brand-new workspace whose single leaf runs the session.
+   *  - `'split-right'` -> split the focused pane along a row (new pane to the right).
+   *  - `'split-down'`  -> split the focused pane along a column (new pane below).
+   *
+   * A split with no focused pane (empty/uninitialized) falls back to a new tab so
+   * the launch always succeeds. The existing spawn path (TerminalPane) applies the
+   * `--settings` wrapper override + AGENT_DESKTOP_PANE/SNAPSHOT_DIR env for any
+   * `claude` pane — this method does NOT duplicate that logic; it only records the
+   * pane's {program:'claude', cwd, initialInput} in the registry and lets the
+   * pane's mount spawn it. Returns the new pane's `paneId`.
+   */
+  launch(plan: {
+    program: 'claude';
+    cwd: string;
+    placement: 'tab' | 'split-right' | 'split-down';
+    initialInput?: string;
+  }): string {
+    const { program, cwd, initialInput } = plan;
+    // A split needs a focused leaf in the active workspace; otherwise open a tab.
+    const canSplit = this.focusedPaneId !== null;
+    const placement =
+      plan.placement !== 'tab' && !canSplit ? 'tab' : plan.placement;
+
+    if (placement === 'tab') {
+      this.newWorkspace(program, cwd, initialInput);
+      return this.focusedPaneId ?? '';
+    }
+
+    const direction: Direction = placement === 'split-right' ? 'row' : 'col';
+    const newPaneId = this.splitWith(direction, program, cwd, initialInput, 'after');
+    return newPaneId ?? '';
   }
 
   /**

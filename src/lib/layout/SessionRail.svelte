@@ -10,6 +10,7 @@
   // switch never touches their xterm/PTY.
 
   import { workspace } from './workspace.svelte';
+  import { launcher } from '$lib/launcher/launcherStore.svelte';
 
   // Inline-rename bookkeeping. `editingId` is the workspace being renamed (double
   // click a row label to start); `draft` holds the in-progress text.
@@ -22,7 +23,9 @@
   }
 
   function addSession() {
-    workspace.newWorkspace();
+    // Open the launcher (folder picker + recents + optional prompt + placement)
+    // rather than spawning a bare workspace directly.
+    launcher.show();
   }
 
   function requestClose(id: string, name: string, e: MouseEvent) {

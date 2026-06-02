@@ -3,6 +3,8 @@
   import PaneNode from '$lib/layout/PaneNode.svelte';
   import PaneContextMenu from '$lib/layout/PaneContextMenu.svelte';
   import SessionRail from '$lib/layout/SessionRail.svelte';
+  import Launcher from '$lib/launcher/Launcher.svelte';
+  import { launcher } from '$lib/launcher/launcherStore.svelte';
   import { workspace } from '$lib/layout/workspace.svelte';
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
   import { restorePersistedLayout, watchAndPersist } from '$lib/layout/store-backend.svelte';
@@ -74,19 +76,36 @@
   });
 
   // Keyboard shortcuts (macOS):
+  //   Cmd-N            open the session LAUNCHER (folder picker + recents +
+  //                    optional prompt + placement). The deliberate, full-flow
+  //                    "new session" entry point.
+  //   Cmd-T            quick-new-workspace in the rail — KEPT AS-IS: an instant,
+  //                    no-dialog `claude` tab inheriting the focused pane's cwd
+  //                    (the launcher is the considered path; Cmd-T is the fast path).
   //   Cmd-D            split row, new pane to the right
   //   Cmd-Shift-D      split col, new pane below
   //   Cmd-W            close the focused pane
   //   Cmd-]            focus next (cyclic, DFS +1)
   //   Cmd-[            focus prev (cyclic, DFS -1)
-  //   Cmd-T            new workspace (session) in the rail
   //   Alt-Arrow        directional focus (spatial neighbor)
   function onKeydown(e: KeyboardEvent) {
     const meta = e.metaKey;
     const alt = e.altKey;
     const key = e.key;
 
-    // Ignore shortcuts before the store is seeded (active workspace exists).
+    // While the launcher modal is open it owns the keyboard (its own Esc /
+    // Cmd-Enter); don't let app pane shortcuts fire underneath it.
+    if (launcher.open) return;
+
+    // Cmd-N opens the launcher. Available even before the store is seeded so the
+    // very first session can be launched through the full flow if desired.
+    if (meta && (key === 'n' || key === 'N')) {
+      e.preventDefault();
+      launcher.show();
+      return;
+    }
+
+    // Ignore the remaining (pane) shortcuts before the store is seeded.
     if (!workspace.active) return;
 
     if (meta && (key === 't' || key === 'T')) {
@@ -178,6 +197,11 @@
 <!-- Single app-wide pane context menu (right-click). Position:fixed, so it can
      live at the markup root. -->
 <PaneContextMenu />
+
+<!-- The session launcher modal. Opened from the rail "+ new session" row, the
+     pane context-menu "New Session" item, and the Cmd-N shortcut (all via the
+     shared `launcher` store). Position:fixed backdrop, so it lives at the root. -->
+<Launcher />
 
 <style>
   .app {

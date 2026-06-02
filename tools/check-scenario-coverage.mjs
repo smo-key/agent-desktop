@@ -41,12 +41,22 @@ const REPO_ROOT = resolve(__dirname, '..');
 // live/idle heartbeat are all pure/headless and unit-tested (Rust task.rs +
 // frontend task.test.ts); the only headless-exempt scenario is the rendered
 // per-pane badge/card (MANUAL below).
+// Milestone 5 adds session-launcher: the launch-plan builder (program is always
+// claude, placement tab/split + split->tab fallback), the recent-folders model
+// (add/dedupe/cap/parse/serialize round-trip), and the optional initial-input
+// delivery (verbatim + single \r, sent-once, never a synthesized slash command)
+// are all pure/headless and unit-tested (plan.test.ts / recents.test.ts /
+// initialInput.test.ts). The genuinely-live aspects — the native folder dialog,
+// the DOM-rendered recents picker, and the actual spawn-in-folder (statusline
+// override + pane env + global-settings-untouched) — are listed in
+// MANUAL_SCENARIOS below.
 const ENFORCED_CAPABILITIES = new Set([
   'terminal-core',
   'tiling-layout',
   'layout-persistence',
   'usage-dashboard',
   'task-detection',
+  'session-launcher',
 ]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by
@@ -111,6 +121,39 @@ const MANUAL_SCENARIOS = {
   // the dashboard card — there is no rendered component in this stage to assert
   // against, so it needs a live in-app confirmation.
   'task-detection': new Set(['badge_and_card_reflect_current_task']),
+  // session-launcher: every PURE scenario has a REAL headless test under exactly
+  // ONE title each —
+  //   - plan.test.ts: open_the_session_in_a_new_tab /
+  //     open_the_session_by_splitting_the_focused_pane /
+  //     split_placement_is_unavailable_with_no_focused_pane (the slash-command
+  //     guarantees are owned by initialInput.test.ts; the plan-level variants use
+  //     distinct titles so each scenario maps to exactly one covering test).
+  //   - recents.test.ts: a_launched_folder_is_added_to_recents /
+  //     recents_survive_an_app_restart /
+  //     re_launching_an_existing_folder_does_not_duplicate_it.
+  //   - initialInput.test.ts: launch_with_an_initial_prompt /
+  //     launch_with_no_initial_prompt / no_slash_command_is_injected_on_launch /
+  //     initial_prompt_beginning_with_a_slash_is_passed_through_verbatim.
+  // The MANUAL set is exactly the genuinely-live aspects:
+  //   - the native Tauri folder dialog opening + the absolute path becoming cwd,
+  //     and its Cancel-aborts-the-launch variant (no headless dialog);
+  //   - the DOM-rendered recents list whose one-click entry sets cwd (no rendered
+  //     component to assert against headless; chooseRecent itself is trivial);
+  //   - the actual spawn-in-folder carrying the --settings statusline override +
+  //     AGENT_DESKTOP_PANE/AGENT_DESKTOP_SNAPSHOT_DIR env, and leaving the user's
+  //     global ~/.claude/settings.json byte-identical. NOTE: the launcher REUSES
+  //     (does not duplicate) the usage-dashboard spawn path, whose load-bearing
+  //     properties already have headless coverage there (spawn.test.ts:
+  //     "Global config left byte-identical" / "Pane id passed into the spawned
+  //     process env"); what is MANUAL here is the end-to-end launcher-driven
+  //     spawn in the chosen cwd, which needs a real PTY + window.
+  'session-launcher': new Set([
+    'open_the_launcher_and_pick_a_folder_via_the_native_picker',
+    'cancelling_the_folder_picker_aborts_the_launch',
+    'select_a_folder_from_the_recent_folders_list',
+    'spawn_carries_the_statusline_override_and_pane_env',
+    'global_settings_are_not_mutated',
+  ]),
 };
 
 // --- helpers -----------------------------------------------------------------
