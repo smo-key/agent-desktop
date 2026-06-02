@@ -6,7 +6,7 @@
 - [x] 1.4 Add `package.json` scripts: `dev`, `build`, `lint` (eslint/prettier or biome + `cargo fmt --check` + `cargo clippy`), `types` (`svelte-check`), `test` (Vitest + `cargo test`), `coverage` (scenario gate, 1.5), `check` (`lint && types && coverage && test`).
 - [x] 1.5 Create `tools/check-scenario-coverage.mjs`: parse every `#### Scenario:` in `openspec/changes/*/specs/**/*.md` (and `openspec/specs/**` once archived), normalize names to snake_case, scan Rust test fn names (`fn <snake>`) and Vitest test titles (`it('<scenario>'…)`), and exit non-zero listing any scenario with no matching test.
 - [x] 1.6 Extend `.gitignore` for `target/`, `node_modules/`, `build/`, `.svelte-kit/`, `dist/`, `*.log` (keep the existing `.superpowers/` ignore).
-- [ ] 1.7 Add a pre-commit hook running `npm run check` and `openspec validate add-agent-desktop --strict`; a failing gate blocks the commit.
+- [x] 1.7 Add a pre-commit hook running `npm run check` and `openspec validate add-agent-desktop --strict`; a failing gate blocks the commit.
 
 ## 2. Capability: `terminal-core` (Milestone 1 — walking skeleton)
 
