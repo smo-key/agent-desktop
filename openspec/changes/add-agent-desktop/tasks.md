@@ -95,9 +95,9 @@ Cover every scenario in `specs/workflow-board/spec.md`. Read-only — a write-ve
 
 Cover every scenario in `specs/agent-overview/spec.md`. Composes M3 (snapshots), M4 (task/foreign), and M5 (launcher). Pure cores (roster/status/usage/subagent-parse/message-dispatch) unit-tested; live/visual scenarios go to the gate MANUAL allowlist.
 
-- [ ] 10.1 Pure roster view-model from the snapshots map (+ workspace): per-agent {name/cwd, model, task, context%, cost} + status (live/idle/needs-attention) heuristic. Unit-tested. Covers *Agent Roster Overview*.
-- [ ] 10.2 Subagent parsing (Rust): read `~/.claude/projects/<proj>/<session>/workflows/<id>.json` + `subagents/**/agent-*.meta.json` → {label, status, usage}; tolerate partial/malformed. Watcher + command + tests. Covers *Surface Subagents*.
-- [ ] 10.3 Usage rollup: per-agent (snapshot cost/context) + aggregate across agents + subagents. Unit-tested. Covers *Agent Usage Tracking*.
-- [ ] 10.4 Message an agent: write user text + CR to a pane's PTY from the overview (via the terminal handle registry); never synthesize input. Unit-tested dispatch. Covers *Message An Agent*.
-- [ ] 10.5 Overview UI: a primary top-level view (toggle with the grid) rendering the roster + subagents + usage rollup; per-agent message box; "new agent" → launcher; click-to-navigate (activate workspace + focus pane). Covers *Navigate To An Agent*, *Kick Off A New Agent From The Overview*, *Overview As A Primary View*.
-- [ ] 10.6 `npm run check` green for `agent-overview`; enforce in the coverage gate.
+- [x] 10.1 Pure roster view-model from the snapshots map (+ workspace): per-agent {name/cwd, model, task, context%, cost} + status (live/idle/needs-attention) heuristic. Unit-tested. Covers *Agent Roster Overview*.
+- [x] 10.2 Subagent parsing (Rust): read `~/.claude/projects/<proj>/<session>/workflows/<id>.json` + `subagents/**/agent-*.meta.json` → {label, status, usage}; tolerate partial/malformed. Watcher + command + tests. Covers *Surface Subagents*.
+- [x] 10.3 Usage rollup: per-agent (snapshot cost/context) + aggregate across agents + subagents. Unit-tested. Covers *Agent Usage Tracking*.
+- [x] 10.4 Message an agent: write user text + CR to a pane's PTY from the overview (via the terminal handle registry); never synthesize input. Unit-tested dispatch. Covers *Message An Agent*.
+- [x] 10.5 Overview UI: a primary top-level view (toggle with the grid) rendering the roster + subagents + usage rollup; per-agent message box; "new agent" → launcher; click-to-navigate (activate workspace + focus pane). Covers *Navigate To An Agent*, *Kick Off A New Agent From The Overview*, *Overview As A Primary View*.
+- [x] 10.6 `npm run check` green for `agent-overview`; enforce in the coverage gate.
