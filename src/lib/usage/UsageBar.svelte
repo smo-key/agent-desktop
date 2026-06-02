@@ -15,7 +15,8 @@
   // ticks a 1s clock so the live/idle dots go stale on their own, and renders.
 
   import { snapshots } from './snapshots.svelte';
-  import { rollup } from './rollup';
+  import { foreign } from './foreign.svelte';
+  import { rollup, IDLE_AFTER_SECONDS } from './rollup';
   import { workspace } from '$lib/layout/workspace.svelte';
 
   // A 1-second heartbeat clock so a card flips to "idle" when its snapshot stops
@@ -34,8 +35,25 @@
     rollup(snapshots.byPane, workspace.focusedPaneId, nowSeconds)
   );
 
+  // EXTERNAL (foreign) sessions — running outside the app, already filtered to
+  // exclude our own pane session ids. Rendered as muted cards after the app
+  // panes, clearly distinguished as "external".
+  const external = $derived(foreign.list);
+
   function focusCard(paneId: string) {
     workspace.focusPane(paneId);
+  }
+
+  /** A foreign session's short id (first 8 chars) for a compact card heading. */
+  function shortId(sessionId: string): string {
+    return sessionId.length > 8 ? sessionId.slice(0, 8) : sessionId;
+  }
+
+  /** Whether a foreign session's heartbeat `ts` is fresh (live) at `nowSeconds`.
+   *  A null/future ts is treated like the app cards: absent -> idle, future -> live. */
+  function foreignLive(ts: number | null): boolean {
+    if (ts === null) return false;
+    return nowSeconds - ts <= IDLE_AFTER_SECONDS;
   }
 
   /** Trim a model id to a compact display label (verbatim if already short). */
@@ -55,9 +73,10 @@
 </script>
 
 <footer class="usage-bar" aria-label="Usage dashboard">
-  <!-- TOP ROW: per-session cards. Empty state when no snapshot has arrived. -->
+  <!-- TOP ROW: per-session cards. Empty state when no app pane AND no external
+       session is reporting. App panes first, then muted "external" cards. -->
   <div class="cards">
-    {#if view.cards.length === 0}
+    {#if view.cards.length === 0 && external.length === 0}
       <div class="empty">No active sessions reporting yet</div>
     {:else}
       {#each view.cards as card (card.paneId)}
@@ -91,6 +110,36 @@
 
           <span class="task">{card.task ?? '—'}</span>
         </button>
+      {/each}
+
+      <!-- EXTERNAL sessions: not app panes, so non-clickable + visually muted.
+           Clearly distinguished by the "ext" tag + dashed border. -->
+      {#each external as ext (ext.session_id)}
+        {@const live = foreignLive(ext.ts)}
+        <div class="card external" title={ext.task ?? `external session ${ext.session_id}`}>
+          <div class="card-head">
+            <span class="live-dot" class:on={live} aria-hidden="true"></span>
+            <span class="model" title={ext.session_id}>{shortId(ext.session_id)}</span>
+            <span class="ext-tag">ext</span>
+          </div>
+
+          <div
+            class="context"
+            class:unknown={ext.context_pct === null}
+            title={ext.context_pct === null
+              ? 'context unknown'
+              : `context ${Math.round(ext.context_pct)}%`}
+          >
+            {#if ext.context_pct !== null}
+              <div
+                class="context-fill"
+                style:width={`${Math.max(0, Math.min(100, ext.context_pct))}%`}
+              ></div>
+            {/if}
+          </div>
+
+          <span class="task">{ext.task ?? '—'}</span>
+        </div>
       {/each}
     {/if}
   </div>
@@ -199,6 +248,39 @@
   .card:focus-visible {
     outline: 2px solid #58a6ff;
     outline-offset: 1px;
+  }
+
+  /* External (foreign) sessions: muted, not clickable, dashed border + lower
+     opacity so they read as "not one of mine" at a glance. */
+  .card.external {
+    background: #11161d;
+    box-shadow: inset 0 0 0 1px transparent;
+    border: 1px dashed #30363d;
+    cursor: default;
+    opacity: 0.82;
+  }
+  .card.external:hover {
+    background: #11161d;
+    opacity: 1;
+  }
+  .card.external .model {
+    color: #adbac7;
+    font-family:
+      ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    font-weight: 500;
+  }
+
+  /* The "ext" tag pinned at the head's right edge. */
+  .ext-tag {
+    flex: 0 0 auto;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #6e7681;
+    background: #21262d;
+    border-radius: 4px;
+    padding: 1px 5px;
   }
 
   .card-head {

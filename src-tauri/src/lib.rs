@@ -1,4 +1,5 @@
 pub mod pty;
+pub mod task;
 pub mod usage;
 
 use std::fs;
@@ -10,6 +11,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
 use pty::{PaneId, PtyEvent, PtyManager, SpawnConfig};
+use task::{ForeignSession, ForeignWatcher, FOREIGN_EVENT};
 use usage::{Snapshot, SnapshotWatcher, SNAPSHOT_EVENT};
 
 /// Basename of the persisted layout file under the app-data directory.
@@ -226,6 +228,58 @@ fn start_usage_watcher(app: &AppHandle) -> Result<SnapshotWatcher, String> {
     })
 }
 
+/// The shared app-session exclude-set, held in Tauri-managed state. The frontend
+/// keeps it current via the `foreign_sessions` command (passing its app-launched
+/// pane session ids); the foreign watcher reads it on every recompute so it never
+/// double-counts an app pane as a foreign session.
+#[derive(Default)]
+struct AppSessionsState(task::AppSessions);
+
+/// Return the current set of FOREIGN Claude sessions (running outside the app),
+/// after updating the shared exclude-set to `app_session_ids` (the session ids of
+/// the caller's app-launched panes). Watches the live `~/.claude/tasks/` +
+/// `$TMPDIR/claude-ctx-*.json`; the returned list EXCLUDES every id in
+/// `app_session_ids` so the app does not double-count its own panes. Used both to
+/// SEED the frontend on mount and to push the exclude-set whenever the app's pane
+/// set changes (subsequent live updates arrive over the `usage://foreign` event).
+/// A missing tasks dir yields an empty list, never an error.
+#[tauri::command]
+fn foreign_sessions(
+    state: State<'_, AppSessionsState>,
+    app_session_ids: Vec<String>,
+) -> Result<Vec<ForeignSession>, String> {
+    // Update the shared exclude-set so the watcher's next recompute uses it too.
+    {
+        let mut guard = state.0.lock().map_err(|_| "app-sessions lock poisoned")?;
+        *guard = app_session_ids.into_iter().collect();
+    }
+    let tasks_base =
+        task::default_tasks_base().ok_or("HOME unset; cannot locate ~/.claude/tasks")?;
+    let tmp_dir = task::default_tmp_dir();
+    let app = state.0.lock().map_err(|_| "app-sessions lock poisoned")?;
+    Ok(task::compute_foreign_sessions(&tasks_base, &tmp_dir, &app))
+}
+
+/// Start the foreign-session watcher over `~/.claude/tasks/` + `$TMPDIR`,
+/// emitting the (filtered) foreign list to the frontend over `usage://foreign`.
+/// Shares `app_sessions` with the `foreign_sessions` command so the exclude-set is
+/// always current. The returned [`ForeignWatcher`] is held in managed state for
+/// the app's lifetime and dropped cleanly on exit.
+fn start_foreign_watcher(
+    app: &AppHandle,
+    app_sessions: task::AppSessions,
+) -> Result<ForeignWatcher, String> {
+    let tasks_base =
+        task::default_tasks_base().ok_or("HOME unset; cannot locate ~/.claude/tasks")?;
+    let tmp_dir = task::default_tmp_dir();
+    let handle = app.clone();
+    task::start_foreign_watcher(&tasks_base, &tmp_dir, app_sessions, move |list| {
+        if let Err(e) = handle.emit(FOREIGN_EVENT, &list) {
+            log::warn!("emit {FOREIGN_EVENT} failed: {e}");
+        }
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -256,9 +310,23 @@ pub fn run() {
                 }
                 Err(e) => log::warn!("start_usage_watcher failed: {e}"),
             }
+            // Start the foreign-session watcher over ~/.claude/tasks/ + $TMPDIR,
+            // sharing the app-session exclude-set with the `foreign_sessions`
+            // command so it never double-counts the app's own panes. Held in
+            // managed state for the app's lifetime; failure is logged but
+            // non-fatal — the frontend still seeds via `foreign_sessions` and
+            // simply won't receive live `usage://foreign` pushes.
+            let app_sessions = app.state::<AppSessionsState>().0.clone();
+            match start_foreign_watcher(app.handle(), app_sessions) {
+                Ok(watcher) => {
+                    app.manage(watcher);
+                }
+                Err(e) => log::warn!("start_foreign_watcher failed: {e}"),
+            }
             Ok(())
         })
         .manage(Arc::new(PtyManager::new()))
+        .manage(AppSessionsState::default())
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
             pty_write,
@@ -267,7 +335,8 @@ pub fn run() {
             layout_load,
             layout_save,
             usage_paths,
-            usage_snapshots
+            usage_snapshots,
+            foreign_sessions
         ])
         .on_window_event(|window, event| {
             // Kill + reap every pane on app quit so no zombie/orphan processes

@@ -10,6 +10,7 @@
   //     to each Gutter as the measurement container for px -> ratio conversion.
 
   import TerminalPane from '$lib/TerminalPane.svelte';
+  import TaskBadge from '$lib/usage/TaskBadge.svelte';
   import Gutter from './Gutter.svelte';
   import PaneNode from './PaneNode.svelte';
   import { workspace } from './workspace.svelte';
@@ -128,6 +129,9 @@
         visible={activeWorkspace}
       />
     {/key}
+    <!-- Subtle top-right task badge for this pane (pointer-events:none; hides when
+         there's no task). Reads the same per-pane snapshot the dashboard uses. -->
+    <TaskBadge paneId={node.paneId} />
   </div>
 {:else}
   <!-- A split. Flex row/col; each child is flex:0 0 ratio% with gutters between.

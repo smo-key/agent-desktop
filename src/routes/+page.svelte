@@ -7,6 +7,8 @@
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
   import { restorePersistedLayout, watchAndPersist } from '$lib/layout/store-backend.svelte';
   import { snapshots } from '$lib/usage/snapshots.svelte';
+  import { foreign } from '$lib/usage/foreign.svelte';
+  import { appSessionIds } from '$lib/usage/appSessions';
   import UsageBar from '$lib/usage/UsageBar.svelte';
   import { findLeaf, type SpatialDir } from '$lib/layout/tree';
 
@@ -36,10 +38,30 @@
       unlistenSnapshots = unlisten;
     });
 
+    // Seed the EXTERNAL (foreign) sessions store with the app's current session
+    // ids (so the Rust watcher excludes our own panes), then subscribe to live
+    // `usage://foreign` pushes. A separate $effect (below) re-seeds whenever the
+    // app's session set changes.
+    let unlistenForeign: (() => void) | undefined;
+    void foreign.start(appSessionIds(snapshots.byPane)).then((unlisten) => {
+      unlistenForeign = unlisten;
+    });
+
     return () => {
       stopWatching?.();
       unlistenSnapshots?.();
+      unlistenForeign?.();
     };
+  });
+
+  // Keep the foreign-session exclude-set current: whenever the app's set of
+  // launched session ids changes (a new pane reports a snapshot, or one ends),
+  // push it to the Rust watcher AND update the client-side guard via a re-seed.
+  // The derived list is sorted + de-duped so this only fires on a real change.
+  const ourSessionIds = $derived(appSessionIds(snapshots.byPane));
+  $effect(() => {
+    const ids = ourSessionIds;
+    void foreign.seed(ids);
   });
 
   // Map the active workspace's focused pane cwd into the title bar subtitle.

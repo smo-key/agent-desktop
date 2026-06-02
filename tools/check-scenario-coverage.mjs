@@ -36,11 +36,17 @@ const REPO_ROOT = resolve(__dirname, '..');
 // Milestone 3 adds usage-dashboard (wrapper snapshot write, per-session settings
 // override, snapshot-store reducer, account rollup math — all pure/headless and
 // unit-tested; the genuinely-live aspects are listed in MANUAL_SCENARIOS below).
+// Milestone 4 adds task-detection: the live-tasks-dir derivation, the schema
+// fallback, the context-bridge parse, the exclude-app-sessions filter, and the
+// live/idle heartbeat are all pure/headless and unit-tested (Rust task.rs +
+// frontend task.test.ts); the only headless-exempt scenario is the rendered
+// per-pane badge/card (MANUAL below).
 const ENFORCED_CAPABILITIES = new Set([
   'terminal-core',
   'tiling-layout',
   'layout-persistence',
   'usage-dashboard',
+  'task-detection',
 ]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by
@@ -93,6 +99,18 @@ const MANUAL_SCENARIOS = {
   // written"); the notify watcher firing end-to-end against a live claude pane;
   // and the rendered two-row dashboard visual itself.
   'usage-dashboard': new Set(),
+  // task-detection: every derivation/parse/filter/heartbeat scenario has a REAL
+  // headless test (Rust task.rs: newest_in_progress_entry_wins /
+  // no_in_progress_entry_yields_null_task / activeform_present /
+  // activeform_missing_subject_present / unknown_extra_fields_do_not_break_parsing
+  // / foreign_session_task_surfaced / context_bridge_fallback /
+  // missing_todos_directory_is_not_required / fresh_ts_is_live / stale_ts_is_idle;
+  // frontend task.test.ts: task_read_from_snapshot / null_task_in_snapshot /
+  // task_updates_on_snapshot_change). The single MANUAL aspect is the genuinely
+  // DOM-bound rendering of the task badge on the pane AND the same activeForm on
+  // the dashboard card — there is no rendered component in this stage to assert
+  // against, so it needs a live in-app confirmation.
+  'task-detection': new Set(['badge_and_card_reflect_current_task']),
 };
 
 // --- helpers -----------------------------------------------------------------
