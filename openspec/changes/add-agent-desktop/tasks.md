@@ -77,16 +77,16 @@ Cover every scenario in `specs/session-launcher/spec.md`.
 
 Cover every scenario in `specs/workflow-board/spec.md`. Read-only — a write-verb attempt must be unreachable by construction and asserted by test. (D6)
 
-- [ ] 8.1 Detect workflow-capable repo (`.claude/commands/workflow/` and/or `.claude/skills/workflow/`). Covers *Workflow Capability Detection*.
-- [ ] 8.2 `WorkflowRunner`: run repo scripts with `cwd=repo`; render `next.sh` markdown directly; parse `jira_output` temp-file-path JSON (read → parse → delete). Covers *Run Repo Scripts Read-Only With Repo As Working Directory*, *Render next.sh Markdown Output Directly*, *Parse Temp-File-Path JSON Outputs*, *Temp-File Cleanup*.
-- [ ] 8.3 Read-only allowlist: only `next.sh` / `*.sh list|get`; reject/never-invoke `create/update/transition/rank/delete`. Covers *Read-Only Guarantee — No Write Verbs*.
-- [ ] 8.4 Surface auth/exit-code errors (missing `settings.local.json`, empty token, nonzero exit) instead of a blank board; on-demand refresh. Covers *Surface Auth And Exit-Code Errors* and *On-Demand Board Refresh*.
-- [ ] 8.5 `npm run check` green for `workflow-board`.
+- [x] 8.1 Detect workflow-capable repo (`.claude/commands/workflow/` and/or `.claude/skills/workflow/`). Covers *Workflow Capability Detection*. (Rust `workflow::detect` + `workflow_detect` command.)
+- [x] 8.2 `WorkflowRunner`: run repo scripts with `cwd=repo`; render `next.sh` markdown directly; parse `jira_output` temp-file-path JSON (read → parse → delete). Covers *Run Repo Scripts Read-Only With Repo As Working Directory*, *Render next.sh Markdown Output Directly*, *Parse Temp-File-Path JSON Outputs*, *Temp-File Cleanup*. (Rust `workflow.rs` runner: `run_script`/`run_json_output`; commands `workflow_next`/`workflow_epics_list`/`workflow_epic_get`/`workflow_issues_list`/`workflow_issue_get`.)
+- [x] 8.3 Read-only allowlist: only `next.sh` / `*.sh list|get`; reject/never-invoke `create/update/transition/rank/delete`. Covers *Read-Only Guarantee — No Write Verbs*. (Closed `ReadVerb`/`IssueType` enums + `parse_read_verb` guard; no IPC path accepts a free-form verb.)
+- [x] 8.4 Surface auth/exit-code errors (missing `settings.local.json`, empty token, nonzero exit) instead of a blank board; on-demand refresh. Covers *Surface Auth And Exit-Code Errors* and *On-Demand Board Refresh*. (Structured `WorkflowError{kind,message,stderr,exitCode}`; commands are re-runnable for refresh.)
+- [x] 8.5 `npm run check` green for `workflow-board`. (Enforced in `tools/check-scenario-coverage.mjs`; 17/17 scenarios covered by Rust tests. Board UI rendering is a later frontend stage.)
 
 ## 9. Integration, validation, and archive
 
 - [ ] 9.1 End-to-end smoke: launch app → restore layout → spawn 3 sessions across split panes + tabs → dashboard shows live per-session cards + account rollup → open a workflow-capable repo → board renders read-only.
-- [ ] 9.2 `tools/check-scenario-coverage.mjs` reports 100% scenario coverage across all 8 capabilities.
+- [x] 9.2 `tools/check-scenario-coverage.mjs` reports 100% scenario coverage across all 8 capabilities. (All 8 enforced: terminal-core, tiling-layout, layout-persistence, usage-dashboard, task-detection, session-launcher, agent-overview, workflow-board — 0 missing each; gate exits 0. workflow-board: 17/17 covered, 1:1 scenario→test, 0 manual.)
 - [ ] 9.3 `openspec validate add-agent-desktop --strict` passes; full `npm run check` green.
 - [ ] 9.4 Package + sign the macOS app (Developer ID); verify spawned `claude` children resolve PATH and are killed/reaped on quit.
 - [ ] 9.5 `openspec archive add-agent-desktop`; mark `docs/superpowers/specs/2026-05-30-agent-desktop-design.md` superseded.
