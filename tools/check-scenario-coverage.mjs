@@ -31,8 +31,13 @@ const REPO_ROOT = resolve(__dirname, '..');
 
 // --- Milestone configuration -------------------------------------------------
 
-// Milestone 1 enforces only the terminal-core capability.
-const ENFORCED_CAPABILITIES = new Set(['terminal-core']);
+// Milestone 1 enforces terminal-core. Milestone 2 adds tiling-layout and
+// layout-persistence (all their pure-logic scenarios are now unit-tested).
+const ENFORCED_CAPABILITIES = new Set([
+  'terminal-core',
+  'tiling-layout',
+  'layout-persistence',
+]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by
 // capability -> set of snake_case scenario names. Reported as MANUAL, not failed.
@@ -43,6 +48,23 @@ const MANUAL_SCENARIOS = {
     'webgl_restricted_to_stay_under_the_context_ceiling',
     'reparenting_does_not_remount_the_terminal',
     'ordered_teardown_leaves_no_leaks',
+  ]),
+  // tiling-layout: every split/close/resize-math/focus/paneId-stability scenario
+  // is a pure-tree unit test (enforced). What remains is genuinely live-DOM bound:
+  // an actual workspace switch in the rendered tree, the runtime guarantee that a
+  // live xterm is not remounted, and the mid-drag (real pointer gesture) variant
+  // of that same no-remount guarantee. These need a real window + live xterm/PTY.
+  'tiling-layout': new Set([
+    'switch_to_another_workspace_via_the_rail',
+    'switching_workspaces_does_not_remount_terminals',
+    'resize_does_not_remount_terminals_mid_drag',
+  ]),
+  // layout-persistence: serialize/validate/migrate/respawn/fallback/debounce are
+  // all enforced unit tests. Only the OPTIONAL addon-serialize scrollback repaint
+  // (requires a live xterm buffer) is headless-exempt.
+  'layout-persistence': new Set([
+    'scrollback_repainted_before_reattach',
+    'missing_scrollback_does_not_block_restore',
   ]),
 };
 

@@ -21,12 +21,37 @@
     /** Arguments passed to the program. */
     args = [] as string[],
     /** Working directory for the child; `null` inherits the app's cwd. */
-    cwd = null as string | null
+    cwd = null as string | null,
+    /**
+     * Whether this pane is the focused/active one. Browsers cap WebGL contexts
+     * (~16/page), so we load the WebGL renderer ONLY on the active pane and
+     * dispose it on inactive ones (xterm falls through to its DOM renderer,
+     * preserving scrollback). See design D5.
+     */
+    active = true,
+    /**
+     * While true, `fit()` is deferred (a gutter drag is in progress). When it
+     * flips back to false we run one fit to settle the final geometry. This
+     * avoids reflow/PTY-resize churn on every drag frame (spec: defer fit to
+     * drag-end).
+     */
+    deferFit = false,
+    /**
+     * Whether this pane's workspace is currently shown. Hidden workspaces are
+     * `display:none` (host is 0×0), so we MUST re-fit when a pane becomes
+     * visible again — its container may have changed size while hidden. Default
+     * true so single-workspace callers are unaffected. (Spec: re-fit the active
+     * workspace panes on switch.)
+     */
+    visible = true
   }: {
     paneId: string;
     program?: string;
     args?: string[];
     cwd?: string | null;
+    active?: boolean;
+    deferFit?: boolean;
+    visible?: boolean;
   } = $props();
 
   // The host element xterm renders into.
@@ -49,6 +74,9 @@
   let ptyId: number | undefined;
   // Reactive: surfaced on the host as `data-exited` for styling/tests.
   let exited = $state(false);
+  // True once `term.open()` has run, so the WebGL effect knows the renderer is
+  // attachable. Plain local (not state): only read inside async/effect bodies.
+  let opened = false;
 
   // GitHub-ish dark theme. Note: the xterm 6 key is `selectionBackground`
   // (the old `selection` key was removed).
@@ -77,9 +105,12 @@
   };
 
   /** Guarded fit: skip 0×0 containers (hidden / mid-layout) so we never push a
-   *  zero-size resize down to the PTY. Returns whether a fit ran. */
+   *  zero-size resize down to the PTY, and skip entirely while a gutter drag is
+   *  in progress (deferFit) — the final fit runs at drag-end. Returns whether a
+   *  fit ran. */
   function safeFit(): boolean {
     if (!fit || !host) return false;
+    if (deferFit) return false;
     if (host.clientWidth === 0 || host.clientHeight === 0) return false;
     fit.fit();
     return true;
@@ -89,6 +120,38 @@
   function note(text: string) {
     // Dim grey, on its own line, without disturbing scrollback semantics.
     term?.write(`\r\n\x1b[2m${text}\x1b[0m\r\n`);
+  }
+
+  // WebGL is loaded lazily and ONLY on the active pane (context cap ~16/page).
+  // These two helpers are idempotent so the `active` effect can call them
+  // freely. On context loss we dispose and let xterm's DOM renderer take over.
+  async function loadWebgl() {
+    if (webgl || !term || !opened) return;
+    try {
+      const { WebglAddon } = await import('@xterm/addon-webgl');
+      // The term may have been disposed (or we lost focus) while awaiting.
+      if (!term || !opened || webgl) return;
+      const addon = new WebglAddon();
+      contextLossSub = addon.onContextLoss(() => {
+        addon.dispose();
+        if (webgl === addon) webgl = undefined;
+        // term keeps rendering via the DOM renderer; scrollback is preserved.
+      });
+      term.loadAddon(addon);
+      webgl = addon;
+    } catch {
+      // No WebGL available — DOM renderer is already active. Not fatal.
+      webgl = undefined;
+    }
+  }
+
+  function disposeWebgl() {
+    contextLossSub?.dispose();
+    contextLossSub = undefined;
+    webgl?.dispose();
+    webgl = undefined;
+    // xterm transparently falls back to the DOM renderer; scrollback + the live
+    // PTY are untouched (we only swap the renderer, never the Terminal).
   }
 
   onMount(() => {
@@ -121,26 +184,15 @@
       // Open into the DOM *before* loading WebGL — the WebGL addon needs a live
       // renderer/canvas to attach to.
       term.open(host);
+      opened = true;
       safeFit();
 
-      // WebGL renderer (visible pane). On context loss, dispose WebGL and let
-      // xterm fall through to its DOM renderer (we never use @xterm/addon-canvas,
-      // which was removed in xterm 6). Guard the whole thing: a machine without a
-      // usable WebGL context should degrade to DOM rather than throw.
-      try {
-        const { WebglAddon } = await import('@xterm/addon-webgl');
-        if (disposed || !term) return;
-        webgl = new WebglAddon();
-        contextLossSub = webgl.onContextLoss(() => {
-          webgl?.dispose();
-          webgl = undefined;
-          // term keeps rendering via the DOM renderer; scrollback is preserved.
-        });
-        term.loadAddon(webgl);
-      } catch {
-        // No WebGL available — DOM renderer is already active. Not fatal.
-        webgl = undefined;
-      }
+      // WebGL renderer — loaded ONLY when this pane is active (context cap
+      // ~16/page). The reactive `active` effect below keeps this in sync as
+      // focus moves; here we just kick off the initial load if we start active.
+      // We never use @xterm/addon-canvas (removed in xterm 6); the fallback is
+      // xterm's own DOM renderer.
+      if (active && !disposed) await loadWebgl();
 
       // Per-pane output channel. The backend streams PtyEvents here in read order.
       channel = new Channel<PtyEvent>();
@@ -236,6 +288,43 @@
       void invoke('pty_kill', { id: ptyId }).catch(() => {});
       ptyId = undefined;
     }
+  });
+
+  // Keep the WebGL renderer attached to the active pane only. When this pane
+  // becomes active we load WebGL; when it goes inactive we dispose it (freeing a
+  // GL context for whatever pane is now focused) and fall back to DOM. Reading
+  // `active` makes this effect re-run on focus changes; `opened`/`webgl` are
+  // plain locals so they don't (we gate the initial load on `opened` instead).
+  $effect(() => {
+    // Track `active` reactively.
+    const isActive = active;
+    if (!opened) return;
+    if (isActive) {
+      void loadWebgl();
+    } else {
+      disposeWebgl();
+    }
+  });
+
+  // When a gutter drag ends (deferFit goes true -> false), run one fit to
+  // settle the final geometry and push the resize to the PTY. While deferFit is
+  // true, safeFit() is a no-op so nothing churns mid-drag.
+  $effect(() => {
+    if (!deferFit) {
+      safeFit();
+    }
+  });
+
+  // When this pane becomes visible (its workspace was switched to), the host
+  // went from 0×0 (display:none) to its real size. Re-fit on the next frame —
+  // after the browser has laid the now-shown element out — so cols/rows and the
+  // PTY size match the (possibly changed) viewport. safeFit() guards 0×0, so the
+  // hidden->visible transition is the meaningful one. ResizeObserver may not
+  // reliably fire on a display toggle, so this explicit re-fit guarantees it.
+  $effect(() => {
+    if (!visible) return;
+    const raf = requestAnimationFrame(() => safeFit());
+    return () => cancelAnimationFrame(raf);
   });
 </script>
 
