@@ -1,22 +1,22 @@
 ## 1. Foundation, tooling, and the test gate
 
-- [ ] 1.1 Commit the OpenSpec artifacts (proposal, design, the 7 spec deltas, tasks) created during change setup.
-- [ ] 1.2 Scaffold the app: Tauri v2 (`src-tauri/`, Rust) + SvelteKit (`src/`). Configure SvelteKit as an SPA — `@sveltejs/adapter-static({ fallback: 'index.html' })`, `src/routes/+layout.ts` with `ssr=false` and `prerender=false`; `tauri.conf.json` `build.frontendDist="../build"`, `devUrl` on fixed port 1420. (D1)
-- [ ] 1.3 Declare deps. Rust: `tauri` v2, `portable-pty`, `notify`, `serde`/`serde_json`. Frontend: `@xterm/xterm@6`, `@xterm/addon-fit`, `@xterm/addon-webgl` (optional: `addon-search`, `addon-web-links`, `addon-unicode11`, `addon-serialize`); import `@xterm/xterm/css/xterm.css` once. Pin versions; let `cargo` confirm `portable-pty` API spelling. (D1, D5)
-- [ ] 1.4 Add `package.json` scripts: `dev`, `build`, `lint` (eslint/prettier or biome + `cargo fmt --check` + `cargo clippy`), `types` (`svelte-check`), `test` (Vitest + `cargo test`), `coverage` (scenario gate, 1.5), `check` (`lint && types && coverage && test`).
-- [ ] 1.5 Create `tools/check-scenario-coverage.mjs`: parse every `#### Scenario:` in `openspec/changes/*/specs/**/*.md` (and `openspec/specs/**` once archived), normalize names to snake_case, scan Rust test fn names (`fn <snake>`) and Vitest test titles (`it('<scenario>'…)`), and exit non-zero listing any scenario with no matching test.
-- [ ] 1.6 Extend `.gitignore` for `target/`, `node_modules/`, `build/`, `.svelte-kit/`, `dist/`, `*.log` (keep the existing `.superpowers/` ignore).
+- [x] 1.1 Commit the OpenSpec artifacts (proposal, design, the 7 spec deltas, tasks) created during change setup.
+- [x] 1.2 Scaffold the app: Tauri v2 (`src-tauri/`, Rust) + SvelteKit (`src/`). Configure SvelteKit as an SPA — `@sveltejs/adapter-static({ fallback: 'index.html' })`, `src/routes/+layout.ts` with `ssr=false` and `prerender=false`; `tauri.conf.json` `build.frontendDist="../build"`, `devUrl` on fixed port 1420. (D1)
+- [x] 1.3 Declare deps. Rust: `tauri` v2, `portable-pty`, `notify`, `serde`/`serde_json`. Frontend: `@xterm/xterm@6`, `@xterm/addon-fit`, `@xterm/addon-webgl` (optional: `addon-search`, `addon-web-links`, `addon-unicode11`, `addon-serialize`); import `@xterm/xterm/css/xterm.css` once. Pin versions; let `cargo` confirm `portable-pty` API spelling. (D1, D5)
+- [x] 1.4 Add `package.json` scripts: `dev`, `build`, `lint` (eslint/prettier or biome + `cargo fmt --check` + `cargo clippy`), `types` (`svelte-check`), `test` (Vitest + `cargo test`), `coverage` (scenario gate, 1.5), `check` (`lint && types && coverage && test`).
+- [x] 1.5 Create `tools/check-scenario-coverage.mjs`: parse every `#### Scenario:` in `openspec/changes/*/specs/**/*.md` (and `openspec/specs/**` once archived), normalize names to snake_case, scan Rust test fn names (`fn <snake>`) and Vitest test titles (`it('<scenario>'…)`), and exit non-zero listing any scenario with no matching test.
+- [x] 1.6 Extend `.gitignore` for `target/`, `node_modules/`, `build/`, `.svelte-kit/`, `dist/`, `*.log` (keep the existing `.superpowers/` ignore).
 - [ ] 1.7 Add a pre-commit hook running `npm run check` and `openspec validate add-agent-desktop --strict`; a failing gate blocks the commit.
 
 ## 2. Capability: `terminal-core` (Milestone 1 — walking skeleton)
 
 Cover every scenario in `specs/terminal-core/spec.md`. Write the failing test first, then implement. Manual TUI check where headless can't reach.
 
-- [ ] 2.1 Rust `PtyManager` state: `Mutex<HashMap<PaneId, Pane>>` + `AtomicU64`. Covers *PTY-Backed Process Spawning* (spawn with seeded env in target cwd; slave dropped for EOF).
-- [ ] 2.2 `pty_spawn` command: `openpty` → `CommandBuilder` (cwd, `TERM=xterm-256color`, `COLORTERM`, seeded `PATH`/`HOME`/`LANG`) → `spawn_command` → `drop(slave)` → dedicated `std::thread` read loop → per-pane `Channel`. Covers *Lossless Ordered Output Streaming* (raw bytes in order; split multibyte reassembled) and *Blocking Read Loop With Coalescing* (native thread; bulk batching ~8–16ms/16–64KiB). (D2)
-- [ ] 2.3 `pty_write` / `pty_resize`. Covers *Input Forwarding To PTY* (keystroke reaches writer; write to dead pane rejected) and *PTY Resize Round-Trip* (SIGWINCH reflow; fit guarded on 0×0).
-- [ ] 2.4 Exit + lifecycle: EOF → `child.wait()` reap → `PtyEvent::Exit`; `pty_kill` via `clone_killer`; kill-all on `CloseRequested`. Covers *Child Exit Detection And Reaping* and *Process Lifecycle And No Orphans*.
-- [ ] 2.5 `TerminalPane.svelte`: dynamic-import xterm in `onMount`, `fit()`, Channel→`term.write(Uint8Array)`, `onData`→`pty_write`, `ResizeObserver`→`onResize`→`pty_resize`; teardown order `ro.disconnect()`→`webgl.dispose()`→`term.dispose()`→close channel→`pty_kill`. WebGL on visible + `onContextLoss`→DOM (no `addon-canvas`). Covers *WebGL Renderer With DOM Fallback* and *Stable Terminal Identity Across Tree Mutations*. (D5)
+- [x] 2.1 Rust `PtyManager` state: `Mutex<HashMap<PaneId, Pane>>` + `AtomicU64`. Covers *PTY-Backed Process Spawning* (spawn with seeded env in target cwd; slave dropped for EOF).
+- [x] 2.2 `pty_spawn` command: `openpty` → `CommandBuilder` (cwd, `TERM=xterm-256color`, `COLORTERM`, seeded `PATH`/`HOME`/`LANG`) → `spawn_command` → `drop(slave)` → dedicated `std::thread` read loop → per-pane `Channel`. Covers *Lossless Ordered Output Streaming* (raw bytes in order; split multibyte reassembled) and *Blocking Read Loop With Coalescing* (native thread; bulk batching ~8–16ms/16–64KiB). (D2)
+- [x] 2.3 `pty_write` / `pty_resize`. Covers *Input Forwarding To PTY* (keystroke reaches writer; write to dead pane rejected) and *PTY Resize Round-Trip* (SIGWINCH reflow; fit guarded on 0×0).
+- [x] 2.4 Exit + lifecycle: EOF → `child.wait()` reap → `PtyEvent::Exit`; `pty_kill` via `clone_killer`; kill-all on `CloseRequested`. Covers *Child Exit Detection And Reaping* and *Process Lifecycle And No Orphans*.
+- [x] 2.5 `TerminalPane.svelte`: dynamic-import xterm in `onMount`, `fit()`, Channel→`term.write(Uint8Array)`, `onData`→`pty_write`, `ResizeObserver`→`onResize`→`pty_resize`; teardown order `ro.disconnect()`→`webgl.dispose()`→`term.dispose()`→close channel→`pty_kill`. WebGL on visible + `onContextLoss`→DOM (no `addon-canvas`). Covers *WebGL Renderer With DOM Fallback* and *Stable Terminal Identity Across Tree Mutations*. (D5)
 - [ ] 2.6 Milestone-1 demo: one pane runs `claude`, full TUI works, resize round-trips. `npm run check` green for `terminal-core`.
 
 ## 3. Capability: `tiling-layout` (Milestone 2)
