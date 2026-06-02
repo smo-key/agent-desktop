@@ -87,7 +87,7 @@ Cover every scenario in `specs/workflow-board/spec.md`. Read-only — a write-ve
 
 - [ ] 9.1 End-to-end smoke: launch app → restore layout → spawn 3 sessions across split panes + tabs → dashboard shows live per-session cards + account rollup → open a workflow-capable repo → board renders read-only.
 - [x] 9.2 `tools/check-scenario-coverage.mjs` reports 100% scenario coverage across all 8 capabilities. (All 8 enforced: terminal-core, tiling-layout, layout-persistence, usage-dashboard, task-detection, session-launcher, agent-overview, workflow-board — 0 missing each; gate exits 0. workflow-board: 17/17 covered, 1:1 scenario→test, 0 manual.)
-- [ ] 9.3 `openspec validate add-agent-desktop --strict` passes; full `npm run check` green.
+- [x] 9.3 `openspec validate add-agent-desktop --strict` passes; full `npm run check` green.
 - [ ] 9.4 Package + sign the macOS app (Developer ID); verify spawned `claude` children resolve PATH and are killed/reaped on quit.
 - [ ] 9.5 `openspec archive add-agent-desktop`; mark `docs/superpowers/specs/2026-05-30-agent-desktop-design.md` superseded.
 
