@@ -1,0 +1,32 @@
+<!-- @dsCard group="Colors" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0}
+  body{width:700px;background:var(--bg-surface);padding:24px 28px;box-sizing:border-box}
+  .meta{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+        color:var(--fg-3);margin-bottom:16px}
+  .row{display:flex;gap:14px}
+  .cell{flex:1;background:var(--space-800);border:1px solid var(--line-subtle);border-radius:var(--r-md);
+        padding:13px 14px;display:flex;flex-direction:column;gap:9px}
+  .top{display:flex;align-items:center;gap:9px}
+  .dot{width:11px;height:11px;border-radius:var(--r-full)}
+  .st{font-family:var(--font-mono);font-size:11px;letter-spacing:.07em;text-transform:uppercase;font-weight:500}
+  .hex{font-family:var(--font-mono);font-size:9px;color:var(--fg-4)}
+  .use{font-family:var(--font-sans);font-size:11px;color:var(--fg-3)}
+</style>
+</head>
+<body>
+  <div class="meta">Semantic status · ops language</div>
+  <div class="row">
+    <div class="cell"><div class="top"><span class="dot" style="background:#3CCB7F;box-shadow:var(--glow-nominal)"></span><span class="st" style="color:#3CCB7F">Nominal</span></div><span class="use">running · success</span><span class="hex">#3CCB7F</span></div>
+    <div class="cell"><div class="top"><span class="dot" style="background:#3D7BFF"></span><span class="st" style="color:#5E92FF">Active</span></div><span class="use">in-flight · info</span><span class="hex">#3D7BFF</span></div>
+    <div class="cell"><div class="top"><span class="dot" style="background:#EE7E4D"></span><span class="st" style="color:#FF9A63">Review</span></div><span class="use">needs you</span><span class="hex">#EE7E4D</span></div>
+    <div class="cell"><div class="top"><span class="dot" style="background:#F0B341"></span><span class="st" style="color:#F0B341">Caution</span></div><span class="use">standby · warn</span><span class="hex">#F0B341</span></div>
+    <div class="cell"><div class="top"><span class="dot" style="background:#F2564B"></span><span class="st" style="color:#F2564B">Abort</span></div><span class="use">error · destroy</span><span class="hex">#F2564B</span></div>
+  </div>
+</body>
+</html>

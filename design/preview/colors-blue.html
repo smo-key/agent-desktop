@@ -1,0 +1,32 @@
+<!-- @dsCard group="Colors" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0}
+  body{width:700px;background:var(--bg-surface);padding:24px 28px;box-sizing:border-box}
+  .meta{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+        color:var(--fg-3);margin-bottom:14px}
+  .ramp{display:flex;gap:8px}
+  .sw{flex:1;display:flex;flex-direction:column;gap:7px}
+  .chip{height:58px;border-radius:var(--r-md);border:1px solid var(--line-subtle)}
+  .nm{font-family:var(--font-mono);font-size:10px;color:var(--fg-3)}
+  .hex{font-family:var(--font-mono);font-size:9px;color:var(--fg-4)}
+  .star{position:absolute;margin:7px 0 0 8px;font-family:var(--font-mono);font-size:9px;color:#fff;opacity:.85}
+</style>
+</head>
+<body>
+  <div class="meta">NASA Blue · structure &amp; primary interactive &nbsp;—&nbsp; <span style="color:var(--blue-400)">500 is default</span></div>
+  <div class="ramp">
+    <div class="sw"><div class="chip" style="background:#BBD2FF"></div><span class="nm">200</span><span class="hex">#BBD2FF</span></div>
+    <div class="sw"><div class="chip" style="background:#8FB4FF"></div><span class="nm">300</span><span class="hex">#8FB4FF</span></div>
+    <div class="sw"><div class="chip" style="background:#5E92FF"></div><span class="nm">400</span><span class="hex">#5E92FF</span></div>
+    <div class="sw"><div class="chip" style="background:#3D7BFF;box-shadow:var(--glow-blue)"></div><span class="nm" style="color:var(--blue-300)">500 ★</span><span class="hex">#3D7BFF</span></div>
+    <div class="sw"><div class="chip" style="background:#2C63E6"></div><span class="nm">600</span><span class="hex">#2C63E6</span></div>
+    <div class="sw"><div class="chip" style="background:#1E49B4"></div><span class="nm">700</span><span class="hex">#1E49B4</span></div>
+    <div class="sw"><div class="chip" style="background:#0B3D91"></div><span class="nm">900·NASA</span><span class="hex">#0B3D91</span></div>
+  </div>
+</body>
+</html>

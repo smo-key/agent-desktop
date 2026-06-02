@@ -1,0 +1,38 @@
+<!-- @dsCard group="Components" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0}
+  body{width:700px;background:var(--bg-surface);padding:26px 30px;box-sizing:border-box;
+       display:flex;flex-direction:column;gap:16px}
+  .meta{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-3)}
+  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .badge{display:inline-flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:11px;
+         font-weight:500;letter-spacing:.06em;text-transform:uppercase;padding:5px 11px 5px 9px;
+         border-radius:var(--r-full);border:1px solid transparent}
+  .dot{width:7px;height:7px;border-radius:50%;flex:none}
+  .pulse{position:relative}
+  .pulse::after{content:"";position:absolute;inset:-4px;border-radius:50%;background:inherit;opacity:.5;
+         animation:p 1.6s ease-out infinite}
+  @keyframes p{0%{transform:scale(1);opacity:.5}100%{transform:scale(2.4);opacity:0}}
+  .nominal{background:var(--nominal-tint);color:#6fe0a6;border-color:rgba(60,203,127,.3)}
+  .active{background:var(--blue-tint);color:var(--blue-300);border-color:rgba(61,123,255,.3)}
+  .review{background:var(--orange-tint);color:var(--orange-300);border-color:rgba(238,126,77,.32)}
+  .standby{background:rgba(255,255,255,.05);color:var(--fg-3);border-color:var(--line-default)}
+  .abort{background:var(--abort-tint);color:#ff8077;border-color:rgba(242,86,75,.32)}
+</style>
+</head>
+<body>
+  <div class="meta">Agent state badges</div>
+  <div class="row">
+    <span class="badge nominal"><span class="dot pulse" style="background:#3CCB7F"></span>Running</span>
+    <span class="badge active"><span class="dot pulse" style="background:#3D7BFF"></span>Thinking</span>
+    <span class="badge review"><span class="dot" style="background:#EE7E4D"></span>Awaiting review</span>
+    <span class="badge standby"><span class="dot" style="background:#7B8499"></span>Standby</span>
+    <span class="badge abort"><span class="dot" style="background:#F2564B"></span>Failed</span>
+  </div>
+</body>
+</html>

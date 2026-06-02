@@ -1,0 +1,32 @@
+<!-- @dsCard group="Spacing" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0}
+  body{width:700px;background:var(--bg-surface);padding:24px 30px;box-sizing:border-box}
+  .meta{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+        color:var(--fg-3);margin-bottom:18px}
+  .row{display:flex;gap:16px;align-items:flex-end}
+  .item{display:flex;flex-direction:column;align-items:center;gap:9px}
+  .box{width:62px;height:50px;background:var(--space-700);border:1px solid var(--line-default);
+       border-top:2px solid var(--blue-500)}
+  .tk{font-family:var(--font-mono);font-size:10px;color:var(--fg-3)}
+  .px{font-family:var(--font-mono);font-size:9px;color:var(--fg-4)}
+</style>
+</head>
+<body>
+  <div class="meta">Corner radii · precise, controlled</div>
+  <div class="row">
+    <div class="item"><div class="box" style="border-radius:4px"></div><span class="tk">xs</span><span class="px">4</span></div>
+    <div class="item"><div class="box" style="border-radius:6px"></div><span class="tk">sm</span><span class="px">6</span></div>
+    <div class="item"><div class="box" style="border-radius:8px"></div><span class="tk">md</span><span class="px">8</span></div>
+    <div class="item"><div class="box" style="border-radius:12px"></div><span class="tk">lg</span><span class="px">12</span></div>
+    <div class="item"><div class="box" style="border-radius:16px"></div><span class="tk">xl</span><span class="px">16</span></div>
+    <div class="item"><div class="box" style="border-radius:22px"></div><span class="tk">2xl</span><span class="px">22</span></div>
+    <div class="item"><div class="box" style="border-radius:999px;width:50px"></div><span class="tk">full</span><span class="px">pill</span></div>
+  </div>
+</body>
+</html>

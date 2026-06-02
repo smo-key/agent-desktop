@@ -1,0 +1,41 @@
+<!-- @dsCard group="Components" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0}
+  body{width:700px;background:var(--bg-surface);padding:26px 30px;box-sizing:border-box;
+       display:flex;flex-direction:column;gap:16px}
+  .row{display:flex;gap:12px;align-items:center}
+  .btn{font-family:var(--font-sans);font-weight:600;font-size:13px;border-radius:var(--r-md);
+       padding:9px 16px;border:1px solid transparent;cursor:pointer;display:inline-flex;
+       align-items:center;gap:8px;line-height:1}
+  .primary{background:var(--blue-500);color:var(--fg-on-accent);box-shadow:0 1px 0 rgba(255,255,255,.12) inset}
+  .primary.hover{background:var(--blue-600)}
+  .energy{background:var(--orange-500);color:var(--fg-on-accent)}
+  .secondary{background:var(--space-650);color:var(--fg-1);border-color:var(--line-default)}
+  .ghost{background:transparent;color:var(--fg-2);border-color:var(--line-default)}
+  .danger{background:transparent;color:var(--abort-500);border-color:rgba(242,86,75,.4)}
+  .disabled{background:var(--space-700);color:var(--fg-4);cursor:not-allowed}
+  .lbl{font-family:var(--font-mono);font-size:9px;color:var(--fg-4);text-transform:uppercase;letter-spacing:.06em;width:62px}
+  .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+</style>
+</head>
+<body>
+  <div class="row"><span class="lbl">default</span>
+    <button class="btn primary">Launch mission</button>
+    <button class="btn energy">Approve</button>
+    <button class="btn secondary">Pause</button>
+    <button class="btn ghost">Details</button>
+    <button class="btn danger">Abort</button>
+  </div>
+  <div class="row"><span class="lbl">hover</span>
+    <button class="btn primary hover">Launch mission</button>
+    <button class="btn secondary" style="background:var(--space-600)">Pause</button>
+    <button class="btn ghost" style="background:rgba(255,255,255,.05);color:var(--fg-1)">Details</button>
+    <button class="btn disabled">Unavailable</button>
+  </div>
+</body>
+</html>

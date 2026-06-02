@@ -1,0 +1,203 @@
+/* ============================================================================
+   MISSION CONTROL — Design Foundations
+   Colors, type, spacing, radii, elevation tokens.
+   A deep-space dark control center: NASA blue is the structural / interactive
+   color, Claude clay-orange is the energy accent (used sparingly), telemetry
+   speaks in mono. Background is near-black with a faint cool tint.
+   ----------------------------------------------------------------------------
+   Fonts are bundled locally in ./fonts (OFL — license files included). They are
+   variable fonts: one file per family covers the full weight range. url() paths
+   resolve relative to THIS stylesheet, so they work from any importing file.
+   ============================================================================ */
+
+@font-face {
+  font-family: 'Space Grotesk';
+  src: url('fonts/SpaceGrotesk-Variable.ttf') format('truetype');
+  font-weight: 300 700; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'Hanken Grotesk';
+  src: url('fonts/HankenGrotesk-Variable.ttf') format('truetype');
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'Hanken Grotesk';
+  src: url('fonts/HankenGrotesk-Italic-Variable.ttf') format('truetype');
+  font-weight: 100 900; font-style: italic; font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('fonts/JetBrainsMono-Variable.ttf') format('truetype');
+  font-weight: 100 800; font-style: normal; font-display: swap;
+}
+
+:root {
+  /* ----------------------------------------------------------------------
+     PRIMITIVES — COLOR
+     ---------------------------------------------------------------------- */
+
+  /* Deep space — backgrounds & surfaces (near-black, faint cool/blue tint) */
+  --space-950: #06080C;   /* void — page edge / behind everything           */
+  --space-900: #090C12;   /* deepest app background                          */
+  --space-850: #0D1017;   /* base app background                             */
+  --space-800: #11151E;   /* sunken panel                                    */
+  --space-750: #161B26;   /* surface — cards, rails                          */
+  --space-700: #1C222F;   /* raised surface                                  */
+  --space-650: #232A39;   /* hover / popover                                 */
+  --space-600: #2C3445;   /* active / pressed surface                        */
+  --space-550: #38415560; /* input fill                                      */
+
+  /* Hairlines */
+  --line-faint:   rgba(255,255,255,0.05);
+  --line-subtle:  rgba(255,255,255,0.08);
+  --line-default: rgba(255,255,255,0.12);
+  --line-strong:  rgba(255,255,255,0.18);
+
+  /* Foreground / text */
+  --fg-1: #EEF1F6;   /* primary text, headings                              */
+  --fg-2: #B2BACA;   /* secondary text                                      */
+  --fg-3: #7B8499;   /* tertiary / muted labels                             */
+  --fg-4: #515B71;   /* faint / disabled / decorative                       */
+  --fg-on-accent: #0A0D13; /* text on bright blue/orange fills              */
+
+  /* Blue — NASA / structure / primary interactive */
+  --blue-200: #BBD2FF;
+  --blue-300: #8FB4FF;
+  --blue-400: #5E92FF;
+  --blue-500: #3D7BFF;   /* PRIMARY interactive                             */
+  --blue-600: #2C63E6;   /* hover                                           */
+  --blue-700: #1E49B4;   /* pressed                                         */
+  --blue-900: #0B3D91;   /* NASA deep — decorative / deep fills             */
+  --blue-tint:        rgba(61,123,255,0.12);
+  --blue-tint-strong: rgba(61,123,255,0.20);
+
+  /* Orange — Claude warmth / energy accent (use sparingly) */
+  --orange-200: #FFD2B3;
+  --orange-300: #FFB78C;
+  --orange-400: #FF9A63;
+  --orange-500: #EE7E4D;   /* ACCENT                                        */
+  --orange-600: #D9663A;   /* hover                                         */
+  --orange-700: #B44E2B;   /* pressed                                       */
+  --clay:       #D97757;   /* Claude reference clay                         */
+  --orange-tint:        rgba(238,126,77,0.13);
+  --orange-tint-strong: rgba(238,126,77,0.22);
+
+  /* Semantic status — aerospace ops language */
+  --nominal-500: #3CCB7F;  /* success / operating nominally                 */
+  --nominal-tint: rgba(60,203,127,0.13);
+  --caution-500: #F0B341;  /* warning / standby                             */
+  --caution-tint: rgba(240,179,65,0.13);
+  --abort-500:   #F2564B;  /* error / abort / destructive                   */
+  --abort-tint:  rgba(242,86,75,0.13);
+  --info-500:    var(--blue-500);
+
+  /* ----------------------------------------------------------------------
+     SEMANTIC ALIASES — surfaces, text, interactive
+     ---------------------------------------------------------------------- */
+  --bg-app:        var(--space-850);
+  --bg-sunken:     var(--space-800);
+  --bg-surface:    var(--space-750);
+  --bg-raised:     var(--space-700);
+  --bg-hover:      var(--space-650);
+  --bg-active:     var(--space-600);
+  --bg-input:      var(--space-550);
+
+  --text-primary:   var(--fg-1);
+  --text-secondary: var(--fg-2);
+  --text-muted:     var(--fg-3);
+  --text-faint:     var(--fg-4);
+
+  --accent:        var(--blue-500);   /* default brand interactive          */
+  --accent-hover:  var(--blue-600);
+  --accent-press:  var(--blue-700);
+  --energy:        var(--orange-500); /* attention / live / Claude warmth    */
+
+  /* ----------------------------------------------------------------------
+     TYPOGRAPHY
+     ---------------------------------------------------------------------- */
+  --font-display: 'Space Grotesk', 'Hanken Grotesk', system-ui, sans-serif;
+  --font-sans:    'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Type scale (px) — fluid-ready raw sizes */
+  --t-display-xl: 56px;
+  --t-display-l:  44px;
+  --t-display-m:  34px;
+  --t-h1:         28px;
+  --t-h2:         22px;
+  --t-h3:         18px;
+  --t-body-l:     16px;
+  --t-body:       14px;   /* app UI base */
+  --t-body-s:     13px;
+  --t-label:      12px;   /* mono labels */
+  --t-caption:    11px;
+
+  --lh-tight:   1.08;
+  --lh-snug:    1.25;
+  --lh-normal:  1.5;
+  --tracking-display: -0.02em;
+  --tracking-tight:   -0.01em;
+  --tracking-label:    0.08em;  /* uppercase mono labels */
+
+  /* ----------------------------------------------------------------------
+     SPACING — 4px base grid
+     ---------------------------------------------------------------------- */
+  --s-1: 4px;   --s-2: 8px;   --s-3: 12px;  --s-4: 16px;
+  --s-5: 20px;  --s-6: 24px;  --s-8: 32px;  --s-10: 40px;
+  --s-12: 48px; --s-16: 64px; --s-20: 80px; --s-24: 96px;
+
+  /* ----------------------------------------------------------------------
+     RADII — precise, controlled (not pill-heavy)
+     ---------------------------------------------------------------------- */
+  --r-xs: 4px;   --r-sm: 6px;   --r-md: 8px;   --r-lg: 12px;
+  --r-xl: 16px;  --r-2xl: 22px; --r-full: 999px;
+
+  /* ----------------------------------------------------------------------
+     ELEVATION — shadows + glows (dark UI: elevation is mostly surface-lightness;
+     shadows reserved for floating layers, glows for live/active states)
+     ---------------------------------------------------------------------- */
+  --shadow-sm:  0 1px 2px rgba(0,0,0,0.40);
+  --shadow-md:  0 4px 14px rgba(0,0,0,0.45);
+  --shadow-lg:  0 14px 38px rgba(0,0,0,0.55);
+  --shadow-pop: 0 10px 34px rgba(0,0,0,0.62);
+
+  --glow-blue:   0 0 0 1px rgba(61,123,255,0.45), 0 0 22px rgba(61,123,255,0.28);
+  --glow-orange: 0 0 0 1px rgba(238,126,77,0.42), 0 0 22px rgba(238,126,77,0.24);
+  --glow-nominal:0 0 0 1px rgba(60,203,127,0.40), 0 0 18px rgba(60,203,127,0.22);
+  --focus-ring:  0 0 0 3px rgba(61,123,255,0.38);
+
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 360ms;
+  --ease-out:  cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+/* ============================================================================
+   SEMANTIC TYPE CLASSES — apply directly or copy the rules
+   ============================================================================ */
+.display-xl { font-family: var(--font-display); font-weight: 600; font-size: var(--t-display-xl); line-height: var(--lh-tight); letter-spacing: var(--tracking-display); color: var(--fg-1); }
+.display-l  { font-family: var(--font-display); font-weight: 600; font-size: var(--t-display-l);  line-height: 1.1;  letter-spacing: var(--tracking-display); color: var(--fg-1); }
+.display-m  { font-family: var(--font-display); font-weight: 600; font-size: var(--t-display-m);  line-height: 1.12; letter-spacing: var(--tracking-tight); color: var(--fg-1); }
+h1, .h1     { font-family: var(--font-display); font-weight: 600; font-size: var(--t-h1); line-height: var(--lh-snug); letter-spacing: var(--tracking-tight); color: var(--fg-1); margin: 0; }
+h2, .h2     { font-family: var(--font-display); font-weight: 500; font-size: var(--t-h2); line-height: var(--lh-snug); letter-spacing: var(--tracking-tight); color: var(--fg-1); margin: 0; }
+h3, .h3     { font-family: var(--font-sans); font-weight: 600; font-size: var(--t-h3); line-height: 1.35; color: var(--fg-1); margin: 0; }
+.body-l     { font-family: var(--font-sans); font-weight: 400; font-size: var(--t-body-l); line-height: var(--lh-normal); color: var(--fg-2); }
+.body, p    { font-family: var(--font-sans); font-weight: 400; font-size: var(--t-body); line-height: var(--lh-normal); color: var(--fg-2); }
+.body-s     { font-family: var(--font-sans); font-weight: 400; font-size: var(--t-body-s); line-height: 1.45; color: var(--fg-2); }
+.label      { font-family: var(--font-mono); font-weight: 500; font-size: var(--t-label); line-height: 1; letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--fg-3); }
+.caption    { font-family: var(--font-sans); font-weight: 400; font-size: var(--t-caption); line-height: 1.4; color: var(--fg-3); }
+.mono       { font-family: var(--font-mono); font-weight: 400; font-size: var(--t-body-s); color: var(--fg-2); font-variant-numeric: tabular-nums; }
+
+/* ============================================================================
+   BASE RESET HELPERS (optional — scope to your root if you use them)
+   ============================================================================ */
+.mc-root {
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--t-body);
+  line-height: var(--lh-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}

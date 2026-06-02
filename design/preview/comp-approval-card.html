@@ -1,0 +1,54 @@
+<!-- @dsCard group="Components" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0}
+  body{width:700px;background:var(--bg-app);padding:24px 28px;box-sizing:border-box}
+  .card{background:var(--space-750);border:1px solid var(--line-default);border-radius:var(--r-lg);
+        overflow:hidden;box-shadow:var(--glow-orange)}
+  .hd{display:flex;align-items:center;gap:10px;padding:13px 16px;background:var(--orange-tint);
+      border-bottom:1px solid rgba(238,126,77,.2)}
+  .hd .ic{width:26px;height:26px;border-radius:var(--r-sm);background:var(--orange-500);
+          display:flex;align-items:center;justify-content:center}
+  .hd .ic svg{width:15px;height:15px;stroke:#0A0D13;stroke-width:2.4}
+  .hd .t{font-family:var(--font-sans);font-weight:600;font-size:13px;color:var(--fg-1)}
+  .hd .s{font-family:var(--font-mono);font-size:10px;color:var(--orange-300);margin-left:auto;
+         text-transform:uppercase;letter-spacing:.06em}
+  .body{padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+  .desc{font-family:var(--font-sans);font-size:13px;color:var(--fg-2);line-height:1.5}
+  .desc b{color:var(--fg-1);font-weight:600}
+  .cmd{font-family:var(--font-mono);font-size:12px;color:var(--blue-200);background:var(--space-900);
+       border:1px solid var(--line-subtle);border-radius:var(--r-sm);padding:9px 12px}
+  .cmd .c{color:var(--fg-4)}
+  .acts{display:flex;gap:10px;align-items:center}
+  .btn{font-family:var(--font-sans);font-weight:600;font-size:13px;border-radius:var(--r-md);
+       padding:9px 18px;border:1px solid transparent;cursor:pointer}
+  .approve{background:var(--orange-500);color:#0A0D13}
+  .deny{background:transparent;color:var(--fg-2);border-color:var(--line-default)}
+  .always{margin-left:auto;font-family:var(--font-sans);font-size:12px;color:var(--fg-3);
+          display:inline-flex;align-items:center;gap:7px}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="hd">
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+      <span class="t">Surveyor needs your approval</span>
+      <span class="s">AC-118 · paused</span>
+    </div>
+    <div class="body">
+      <div class="desc">The agent wants to <b>run a database migration</b> against the staging
+        environment. This alters live schema and can't be undone automatically.</div>
+      <div class="cmd"><span class="c">$</span> npm run migrate:staging <span class="c">--</span> --to=v3</div>
+      <div class="acts">
+        <button class="btn approve">Approve &amp; continue</button>
+        <button class="btn deny">Deny</button>
+        <label class="always"><span style="width:30px;height:18px;border-radius:999px;background:var(--space-600);display:inline-block;position:relative"><span style="position:absolute;width:13px;height:13px;border-radius:50%;background:#fff;top:2.5px;left:2.5px"></span></span>Always allow migrations</label>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

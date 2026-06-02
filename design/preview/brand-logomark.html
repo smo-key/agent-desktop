@@ -1,0 +1,44 @@
+<!-- @dsCard group="Brand" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0}
+  body{width:700px;background:var(--bg-surface);font-family:var(--font-sans);
+       display:flex;align-items:center;gap:36px;padding:28px 32px;box-sizing:border-box}
+  .mark-cell{display:flex;flex-direction:column;align-items:center;gap:10px}
+  .swatch-bg{display:flex;align-items:center;justify-content:center;border-radius:var(--r-lg);
+             width:96px;height:96px}
+  .on-dark{background:var(--space-900);border:1px solid var(--line-subtle)}
+  .on-blue{background:var(--blue-900)}
+  .on-light{background:#EEF1F6}
+  .cap{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-3)}
+  .sizes{display:flex;align-items:flex-end;gap:22px}
+  .sizes img{display:block}
+  .divider{width:1px;align-self:stretch;background:var(--line-subtle);margin:0 4px}
+</style>
+</head>
+<body>
+  <div class="sizes">
+    <img src="../assets/logomark.svg" width="64" height="64" alt="">
+    <img src="../assets/logomark.svg" width="40" height="40" alt="">
+    <img src="../assets/logomark.svg" width="24" height="24" alt="">
+    <img src="../assets/logomark.svg" width="16" height="16" alt="">
+  </div>
+  <div class="divider"></div>
+  <div class="mark-cell">
+    <div class="swatch-bg on-dark"><img src="../assets/logomark.svg" width="56" height="56" alt=""></div>
+    <span class="cap">on space</span>
+  </div>
+  <div class="mark-cell">
+    <div class="swatch-bg on-blue"><img src="../assets/logomark.svg" width="56" height="56" alt=""></div>
+    <span class="cap">on NASA blue</span>
+  </div>
+  <div class="mark-cell">
+    <div class="swatch-bg on-light"><img src="../assets/logomark.svg" width="56" height="56" alt=""></div>
+    <span class="cap">on light</span>
+  </div>
+</body>
+</html>

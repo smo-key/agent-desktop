@@ -1,0 +1,29 @@
+<!-- @dsCard group="Spacing" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0}
+  body{width:700px;background:var(--bg-app);padding:30px 30px;box-sizing:border-box}
+  .meta{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+        color:var(--fg-3);margin-bottom:22px}
+  .row{display:flex;gap:22px;align-items:center}
+  .item{display:flex;flex-direction:column;align-items:center;gap:11px}
+  .box{width:96px;height:54px;background:var(--space-700);border:1px solid var(--line-subtle);
+       border-radius:var(--r-lg);display:flex}
+  .tk{font-family:var(--font-mono);font-size:10px;color:var(--fg-3)}
+</style>
+</head>
+<body>
+  <div class="meta">Elevation · shadows for floating layers, glows for live state</div>
+  <div class="row">
+    <div class="item"><div class="box" style="box-shadow:var(--shadow-sm)"></div><span class="tk">sm</span></div>
+    <div class="item"><div class="box" style="box-shadow:var(--shadow-md)"></div><span class="tk">md</span></div>
+    <div class="item"><div class="box" style="box-shadow:var(--shadow-lg)"></div><span class="tk">lg · pop</span></div>
+    <div class="item"><div class="box" style="box-shadow:var(--glow-blue)"></div><span class="tk">glow·blue</span></div>
+    <div class="item"><div class="box" style="box-shadow:var(--glow-orange)"></div><span class="tk">glow·orange</span></div>
+  </div>
+</body>
+</html>

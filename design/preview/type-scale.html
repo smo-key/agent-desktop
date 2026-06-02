@@ -1,0 +1,30 @@
+<!-- @dsCard group="Type" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0}
+  body{width:700px;background:var(--bg-surface);padding:24px 32px;box-sizing:border-box}
+  table{border-collapse:collapse;width:100%}
+  td{padding:7px 0;vertical-align:baseline;border-bottom:1px solid var(--line-faint)}
+  tr:last-child td{border-bottom:none}
+  .tok{font-family:var(--font-mono);font-size:11px;color:var(--fg-3);white-space:nowrap;
+       letter-spacing:.04em;width:120px}
+  .spec{font-family:var(--font-mono);font-size:11px;color:var(--fg-4);text-align:right;white-space:nowrap}
+  .s{color:var(--fg-1)}
+  .d{font-family:var(--font-display);font-weight:600;letter-spacing:-0.02em}
+  .b{font-family:var(--font-sans)}
+</style>
+</head>
+<body>
+  <table>
+    <tr><td class="tok">display-l</td><td class="s d" style="font-size:30px">Aa Orbit</td><td class="spec">44 / 1.1</td></tr>
+    <tr><td class="tok">h1</td><td class="s d" style="font-size:24px">Mission overview</td><td class="spec">28 / 1.25</td></tr>
+    <tr><td class="tok">h3</td><td class="s b" style="font-weight:600;font-size:18px">Active agents</td><td class="spec">18 / 1.35</td></tr>
+    <tr><td class="tok">body</td><td class="s b" style="font-size:14px;color:var(--fg-2)">Review &amp; approve the work that matters.</td><td class="spec">14 / 1.5</td></tr>
+    <tr><td class="tok">label</td><td class="label">Awaiting Review</td><td class="spec">12 · mono · +0.08</td></tr>
+  </table>
+</body>
+</html>

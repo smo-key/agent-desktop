@@ -1,0 +1,45 @@
+<!-- @dsCard group="Components" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0}
+  body{width:700px;background:var(--bg-surface);padding:24px 30px;box-sizing:border-box;
+       display:flex;gap:18px}
+  .col{flex:1;display:flex;flex-direction:column;gap:13px}
+  .field{display:flex;flex-direction:column;gap:6px}
+  .lab{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--fg-3)}
+  .inp{font-family:var(--font-sans);font-size:13px;color:var(--fg-1);background:rgba(56,65,85,.38);
+       border:1px solid var(--line-default);border-radius:var(--r-md);padding:10px 12px;outline:none}
+  .inp.ph{color:var(--fg-4)}
+  .inp.focus{border-color:var(--blue-500);box-shadow:var(--focus-ring)}
+  .seg{display:inline-flex;background:var(--space-800);border:1px solid var(--line-subtle);
+       border-radius:var(--r-md);padding:3px}
+  .seg button{font-family:var(--font-sans);font-weight:500;font-size:12px;border:none;background:none;
+       color:var(--fg-3);padding:6px 13px;border-radius:6px;cursor:pointer}
+  .seg button.on{background:var(--space-650);color:var(--fg-1)}
+  .switch{width:38px;height:22px;border-radius:999px;background:var(--blue-500);position:relative;display:inline-block}
+  .switch::after{content:"";position:absolute;width:16px;height:16px;border-radius:50%;background:#fff;top:3px;right:3px}
+  .switch.off{background:var(--space-600)}
+  .switch.off::after{right:auto;left:3px}
+  .swrow{display:flex;align-items:center;gap:10px}
+  .swtxt{font-family:var(--font-sans);font-size:12px;color:var(--fg-2)}
+</style>
+</head>
+<body>
+  <div class="col">
+    <div class="field"><span class="lab">Objective</span><div class="inp">Refactor the auth module</div></div>
+    <div class="field"><span class="lab">Repository</span><div class="inp ph">search repositories…</div></div>
+    <div class="field"><span class="lab">Focused</span><div class="inp focus">main branch</div></div>
+  </div>
+  <div class="col">
+    <div class="field"><span class="lab">Autonomy</span>
+      <div class="seg"><button class="on">Supervised</button><button>Trusted</button><button>Auto</button></div>
+    </div>
+    <div class="swrow"><span class="switch"></span><span class="swtxt">Pause on risky actions</span></div>
+    <div class="swrow"><span class="switch off"></span><span class="swtxt">Notify on every step</span></div>
+  </div>
+</body>
+</html>

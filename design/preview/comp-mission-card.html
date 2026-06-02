@@ -1,0 +1,65 @@
+<!-- @dsCard group="Components" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0}
+  body{width:700px;background:var(--bg-app);padding:24px 28px;box-sizing:border-box;display:flex;gap:16px}
+  .card{flex:1;background:var(--space-750);border:1px solid var(--line-subtle);border-radius:var(--r-lg);
+        padding:16px 17px;display:flex;flex-direction:column;gap:13px}
+  .card.live{box-shadow:inset 0 0 0 1px rgba(61,123,255,.18)}
+  .top{display:flex;align-items:center;gap:11px}
+  .av{width:34px;height:34px;border-radius:var(--r-md);background:var(--space-600);display:flex;
+      align-items:center;justify-content:center;flex:none;border:1px solid var(--line-subtle)}
+  .av img{width:22px;height:22px}
+  .who{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .nm{font-family:var(--font-sans);font-weight:600;font-size:14px;color:var(--fg-1)}
+  .id{font-family:var(--font-mono);font-size:10px;color:var(--fg-3);letter-spacing:.04em}
+  .badge{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);
+         font-size:10px;font-weight:500;letter-spacing:.05em;text-transform:uppercase;padding:4px 9px;
+         border-radius:var(--r-full)}
+  .nominal{background:var(--nominal-tint);color:#6fe0a6}
+  .review{background:var(--orange-tint);color:var(--orange-300)}
+  .dot{width:6px;height:6px;border-radius:50%}
+  .task{font-family:var(--font-sans);font-size:13px;color:var(--fg-2);line-height:1.45}
+  .task b{color:var(--fg-1);font-weight:600}
+  .prog{height:4px;border-radius:2px;background:var(--space-600);overflow:hidden}
+  .prog i{display:block;height:100%;border-radius:2px}
+  .foot{display:flex;align-items:center;gap:14px;font-family:var(--font-mono);font-size:10.5px;
+        color:var(--fg-3);font-variant-numeric:tabular-nums}
+  .foot span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+  .foot svg{width:12px;height:12px;stroke:var(--fg-4)}
+</style>
+</head>
+<body>
+  <div class="card live">
+    <div class="top">
+      <div class="av"><img src="../assets/logomark.svg" alt=""></div>
+      <div class="who"><span class="nm">Orbiter</span><span class="id">AC-204</span></div>
+      <span class="badge nominal"><span class="dot" style="background:#3CCB7F"></span>Running</span>
+    </div>
+    <div class="task">Refactoring the <b>auth module</b> — extracting token logic into a service layer.</div>
+    <div class="prog"><i style="width:78%;background:var(--blue-500)"></i></div>
+    <div class="foot">
+      <span><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>auth-refactor</span>
+      <span><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>00:42</span>
+      <span>38.2k tok</span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="top">
+      <div class="av"><img src="../assets/logomark.svg" alt=""></div>
+      <div class="who"><span class="nm">Surveyor</span><span class="id">AC-118</span></div>
+      <span class="badge review"><span class="dot" style="background:#EE7E4D"></span>Review</span>
+    </div>
+    <div class="task">Wants to <b>run database migration</b> on the staging environment.</div>
+    <div class="prog"><i style="width:100%;background:var(--orange-500)"></i></div>
+    <div class="foot">
+      <span><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>migrate-v3</span>
+      <span><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>paused</span>
+    </div>
+  </div>
+</body>
+</html>

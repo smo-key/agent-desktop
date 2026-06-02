@@ -1,0 +1,32 @@
+<!-- @dsCard group="Spacing" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0}
+  body{width:700px;background:var(--bg-surface);padding:24px 30px;box-sizing:border-box}
+  .meta{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+        color:var(--fg-3);margin-bottom:18px}
+  .scale{display:flex;align-items:flex-end;gap:18px}
+  .item{display:flex;flex-direction:column;align-items:center;gap:9px}
+  .bar{background:var(--blue-500);border-radius:2px;width:18px;opacity:.92}
+  .tk{font-family:var(--font-mono);font-size:10px;color:var(--fg-3)}
+  .px{font-family:var(--font-mono);font-size:9px;color:var(--fg-4)}
+</style>
+</head>
+<body>
+  <div class="meta">Spacing · 4px base grid</div>
+  <div class="scale">
+    <div class="item"><div class="bar" style="height:4px"></div><span class="tk">s-1</span><span class="px">4</span></div>
+    <div class="item"><div class="bar" style="height:8px"></div><span class="tk">s-2</span><span class="px">8</span></div>
+    <div class="item"><div class="bar" style="height:12px"></div><span class="tk">s-3</span><span class="px">12</span></div>
+    <div class="item"><div class="bar" style="height:16px"></div><span class="tk">s-4</span><span class="px">16</span></div>
+    <div class="item"><div class="bar" style="height:24px"></div><span class="tk">s-6</span><span class="px">24</span></div>
+    <div class="item"><div class="bar" style="height:32px"></div><span class="tk">s-8</span><span class="px">32</span></div>
+    <div class="item"><div class="bar" style="height:48px"></div><span class="tk">s-12</span><span class="px">48</span></div>
+    <div class="item"><div class="bar" style="height:64px"></div><span class="tk">s-16</span><span class="px">64</span></div>
+  </div>
+</body>
+</html>
