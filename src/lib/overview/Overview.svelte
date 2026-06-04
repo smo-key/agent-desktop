@@ -41,6 +41,7 @@
   import { events } from './events.svelte';
   import { renderMarkdown } from './markdown';
   import { openInEditor } from './editor';
+  import { titles } from './titles.svelte';
   import { view } from './view.svelte';
   import { projects } from '$lib/projects/projects.svelte';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
@@ -396,7 +397,9 @@
                 >
                   <div class="ac-top">
                     <ProjectIcon icon={av.icon} color={av.color} size={30} />
-                    <span class="name" title={row.name}>{row.name}</span>
+                    <span class="name" title={titles.titleFor(row.paneId) ? `${titles.titleFor(row.paneId)} · ${row.name}` : row.name}>
+                      {titles.titleFor(row.paneId) ?? row.name}
+                    </span>
                     <span class="badge {badgeClass(row.status)}">
                       <span class="sdot" aria-hidden="true"></span>
                       {statusLabel(row.status)}

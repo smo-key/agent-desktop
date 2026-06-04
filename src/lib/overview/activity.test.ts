@@ -15,22 +15,25 @@ describe('activity — transcript activity normalizer', () => {
       summary: 'Looking at the parser',
       question: null,
       questions: null,
-      contextPct: 42
-      ,messages: null
+      contextPct: 42,
+      messages: null,
+      userHash: null
     });
     expect(norm['sess-b']).toEqual({
       summary: null,
       question: 'Which database?',
       questions: null,
       contextPct: null,
-      messages: null
+      messages: null,
+      userHash: null
     });
     expect(norm['sess-c']).toEqual({
       summary: null,
       question: null,
       questions: null,
       contextPct: null,
-      messages: null
+      messages: null,
+      userHash: null
     });
   });
 
@@ -80,7 +83,8 @@ describe('activity — transcript activity normalizer', () => {
       question: 'ok?',
       questions: null,
       contextPct: null,
-      messages: null
+      messages: null,
+      userHash: null
     });
   });
 });

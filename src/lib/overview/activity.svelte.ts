@@ -44,6 +44,9 @@ export interface Activity {
   contextPct?: number | null;
   /** Recent assistant messages (newest LAST), rendered as the transcript preview. */
   messages?: string[] | null;
+  /** A cheap hash of the user's messages — changes only when the user adds one;
+   *  gates Haiku session-title regeneration. */
+  userHash?: string | null;
 }
 
 /** The whole store state: paneId -> that pane's activity. */
@@ -102,7 +105,11 @@ export function normalizeActivity(payload: unknown): ActivityMap {
           : null,
       messages: Array.isArray((value as Record<string, unknown>).messages)
         ? ((value as { messages: unknown[] }).messages.filter((m) => typeof m === 'string') as string[])
-        : null
+        : null,
+      userHash:
+        typeof (value as Record<string, unknown>).userHash === 'string'
+          ? ((value as { userHash: string }).userHash)
+          : null
     };
   }
   return out;

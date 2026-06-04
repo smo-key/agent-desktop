@@ -98,6 +98,12 @@ pub struct Activity {
     /// last one prominent, older ones faded). `null` when none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messages: Option<Vec<String>>,
+    /// A cheap stable hash of the USER's messages — changes only when the user adds
+    /// a message. The overview uses it to regenerate the Haiku session title (which
+    /// is derived from the user's messages) ONLY when it actually changed, rather
+    /// than on every poll. `null` when the user has sent nothing yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_hash: Option<String>,
 }
 
 /// One pane the frontend wants activity for: its frontend `pane_id` (the map key),
@@ -194,6 +200,71 @@ fn assistant_text(entry: &Value) -> Option<String> {
     } else {
         Some(parts.join("\n\n"))
     }
+}
+
+/// The user's prose text from a `user` entry, or `None`. The `content` is either a
+/// plain string (the user's typed message) or an array of blocks — in the array
+/// case only `text` blocks are kept, so a tool_result-only user entry yields
+/// `None` (it isn't a message the user wrote).
+fn user_text(entry: &Value) -> Option<String> {
+    if entry.get("type").and_then(Value::as_str) != Some("user") {
+        return None;
+    }
+    let content = entry.get("message").and_then(|m| m.get("content"))?;
+    if let Some(s) = content.as_str() {
+        let t = s.trim();
+        return (!t.is_empty()).then(|| t.to_string());
+    }
+    if let Some(arr) = content.as_array() {
+        let mut parts = Vec::new();
+        for b in arr {
+            if b.get("type").and_then(Value::as_str) == Some("text") {
+                if let Some(t) = b.get("text").and_then(Value::as_str) {
+                    let t = t.trim();
+                    if !t.is_empty() {
+                        parts.push(t.to_string());
+                    }
+                }
+            }
+        }
+        if !parts.is_empty() {
+            return Some(parts.join("\n"));
+        }
+    }
+    None
+}
+
+/// A stable hex hash of a list of strings (order + content sensitive).
+fn hash_strings(items: &[String]) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    items.len().hash(&mut h);
+    for s in items {
+        s.hash(&mut h);
+    }
+    format!("{:016x}", h.finish())
+}
+
+/// Every USER prose message in a transcript, in order (oldest first). Reads the
+/// WHOLE file (not just the tail) so a session title reflects all of the user's
+/// messages. Tolerant of malformed lines; empty when none / unreadable.
+pub fn user_messages(path: &Path) -> Vec<String> {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in body.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<Value>(t) {
+            if let Some(text) = user_text(&v) {
+                out.push(text);
+            }
+        }
+    }
+    out
 }
 
 /// The content blocks of an `assistant` entry, or empty.
@@ -307,6 +378,15 @@ pub fn summarize_transcript(path: &Path) -> Activity {
     if !msgs.is_empty() {
         msgs.reverse(); // newest LAST (the prominent one)
         out.messages = Some(msgs);
+    }
+
+    // USER-FOCUS hash: a cheap signal that the user's messages changed, so the
+    // overview regenerates the Haiku session title only on a real change. Tail-based
+    // (the newest user message is always in the tail), which is all the change
+    // detector needs.
+    let user_msgs: Vec<String> = entries.iter().filter_map(user_text).collect();
+    if !user_msgs.is_empty() {
+        out.user_hash = Some(hash_strings(&user_msgs));
     }
 
     // QUESTION: the LAST AskUserQuestion tool_use, pending iff no later tool_result
@@ -716,5 +796,33 @@ mod tests {
         assert_eq!(msgs[1], "Second\nwith a line");
         // The summary is still the collapsed last message (newlines flattened).
         assert_eq!(act.summary.as_deref(), Some("Second with a line"));
+        // A user-focus hash is present once the user has messaged.
+        assert!(act.user_hash.is_none(), "no user messages in this transcript yet");
+    }
+
+    /// `user_messages` returns only the user's PROSE (string or text-block content),
+    /// skipping assistant turns and tool_result-only user entries.
+    #[test]
+    fn user_messages_extracts_user_prose_only() {
+        let tmp = TempDir::new("usermsgs");
+        let path = write_transcript(
+            tmp.path(),
+            "proj",
+            "sess-U",
+            &[
+                serde_json::json!({"type":"user","message":{"role":"user","content":"Fix the parser bug"}}),
+                assistant(serde_json::json!([{"type":"text","text":"on it"}])),
+                // A tool_result-only user entry is NOT a user message.
+                serde_json::json!({"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}),
+                serde_json::json!({"type":"user","message":{"role":"user","content":[{"type":"text","text":"Now add tests"}]}}),
+            ],
+        );
+        let msgs = user_messages(&path);
+        assert_eq!(msgs, vec!["Fix the parser bug".to_string(), "Now add tests".to_string()]);
+
+        // And the activity user_hash is populated + stable for the same content.
+        let act = summarize_transcript(&path);
+        assert!(act.user_hash.is_some());
+        assert_eq!(act.user_hash, summarize_transcript(&path).user_hash);
     }
 }

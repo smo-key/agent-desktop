@@ -132,6 +132,80 @@ fn open_in_editor(path: String) -> Result<(), String> {
         .map_err(|e| format!("open -a Cursor {path}: {e}"))
 }
 
+/// Generate a short session FOCUS title from the user's messages, using Claude
+/// Haiku. Locates the session transcript, extracts the user's prose messages, and
+/// asks `claude -p --model haiku` for a <=6-word title (e.g. "SKIPA-45: Fix
+/// Feature"). Returns `None` when the user has sent nothing yet. Runs on Tauri's
+/// command worker thread (the blocking model call never blocks the UI); the
+/// frontend gates calls on the `user_hash` so a title is regenerated only when the
+/// user's messages actually change.
+#[tauri::command]
+fn session_focus(session_id: String, cwd: Option<String>) -> Result<Option<String>, String> {
+    let projects_base =
+        activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
+    let pane = PaneRef {
+        pane_id: String::new(),
+        session_id: Some(session_id),
+        cwd,
+    };
+    let Some(transcript) = activity::find_transcript(&projects_base, &pane) else {
+        return Ok(None);
+    };
+    let msgs = activity::user_messages(&transcript);
+    if msgs.is_empty() {
+        return Ok(None);
+    }
+    // Bound the prompt: the last 40 user messages, each clipped.
+    let joined: String = msgs
+        .iter()
+        .rev()
+        .take(40)
+        .rev()
+        .map(|m| {
+            let one = m.split_whitespace().collect::<Vec<_>>().join(" ");
+            one.chars().take(500).collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n- ");
+    let prompt = format!(
+        "You label coding sessions. Read the user's messages to an AI coding agent \
+         below and reply with ONE short title (at most 6 words) naming the session's \
+         focus — for example \"SKIPA-45: Fix Feature\" or \"Improve frontend dialog \
+         handling\". Reply with ONLY the title: no quotes, no trailing punctuation, no \
+         preamble.\n\nMessages:\n- {joined}"
+    );
+
+    // Spawn a normal `claude -p` (reuses the user's auth) with the Haiku model. Seed
+    // a GUI-friendly PATH so `claude` resolves from a sparse app env (mirrors the
+    // PTY's seed_env). No cwd is set, so the project's CLAUDE.md isn't loaded.
+    let path = std::env::var("PATH")
+        .unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string());
+    let mut cmd = std::process::Command::new("claude");
+    cmd.args(["-p", "--model", "haiku", &prompt]);
+    cmd.env("PATH", path);
+    if let Ok(home) = std::env::var("HOME") {
+        cmd.env("HOME", home);
+    }
+    let output = cmd.output().map_err(|e| format!("spawn claude: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "claude exited {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let title = raw
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .trim_matches(|c| c == '"' || c == '\'' || c == '.')
+        .trim();
+    let title: String = title.chars().take(60).collect();
+    Ok((!title.is_empty()).then_some(title))
+}
+
 /// Resize a pane's PTY (delivers SIGWINCH to the child).
 #[tauri::command]
 fn pty_resize(
@@ -525,6 +599,7 @@ pub fn run() {
             pty_resize,
             pty_kill,
             open_in_editor,
+            session_focus,
             layout_load,
             layout_save,
             recents_load,

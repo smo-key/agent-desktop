@@ -17,6 +17,7 @@
   import { subagents, type SessionRef } from '$lib/overview/subagents.svelte';
   import { activity, type PaneRef } from '$lib/overview/activity.svelte';
   import { events } from '$lib/overview/events.svelte';
+  import { titles } from '$lib/overview/titles.svelte';
   import { triggersTranscriptRead, SAFETY_POLL_MS } from '$lib/overview/poll';
   import { appSessionRefs } from '$lib/overview/sessionRefs';
   import { type SpatialDir } from '$lib/layout/tree';
@@ -63,7 +64,7 @@
     // Prime TRANSCRIPT ACTIVITY once on mount (each claude pane's last message +
     // any pending question, read from its transcript by cwd). Event-driven reads
     // (below) keep it fresh, with a slow safety poll as the backstop.
-    void activity.refresh(currentPaneRefs());
+    void refreshActivity();
 
     // Start the EVENT pipeline store: seed each pane's timeline (ring → durable
     // sink → transcript backfill, resolved in Rust), then subscribe to live
@@ -71,7 +72,7 @@
     // changed (a tool completing / a turn ending) triggers an immediate transcript
     // read — replacing the old fixed 1.5s poll.
     events.onEvent = (ev) => {
-      if (triggersTranscriptRead(ev.hookEventName)) void activity.refresh(currentPaneRefs());
+      if (triggersTranscriptRead(ev.hookEventName)) void refreshActivity();
     };
     let unlistenEvents: (() => void) | undefined;
     void events.start(currentPaneRefs()).then((unlisten) => {
@@ -109,6 +110,16 @@
     return refs;
   }
 
+  // Refresh transcript activity, then ask the titles store to regenerate any Haiku
+  // session title whose user-messages hash changed (gated + throttled in the store,
+  // so this is cheap to call often).
+  async function refreshActivity(): Promise<void> {
+    const refs = currentPaneRefs();
+    if (refs.length === 0) return;
+    await activity.refresh(refs);
+    titles.refresh(refs, (paneId) => activity.forPane(paneId).userHash, Date.now());
+  }
+
   // The app's set of launched session ids (sorted, de-duped), used to keep the
   // subagents watched-set current as panes come and go.
   const ourSessionIds = $derived(appSessionIds(snapshots.byPane));
@@ -129,8 +140,7 @@
   // retired in favour of SAFETY_POLL_MS.
   $effect(() => {
     const id = setInterval(() => {
-      const refs = currentPaneRefs();
-      if (refs.length > 0) void activity.refresh(refs);
+      void refreshActivity();
     }, SAFETY_POLL_MS);
     return () => clearInterval(id);
   });
