@@ -24,7 +24,8 @@ function fakeHandle(opts: { alive?: boolean } = {}) {
       if (!alive) return false;
       sent.push(text);
       return true;
-    }
+    },
+    sendKeys: (): boolean => alive
   };
   return { handle, sent };
 }

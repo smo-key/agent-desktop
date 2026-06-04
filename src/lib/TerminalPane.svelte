@@ -7,7 +7,12 @@
   import { registerTerminal, unregisterTerminal } from './layout/terminals';
   import { getUsagePaths } from './usage/paths';
   import { buildSpawnOverride } from './usage/spawn';
-  import { InitialInputSender, SUBMIT_DELAY_MS } from './launcher/initialInput';
+  import {
+    InitialInputSender,
+    SUBMIT_DELAY_MS,
+    READY_QUIET_MS,
+    READY_MAX_MS
+  } from './launcher/initialInput';
   import { noteOutput, noteExit, clearRuntime } from './overview/runtime';
 
   // PtyEvent — the exact wire shape the Rust backend streams over the per-pane
@@ -58,7 +63,12 @@
      * NEVER synthesizes a slash command; a prompt beginning with `/` is passed
      * through verbatim. See src/lib/launcher/initialInput.ts.
      */
-    initialInput = undefined as string | undefined
+    initialInput = undefined as string | undefined,
+    /**
+     * OPTIONAL app-owned Claude session id (claude panes only). Injected as
+     * `--session-id <id>` so the overview can locate this exact agent's transcript.
+     */
+    sessionId = undefined as string | undefined
   }: {
     paneId: string;
     program?: string;
@@ -68,6 +78,7 @@
     deferFit?: boolean;
     visible?: boolean;
     initialInput?: string;
+    sessionId?: string;
   } = $props();
 
   // Single-shot sender for the optional initial prompt. Constructed in onMount
@@ -76,6 +87,9 @@
   // re-renders so the prompt is delivered at most once (guard against
   // double-send). The app never synthesizes a command — only the user's text.
   let initialInputSender: InitialInputSender | undefined;
+  // Initial-prompt delivery timers (component-scoped so teardown can clear them).
+  let quietTimer: ReturnType<typeof setTimeout> | undefined;
+  let maxTimer: ReturnType<typeof setTimeout> | undefined;
 
   // The host element xterm renders into.
   let host: HTMLDivElement;
@@ -184,17 +198,27 @@
     // spawn-time value; later prop changes must not re-send it).
     initialInputSender = new InitialInputSender(initialInput);
 
-    // Initial-prompt delivery is gated on claude's FIRST output (its TUI is up)
-    // and attempted at most once. Writing the prompt before the TUI is ready left
-    // the line typed-but-unsubmitted (the trailing Enter was swallowed), so we
-    // wait for the first byte, write the verbatim text, then write the submitting
-    // Enter as a SEPARATE write after a short settle (see initialInput.ts).
-    let firstOutputSeen = false;
-    let initialAttempted = false;
+    // Initial-prompt delivery waits for claude's startup output to go QUIET — the
+    // TUI emits a burst of setup/render output on launch and is NOT yet accepting
+    // input during it; writing then left the text garbled and the Enter swallowed
+    // (the "work never starts, shows as needs attention" symptom). We arm a quiet
+    // timer that each output byte resets; once output is quiet for READY_QUIET_MS
+    // (claude is idle at the ready input box) we write the verbatim text, then the
+    // submitting Enter as a SEPARATE write after a settle. A hard cap forces
+    // delivery if output never goes quiet. Delivered at most once.
+    let initialDelivered = false;
+
     const deliverInitial = () => {
-      if (initialAttempted) return;
-      if (!firstOutputSeen || ptyId === undefined) return;
-      initialAttempted = true;
+      if (initialDelivered) return;
+      // Not wired yet — re-arm and wait (the quiet timer may have fired between
+      // spawn round-trips before ptyId was set).
+      if (ptyId === undefined) {
+        armInitial();
+        return;
+      }
+      initialDelivered = true;
+      if (quietTimer) clearTimeout(quietTimer);
+      if (maxTimer) clearTimeout(maxTimer);
       initialInputSender?.deliver(
         (data) => {
           if (ptyId === undefined) return;
@@ -202,6 +226,16 @@
         },
         (run) => setTimeout(run, SUBMIT_DELAY_MS)
       );
+    };
+
+    // (Re)start the quiet window; start the hard cap once. Called when the PTY is
+    // wired and on every output byte (so a fresh byte defers delivery until the
+    // output settles). No-op once delivered or when there is no prompt to send.
+    const armInitial = () => {
+      if (initialDelivered || !initialInputSender?.hasPrompt) return;
+      if (quietTimer) clearTimeout(quietTimer);
+      quietTimer = setTimeout(deliverInitial, READY_QUIET_MS);
+      if (maxTimer === undefined) maxTimer = setTimeout(deliverInitial, READY_MAX_MS);
     };
 
     (async () => {
@@ -252,10 +286,8 @@
           // and, on the first byte, deliver any pending initial prompt now that
           // claude's TUI has begun rendering.
           noteOutput(paneId, Date.now());
-          if (!firstOutputSeen) {
-            firstOutputSeen = true;
-            deliverInitial();
-          }
+          // Defer initial-prompt delivery until output settles (TUI ready).
+          armInitial();
         } else {
           exited = true;
           // Record the exit for the overview status (finished vs errored, by code).
@@ -280,6 +312,7 @@
         program,
         args,
         paneId,
+        sessionId,
         usagePaths
       });
 
@@ -301,10 +334,10 @@
         return;
       }
       ptyId = id;
-      // If claude's first output already arrived while we were awaiting the spawn
-      // round-trip, deliver the pending initial prompt now (the data handler's own
-      // attempt was a no-op because ptyId was not yet set).
-      deliverInitial();
+      // Arm the initial-prompt quiet timer now the PTY is wired (output may have
+      // already begun arriving while we awaited the spawn round-trip). Delivery
+      // happens once claude's startup output goes quiet.
+      armInitial();
 
       // Expose a Copy/Paste handle for the pane context menu (decoupled from the
       // xterm instance). Unregistered in onDestroy.
@@ -328,6 +361,17 @@
           void invoke('pty_write', {
             id: ptyId,
             data: Array.from(new TextEncoder().encode(text + '\r'))
+          }).catch(() => {});
+          return true;
+        },
+        // Answer-an-interactive-menu (agent-overview): write raw bytes VERBATIM
+        // (arrow/Enter sequences) to the live TUI, with no appended carriage return.
+        // Returns false when there is no live PTY to write to.
+        sendKeys: (data: string): boolean => {
+          if (ptyId === undefined || !data) return false;
+          void invoke('pty_write', {
+            id: ptyId,
+            data: Array.from(new TextEncoder().encode(data))
           }).catch(() => {});
           return true;
         }
@@ -361,9 +405,9 @@
       // during the async spawn.
       safeFit();
 
-      // NB: the OPTIONAL initial prompt is delivered by `deliverInitial()` —
-      // gated on claude's first output (TUI up), with the text and the submitting
-      // Enter sent as two separate writes — not here, so the Enter actually submits.
+      // NB: the OPTIONAL initial prompt is delivered by `deliverInitial()` once
+      // claude's startup output goes quiet (TUI ready), with the text and the
+      // submitting Enter sent as two separate writes — not here.
     })();
 
     // onMount's returned cleanup runs synchronously on destroy; we set the flag so
@@ -382,6 +426,10 @@
     // Drop this pane's overview runtime entry so a closed pane leaves no stale
     // status behind (a removed pane should simply vanish from the roster).
     clearRuntime(paneId);
+
+    // Cancel any pending initial-prompt delivery timers.
+    if (quietTimer) clearTimeout(quietTimer);
+    if (maxTimer) clearTimeout(maxTimer);
 
     ro?.disconnect();
     ro = undefined;

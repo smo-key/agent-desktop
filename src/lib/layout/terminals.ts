@@ -24,6 +24,14 @@ export interface TerminalHandle {
    * caller never reports a false success against a dead agent.
    */
   send(text: string): boolean;
+  /**
+   * Write RAW bytes to the pane's PTY VERBATIM — no trailing carriage return, no
+   * transformation. Used to answer an interactive menu (e.g. a pending
+   * `AskUserQuestion`) by sending navigation/control sequences (arrow keys, Enter)
+   * straight to the live TUI. Returns `true` when written to a live PTY, `false`
+   * when the pane's process has exited / no PTY is wired.
+   */
+  sendKeys(data: string): boolean;
 }
 
 const handles = new Map<string, TerminalHandle>();

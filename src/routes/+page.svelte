@@ -12,7 +12,6 @@
   import { appSessionIds } from '$lib/usage/appSessions';
   import UsageBar from '$lib/usage/UsageBar.svelte';
   import Overview from '$lib/overview/Overview.svelte';
-  import Windows from '$lib/overview/Windows.svelte';
   import { runtimeMap } from '$lib/overview/runtime';
   import { view, type ViewMode } from '$lib/overview/view.svelte';
   import { subagents, type SessionRef } from '$lib/overview/subagents.svelte';
@@ -25,7 +24,6 @@
   // The top-level view segments (title-bar control). Order matches `view.cycle()`.
   const viewSegments: { mode: ViewMode; label: string }[] = [
     { mode: 'overview', label: 'Overview' },
-    { mode: 'windows', label: 'Windows' },
     { mode: 'grid', label: 'Grid' }
   ];
 
@@ -361,8 +359,6 @@
        the live xterm tails of those same mounted panes. -->
   {#if view.isOverview}
     <Overview />
-  {:else if view.isWindows}
-    <Windows />
   {/if}
   {:else}
     <!-- Minimal splash while the persisted layout is restoring; replaced by the
