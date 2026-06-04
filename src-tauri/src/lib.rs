@@ -1,3 +1,5 @@
+pub mod activity;
+pub mod events;
 pub mod pty;
 pub mod subagents;
 pub mod task;
@@ -11,9 +13,10 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
+use activity::{Activity, PaneRef};
+use events::{AgentEvent, EventState, EVENT_EVENT};
 use pty::{PaneId, PtyEvent, PtyManager, SpawnConfig};
 use subagents::{SessionRef, Subagent, SubagentsWatcher, SUBAGENTS_EVENT};
-use task::{ForeignSession, ForeignWatcher, FOREIGN_EVENT};
 use usage::{Snapshot, SnapshotWatcher, SNAPSHOT_EVENT};
 
 use std::collections::HashMap;
@@ -24,6 +27,9 @@ const LAYOUT_FILE: &str = "layout.json";
 /// Basename of the persisted recent-folders file (sibling of `layout.json`).
 const RECENTS_FILE: &str = "recents.json";
 
+/// Basename of the persisted projects file (sibling of `layout.json`).
+const PROJECTS_FILE: &str = "projects.json";
+
 /// The statusline wrapper source, version-controlled under `src-tauri/resources`
 /// and baked into the binary. Installed verbatim to `<app_data_dir>/bin/` on
 /// setup so a session can be launched with
@@ -32,15 +38,28 @@ const RECENTS_FILE: &str = "recents.json";
 /// shebang regardless of the host project's module type.
 const STATUSLINE_WRAPPER_SRC: &str = include_str!("../resources/statusline-wrapper.cjs");
 
+/// The baked event-hook source (installed beside the wrapper). It is wired into
+/// the FULL hook lifecycle event set and delivers each normalized event over the
+/// app-hosted Unix socket, feeding the overview's event-sourced status + per-tool
+/// timeline (see `events.rs`).
+const EVENT_HOOK_SRC: &str = include_str!("../resources/event-hook.cjs");
+
 /// Subdir (under app-data) holding the installed wrapper executable.
 const BIN_DIR: &str = "bin";
 /// Installed wrapper basename. Kept as `.js` (the name the spec/`--settings`
 /// command reference); standalone with no sibling package.json `node` treats a
 /// `.js` file as CommonJS, so the CommonJS source runs correctly.
 const WRAPPER_FILE: &str = "statusline-wrapper.js";
+/// Installed event-hook basename (a standalone `.js`, run via its shebang).
+const EVENT_HOOK_FILE: &str = "event-hook.js";
 /// Subdir (under app-data) the wrapper writes per-pane snapshots into and the
 /// `SnapshotWatcher` watches.
 const SNAPSHOT_DIR: &str = "snapshots";
+/// Subdir (under app-data) holding the durable per-session event logs the event
+/// pipeline appends to (`events/<sessionId>.jsonl`).
+const EVENTS_DIR: &str = "events";
+/// Basename (under app-data) of the Unix-domain socket the event hook delivers to.
+const SOCKET_FILE: &str = "events.sock";
 
 /// Absolute paths the frontend needs to launch sessions wired into the usage
 /// dashboard. Serialized camelCase for the JS side.
@@ -53,6 +72,13 @@ pub struct UsagePaths {
     /// Absolute path to the snapshots dir — passed as `AGENT_DESKTOP_SNAPSHOT_DIR`
     /// in the spawned process env and watched by the `SnapshotWatcher`.
     pub snapshot_dir: String,
+    /// Absolute path to the installed `event-hook.js` — goes verbatim into the
+    /// `--settings` `hooks` config (the full lifecycle event set) of every spawned
+    /// session so the overview's status + per-tool timeline are event-sourced.
+    pub event_hook_path: String,
+    /// Absolute path to the app-hosted Unix socket the event hook delivers to —
+    /// passed as `AGENT_DESKTOP_SOCKET_PATH` in the spawned process env.
+    pub socket_path: String,
 }
 
 /// Spawn a PTY-backed process for a pane. Output is streamed to the frontend
@@ -174,6 +200,20 @@ fn recents_save(app: AppHandle, json: String) -> Result<(), String> {
     write_app_data_json(&app, RECENTS_FILE, &json)
 }
 
+/// Load the persisted projects JSON (sibling `projects.json`), or `None` when no
+/// file exists yet. The frontend parses tolerantly (empty list on any malformed
+/// input), so a read error other than not-found is the only failure surfaced here.
+#[tauri::command]
+fn projects_load(app: AppHandle) -> Result<Option<String>, String> {
+    read_app_data_json(&app, PROJECTS_FILE)
+}
+
+/// Atomically persist the projects JSON (see [`write_app_data_json`]).
+#[tauri::command]
+fn projects_save(app: AppHandle, json: String) -> Result<(), String> {
+    write_app_data_json(&app, PROJECTS_FILE, &json)
+}
+
 /// Resolve `<app_data_dir>`, creating it if needed.
 fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
@@ -203,18 +243,45 @@ pub fn install_usage_assets_in(base: &std::path::Path) -> Result<UsagePaths, Str
     let bin = base.join(BIN_DIR);
     fs::create_dir_all(&bin).map_err(|e| format!("create_dir_all {bin:?}: {e}"))?;
 
-    let wrapper = bin.join(WRAPPER_FILE);
-    // Unique per-call tmp name (pid + a nanosecond timestamp), mirroring the
-    // wrapper's own `.tmp` naming, so two concurrent installs (e.g. setup + a
-    // `usage_paths` call) can never collide on the same tmp path before rename.
+    // Install both baked scripts atomically (sibling `.tmp` + rename, mode 0755).
+    let wrapper = install_executable(&bin, WRAPPER_FILE, STATUSLINE_WRAPPER_SRC)?;
+    let event_hook = install_executable(&bin, EVENT_HOOK_FILE, EVENT_HOOK_SRC)?;
+
+    let snapshots = base.join(SNAPSHOT_DIR);
+    fs::create_dir_all(&snapshots).map_err(|e| format!("create_dir_all {snapshots:?}: {e}"))?;
+
+    // Ensure the durable events dir exists; the socket lives at the app-data root.
+    let events = base.join(EVENTS_DIR);
+    fs::create_dir_all(&events).map_err(|e| format!("create_dir_all {events:?}: {e}"))?;
+
+    Ok(UsagePaths {
+        wrapper_path: wrapper.to_string_lossy().into_owned(),
+        snapshot_dir: snapshots.to_string_lossy().into_owned(),
+        event_hook_path: event_hook.to_string_lossy().into_owned(),
+        socket_path: base.join(SOCKET_FILE).to_string_lossy().into_owned(),
+    })
+}
+
+/// Write a baked script to `<bin>/<file>` executably (mode 0755 on Unix) via a
+/// unique sibling `.tmp` + atomic rename, so a concurrent launch never reads a
+/// half-written file. Returns the installed path. Idempotent (rewritten each call,
+/// so an app update ships the latest source).
+fn install_executable(
+    bin: &std::path::Path,
+    file: &str,
+    src: &str,
+) -> Result<std::path::PathBuf, String> {
+    let dest = bin.join(file);
+    // Unique per-call tmp name (pid + a nanosecond timestamp) so two concurrent
+    // installs (e.g. setup + a `usage_paths` call) never collide before rename.
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let tmp = bin.join(format!("{WRAPPER_FILE}.{}.{nanos}.tmp", std::process::id()));
-    fs::write(&tmp, STATUSLINE_WRAPPER_SRC).map_err(|e| format!("write {tmp:?}: {e}"))?;
+    let tmp = bin.join(format!("{file}.{}.{nanos}.tmp", std::process::id()));
+    fs::write(&tmp, src).map_err(|e| format!("write {tmp:?}: {e}"))?;
 
-    // Make the wrapper executable (it runs via its `#!/usr/bin/env node` shebang).
+    // Make it executable (it runs via its `#!/usr/bin/env node` shebang).
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -222,15 +289,8 @@ pub fn install_usage_assets_in(base: &std::path::Path) -> Result<UsagePaths, Str
             .map_err(|e| format!("chmod {tmp:?}: {e}"))?;
     }
 
-    fs::rename(&tmp, &wrapper).map_err(|e| format!("rename {tmp:?} -> {wrapper:?}: {e}"))?;
-
-    let snapshots = base.join(SNAPSHOT_DIR);
-    fs::create_dir_all(&snapshots).map_err(|e| format!("create_dir_all {snapshots:?}: {e}"))?;
-
-    Ok(UsagePaths {
-        wrapper_path: wrapper.to_string_lossy().into_owned(),
-        snapshot_dir: snapshots.to_string_lossy().into_owned(),
-    })
+    fs::rename(&tmp, &dest).map_err(|e| format!("rename {tmp:?} -> {dest:?}: {e}"))?;
+    Ok(dest)
 }
 
 /// Return the absolute wrapper path + snapshot dir for launching sessions wired
@@ -265,58 +325,6 @@ fn start_usage_watcher(app: &AppHandle) -> Result<SnapshotWatcher, String> {
         // frontend re-seeds via `usage_snapshots` on mount.
         if let Err(e) = handle.emit(SNAPSHOT_EVENT, &snap) {
             log::warn!("emit {SNAPSHOT_EVENT} failed: {e}");
-        }
-    })
-}
-
-/// The shared app-session exclude-set, held in Tauri-managed state. The frontend
-/// keeps it current via the `foreign_sessions` command (passing its app-launched
-/// pane session ids); the foreign watcher reads it on every recompute so it never
-/// double-counts an app pane as a foreign session.
-#[derive(Default)]
-struct AppSessionsState(task::AppSessions);
-
-/// Return the current set of FOREIGN Claude sessions (running outside the app),
-/// after updating the shared exclude-set to `app_session_ids` (the session ids of
-/// the caller's app-launched panes). Watches the live `~/.claude/tasks/` +
-/// `$TMPDIR/claude-ctx-*.json`; the returned list EXCLUDES every id in
-/// `app_session_ids` so the app does not double-count its own panes. Used both to
-/// SEED the frontend on mount and to push the exclude-set whenever the app's pane
-/// set changes (subsequent live updates arrive over the `usage://foreign` event).
-/// A missing tasks dir yields an empty list, never an error.
-#[tauri::command]
-fn foreign_sessions(
-    state: State<'_, AppSessionsState>,
-    app_session_ids: Vec<String>,
-) -> Result<Vec<ForeignSession>, String> {
-    // Update the shared exclude-set so the watcher's next recompute uses it too.
-    {
-        let mut guard = state.0.lock().map_err(|_| "app-sessions lock poisoned")?;
-        *guard = app_session_ids.into_iter().collect();
-    }
-    let tasks_base =
-        task::default_tasks_base().ok_or("HOME unset; cannot locate ~/.claude/tasks")?;
-    let tmp_dir = task::default_tmp_dir();
-    let app = state.0.lock().map_err(|_| "app-sessions lock poisoned")?;
-    Ok(task::compute_foreign_sessions(&tasks_base, &tmp_dir, &app))
-}
-
-/// Start the foreign-session watcher over `~/.claude/tasks/` + `$TMPDIR`,
-/// emitting the (filtered) foreign list to the frontend over `usage://foreign`.
-/// Shares `app_sessions` with the `foreign_sessions` command so the exclude-set is
-/// always current. The returned [`ForeignWatcher`] is held in managed state for
-/// the app's lifetime and dropped cleanly on exit.
-fn start_foreign_watcher(
-    app: &AppHandle,
-    app_sessions: task::AppSessions,
-) -> Result<ForeignWatcher, String> {
-    let tasks_base =
-        task::default_tasks_base().ok_or("HOME unset; cannot locate ~/.claude/tasks")?;
-    let tmp_dir = task::default_tmp_dir();
-    let handle = app.clone();
-    task::start_foreign_watcher(&tasks_base, &tmp_dir, app_sessions, move |list| {
-        if let Err(e) = handle.emit(FOREIGN_EVENT, &list) {
-            log::warn!("emit {FOREIGN_EVENT} failed: {e}");
         }
     })
 }
@@ -376,6 +384,53 @@ fn start_subagents_watcher(
     })
 }
 
+/// Return the `pane_id -> Activity` map (last assistant message + any pending
+/// question) for the caller's app panes. Each pane supplies its `{paneId, cwd}`;
+/// the cwd locates the agent's transcript (the newest `*.jsonl` under
+/// `~/.claude/projects/<encoded-cwd>/`), so this is INDEPENDENT of the statusline
+/// snapshot — the frontend polls it on a short clock. A pane with no cwd or no
+/// transcript is simply absent from the map.
+#[tauri::command]
+fn activity_for(panes: Vec<PaneRef>) -> Result<HashMap<String, Activity>, String> {
+    let projects_base =
+        activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
+    Ok(activity::activity_for_panes(&projects_base, &panes))
+}
+
+/// Return the `pane_id -> [AgentEvent]` timeline for the caller's app panes, used
+/// to SEED the overview's event store on mount/resume. For each pane the events
+/// come from the in-memory ring (hot cache) first, then the durable per-session
+/// sink (`events/<sessionId>.jsonl`) so a `claude --resume` shows its prior
+/// timeline, then — for a session predating the event pipeline (no sink) — a
+/// completed-tool timeline reconstructed from its transcript. A pane with no
+/// session id, or no events anywhere, maps to an empty list.
+#[tauri::command]
+fn events_for(
+    state: State<'_, Arc<EventState>>,
+    panes: Vec<PaneRef>,
+) -> Result<HashMap<String, Vec<AgentEvent>>, String> {
+    let projects_base = activity::projects_base();
+    let mut map = HashMap::new();
+    for pane in &panes {
+        let Some(sid) = pane.session_id.as_deref() else {
+            continue;
+        };
+        let mut timeline = state.ring_for(&pane.pane_id);
+        if timeline.is_empty() {
+            timeline = state.sink_for(sid);
+        }
+        if timeline.is_empty() {
+            if let Some(base) = projects_base.as_ref() {
+                if let Some(transcript) = activity::find_transcript(base, pane) {
+                    timeline = events::backfill_from_transcript(&transcript, &pane.pane_id, sid);
+                }
+            }
+        }
+        map.insert(pane.pane_id.clone(), timeline);
+    }
+    Ok(map)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -410,19 +465,6 @@ pub fn run() {
                 }
                 Err(e) => log::warn!("start_usage_watcher failed: {e}"),
             }
-            // Start the foreign-session watcher over ~/.claude/tasks/ + $TMPDIR,
-            // sharing the app-session exclude-set with the `foreign_sessions`
-            // command so it never double-counts the app's own panes. Held in
-            // managed state for the app's lifetime; failure is logged but
-            // non-fatal — the frontend still seeds via `foreign_sessions` and
-            // simply won't receive live `usage://foreign` pushes.
-            let app_sessions = app.state::<AppSessionsState>().0.clone();
-            match start_foreign_watcher(app.handle(), app_sessions) {
-                Ok(watcher) => {
-                    app.manage(watcher);
-                }
-                Err(e) => log::warn!("start_foreign_watcher failed: {e}"),
-            }
             // Start the subagents watcher over ~/.claude/projects/, sharing the
             // watched-session set with the `subagents_for` command so a session
             // launched after startup begins surfacing its subagents. Held in
@@ -436,10 +478,33 @@ pub fn run() {
                 }
                 Err(e) => log::warn!("start_subagents_watcher failed: {e}"),
             }
+            // Event pipeline: ALWAYS manage the shared event state (so `events_for`
+            // resolves even if the socket can't bind), prune the durable sink on
+            // boot, then best-effort start the Unix-socket server that emits each
+            // parsed event over `overview://event`. A bind/emit failure is logged
+            // but non-fatal — the overview falls back to transcript/PTW signals.
+            let events_base = app_data_dir(app.handle())
+                .map(|b| b.join(EVENTS_DIR))
+                .unwrap_or_else(|_| std::env::temp_dir().join("agent-desktop-events"));
+            let event_state = Arc::new(EventState::new(events_base));
+            event_state.prune();
+            app.manage(event_state.clone());
+            if let Ok(base) = app_data_dir(app.handle()) {
+                let handle = app.handle().clone();
+                match events::start_event_server(&base.join(SOCKET_FILE), event_state, move |ev| {
+                    if let Err(e) = handle.emit(EVENT_EVENT, &ev) {
+                        log::warn!("emit {EVENT_EVENT} failed: {e}");
+                    }
+                }) {
+                    Ok(server) => {
+                        app.manage(server);
+                    }
+                    Err(e) => log::warn!("start_event_server failed: {e}"),
+                }
+            }
             Ok(())
         })
         .manage(Arc::new(PtyManager::new()))
-        .manage(AppSessionsState::default())
         .manage(WatchedSessionsState::default())
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
@@ -450,10 +515,13 @@ pub fn run() {
             layout_save,
             recents_load,
             recents_save,
+            projects_load,
+            projects_save,
             usage_paths,
             usage_snapshots,
-            foreign_sessions,
-            subagents_for
+            subagents_for,
+            activity_for,
+            events_for
         ])
         .on_window_event(|window, event| {
             // Kill + reap every pane on app quit so no zombie/orphan processes
@@ -534,6 +602,25 @@ mod tests {
             .join(BIN_DIR)
             .join("statusline-wrapper.js.tmp")
             .exists());
+
+        // The event hook is installed beside the wrapper (same baked-source +
+        // shebang + 0755 contract) and the durable events dir + socket path are
+        // returned, so the event pipeline is wired at spawn.
+        let hook = PathBuf::from(&paths.event_hook_path);
+        assert_eq!(hook, tmp.path().join(BIN_DIR).join(EVENT_HOOK_FILE));
+        assert!(hook.is_file(), "event hook must exist");
+        let hook_src = fs::read_to_string(&hook).unwrap();
+        assert_eq!(hook_src, EVENT_HOOK_SRC);
+        assert!(hook_src.starts_with("#!/usr/bin/env node"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&hook).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o755, "event hook must be mode 0755");
+        }
+        // The socket path sits at the app-data root and the events dir exists.
+        assert_eq!(PathBuf::from(&paths.socket_path), tmp.path().join(SOCKET_FILE));
+        assert!(tmp.path().join(EVENTS_DIR).is_dir(), "events dir must exist");
     }
 
     #[test]

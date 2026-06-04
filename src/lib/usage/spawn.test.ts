@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSpawnOverride, type UsagePaths } from './spawn';
+import { buildSpawnOverride, quoteCommand, type UsagePaths } from './spawn';
 
 // Tests for the PURE spawn-override helper that wires `claude` panes THROUGH the
 // app-managed statusline wrapper without ever touching the user's global
@@ -9,8 +9,25 @@ import { buildSpawnOverride, type UsagePaths } from './spawn';
 
 const PATHS: UsagePaths = {
   wrapperPath: '/Users/me/Library/Application Support/agent-desktop/bin/statusline-wrapper.js',
-  snapshotDir: '/Users/me/Library/Application Support/agent-desktop/snapshots'
+  snapshotDir: '/Users/me/Library/Application Support/agent-desktop/snapshots',
+  eventHookPath: '/Users/me/Library/Application Support/agent-desktop/bin/event-hook.js',
+  socketPath: '/Users/me/Library/Application Support/agent-desktop/events.sock'
 };
+
+/** The full hook event set the event hook is wired into, with Pre/Post matching all tools. */
+function expectedHooks(eventHookPath: string) {
+  const cmd = { type: 'command', command: `"${eventHookPath}"` };
+  return {
+    SessionStart: [{ hooks: [cmd] }],
+    UserPromptSubmit: [{ hooks: [cmd] }],
+    PreToolUse: [{ matcher: '*', hooks: [cmd] }],
+    PostToolUse: [{ matcher: '*', hooks: [cmd] }],
+    Notification: [{ hooks: [cmd] }],
+    Stop: [{ hooks: [cmd] }],
+    SubagentStop: [{ hooks: [cmd] }],
+    SessionEnd: [{ hooks: [cmd] }]
+  };
+}
 
 describe('buildSpawnOverride', () => {
   // The headline scenario: a claude spawn carries the per-session --settings
@@ -28,18 +45,24 @@ describe('buildSpawnOverride', () => {
 
     expect(claude.args[0]).toBe('--settings');
     const parsed = JSON.parse(claude.args[1]);
-    expect(parsed).toEqual({
-      statusLine: { type: 'command', command: PATHS.wrapperPath }
-    });
+    expect(parsed.remoteControlAtStartup).toBe(false);
+    // Command paths are shell-quoted so the spaced app-data path survives claude's
+    // shell invocation (the wrapper/hook silently never run otherwise).
+    expect(parsed.statusLine).toEqual({ type: 'command', command: `"${PATHS.wrapperPath}"` });
+    // The single event hook is wired into the full lifecycle event set so the
+    // overview's status + per-tool timeline are event-sourced.
+    expect(parsed.hooks).toEqual(expectedHooks(PATHS.eventHookPath));
     // The override is inline JSON (a per-session merge), never a file write —
     // nothing here points at or mutates ~/.claude/settings.json.
     expect(claude.args[1]).not.toContain('settings.json');
     // Existing args are preserved verbatim after the injected ones.
     expect(claude.args.slice(2)).toEqual(['--resume']);
-    // The per-session env reaches the wrapper (statusLine.command).
+    // The per-session env reaches the wrapper (statusLine.command) and the event
+    // hook (AGENT_DESKTOP_SOCKET_PATH).
     expect(claude.env).toEqual([
       ['AGENT_DESKTOP_PANE', 'pane-xyz'],
-      ['AGENT_DESKTOP_SNAPSHOT_DIR', PATHS.snapshotDir]
+      ['AGENT_DESKTOP_SNAPSHOT_DIR', PATHS.snapshotDir],
+      ['AGENT_DESKTOP_SOCKET_PATH', PATHS.socketPath]
     ]);
 
     // shell: no --settings override, no AGENT_DESKTOP_* env — spawns unchanged,
@@ -62,12 +85,45 @@ describe('buildSpawnOverride', () => {
       paneId: 'p1',
       usagePaths: PATHS
     });
-    // The override object contains ONLY statusLine.command — no other keys — so
-    // `claude --settings` merges it per-key over the user's settings.json,
-    // leaving every other key (e.g. permissions.allow) in effect.
+    // The override object contains ONLY `remoteControlAtStartup` (keep the
+    // transcript local), `statusLine.command` (the snapshot wrapper), and `hooks`
+    // (the AskUserQuestion sidecar) — no other keys — so `claude --settings` merges
+    // it per-key over the user's settings.json, leaving every other key (e.g.
+    // permissions.allow) in effect.
     const parsed = JSON.parse(args[1]);
-    expect(Object.keys(parsed)).toEqual(['statusLine']);
-    expect(parsed.statusLine.command).toBe(PATHS.wrapperPath);
+    expect(Object.keys(parsed)).toEqual(['remoteControlAtStartup', 'statusLine', 'hooks']);
+    expect(parsed.remoteControlAtStartup).toBe(false);
+    expect(parsed.statusLine.command).toBe(`"${PATHS.wrapperPath}"`);
+    expect(parsed.hooks.PreToolUse[0].matcher).toBe('*');
+    expect(parsed.hooks.PreToolUse[0].hooks[0].command).toBe(`"${PATHS.eventHookPath}"`);
+  });
+
+  it('Full event set registered at spawn', () => {
+    // The event hook is registered for every lifecycle event, Pre/PostToolUse
+    // match ALL tools, and the socket path reaches the spawned process env.
+    const { args, env } = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'pane-full',
+      sessionId: 'sess-full',
+      usagePaths: PATHS
+    });
+    const parsed = JSON.parse(args[args.indexOf('--settings') + 1]);
+    expect(parsed.hooks).toEqual(expectedHooks(PATHS.eventHookPath));
+    expect(Object.keys(parsed.hooks)).toEqual([
+      'SessionStart',
+      'UserPromptSubmit',
+      'PreToolUse',
+      'PostToolUse',
+      'Notification',
+      'Stop',
+      'SubagentStop',
+      'SessionEnd'
+    ]);
+    expect(parsed.hooks.PreToolUse[0].matcher).toBe('*');
+    expect(parsed.hooks.PostToolUse[0].matcher).toBe('*');
+    const map = new Map(env);
+    expect(map.get('AGENT_DESKTOP_SOCKET_PATH')).toBe(PATHS.socketPath);
   });
 
   it('Pane id passed into the spawned process env', () => {
@@ -83,16 +139,70 @@ describe('buildSpawnOverride', () => {
   });
 
   it('claude spawns unwrapped when usage paths are unavailable', () => {
-    // If the wrapper path could not be resolved, claude still launches — just
-    // without the override — rather than failing the session.
+    // If the wrapper path could not be resolved, claude still launches WITHOUT the
+    // statusline wrapper or its env — but it ALWAYS carries the inline `--settings`
+    // disabling remote-control, so the transcript stays local + complete for the
+    // overview's activity (a missing wrapper must never bridge the session away).
     const { args, env } = buildSpawnOverride({
       program: 'claude',
       args: ['--resume'],
       paneId: 'p1',
       usagePaths: null
     });
-    expect(args).toEqual(['--resume']);
+    expect(args).toEqual(['--settings', '{"remoteControlAtStartup":false}', '--resume']);
     expect(env).toBeUndefined();
+  });
+
+  it('Agent launched with an app-owned session id', () => {
+    // A claude pane carries `--session-id <uuid>` (BEFORE --settings) so the
+    // overview can locate this exact agent's transcript; it is injected even when
+    // the wrapper is unavailable (activity is decoupled from the snapshot).
+    const wrapped = buildSpawnOverride({
+      program: 'claude',
+      args: ['--resume'],
+      paneId: 'p1',
+      sessionId: 'sess-uuid-1',
+      usagePaths: PATHS
+    });
+    expect(wrapped.args.slice(0, 2)).toEqual(['--session-id', 'sess-uuid-1']);
+    expect(wrapped.args[2]).toBe('--settings');
+    expect(wrapped.args.slice(-1)).toEqual(['--resume']);
+
+    const unwrapped = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'p1',
+      sessionId: 'sess-uuid-2',
+      usagePaths: null
+    });
+    // Still carries `--session-id` AND the remote-control-disabling `--settings`,
+    // just no statusline wrapper.
+    expect(unwrapped.args).toEqual([
+      '--session-id',
+      'sess-uuid-2',
+      '--settings',
+      '{"remoteControlAtStartup":false}'
+    ]);
+    expect(unwrapped.env).toBeUndefined();
+
+    // A shell pane never gets a session id.
+    const shell = buildSpawnOverride({
+      program: '/bin/zsh',
+      args: [],
+      paneId: 'p1',
+      sessionId: 'ignored',
+      usagePaths: PATHS
+    });
+    expect(shell.args).toEqual([]);
+  });
+
+  it('quoteCommand wraps a spaced app-data path so the shell does not split it', () => {
+    // The real install path: `~/Library/Application Support/…` has a space, which
+    // breaks claude's shell invocation of the command unless quoted.
+    const spaced = '/Users/me/Library/Application Support/agent-desktop/bin/question-hook.js';
+    expect(quoteCommand(spaced)).toBe(`"${spaced}"`);
+    // Chars special inside double quotes are escaped.
+    expect(quoteCommand('/x/$HOME/`b`/"c"/a.js')).toBe('"/x/\\$HOME/\\`b\\`/\\"c\\"/a.js"');
   });
 
   it('does not mutate the input args array', () => {

@@ -1,0 +1,149 @@
+// Event-hook tests (add-activity-event-pipeline, tasks 1.1–1.5).
+//
+// Two layers:
+//  - PURE core (summarize / normalize / extractQuestions) required directly from
+//    the production .cjs and asserted in-process.
+//  - INTEGRATION: the real hook run as a subprocess (its `require.main` path),
+//    delivering over a real Unix socket, and the no-block guarantee when no
+//    socket is listening.
+//
+// Test titles map to the `#### Scenario:` names in
+// openspec/changes/add-activity-event-pipeline/specs/activity-events/spec.md
+// (the coverage gate normalizes both to snake_case).
+
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:net';
+import { createRequire } from 'node:module';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const HOOK = join(HERE, 'event-hook.cjs');
+const require = createRequire(import.meta.url);
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const hook = require('./event-hook.cjs') as typeof import('./event-hook.cjs');
+
+const PANE_ID = 'pane-evt-uuid-0001';
+
+let tmp: string;
+beforeEach(() => {
+  tmp = mkdtempSync(join(tmpdir(), 'agentdesk-evt-'));
+});
+afterEach(() => {
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+describe('event-hook pure core', () => {
+  it('Tool event summarized', () => {
+    expect(hook.summarize('Bash', { command: 'npm test' })).toBe('Bash:npm test');
+    expect(hook.summarize('Edit', { file_path: '/a/b/auth.ts' })).toBe('Edit:auth.ts');
+    expect(hook.summarize('Read', { file_path: '/a/b/c.md' })).toBe('Read:c.md');
+    expect(hook.summarize('Task', { subagent_type: 'code-review' })).toBe('Task:code-review');
+    expect(hook.summarize('mcp__slack__send_message', {})).toBe('mcp:slack/send_message');
+    // Unknown shape falls back to the bare tool name.
+    expect(hook.summarize('SomeFutureTool', { whatever: 1 })).toBe('SomeFutureTool');
+  });
+
+  it('Pending question carried on the event', () => {
+    const evt = {
+      session_id: 'sess-1',
+      hook_event_name: 'PreToolUse',
+      tool_name: 'AskUserQuestion',
+      tool_input: {
+        questions: [
+          {
+            header: 'Approach',
+            question: 'Which one?',
+            multiSelect: false,
+            options: [{ label: 'A', description: 'first' }, { label: 'B', description: '' }]
+          }
+        ]
+      }
+    };
+    const out = hook.normalize(evt, PANE_ID, 1000);
+    expect(out.paneId).toBe(PANE_ID);
+    expect(out.sessionId).toBe('sess-1');
+    expect(out.hookEventName).toBe('PreToolUse');
+    expect(out.toolName).toBe('AskUserQuestion');
+    expect(out.question).toEqual({
+      questions: [
+        {
+          header: 'Approach',
+          question: 'Which one?',
+          multiSelect: false,
+          options: [{ label: 'A', description: 'first' }, { label: 'B', description: '' }]
+        }
+      ]
+    });
+    // A non-question tool carries a summary but no question payload.
+    const other = hook.normalize(
+      { session_id: 's', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } },
+      PANE_ID,
+      2000
+    );
+    expect(other.question).toBeUndefined();
+    expect(other.summary).toBe('Bash:ls');
+    expect(other.ts).toBe(2000);
+  });
+});
+
+describe('event-hook delivery', () => {
+  it('Event delivered as one line', async () => {
+    const socketPath = join(tmp, 'events.sock');
+    const received: string[] = [];
+    const server = createServer((conn) => {
+      let buf = '';
+      conn.on('data', (d) => {
+        buf += d.toString();
+      });
+      conn.on('end', () => received.push(buf));
+    });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+
+    const payload = JSON.stringify({
+      session_id: 'sess-9',
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Edit',
+      tool_input: { file_path: '/repo/src/main.rs' }
+    });
+
+    await new Promise<void>((resolve) => {
+      const child = spawn(process.execPath, [HOOK], {
+        env: { ...process.env, AGENT_DESKTOP_PANE: PANE_ID, AGENT_DESKTOP_SOCKET_PATH: socketPath }
+      });
+      child.stdin.end(payload);
+      child.on('close', () => setTimeout(resolve, 50));
+    });
+
+    server.close();
+    expect(received).toHaveLength(1);
+    // Exactly one newline-terminated JSON line.
+    expect(received[0].endsWith('\n')).toBe(true);
+    expect(received[0].trimEnd().split('\n')).toHaveLength(1);
+    const evt = JSON.parse(received[0]);
+    expect(evt).toMatchObject({
+      paneId: PANE_ID,
+      sessionId: 'sess-9',
+      hookEventName: 'PreToolUse',
+      toolName: 'Edit',
+      summary: 'Edit:main.rs'
+    });
+    expect(typeof evt.ts).toBe('number');
+  });
+
+  it('Socket absent does not block the turn', () => {
+    // No server listening at this path — the hook must still exit 0 quickly.
+    const socketPath = join(tmp, 'nobody-home.sock');
+    const res = spawnSync(process.execPath, [HOOK], {
+      input: JSON.stringify({ session_id: 's', hook_event_name: 'Stop' }),
+      encoding: 'utf8',
+      timeout: 5000,
+      env: { ...process.env, AGENT_DESKTOP_PANE: PANE_ID, AGENT_DESKTOP_SOCKET_PATH: socketPath }
+    });
+    expect(res.status).toBe(0);
+    expect(res.stdout).toBe('{}');
+  });
+});
