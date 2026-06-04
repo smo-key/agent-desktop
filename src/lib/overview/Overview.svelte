@@ -23,14 +23,30 @@
   import { workspace } from '$lib/layout/workspace.svelte';
   import { snapshots } from '$lib/usage/snapshots.svelte';
   import { launcher } from '$lib/launcher/launcherStore.svelte';
-  import { leavesInOrder } from '$lib/layout/tree';
-  import { buildRoster, type RosterWorkspace, type AgentStatus } from './roster';
+  import {
+    buildRoster,
+    groupByLane,
+    LANE_ORDER,
+    type AgentStatus,
+    type AgentLane
+  } from './roster';
+  import { toRosterWorkspaces, toNavWorkspaces } from './rosterInputs';
   import { runtimeMap } from './runtime';
   import { aggregate } from './usage';
   import { messageAgent } from './message';
-  import { navigateTarget, type NavWorkspace } from './navigate';
+  import { answerWithOption, answerWithText } from './answer';
+  import { navigateTarget } from './navigate';
   import { subagents, type Subagent } from './subagents.svelte';
+  import { activity } from './activity.svelte';
+  import { events } from './events.svelte';
   import { view } from './view.svelte';
+  import { projects } from '$lib/projects/projects.svelte';
+  import { projectFilter } from '$lib/projects/projectFilter.svelte';
+  import { filterRowsByProject } from '$lib/projects/projectRollup';
+  import { projectForId } from '$lib/projects/projects';
+  import ProjectPanel from '$lib/projects/ProjectPanel.svelte';
+  import ProjectIcon from '$lib/icons/ProjectIcon.svelte';
+  import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
 
   // A 1-second clock so a card flips working -> waiting (and reflects exits) as the
   // live terminal goes quiet, with no new event needed. Epoch MS to match the
@@ -43,34 +59,43 @@
     return () => clearInterval(id);
   });
 
-  // Project the live workspace store into the framework-free roster input: one
-  // RosterWorkspace per workspace, each pane tagged isApp iff its registry program
-  // is `claude` (only app panes become agent rows — shells are skipped).
-  const rosterWorkspaces = $derived.by<RosterWorkspace[]>(() =>
-    workspace.workspaces.map((entry) => ({
-      id: entry.id,
-      name: entry.name,
-      panes: leavesInOrder(entry.ws.root).map((leaf) => ({
-        paneId: leaf.paneId,
-        cwd: entry.registry[leaf.paneId]?.cwd ?? null,
-        isApp: entry.registry[leaf.paneId]?.program === 'claude'
-      }))
-    }))
-  );
+  // Project the live workspace store into the framework-free roster + nav inputs
+  // (shared with the Windows overview): each pane tagged with cwd / isApp /
+  // projectId, and each workspace's root tree for click-to-navigate.
+  const rosterWorkspaces = $derived(toRosterWorkspaces(workspace.workspaces));
+  const navWorkspaces = $derived(toNavWorkspaces(workspace.workspaces));
 
-  // The same workspaces projected for navigation (id + root tree); the real tree
-  // nodes already satisfy NavNode (leaves carry id + paneId).
-  const navWorkspaces = $derived.by<NavWorkspace[]>(() =>
-    workspace.workspaces.map((entry) => ({ id: entry.id, root: entry.ws.root }))
+  // The FULL live roster (every agent), recomputed when workspaces, snapshots, or
+  // the clock change. `runtimeMap()` is a plain (non-reactive) read of the
+  // imperative PTY-activity registry; the 1-second `nowMs` tick re-runs this so
+  // each agent's status stays current without per-byte reactivity. `allRows` feeds
+  // the project panel's counts; `rows` is the panel-filtered subset we render.
+  const allRows = $derived(
+    buildRoster(
+      snapshots.byPane,
+      rosterWorkspaces,
+      runtimeMap(),
+      nowMs,
+      activity.bySession,
+      undefined,
+      events.activityMap()
+    )
   );
+  const rows = $derived(filterRowsByProject(allRows, projectFilter.selected));
 
-  // The live roster, recomputed when workspaces, snapshots, or the clock change.
-  // `runtimeMap()` is a plain (non-reactive) read of the imperative PTY-activity
-  // registry; the 1-second `nowMs` tick re-runs this derived, so each agent's
-  // working/waiting/finished/error status stays current without per-byte reactivity.
-  const rows = $derived(
-    buildRoster(snapshots.byPane, rosterWorkspaces, runtimeMap(), nowMs)
-  );
+  // The roster partitioned into the three control-room lanes (pure), ordered
+  // top->bottom by how much each agent needs you. Empty lanes are skipped in the
+  // template. Static lane metadata (title + glyph) drives each lane header.
+  const grouped = $derived(groupByLane(rows));
+  const LANES: Record<AgentLane, { title: string; glyph: string }> = {
+    attn: { title: 'Needs attention', glyph: '!' },
+    done: { title: 'Completed', glyph: '✓' },
+    flight: { title: 'In flight', glyph: '▸' }
+  };
+
+  // Count of agents demanding the user's attention — surfaced in the header
+  // subtitle (orange) as the at-a-glance "do I need to act" signal.
+  const attnCount = $derived(grouped.attn.length);
 
   // The header usage rollup: every agent's cost + every available subagent's
   // recorded usage, nulls skipped. Stage 1's `aggregate` consumes the decoupled
@@ -83,6 +108,74 @@
 
   // Per-agent draft message text, keyed by paneId. Cleared on a successful send.
   let drafts = $state<Record<string, string>>({});
+
+  // Per-agent draft FREE-TEXT answer to a pending question, keyed by paneId.
+  let answerDrafts = $state<Record<string, string>>({});
+
+  /** Answer the agent's pending question by selecting option `i` (0-based). The
+   *  hook clears the sidecar on answer, so the callout disappears on the next poll. */
+  function pickOption(paneId: string, optionIndex: number) {
+    answerWithOption(paneId, optionIndex);
+  }
+
+  /** Answer the agent's pending question with the user's own typed text. */
+  function sendAnswer(paneId: string, optionCount: number) {
+    const text = answerDrafts[paneId] ?? '';
+    if (answerWithText(paneId, optionCount, text)) {
+      answerDrafts = { ...answerDrafts, [paneId]: '' };
+    }
+  }
+
+  function onAnswerKey(e: KeyboardEvent, paneId: string, optionCount: number) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      sendAnswer(paneId, optionCount);
+    }
+  }
+
+  // Per-lane collapse state. Completed agents are collapsed by DEFAULT (the user
+  // doesn't want to see finished sessions' detail); click a lane head to toggle.
+  let collapsedLanes = $state<Record<AgentLane, boolean>>({
+    attn: false,
+    flight: false,
+    done: true
+  });
+
+  /** Whether an agent is alive (has a PTY to message) — not finished/errored. */
+  function isAlive(status: AgentStatus): boolean {
+    return status !== 'finished' && status !== 'error';
+  }
+
+  // Right-click context menu for an agent card.
+  let menu = $state<{ open: boolean; x: number; y: number; items: MenuItem[] }>({
+    open: false,
+    x: 0,
+    y: 0,
+    items: []
+  });
+
+  function openAgentMenu(e: MouseEvent, paneId: string, name: string) {
+    e.preventDefault();
+    menu = {
+      open: true,
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { label: 'Open terminal', onClick: () => openAgent(paneId) },
+        {
+          label: 'Close session',
+          danger: true,
+          onClick: () => {
+            const ok =
+              typeof confirm === 'function'
+                ? confirm(`Close "${name}"? Its terminal will be terminated.`)
+                : true;
+            if (ok) workspace.closeAgent(paneId);
+          }
+        }
+      ]
+    };
+  }
 
   /** The subagents nested under an agent: resolved by the agent's session id (the
    *  snapshot's `session_id`), since subagents are keyed by their parent session. */
@@ -125,8 +218,16 @@
 
   // ---- Display helpers (formatting only; no logic) -------------------------
 
-  function modelLabel(model: string | null): string {
-    return model && model.trim() ? model : 'unknown';
+  /** The card's activity line: the explicit in-progress task, else the agent's
+   *  last message (transcript summary), else null (renders as "—"). */
+  function activityLine(row: { task: string | null; summary: string | null }): string | null {
+    return row.task ?? row.summary;
+  }
+
+  /** The {icon,color} for an agent's project avatar (neutral folder when none). */
+  function projAvatar(projectId: string | null): { icon: string; color: string } {
+    const p = projectForId(projects.list, projectId);
+    return p ? { icon: p.icon, color: p.color } : { icon: 'folder', color: '#7B8499' };
   }
 
   function cost(value: number | null): string {
@@ -152,9 +253,20 @@
     }
   }
 
-  /** Statuses that demand the user's attention (prominent card highlight). */
-  function isAttention(status: AgentStatus): boolean {
-    return status === 'waiting' || status === 'error';
+  /** The status-badge variant class (mission-control semantic colors). */
+  function badgeClass(status: AgentStatus): string {
+    switch (status) {
+      case 'working':
+        return 'b-active';
+      case 'waiting':
+        return 'b-review';
+      case 'finished':
+        return 'b-nominal';
+      case 'error':
+        return 'b-abort';
+      default:
+        return 'b-standby';
+    }
   }
 
   /** A subagent's compact usage label: cost if present, else tokens, else "—". */
@@ -172,245 +284,422 @@
   }
 </script>
 
-<section class="overview" aria-label="Agent overview">
-  <!-- Header: title + aggregate cost rollup + new-agent action. -->
-  <header class="head">
-    <div class="head-left">
-      <h1 class="head-title">Agents</h1>
-      <span class="head-count">{rows.length}</span>
-    </div>
+<div class="overview-shell">
+  <!-- Shared project panel: filter the fleet by project + create projects. -->
+  <ProjectPanel rows={allRows} />
 
-    <div class="head-right">
-      <div class="rollup" title="Total cost across all agents and subagents">
-        <span class="rollup-label">total</span>
-        <span class="rollup-value" class:dim={totals.totalCost === null}>
-          {cost(totals.totalCost)}
-        </span>
+  <section class="overview" aria-label="Agent overview">
+  <!-- Control-room header: title + live agent count, an attention subtitle (the
+       at-a-glance "do I need to act" signal, orange), the aggregate cost rollup,
+       and the launch action (⌘N). Sticky so it stays put while lanes scroll. -->
+  <header class="cr-head">
+    <div class="cr-head-in">
+      <img class="cr-logo" src="/logomark.svg" alt="" aria-hidden="true" />
+      <div class="cr-titles">
+        <h1 class="cr-title">Agents <span class="cr-count">{rows.length}</span></h1>
+        <div class="cr-sub">
+          {#if attnCount > 0}
+            <b>{attnCount} need{attnCount === 1 ? 's' : ''} you</b>
+          {:else}
+            All agents running on their own
+          {/if}
+        </div>
       </div>
-      <button type="button" class="new-agent" onclick={newAgent}>
-        <span class="plus" aria-hidden="true">＋</span>
-        New agent
-      </button>
+
+      <div class="cr-actions">
+        <div class="rollup" title="Total cost across all agents and subagents">
+          <span class="rollup-label">total</span>
+          <span class="rollup-value" class:dim={totals.totalCost === null}>
+            {cost(totals.totalCost)}
+          </span>
+        </div>
+        <button type="button" class="btn btn-primary launch-btn" onclick={newAgent}>
+          <span class="plus" aria-hidden="true">＋</span>
+          Launch mission
+          <span class="kbd">⌘N</span>
+        </button>
+      </div>
     </div>
   </header>
 
-  <!-- The roster grid. Empty state when no app pane exists yet. -->
+  <!-- The lanes. Empty state when no app pane exists yet, else one lane block per
+       non-empty lane in attention -> completed -> in-flight order. -->
   {#if rows.length === 0}
     <div class="empty">
-      <p>No agents yet.</p>
-      <button type="button" class="new-agent" onclick={newAgent}>
+      <div class="empty-ic" aria-hidden="true">
+        <img src="/logomark.svg" alt="" />
+      </div>
+      <h3>No agents yet</h3>
+      <p>Launch a mission to dispatch your first agent.</p>
+      <button type="button" class="btn btn-primary" onclick={newAgent}>
         <span class="plus" aria-hidden="true">＋</span>
-        New agent
+        Launch mission
       </button>
     </div>
   {:else}
-    <div class="grid">
-      {#each rows as row (row.paneId)}
-        {@const subs = subagentsFor(row.paneId)}
-        <!-- The card is a clickable region that navigates; the message box stops
-             propagation so typing/sending never triggers navigation. -->
-        <div
-          class="card"
-          class:needs-attention={isAttention(row.status)}
-          role="button"
-          tabindex="0"
-          onclick={() => openAgent(row.paneId)}
-          onkeydown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              openAgent(row.paneId);
-            }
-          }}
-        >
-          <div class="card-head">
-            <span
-              class="status-pill"
-              class:working={row.status === 'working'}
-              class:waiting={row.status === 'waiting'}
-              class:finished={row.status === 'finished'}
-              class:error={row.status === 'error'}
-              class:idle={row.status === 'idle'}
-            >
-              <span class="status-dot" aria-hidden="true"></span>
-              {statusLabel(row.status)}
-            </span>
-            <span class="model">{modelLabel(row.model)}</span>
-          </div>
-
-          <div class="name" title={row.cwd ?? row.name}>{row.name}</div>
-          {#if row.cwd}
-            <div class="cwd" title={row.cwd}>{row.cwd}</div>
-          {/if}
-
-          <div class="task" title={row.task ?? ''}>{row.task ?? '—'}</div>
-
-          <!-- Context bar + cost. -->
-          <div class="meter-row">
-            <div
-              class="context"
-              class:unknown={row.contextPct === null}
-              title={row.contextPct === null
-                ? 'context unknown'
-                : `context ${Math.round(row.contextPct)}%`}
-            >
-              {#if row.contextPct !== null}
-                <div
-                  class="context-fill"
-                  style:width={`${Math.max(0, Math.min(100, row.contextPct))}%`}
-                ></div>
-              {/if}
-            </div>
-            <span class="ctx-pct">{pct(row.contextPct)}</span>
-            <span class="cost" title="Session cost">{cost(row.cost)}</span>
-          </div>
-
-          <!-- Subagents nested under the parent agent. -->
-          {#if subs.length > 0}
-            <ul class="subagents">
-              {#each subs as sub (sub.id)}
-                <li class="subagent" title={sub.label ?? sub.id}>
-                  <span class="sub-dot" aria-hidden="true"></span>
-                  <span class="sub-label">{sub.label ?? sub.id}</span>
-                  {#if sub.status}<span class="sub-status">{sub.status}</span>{/if}
-                  <span class="sub-usage">{subUsage(sub)}</span>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-
-          <!-- Inline message box: Enter or Send delivers to the PTY. Clicks/keys
-               here are stopped so they never navigate the card. -->
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="message"
-            onclick={(e) => e.stopPropagation()}
-            onkeydown={(e) => e.stopPropagation()}
-          >
-            <input
-              class="message-input"
-              type="text"
-              placeholder="Message this agent…"
-              aria-label={`Message ${row.name}`}
-              bind:value={
-                () => drafts[row.paneId] ?? '',
-                (v) => (drafts = { ...drafts, [row.paneId]: v })
-              }
-              onkeydown={(e) => onMessageKey(e, row.paneId)}
-            />
+    <div class="lanes">
+      {#each LANE_ORDER as lane (lane)}
+        {@const laneRows = grouped[lane]}
+        {#if laneRows.length > 0}
+          {@const collapsed = collapsedLanes[lane]}
+          <div class="lane {lane}">
             <button
               type="button"
-              class="send"
-              aria-label="Send message"
-              disabled={(drafts[row.paneId] ?? '').trim().length === 0}
-              onclick={() => sendTo(row.paneId)}
+              class="lane-head"
+              aria-expanded={!collapsed}
+              onclick={() => (collapsedLanes = { ...collapsedLanes, [lane]: !collapsed })}
             >
-              Send
+              <span class="lane-chevron" class:collapsed aria-hidden="true">▾</span>
+              <span class="lane-ic" aria-hidden="true">{LANES[lane].glyph}</span>
+              <span class="lane-title">{LANES[lane].title}</span>
+              <span class="lane-ct">{laneRows.length}</span>
+              <span class="lane-line" aria-hidden="true"></span>
             </button>
+
+            {#if !collapsed}
+            <div class="agrid">
+              {#each laneRows as row (row.paneId)}
+                {@const subs = subagentsFor(row.paneId)}
+                {@const av = projAvatar(row.projectId)}
+                <!-- The card is a clickable region that navigates; the message box
+                     stops propagation so typing/sending never navigates. -->
+                <div
+                  class="acard {lane}"
+                  class:error={row.status === 'error'}
+                  role="button"
+                  tabindex="0"
+                  onclick={() => openAgent(row.paneId)}
+                  oncontextmenu={(e) => openAgentMenu(e, row.paneId, row.name)}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      openAgent(row.paneId);
+                    }
+                  }}
+                >
+                  <div class="ac-top">
+                    <ProjectIcon icon={av.icon} color={av.color} size={30} />
+                    <span class="name" title={row.name}>{row.name}</span>
+                    <span class="badge {badgeClass(row.status)}">
+                      <span class="sdot" aria-hidden="true"></span>
+                      {statusLabel(row.status)}
+                    </span>
+                  </div>
+
+                  <!-- A pending AskUserQuestion: the agent asked YOU and is waiting.
+                       Shown as a prominent callout with its options (click to answer)
+                       and a free-text field. Clicks/keys here stop propagation so
+                       answering never navigates the card. The structured form drives
+                       the FIRST pending question (the one on screen in the TUI); when
+                       only the compact text is available we fall back to a plain
+                       callout. -->
+                  {#if row.questions && row.questions.length > 0}
+                    {@const q = row.questions[0]}
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <div
+                      class="qask"
+                      onclick={(e) => e.stopPropagation()}
+                      onkeydown={(e) => e.stopPropagation()}
+                    >
+                      <div class="qask-head">
+                        <span class="qask-ic" aria-hidden="true">?</span>
+                        {#if q.header}<span class="qask-tag">{q.header}</span>{/if}
+                        <span class="qask-text">{q.question}</span>
+                      </div>
+                      {#if q.options.length > 0}
+                        <div class="qopts">
+                          {#each q.options as opt, i (i)}
+                            <button
+                              type="button"
+                              class="qopt"
+                              title={opt.description || opt.label}
+                              onclick={() => pickOption(row.paneId, i)}
+                            >
+                              <span class="qopt-num" aria-hidden="true">{i + 1}</span>
+                              <span class="qopt-body">
+                                <span class="qopt-label">{opt.label}</span>
+                                {#if opt.description}
+                                  <span class="qopt-desc">{opt.description}</span>
+                                {/if}
+                              </span>
+                            </button>
+                          {/each}
+                        </div>
+                      {/if}
+                      <div class="qreply">
+                        <input
+                          type="text"
+                          placeholder="Or type your own answer…"
+                          aria-label="Type your own answer"
+                          bind:value={
+                            () => answerDrafts[row.paneId] ?? '',
+                            (v) => (answerDrafts = { ...answerDrafts, [row.paneId]: v })
+                          }
+                          onkeydown={(e) => onAnswerKey(e, row.paneId, q.options.length)}
+                        />
+                        <button
+                          type="button"
+                          class="icon-send"
+                          aria-label="Send answer"
+                          disabled={(answerDrafts[row.paneId] ?? '').trim().length === 0}
+                          onclick={() => sendAnswer(row.paneId, q.options.length)}
+                        >
+                          ↥
+                        </button>
+                      </div>
+                    </div>
+                  {:else if row.question}
+                    <div class="qask" title={row.question}>
+                      <div class="qask-head">
+                        <span class="qask-ic" aria-hidden="true">?</span>
+                        <span class="qask-text">{row.question}</span>
+                      </div>
+                    </div>
+                  {/if}
+
+                  <!-- Activity: the in-progress task, else the agent's last message. -->
+                  <div class="task" title={activityLine(row) ?? ''}>{activityLine(row) ?? '—'}</div>
+
+                  <!-- Context bar (the segmented task strip's single-bar fallback). -->
+                  <div class="bar" class:unknown={row.contextPct === null}>
+                    {#if row.contextPct !== null}
+                      <i
+                        style:width={`${Math.max(0, Math.min(100, row.contextPct))}%`}
+                      ></i>
+                    {/if}
+                  </div>
+
+                  <!-- Subagents nested under the parent agent. -->
+                  {#if subs.length > 0}
+                    <ul class="subagents">
+                      {#each subs as sub (sub.id)}
+                        <li class="subagent" title={sub.label ?? sub.id}>
+                          <span class="sub-dot" aria-hidden="true"></span>
+                          <span class="sub-label">{sub.label ?? sub.id}</span>
+                          {#if sub.status}<span class="sub-status">{sub.status}</span>{/if}
+                          <span class="sub-usage">{subUsage(sub)}</span>
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
+
+                  <!-- Telemetry footer: context % + session cost (mono). -->
+                  <div class="ac-foot">
+                    <span title="Context window used">ctx {pct(row.contextPct)}</span>
+                    <span class="grow"></span>
+                    <span class="cost" title="Session cost">{cost(row.cost)}</span>
+                  </div>
+
+                  <!-- Inline message box — only for LIVE agents (a finished or
+                       errored agent has no PTY to message). Clicks/keys here are
+                       stopped so they never navigate the card. -->
+                  {#if isAlive(row.status)}
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <div
+                      class="ac-reply"
+                      onclick={(e) => e.stopPropagation()}
+                      onkeydown={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="text"
+                        placeholder="Message this agent…"
+                        aria-label={`Message ${row.name}`}
+                        bind:value={
+                          () => drafts[row.paneId] ?? '',
+                          (v) => (drafts = { ...drafts, [row.paneId]: v })
+                        }
+                        onkeydown={(e) => onMessageKey(e, row.paneId)}
+                      />
+                      <button
+                        type="button"
+                        class="icon-send"
+                        aria-label="Send message"
+                        disabled={(drafts[row.paneId] ?? '').trim().length === 0}
+                        onclick={() => sendTo(row.paneId)}
+                      >
+                        ↥
+                      </button>
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+            {/if}
           </div>
-        </div>
+        {/if}
       {/each}
     </div>
   {/if}
-</section>
+  </section>
+
+  <ContextMenu
+    open={menu.open}
+    x={menu.x}
+    y={menu.y}
+    items={menu.items}
+    onClose={() => (menu = { ...menu, open: false })}
+  />
+</div>
 
 <style>
+  /* Shell: project panel (fixed) + the overview surface (fills the rest). */
+  .overview-shell {
+    display: flex;
+    flex-direction: row;
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+  }
+  .overview-shell :global(.ppanel) {
+    flex: 0 0 220px;
+    width: 220px;
+  }
+
   .overview {
     display: flex;
     flex-direction: column;
     flex: 1 1 auto;
+    min-width: 0;
     height: 100%;
-    width: 100%;
     min-height: 0;
-    background: #0d1117;
-    color: #e6edf3;
+    background: var(--space-850);
+    color: var(--fg-1);
     overflow: hidden;
-    font-family:
-      ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: var(--font-sans);
   }
 
-  /* ---- Header ------------------------------------------------------------- */
-  .head {
+  /* ---- Control-room header (sticky) -------------------------------------- */
+  .cr-head {
+    position: sticky;
+    top: 0;
+    z-index: 20;
     flex: 0 0 auto;
+    background: rgba(13, 16, 23, 0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line-subtle);
+    padding: 18px 32px;
+  }
+  .cr-head-in {
+    max-width: 1080px;
+    margin: 0 auto;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 16px 20px 12px;
-    border-bottom: 1px solid #21262d;
+    gap: 14px;
   }
-  .head-left {
+  .cr-logo {
+    width: 30px;
+    height: 30px;
+    flex: none;
+  }
+  .cr-titles {
+    min-width: 0;
+  }
+  .cr-title {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 22px;
+    letter-spacing: var(--tracking-tight);
+    color: var(--fg-1);
     display: flex;
     align-items: baseline;
-    gap: 10px;
+    gap: 9px;
+    white-space: nowrap;
   }
-  .head-title {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 700;
-    letter-spacing: -0.01em;
-  }
-  .head-count {
+  .cr-count {
+    font-family: var(--font-mono);
     font-size: 12px;
-    font-weight: 600;
-    color: #8b949e;
-    background: #161b22;
-    border: 1px solid #21262d;
-    border-radius: 10px;
-    padding: 1px 8px;
+    font-weight: 500;
+    color: var(--fg-3);
+    background: var(--space-750);
+    border: 1px solid var(--line-subtle);
+    border-radius: var(--r-full);
+    padding: 2px 9px;
   }
-  .head-right {
+  .cr-sub {
+    color: var(--fg-3);
+    font-size: 13px;
+    margin-top: 3px;
+    white-space: nowrap;
+  }
+  .cr-sub b {
+    color: var(--orange-300);
+    font-weight: 600;
+  }
+  .cr-actions {
+    margin-left: auto;
     display: flex;
     align-items: center;
     gap: 12px;
   }
+
   .rollup {
     display: flex;
     align-items: baseline;
     gap: 6px;
-    font-family:
-      ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
   }
   .rollup-label {
     font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: #6e7681;
+    letter-spacing: var(--tracking-label);
+    color: var(--fg-4);
   }
   .rollup-value {
     font-size: 14px;
-    font-weight: 700;
-    color: #3fb950;
+    font-weight: 600;
+    color: var(--nominal-500);
+    font-variant-numeric: tabular-nums;
   }
   .rollup-value.dim {
-    color: #484f58;
+    color: var(--fg-4);
     font-weight: 400;
   }
 
-  .new-agent {
+  /* ---- Buttons (shared mission-control look) ----------------------------- */
+  .btn {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 13px;
+    border-radius: var(--r-md);
+    padding: 9px 16px;
+    border: 1px solid transparent;
+    cursor: pointer;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    height: 30px;
-    padding: 0 12px;
-    border: 1px solid #2ea043;
-    border-radius: 7px;
-    background: #238636;
-    color: #ffffff;
-    font-size: 12px;
-    font-weight: 600;
-    font-family: inherit;
-    cursor: pointer;
+    gap: 8px;
+    line-height: 1;
+    white-space: nowrap;
     transition:
-      background 0.12s ease,
-      border-color 0.12s ease;
+      background var(--dur-fast),
+      border-color var(--dur-fast),
+      transform var(--dur-fast);
   }
-  .new-agent:hover {
-    background: #2ea043;
-    border-color: #3fb950;
+  .btn:active {
+    transform: translateY(1px);
   }
-  .new-agent .plus {
+  .btn-primary {
+    background: var(--blue-500);
+    color: #fff;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset;
+  }
+  .btn-primary:hover {
+    background: var(--blue-600);
+  }
+  .launch-btn .plus {
     font-size: 13px;
     line-height: 1;
+  }
+  .kbd {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    background: rgba(255, 255, 255, 0.18);
+    color: #fff;
+    border-radius: 4px;
+    padding: 2px 6px;
+    margin-left: 1px;
   }
 
   /* ---- Empty state -------------------------------------------------------- */
@@ -420,313 +709,540 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 14px;
-    color: #6e7681;
+    gap: 12px;
+    text-align: center;
+    color: var(--fg-3);
+    padding: 80px 20px;
+  }
+  .empty-ic {
+    width: 56px;
+    height: 56px;
+    border-radius: var(--r-xl);
+    background: var(--space-750);
+    border: 1px solid var(--line-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .empty-ic img {
+    width: 30px;
+    height: 30px;
+  }
+  .empty h3 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 600;
+    color: var(--fg-1);
+    font-size: 16px;
   }
   .empty p {
     margin: 0;
-    font-size: 14px;
+    font-size: 13px;
+    max-width: 320px;
+    color: var(--fg-3);
   }
 
-  /* ---- Roster grid -------------------------------------------------------- */
-  .grid {
+  /* ---- Lanes -------------------------------------------------------------- */
+  .lanes {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 14px;
-    padding: 16px 20px 24px;
-    align-content: start;
+    max-width: 1080px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 6px 32px 60px;
+  }
+  .lane {
+    margin-top: 30px;
+  }
+  .lane:first-child {
+    margin-top: 18px;
+  }
+  .lane-head {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    margin-bottom: 14px;
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 4px 0;
+    cursor: pointer;
+    text-align: left;
+  }
+  .lane-chevron {
+    flex: none;
+    color: var(--fg-4);
+    font-size: 11px;
+    line-height: 1;
+    transition: transform var(--dur-fast);
+  }
+  .lane-chevron.collapsed {
+    transform: rotate(-90deg);
+  }
+  .lane-head:hover .lane-title {
+    color: var(--fg-1);
+  }
+  .lane-ic {
+    width: 24px;
+    height: 24px;
+    border-radius: var(--r-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .lane.attn .lane-ic {
+    background: var(--orange-tint);
+    color: var(--orange-400);
+  }
+  .lane.done .lane-ic {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--fg-3);
+  }
+  .lane.flight .lane-ic {
+    background: var(--blue-tint);
+    color: var(--blue-300);
+  }
+  .lane-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: var(--tracking-tight);
+    color: var(--fg-1);
+    white-space: nowrap;
+  }
+  .lane-ct {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-4);
+  }
+  .lane-line {
+    flex: 1;
+    height: 1px;
+    background: var(--line-faint);
   }
 
-  .card {
+  .agrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    align-items: start;
+  }
+  @media (max-width: 840px) {
+    .agrid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* ---- Agent card --------------------------------------------------------- */
+  .acard {
+    background: var(--space-750);
+    border: 1px solid var(--line-subtle);
+    border-radius: var(--r-lg);
+    padding: 16px 17px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 14px;
-    border-radius: 12px;
-    background: #161b22;
-    box-shadow: inset 0 0 0 1px #21262d;
+    gap: 12px;
     cursor: pointer;
     transition:
-      background 0.12s ease,
-      box-shadow 0.12s ease,
-      transform 0.12s ease;
+      border-color var(--dur-fast),
+      background var(--dur-fast),
+      transform var(--dur-fast);
   }
-  .card:hover {
-    background: #1c2128;
-    box-shadow: inset 0 0 0 1px #30363d;
+  .acard:hover {
+    border-color: var(--line-default);
+    background: var(--space-700);
+    transform: translateY(-1px);
   }
-  .card:focus-visible {
-    outline: 2px solid #58a6ff;
-    outline-offset: 2px;
+  .acard:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
   }
-  /* needs-attention is the prominent one: an amber ring + subtle glow so a
-     waiting agent jumps out of the grid. */
-  .card.needs-attention {
-    box-shadow:
-      inset 0 0 0 1px #d29922,
-      0 0 0 1px rgba(210, 153, 34, 0.35),
-      0 0 18px rgba(210, 153, 34, 0.15);
-    background: #1d1a12;
+  /* needs-attention: orange ring + a soft top gradient so it jumps out. */
+  .acard.attn {
+    border-color: rgba(238, 126, 77, 0.3);
+    background: linear-gradient(180deg, rgba(238, 126, 77, 0.055), transparent 130px),
+      var(--space-750);
   }
-  .card.needs-attention:hover {
-    background: #241f14;
+  .acard.attn:hover {
+    border-color: rgba(238, 126, 77, 0.45);
+  }
+  /* errored agent: red ring instead of orange (still in the attention lane). */
+  .acard.attn.error {
+    border-color: rgba(242, 86, 75, 0.4);
+    background: linear-gradient(180deg, rgba(242, 86, 75, 0.06), transparent 130px),
+      var(--space-750);
+  }
+  .acard.done {
+    background: var(--space-800);
+  }
+  .acard.flight {
+    box-shadow: inset 0 0 0 1px rgba(61, 123, 255, 0.1);
   }
 
-  .card-head {
+  .ac-top {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+    gap: 10px;
+  }
+  /* Session name sits next to the project icon and takes the row, pushing the
+     status badge to the right. */
+  .ac-top .name {
+    flex: 1;
+    min-width: 0;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--fg-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .status-pill {
+  /* Status badge (mono uppercase, semantic tint). */
+  .badge {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
+    font-family: var(--font-mono);
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 500;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
-    padding: 2px 8px;
-    border-radius: 10px;
+    padding: 4px 9px;
+    border-radius: var(--r-full);
+    white-space: nowrap;
   }
-  .status-dot {
+  .badge .sdot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
     background: currentColor;
+    flex: none;
   }
-  /* working — green, actively streaming. */
-  .status-pill.working {
-    color: #3fb950;
-    background: rgba(63, 185, 80, 0.12);
+  .b-nominal {
+    background: var(--nominal-tint);
+    color: #6fe0a6;
   }
-  /* waiting (needs input) — amber, the prominent "look at me" state. */
-  .status-pill.waiting {
-    color: #f0b429;
-    background: rgba(210, 153, 34, 0.16);
+  .b-active {
+    background: var(--blue-tint);
+    color: var(--blue-300);
   }
-  /* finished — blue, the session ended cleanly. */
-  .status-pill.finished {
-    color: #58a6ff;
-    background: rgba(88, 166, 255, 0.12);
+  .b-review {
+    background: var(--orange-tint);
+    color: var(--orange-300);
   }
-  /* error — red, the process exited non-zero. */
-  .status-pill.error {
-    color: #f85149;
-    background: rgba(248, 81, 73, 0.14);
+  .b-standby {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--fg-3);
   }
-  /* idle — gray, no runtime info yet. */
-  .status-pill.idle {
-    color: #8b949e;
-    background: rgba(139, 148, 158, 0.1);
+  .b-abort {
+    background: var(--abort-tint);
+    color: #ff8077;
   }
 
-  /* The prominent error highlight reuses needs-attention's ring but in red. */
-  .card.needs-attention:has(.status-pill.error) {
-    box-shadow:
-      inset 0 0 0 1px #f85149,
-      0 0 0 1px rgba(248, 81, 73, 0.35),
-      0 0 18px rgba(248, 81, 73, 0.15);
-    background: #1d1413;
+  /* Pending question callout (the agent is waiting on the user's answer). A column:
+     the question head, the selectable options, then a free-text answer field. */
+  .qask {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 10px 11px;
+    border-radius: var(--r-md);
+    background: var(--orange-tint);
+    border: 1px solid rgba(238, 126, 77, 0.3);
   }
-  .card.needs-attention:has(.status-pill.error):hover {
-    background: #241715;
+  .qask-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
   }
-
-  .model {
+  .qask-ic {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--orange-400);
+    color: var(--space-900);
+    font-family: var(--font-mono);
     font-size: 11px;
-    font-weight: 500;
-    color: #8b949e;
-    font-family:
-      ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 55%;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
   }
-
-  .name {
-    font-size: 14px;
+  .qask-tag {
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: 9px;
     font-weight: 600;
-    color: #e6edf3;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--orange-300);
+    background: rgba(238, 126, 77, 0.16);
+    border-radius: 4px;
+    padding: 2px 6px;
+    line-height: 1.3;
   }
-  .cwd {
-    font-size: 11px;
-    color: #6e7681;
-    font-family:
-      ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    margin-top: -4px;
+  .qask-text {
+    font-size: 12.5px;
+    line-height: 1.4;
+    color: var(--orange-200);
+    font-weight: 600;
   }
 
-  .task {
-    font-size: 12px;
-    color: #adbac7;
+  /* The selectable options (click to answer). */
+  .qopts {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .qopt {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    padding: 7px 9px;
+    border-radius: var(--r-sm);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--line-subtle);
+    cursor: pointer;
+    transition:
+      background var(--dur-fast),
+      border-color var(--dur-fast);
+  }
+  .qopt:hover {
+    background: rgba(238, 126, 77, 0.12);
+    border-color: rgba(238, 126, 77, 0.45);
+  }
+  .qopt:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+  .qopt-num {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    background: rgba(238, 126, 77, 0.2);
+    color: var(--orange-200);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 16px;
+    text-align: center;
+  }
+  .qopt-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .qopt-label {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--fg-1);
+    line-height: 1.3;
+  }
+  .qopt-desc {
+    font-size: 11px;
     line-height: 1.35;
+    color: var(--fg-3);
     overflow: hidden;
     text-overflow: ellipsis;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     line-clamp: 2;
     -webkit-box-orient: vertical;
-    min-height: 16px;
   }
 
-  .meter-row {
+  /* Free-text answer field inside the question callout. */
+  .qreply {
     display: flex;
-    align-items: center;
     gap: 8px;
   }
-  .context {
+  .qreply input {
     flex: 1 1 auto;
-    height: 6px;
-    border-radius: 3px;
-    background: #21262d;
+    min-width: 0;
+    font-family: var(--font-sans);
+    font-size: 12.5px;
+    color: var(--fg-1);
+    background: rgba(20, 14, 10, 0.35);
+    border: 1px solid rgba(238, 126, 77, 0.3);
+    border-radius: var(--r-sm);
+    padding: 7px 10px;
+    outline: none;
+    transition:
+      border-color var(--dur-fast),
+      box-shadow var(--dur-fast);
+  }
+  .qreply input::placeholder {
+    color: var(--orange-300);
+    opacity: 0.7;
+  }
+  .qreply input:focus {
+    border-color: var(--orange-400);
+    box-shadow: 0 0 0 3px rgba(238, 126, 77, 0.18);
+  }
+
+  .task {
+    font-size: 13px;
+    color: var(--fg-2);
+    line-height: 1.45;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    min-height: 19px;
+  }
+
+  /* Context bar (single-bar fallback for the segmented task strip). */
+  .bar {
+    height: 5px;
+    border-radius: 2px;
+    background: var(--space-600);
     overflow: hidden;
   }
-  .context.unknown {
+  .bar.unknown {
     background: repeating-linear-gradient(
       -45deg,
-      #21262d,
-      #21262d 4px,
-      #1a1f26 4px,
-      #1a1f26 8px
+      var(--space-600),
+      var(--space-600) 4px,
+      var(--space-700) 4px,
+      var(--space-700) 8px
     );
   }
-  .context-fill {
+  .bar i {
+    display: block;
     height: 100%;
-    border-radius: 3px;
-    background: linear-gradient(90deg, #3fb950, #58a6ff);
-    transition: width 0.2s ease;
-  }
-  .ctx-pct {
-    flex: 0 0 auto;
-    font-size: 11px;
-    color: #8b949e;
-    font-variant-numeric: tabular-nums;
-    min-width: 32px;
-    text-align: right;
-  }
-  .cost {
-    flex: 0 0 auto;
-    font-size: 12px;
-    font-weight: 600;
-    color: #e6edf3;
-    font-variant-numeric: tabular-nums;
-    min-width: 48px;
-    text-align: right;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--blue-500), var(--blue-400));
+    transition: width var(--dur-slow) var(--ease-out);
   }
 
   /* ---- Subagents ---------------------------------------------------------- */
   .subagents {
     list-style: none;
-    margin: 2px 0 0;
-    padding: 8px 0 0;
-    border-top: 1px solid #21262d;
+    margin: 0;
+    padding: 10px 0 0;
+    border-top: 1px solid var(--line-subtle);
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 6px;
   }
   .subagent {
     display: flex;
     align-items: center;
     gap: 7px;
     font-size: 11px;
-    color: #adbac7;
+    color: var(--fg-2);
     min-width: 0;
   }
   .sub-dot {
-    flex: 0 0 auto;
+    flex: none;
     width: 4px;
     height: 4px;
     border-radius: 50%;
-    background: #58a6ff;
+    background: var(--blue-400);
   }
   .sub-label {
     flex: 1 1 auto;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family:
-      ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
   }
   .sub-status {
-    flex: 0 0 auto;
+    flex: none;
+    font-family: var(--font-mono);
     font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: #6e7681;
-    background: #21262d;
+    color: var(--fg-3);
+    background: var(--space-700);
     border-radius: 4px;
     padding: 1px 5px;
   }
   .sub-usage {
-    flex: 0 0 auto;
+    flex: none;
+    font-family: var(--font-mono);
     font-size: 10px;
-    color: #6e7681;
+    color: var(--fg-4);
     font-variant-numeric: tabular-nums;
   }
 
-  /* ---- Message box -------------------------------------------------------- */
-  .message {
+  /* ---- Telemetry footer --------------------------------------------------- */
+  .ac-foot {
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-top: 2px;
+    gap: 11px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .ac-foot .grow {
+    flex: 1;
+  }
+  .ac-foot .cost {
+    color: var(--fg-1);
+    font-weight: 500;
+  }
+
+  /* ---- Inline reply (message the agent) ----------------------------------- */
+  .ac-reply {
+    display: flex;
+    gap: 8px;
     cursor: default;
   }
-  .message-input {
+  .ac-reply input {
     flex: 1 1 auto;
     min-width: 0;
-    height: 30px;
-    padding: 0 10px;
-    border: 1px solid #30363d;
-    border-radius: 7px;
-    background: #0d1117;
-    color: #e6edf3;
-    font-size: 12px;
-    font-family: inherit;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    color: var(--fg-1);
+    background: rgba(56, 65, 85, 0.35);
+    border: 1px solid var(--line-default);
+    border-radius: var(--r-md);
+    padding: 9px 12px;
     outline: none;
-    transition: border-color 0.12s ease;
-  }
-  .message-input::placeholder {
-    color: #6e7681;
-  }
-  .message-input:focus {
-    border-color: #58a6ff;
-  }
-  .send {
-    flex: 0 0 auto;
-    height: 30px;
-    padding: 0 12px;
-    border: 1px solid #30363d;
-    border-radius: 7px;
-    background: #21262d;
-    color: #e6edf3;
-    font-size: 12px;
-    font-weight: 600;
-    font-family: inherit;
-    cursor: pointer;
     transition:
-      background 0.12s ease,
-      border-color 0.12s ease,
-      opacity 0.12s ease;
+      border-color var(--dur-fast),
+      box-shadow var(--dur-fast);
   }
-  .send:hover:not(:disabled) {
-    background: #30363d;
-    border-color: #58a6ff;
+  .ac-reply input::placeholder {
+    color: var(--fg-4);
   }
-  .send:disabled {
-    opacity: 0.45;
+  .ac-reply input:focus {
+    border-color: var(--blue-500);
+    box-shadow: var(--focus-ring);
+  }
+  .icon-send {
+    width: 38px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--r-md);
+    background: var(--blue-500);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    transition: background var(--dur-fast);
+  }
+  .icon-send:hover:not(:disabled) {
+    background: var(--blue-600);
+  }
+  .icon-send:disabled {
+    background: var(--space-600);
+    color: var(--fg-4);
     cursor: not-allowed;
   }
 </style>

@@ -68,6 +68,29 @@ const ENFORCED_CAPABILITIES = new Set([
   'task-detection',
   'session-launcher',
   'agent-overview',
+  // projects: a project = a working folder with a name/color/icon, bound to an
+  // agent EXPLICITLY at launch (registry projectId, persisted). Every scenario is
+  // pure/headless and unit-tested — plan.test.ts (Project assigned at launch),
+  // roster.test.ts (Agent carries its project identity), projects.test.ts (Creating
+  // a project … deduped by folder), projectRollup.test.ts (Filter agents by
+  // project). The DOM-rendered project panel/avatars are confirmed live.
+  'projects',
+  // activity-events: the hook → Unix socket → durable sink pipeline. Every scenario
+  // has a REAL headless test — event-hook.test.ts (full set registration is in
+  // spawn.test.ts; summarize / pending-question / one-line delivery / socket-absent
+  // no-block) and src-tauri/src/events.rs (accept+buffer / malformed-drop / stale
+  // socket rebind / sink append + sessionId keying / age+size retention / resume
+  // reads the sink / transcript backfill). No MANUAL: the live socket end-to-end is
+  // exercised headlessly by the Rust accept test.
+  'activity-events',
+  // activity-timeline: event-sourced status + currentAction + per-tool timeline.
+  // Every scenario except the two live route-interval behaviors is unit-tested —
+  // events.test.ts (status mapping / current action / question lifecycle / fallback
+  // / timeline accumulation), events.svelte.test.ts (ingest + seed-on-mount +
+  // pending-question), roster.test.ts (exit-authoritative / status-independent-of-
+  // snapshot / cost-model-from-snapshot), poll.test.ts (content-refreshed-on-stop).
+  // The two MANUAL scenarios are the route's setInterval wiring (see below).
+  'activity-timeline',
 ]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by
@@ -176,7 +199,8 @@ const MANUAL_SCENARIOS = {
   //   - navigate.test.ts: selecting_an_agent_focuses_its_pane (the PURE target
   //     resolution paneId -> {workspaceId, leafId}; the live store mutation + view
   //     switch is the MANUAL part of the same flow, confirmed in-app).
-  //   - view.svelte.test.ts: toggle_between_overview_and_grid.
+  //   - view.svelte.test.ts: switch_between_the_overview_windows_and_grid_views.
+  //   - tail.test.ts: terminal_windows_show_a_limited_live_tail.
   //   - subagents.rs (Rust): subagents_appear_under_their_parent_agent /
   //     partial_subagent_metadata_does_not_break_the_roster.
   // The single MANUAL aspect is the end-to-end new-agent launch — the live launcher
@@ -185,6 +209,15 @@ const MANUAL_SCENARIOS = {
   // session-launcher; what is live here is the overview's "＋ New agent" opening it
   // and the resulting pane rostering, which needs a real window + PTY.
   'agent-overview': new Set(['new_agent_action_launches_and_rosters']),
+  // activity-events: the live socket end-to-end is covered headlessly by the Rust
+  // accept test, so nothing is MANUAL here.
+  'activity-events': new Set(),
+  // activity-timeline: the two genuinely-live aspects are the route's own
+  // setInterval wiring — the slow safety-poll backstop, and the ABSENCE of the
+  // retired 1.5s fast poll. Both are $effect intervals in +page.svelte with no
+  // pure surface to assert against (the read POLICY itself is unit-tested as
+  // "Content refreshed on stop"); they are confirmed live in-app.
+  'activity-timeline': new Set(['safety_poll_backstops_missed_events', 'fixed_fast_poll_removed']),
 };
 
 // --- helpers -----------------------------------------------------------------

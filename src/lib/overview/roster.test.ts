@@ -2,12 +2,17 @@ import { describe, expect, it } from 'vitest';
 import {
   buildRoster,
   deriveStatus,
+  laneOf,
+  groupByLane,
+  LANE_ORDER,
   WORKING_WINDOW_MS,
+  type AgentRow,
   type PaneRuntime,
   type RosterWorkspace,
   type RuntimeMap
 } from './roster';
 import type { Snapshot, SnapshotMap } from '../usage/snapshots.svelte';
+import type { EventActivity } from './events';
 
 // Tests for the PURE roster view-model (Stage 1 of agent-overview). The `it(...)`
 // titles are the EXACT `#### Scenario:` names from the agent-overview spec
@@ -131,6 +136,53 @@ describe('roster — Agent Roster Overview', () => {
     expect(rows.map((r) => r.paneId)).toEqual(['pane-app']);
   });
 
+  // Transcript-derived activity (summary + pending question), keyed on the PANE id,
+  // is merged onto the agent's row so the overview can show its last message and any
+  // pending question.
+  it('Agent surfaces its transcript activity', () => {
+    const now = 1_000_000;
+    const map = mapOf(snap('pane-a'));
+    const workspaces = [ws('ws-1', 'P', [{ paneId: 'pane-a', cwd: '/x' }])];
+    const activity = {
+      'pane-a': { summary: 'Looking at the parser', question: 'Which database?' }
+    };
+
+    const rows = buildRoster(map, workspaces, {}, now, activity);
+    expect(rows[0].summary).toBe('Looking at the parser');
+    expect(rows[0].question).toBe('Which database?');
+
+    // A pane with no matching activity entry carries nulls.
+    const noAct = buildRoster(map, workspaces, {}, now, {});
+    expect(noAct[0].summary).toBeNull();
+    expect(noAct[0].question).toBeNull();
+  });
+
+  // The agent's project binding (registry projectId) is carried onto its row so
+  // the overview can render the project avatar + filter by project.
+  it('Agent carries its project identity', () => {
+    const now = 1_000_000;
+    const map = mapOf(snap('pane-a'));
+    const workspaces: RosterWorkspace[] = [
+      {
+        id: 'ws-1',
+        name: 'Payments',
+        panes: [{ paneId: 'pane-a', cwd: '/x', isApp: true, projectId: 'proj-pay' }]
+      }
+    ];
+
+    const rows = buildRoster(map, workspaces, {}, now);
+
+    expect(rows[0].projectId).toBe('proj-pay');
+    // A pane with no project binding rosters with a null projectId (unassigned).
+    const noProj = buildRoster(
+      mapOf(snap('pane-b')),
+      [ws('ws-2', 'X', [{ paneId: 'pane-b', cwd: '/y' }])],
+      {},
+      now
+    );
+    expect(noProj[0].projectId).toBeNull();
+  });
+
   // Name falls back to a short cwd basename when the workspace name is empty.
   it('Name falls back to short cwd', () => {
     const now = 1_000_000;
@@ -186,5 +238,97 @@ describe('roster — Agent status heuristic', () => {
 
     // No runtime at all (pane not wired yet) => idle.
     expect(deriveStatus(undefined, now)).toBe('idle');
+  });
+});
+
+describe('roster — control-room lanes', () => {
+  // The Overview groups agents into three lanes, ordered top->bottom by how much
+  // they need you: needs-attention (waiting/error), completed (finished), then
+  // in-flight (working/idle, running on their own).
+  it('maps each status to its lane', () => {
+    expect(laneOf('waiting')).toBe('attn');
+    expect(laneOf('error')).toBe('attn');
+    expect(laneOf('finished')).toBe('done');
+    expect(laneOf('working')).toBe('flight');
+    expect(laneOf('idle')).toBe('flight');
+  });
+
+  it('orders lanes attention -> in-flight -> completed', () => {
+    expect(LANE_ORDER).toEqual(['attn', 'flight', 'done']);
+  });
+
+  it('groups rows by lane, preserving roster order within each lane', () => {
+    const row = (paneId: string, status: AgentRow['status']): AgentRow => ({
+      paneId,
+      workspaceId: 'ws',
+      name: paneId,
+      cwd: null,
+      model: null,
+      task: null,
+      summary: null,
+      question: null,
+      questions: null,
+      currentAction: null,
+      contextPct: null,
+      cost: null,
+      status,
+      projectId: null
+    });
+    const rows = [
+      row('a', 'working'),
+      row('b', 'waiting'),
+      row('c', 'finished'),
+      row('d', 'error'),
+      row('e', 'idle')
+    ];
+
+    const grouped = groupByLane(rows);
+
+    expect(grouped.attn.map((r) => r.paneId)).toEqual(['b', 'd']);
+    expect(grouped.done.map((r) => r.paneId)).toEqual(['c']);
+    expect(grouped.flight.map((r) => r.paneId)).toEqual(['a', 'e']);
+  });
+});
+
+// Event-sourced status integration (activity-timeline). buildRoster prefers the
+// event-derived status + currentAction + question, with PTY exit authoritative and
+// the snapshot still the cost/model source. Titles match the spec scenarios.
+describe('roster — event-sourced status', () => {
+  const now = 1_000_000;
+  const wsX = ws('w1', 'W', [{ paneId: 'pane-x', cwd: '/x' }]);
+  const evAct = (over: Partial<EventActivity> = {}): Record<string, EventActivity> => ({
+    'pane-x': { status: null, currentAction: null, question: null, questions: null, ...over }
+  });
+
+  it('Exit is authoritative', () => {
+    // The process exited non-zero; even an event status of "working" must not win.
+    const runtime = runtimeOf(rt('pane-x', { exited: true, exitCode: 1, lastOutputAt: now }));
+    const [row] = buildRoster({}, [wsX], runtime, now, {}, WORKING_WINDOW_MS, evAct({ status: 'working' }));
+    expect(row.status).toBe('error');
+  });
+
+  it('Status independent of snapshot', () => {
+    // No snapshot at all, yet the event-sourced status + currentAction surface.
+    const runtime = runtimeOf(rt('pane-x', { lastOutputAt: now - 999_999 })); // PTY would say "waiting"
+    const [row] = buildRoster(
+      {},
+      [wsX],
+      runtime,
+      now,
+      {},
+      WORKING_WINDOW_MS,
+      evAct({ status: 'working', currentAction: 'Bash:npm test' })
+    );
+    expect(row.status).toBe('working');
+    expect(row.currentAction).toBe('Bash:npm test');
+    expect(row.model).toBeNull();
+  });
+
+  it('Cost and model still read from snapshot', () => {
+    const map = mapOf(snap('pane-x', { model: 'claude-opus', cost: 2.5 }));
+    const [row] = buildRoster(map, [wsX], runtimeOf(), now, {}, WORKING_WINDOW_MS, evAct({ status: 'waiting' }));
+    expect(row.model).toBe('claude-opus');
+    expect(row.cost).toBe(2.5);
+    expect(row.status).toBe('waiting');
   });
 });

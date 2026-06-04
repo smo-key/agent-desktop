@@ -32,9 +32,14 @@ function row(over: Partial<AgentRow> = {}): AgentRow {
     cwd: null,
     model: null,
     task: null,
+    summary: null,
+    question: null,
+    questions: null,
+    currentAction: null,
     contextPct: null,
     cost: null,
     status: 'idle',
+    projectId: null,
     ...over
   };
 }

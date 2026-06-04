@@ -9,16 +9,25 @@
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
   import { restorePersistedLayout, watchAndPersist } from '$lib/layout/store-backend.svelte';
   import { snapshots } from '$lib/usage/snapshots.svelte';
-  import { foreign } from '$lib/usage/foreign.svelte';
   import { appSessionIds } from '$lib/usage/appSessions';
   import UsageBar from '$lib/usage/UsageBar.svelte';
   import Overview from '$lib/overview/Overview.svelte';
-  import { view } from '$lib/overview/view.svelte';
+  import Windows from '$lib/overview/Windows.svelte';
+  import { runtimeMap } from '$lib/overview/runtime';
+  import { view, type ViewMode } from '$lib/overview/view.svelte';
   import { subagents, type SessionRef } from '$lib/overview/subagents.svelte';
+  import { activity, type PaneRef } from '$lib/overview/activity.svelte';
+  import { events } from '$lib/overview/events.svelte';
+  import { triggersTranscriptRead, SAFETY_POLL_MS } from '$lib/overview/poll';
   import { appSessionRefs } from '$lib/overview/sessionRefs';
-  import { findLeaf, type SpatialDir } from '$lib/layout/tree';
+  import { type SpatialDir } from '$lib/layout/tree';
 
-  const cwd = '/Users/arthur/git/agent-desktop';
+  // The top-level view segments (title-bar control). Order matches `view.cycle()`.
+  const viewSegments: { mode: ViewMode; label: string }[] = [
+    { mode: 'overview', label: 'Overview' },
+    { mode: 'windows', label: 'Windows' },
+    { mode: 'grid', label: 'Grid' }
+  ];
 
   // True once the persisted layout has loaded (or fallen back to fresh). We hold
   // off rendering the workspace area until then so we never flash a throwaway
@@ -44,15 +53,6 @@
       unlistenSnapshots = unlisten;
     });
 
-    // Seed the EXTERNAL (foreign) sessions store with the app's current session
-    // ids (so the Rust watcher excludes our own panes), then subscribe to live
-    // `usage://foreign` pushes. A separate $effect (below) re-seeds whenever the
-    // app's session set changes.
-    let unlistenForeign: (() => void) | undefined;
-    void foreign.start(appSessionIds(snapshots.byPane)).then((unlisten) => {
-      unlistenForeign = unlisten;
-    });
-
     // Seed the SUBAGENTS store (agent-overview) with the app's current app-pane
     // session refs ({sessionId, cwd}), then subscribe to live `overview://subagents`
     // pushes from the Rust subagent watcher. A separate $effect (below) re-seeds the
@@ -62,11 +62,30 @@
       unlistenSubagents = unlisten;
     });
 
+    // Prime TRANSCRIPT ACTIVITY once on mount (each claude pane's last message +
+    // any pending question, read from its transcript by cwd). Event-driven reads
+    // (below) keep it fresh, with a slow safety poll as the backstop.
+    void activity.refresh(currentPaneRefs());
+
+    // Start the EVENT pipeline store: seed each pane's timeline (ring → durable
+    // sink → transcript backfill, resolved in Rust), then subscribe to live
+    // `overview://event` pushes. Each ingested event that signals visible content
+    // changed (a tool completing / a turn ending) triggers an immediate transcript
+    // read — replacing the old fixed 1.5s poll.
+    events.onEvent = (ev) => {
+      if (triggersTranscriptRead(ev.hookEventName)) void activity.refresh(currentPaneRefs());
+    };
+    let unlistenEvents: (() => void) | undefined;
+    void events.start(currentPaneRefs()).then((unlisten) => {
+      unlistenEvents = unlisten;
+    });
+
     return () => {
       stopWatching?.();
       unlistenSnapshots?.();
-      unlistenForeign?.();
       unlistenSubagents?.();
+      unlistenEvents?.();
+      events.onEvent = undefined;
     };
   });
 
@@ -76,15 +95,25 @@
     return appSessionRefs(snapshots.byPane, (paneId) => workspace.session(paneId).cwd);
   }
 
-  // Keep the foreign-session exclude-set current: whenever the app's set of
-  // launched session ids changes (a new pane reports a snapshot, or one ends),
-  // push it to the Rust watcher AND update the client-side guard via a re-seed.
-  // The derived list is sorted + de-duped so this only fires on a real change.
+  // The app's claude panes as {paneId, sessionId, cwd} — the input to the
+  // transcript-activity command. Read straight from the workspace registry (NOT the
+  // snapshot): each claude pane was spawned with `--session-id`, so we read its
+  // EXACT transcript with no statusline/snapshot dependency and no cwd ambiguity.
+  function currentPaneRefs(): PaneRef[] {
+    const refs: PaneRef[] = [];
+    for (const ws of workspace.workspaces) {
+      for (const [paneId, sess] of Object.entries(ws.registry)) {
+        if (sess.program === 'claude' && sess.sessionId) {
+          refs.push({ paneId, sessionId: sess.sessionId, cwd: sess.cwd });
+        }
+      }
+    }
+    return refs;
+  }
+
+  // The app's set of launched session ids (sorted, de-duped), used to keep the
+  // subagents watched-set current as panes come and go.
   const ourSessionIds = $derived(appSessionIds(snapshots.byPane));
-  $effect(() => {
-    const ids = ourSessionIds;
-    void foreign.seed(ids);
-  });
 
   // Keep the SUBAGENTS watched-set current too: whenever the app's session refs
   // change (a new app pane reports a session id, a cwd resolves, or one ends),
@@ -93,6 +122,27 @@
   $effect(() => {
     void ourSessionIds; // re-run when the app's session set changes
     void subagents.seed(currentSessionRefs());
+  });
+
+  // SAFETY poll for TRANSCRIPT ACTIVITY. Event-driven reads (the `events.onEvent`
+  // hook above) do the timely work now — on every tool completion / turn end — so
+  // this is only a slow backstop that re-reads content if a triggering event never
+  // arrived (e.g. the socket was briefly down). The old fixed 1.5s fast poll is
+  // retired in favour of SAFETY_POLL_MS.
+  $effect(() => {
+    const id = setInterval(() => {
+      const refs = currentPaneRefs();
+      if (refs.length > 0) void activity.refresh(refs);
+    }, SAFETY_POLL_MS);
+    return () => clearInterval(id);
+  });
+
+  // Keep the EVENT store's seeded set current: whenever the app's session set
+  // changes (a pane launched/ended, a cwd resolved), re-seed `events_for` so a
+  // newly-launched agent's timeline (and any backfill) is available immediately.
+  $effect(() => {
+    void ourSessionIds; // re-run when the app's session set changes
+    void events.seed(currentPaneRefs());
   });
 
   // Prune GHOST snapshots: whenever the set of open panes changes (a pane closes,
@@ -106,13 +156,36 @@
     snapshots.retain(workspace.allPaneIds());
   });
 
-  // Map the active workspace's focused pane cwd into the title bar subtitle.
-  const focusedCwd = $derived.by(() => {
-    const entry = workspace.active;
-    if (!entry) return cwd;
-    const leaf = findLeaf(entry.ws.root, entry.ws.focusedId);
-    if (!leaf) return cwd;
-    return workspace.session(leaf.paneId).cwd ?? cwd;
+  // With no workspaces left (first launch, or the last agent closed/exited), the
+  // grid would render blank — so fall back to the overview (its empty state). Reads
+  // `workspace.workspaces` reactively, so it fires whenever the list empties.
+  $effect(() => {
+    if (workspace.workspaces.length === 0 && view.isGrid) view.show('overview');
+  });
+
+  // Auto-retire finished agents: the moment an agent's process EXITS (cleanly or
+  // with an error), close its pane/workspace so it disappears from every surface —
+  // and, if you were looking at that very pane in the grid, drop you back to the
+  // overview rather than stranding you in a dead terminal. The runtime registry is
+  // non-reactive (it's a per-byte side channel), so we scan it on a 1s clock. The
+  // last remaining workspace can't be removed (closeWorkspace keeps one), so a lone
+  // finished agent lingers instead of leaving the app paneless.
+  $effect(() => {
+    const id = setInterval(() => {
+      const exited = Object.entries(runtimeMap())
+        .filter(([, r]) => r.exited)
+        .map(([paneId]) => paneId);
+      if (exited.length === 0) return;
+      const live = workspace.allPaneIds();
+      const focused = workspace.focusedPaneId;
+      for (const paneId of exited) {
+        if (!live.has(paneId)) continue; // already retired
+        const wasViewing = view.isGrid && paneId === focused;
+        workspace.closeAgent(paneId);
+        if (wasViewing) view.show('overview');
+      }
+    }, 1000);
+    return () => clearInterval(id);
   });
 
   // Keyboard shortcuts (macOS):
@@ -145,12 +218,12 @@
       return;
     }
 
-    // Cmd-O toggles the top-level view between the Overview (mission control) and
-    // the terminal grid. Available regardless of store state — the overview is the
-    // default surface and is meaningful even before any pane is seeded.
+    // Cmd-O cycles the top-level view: overview (cards) -> windows (terminals) ->
+    // grid -> overview. Available regardless of store state — the overviews are
+    // meaningful even before any pane is seeded.
     if (meta && !e.shiftKey && (key === 'o' || key === 'O')) {
       e.preventDefault();
-      view.toggle();
+      view.cycle();
       return;
     }
 
@@ -222,22 +295,31 @@
        lights float over the left of this bar, so we pad-left to clear them and
        make the whole bar a drag region instead of drawing our own dots. -->
   <header class="titlebar" data-tauri-drag-region>
-    <span class="title">agent-desktop</span>
+    <div class="tb-left">
+      <img class="logo" src="/logomark.svg" alt="" aria-hidden="true" />
+      <span class="title">agent-desktop</span>
+    </div>
 
-    <!-- Top-level view toggle: Overview (mission control) <-> terminal grid.
-         Cmd-O does the same. data-tauri-drag-region is OFF on the button so the
-         click registers instead of dragging the window. -->
-    <button
-      type="button"
-      class="view-toggle"
-      data-tauri-drag-region="false"
-      title={view.isGrid ? 'Go to overview (⌘O)' : 'Go to terminal grid (⌘O)'}
-      onclick={() => view.toggle()}
-    >
-      {view.isGrid ? 'Overview' : 'Grid'}
-    </button>
+    <!-- Top-level view control, centered: Overview (cards) · Windows (terminals)
+         · Grid. Cmd-O cycles the same. data-tauri-drag-region is OFF so clicks
+         register instead of dragging the window. -->
+    <div class="view-seg" data-tauri-drag-region="false">
+      {#each viewSegments as seg (seg.mode)}
+        <button
+          type="button"
+          class="seg-btn"
+          class:on={view.mode === seg.mode}
+          title={`${seg.label} (⌘O)`}
+          onclick={() => view.show(seg.mode)}
+        >
+          {seg.label}
+        </button>
+      {/each}
+    </div>
 
-    <span class="subtitle">{focusedCwd}</span>
+    <!-- Right group: empty, but kept as an equal-flex spacer so the view switcher
+         stays in the true horizontal center of the bar. -->
+    <div class="tb-right"></div>
   </header>
 
   <!-- Hold off rendering the workspace area (grid + overview + workflow) until the
@@ -272,12 +354,15 @@
     <UsageBar />
   </div>
 
-  <!-- The primary OVERVIEW (mission control) surface. Rendered only while it is
-       the active top-level view; the grid above stays mounted (hidden) so its
-       PTYs are untouched. The overview reads the snapshots + workspace + subagent
-       stores (all pure view-model math) and drives navigation back into the grid. -->
+  <!-- The OVERVIEW surfaces (cards + terminal windows). Rendered only while one is
+       the active top-level view; the grid above stays mounted (hidden) so its PTYs
+       are untouched. Both read the snapshots + workspace + subagent stores (pure
+       view-model math), share the project panel/filter, and the Windows view reads
+       the live xterm tails of those same mounted panes. -->
   {#if view.isOverview}
     <Overview />
+  {:else if view.isWindows}
+    <Windows />
   {/if}
   {:else}
     <!-- Minimal splash while the persisted layout is restoring; replaced by the
@@ -306,54 +391,89 @@
     flex-direction: column;
     height: 100vh;
     width: 100vw;
-    background: #0d1117;
+    background: var(--space-850);
     overflow: hidden;
   }
 
   .titlebar {
     display: flex;
     align-items: center;
-    gap: 8px;
-    height: 32px;
-    flex: 0 0 32px;
-    padding: 0 12px 0 80px;
-    background: #161b22;
-    border-bottom: 1px solid #21262d;
+    gap: 9px;
+    height: 40px;
+    flex: 0 0 40px;
+    padding: 0 14px 0 80px;
+    background: var(--space-900);
+    border-bottom: 1px solid var(--line-subtle);
     user-select: none;
     -webkit-user-select: none;
   }
 
+  /* Left group (logo + title) and right group (env) each take equal flex so the
+     view switcher between them sits in the true horizontal center of the bar. */
+  .tb-left {
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+  }
+  .tb-right {
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+
+  .logo {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    pointer-events: none;
+  }
+
   .title {
+    font-family: var(--font-display);
     font-size: 13px;
     font-weight: 600;
-    color: #e6edf3;
+    color: var(--fg-2);
     letter-spacing: -0.01em;
     pointer-events: none;
   }
 
-  /* Top-level view toggle button. pointer-events re-enabled (the bar is a drag
-     region) so the click lands; sits just right of the title. */
-  .view-toggle {
+  /* Top-level view segmented control. pointer-events re-enabled (the bar is a
+     drag region) so clicks land; sits just right of the title. */
+  .view-seg {
     pointer-events: auto;
+    flex: none;
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    border-radius: var(--r-md);
+    background: var(--space-800);
+    border: 1px solid var(--line-subtle);
+  }
+  .seg-btn {
     height: 20px;
-    padding: 0 10px;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    background: #0d1117;
-    color: #adbac7;
+    padding: 0 11px;
+    border: none;
+    border-radius: 5px;
+    background: none;
+    color: var(--fg-3);
     font-size: 11px;
     font-weight: 600;
-    font-family: inherit;
+    font-family: var(--font-sans);
     cursor: pointer;
     transition:
-      background 0.12s ease,
-      color 0.12s ease,
-      border-color 0.12s ease;
+      background var(--dur-fast),
+      color var(--dur-fast);
   }
-  .view-toggle:hover {
-    background: #1c2128;
-    color: #e6edf3;
-    border-color: #58a6ff;
+  .seg-btn:hover {
+    color: var(--fg-1);
+  }
+  .seg-btn.on {
+    background: var(--space-650);
+    color: var(--fg-1);
   }
 
   /* The grid-view wrapper fills the region below the title bar (body + usage bar)
@@ -377,24 +497,11 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #6e7681;
+    color: var(--fg-3);
     font-size: 13px;
-    font-family:
-      ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
   }
 
-  .subtitle {
-    margin-left: auto;
-    font-size: 11px;
-    color: #6e7681;
-    font-family:
-      ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 60%;
-    pointer-events: none;
-  }
 
   /* Below the title bar: rail (fixed) + workspace area (fills the rest). */
   .body {
@@ -406,8 +513,8 @@
 
   /* The session rail occupies a fixed left column. */
   .body :global(nav.rail) {
-    flex: 0 0 150px;
-    width: 150px;
+    flex: 0 0 200px;
+    width: 200px;
   }
 
   .surface {
@@ -415,7 +522,7 @@
     min-height: 0;
     min-width: 0;
     position: relative;
-    background: #0d1117;
+    background: var(--space-850);
   }
 
   /* Each workspace fills the surface; inactive ones are hidden but stay mounted

@@ -20,6 +20,7 @@
 // up to `null`, NEVER `NaN`.
 
 import type { Snapshot, SnapshotMap } from '../usage/snapshots.svelte';
+import type { EventActivity } from './events';
 
 /**
  * An agent's live status, derived from its terminal activity + process state:
@@ -30,6 +31,37 @@ import type { Snapshot, SnapshotMap } from '../usage/snapshots.svelte';
  *  - `idle`     — no runtime info yet (pane not wired).
  */
 export type AgentStatus = 'working' | 'waiting' | 'finished' | 'error' | 'idle';
+
+/**
+ * The control-room LANE an agent belongs to — the Overview groups the roster into
+ * three lanes, ordered top->bottom by how much they need you:
+ *  - `attn`   — needs attention: waiting on YOU, or errored (the prominent lane).
+ *  - `done`   — completed: the process finished cleanly.
+ *  - `flight` — in flight: working on its own, or idle (these need you least).
+ */
+export type AgentLane = 'attn' | 'done' | 'flight';
+
+/** The lane render order (top -> bottom): needs-attention, in-flight, completed.
+ *  Completed sits at the BOTTOM (it needs you least and is collapsed by default). */
+export const LANE_ORDER: readonly AgentLane[] = ['attn', 'flight', 'done'];
+
+/** PURE: the lane for a status. waiting/error -> attn, finished -> done, else flight. */
+export function laneOf(status: AgentStatus): AgentLane {
+  if (status === 'waiting' || status === 'error') return 'attn';
+  if (status === 'finished') return 'done';
+  return 'flight';
+}
+
+/**
+ * PURE: partition the roster into its three lanes, preserving the original roster
+ * order within each lane. Always returns all three keys (empty arrays when a lane
+ * has no agents) so the Overview can decide whether to render each lane.
+ */
+export function groupByLane(rows: AgentRow[]): Record<AgentLane, AgentRow[]> {
+  const grouped: Record<AgentLane, AgentRow[]> = { attn: [], done: [], flight: [] };
+  for (const row of rows) grouped[laneOf(row.status)].push(row);
+  return grouped;
+}
 
 /** Per-pane runtime state captured from the live terminal (framework-free). */
 export interface PaneRuntime {
@@ -43,6 +75,43 @@ export interface PaneRuntime {
 
 /** The live `pane_id -> runtime` map the Overview feeds into `buildRoster`. */
 export type RuntimeMap = Record<string, PaneRuntime>;
+
+/** One selectable option of a pending `AskUserQuestion` (label + longer help). */
+export interface QuestionOption {
+  /** The option's short label (what the user picks). */
+  label: string;
+  /** The option's longer description (may be empty). */
+  description: string;
+}
+
+/** One pending question of an `AskUserQuestion`: header, prompt, options, mode. */
+export interface PendingQuestion {
+  /** A short header/label for the question (may be empty). */
+  header: string;
+  /** The question prompt text. */
+  question: string;
+  /** Whether more than one option may be selected. */
+  multiSelect: boolean;
+  /** The selectable options (empty for an open-ended free-text question). */
+  options: QuestionOption[];
+}
+
+/** Transcript-derived activity for an agent (framework-free shape). */
+export interface RowActivity {
+  /** The agent's last assistant message, or null. */
+  summary?: string | null;
+  /** A pending AskUserQuestion the agent is waiting on (compact text), or null. */
+  question?: string | null;
+  /** The full structured pending question(s) — options the user can answer, or null. */
+  questions?: PendingQuestion[] | null;
+  /** Context-window usage 0..100 from the transcript, or null. */
+  contextPct?: number | null;
+}
+
+/** The live `pane_id -> activity` map the Overview feeds into `buildRoster`.
+ *  Keyed on the frontend PANE id (the transcript is located from the pane's cwd),
+ *  so a row resolves its activity directly with no dependency on the snapshot. */
+export type ActivityMap = Record<string, RowActivity>;
 
 /**
  * Output newer than this (ms) counts as "working". It must exceed claude's
@@ -61,6 +130,8 @@ export interface RosterPane {
   /** Whether this pane runs an app (claude) agent. Non-app (shell) panes are
    *  NOT agents and never appear in the roster. */
   isApp: boolean;
+  /** The project this agent was launched under, or null/undefined if none. */
+  projectId?: string | null;
 }
 
 /** One workspace, projected to exactly what the roster reads. */
@@ -87,12 +158,22 @@ export interface AgentRow {
   model: string | null;
   /** The current in-progress task (`activeForm`), or null. */
   task: string | null;
+  /** The agent's last assistant message (high-level "what it just said"), or null. */
+  summary: string | null;
+  /** A pending AskUserQuestion the agent is waiting on (compact text), or null. */
+  question: string | null;
+  /** The full structured pending question(s) the user can answer, or null. */
+  questions: PendingQuestion[] | null;
+  /** The in-flight tool's label (event-sourced, e.g. `Bash:npm test`), or null. */
+  currentAction: string | null;
   /** Context-window usage 0..100, or null when unknown. */
   contextPct: number | null;
   /** Total session cost in USD, or null when unknown. */
   cost: number | null;
   /** Derived live/idle/needs-attention status. */
   status: AgentStatus;
+  /** The project this agent belongs to (registry `projectId`), or null if none. */
+  projectId: string | null;
 }
 
 /** Coerce to a finite number, else null (guards NaN/Infinity/strings). */
@@ -154,9 +235,16 @@ function rowFor(
   pane: RosterPane,
   snapshot: Snapshot | undefined,
   runtime: PaneRuntime | undefined,
+  activity: RowActivity | undefined,
+  event: EventActivity | undefined,
   nowMs: number,
   workingWindowMs: number
 ): AgentRow {
+  // Status precedence: a process exit is AUTHORITATIVE (a dead process is never
+  // "working"); otherwise the event-sourced status wins; the PTY-byte heuristic is
+  // the fallback only when events haven't determined a status (or none arrived).
+  const ptyStatus = deriveStatus(runtime, nowMs, workingWindowMs);
+  const status = runtime?.exited ? ptyStatus : event?.status ?? ptyStatus;
   return {
     paneId: pane.paneId,
     workspaceId,
@@ -164,9 +252,18 @@ function rowFor(
     cwd: pane.cwd,
     model: snapshot?.model ?? null,
     task: snapshot?.task ?? null,
-    contextPct: finiteOrNull(snapshot?.context_pct),
+    summary: activity?.summary ?? null,
+    // The pending question is event-sourced (it rides the PreToolUse event); the
+    // transcript sidecar is a fallback for sessions with no event pipeline.
+    question: event?.question ?? activity?.question ?? null,
+    questions: event?.questions ?? activity?.questions ?? null,
+    currentAction: event?.currentAction ?? null,
+    // Prefer the transcript-derived context % (decoupled from the statusline
+    // snapshot); fall back to the snapshot's when the transcript has no usage yet.
+    contextPct: finiteOrNull(activity?.contextPct) ?? finiteOrNull(snapshot?.context_pct),
     cost: finiteOrNull(snapshot?.cost),
-    status: deriveStatus(runtime, nowMs, workingWindowMs)
+    status,
+    projectId: pane.projectId ?? null
   };
 }
 
@@ -182,6 +279,7 @@ function rowFor(
  * @param workspaces  the framework-free workspace projection
  * @param runtime     the live pane_id -> runtime map (PTY activity + exit), for status
  * @param nowMs       "now" in epoch ms, for the output-activity window
+ * @param activity    the live session_id -> transcript activity map (summary/question)
  * @param workingWindowMs  activity window in ms (default WORKING_WINDOW_MS)
  */
 export function buildRoster(
@@ -189,14 +287,29 @@ export function buildRoster(
   workspaces: RosterWorkspace[],
   runtime: RuntimeMap,
   nowMs: number,
-  workingWindowMs: number = WORKING_WINDOW_MS
+  activity: ActivityMap = {},
+  workingWindowMs: number = WORKING_WINDOW_MS,
+  eventActivity: Record<string, EventActivity> = {}
 ): AgentRow[] {
   const rows: AgentRow[] = [];
   for (const ws of workspaces) {
     for (const pane of ws.panes) {
       if (!pane.isApp) continue;
+      // Both activity maps are keyed on the pane id (its transcript/events are
+      // located from the cwd / the app-stamped pane env).
+      const act = activity[pane.paneId];
       rows.push(
-        rowFor(ws.id, ws.name, pane, map[pane.paneId], runtime[pane.paneId], nowMs, workingWindowMs)
+        rowFor(
+          ws.id,
+          ws.name,
+          pane,
+          map[pane.paneId],
+          runtime[pane.paneId],
+          act,
+          eventActivity[pane.paneId],
+          nowMs,
+          workingWindowMs
+        )
       );
     }
   }

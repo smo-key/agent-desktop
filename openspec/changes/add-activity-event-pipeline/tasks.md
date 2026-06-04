@@ -25,30 +25,30 @@
 
 ## 4. Frontend event store
 
-- [ ] 4.1 Write failing tests for `events.svelte.ts`: ingest `overview://event`, maintain `paneId → Event[]` ring, derive `currentAction` (latest PreToolUse without matching PostToolUse, cleared on Post/Stop)
-- [ ] 4.2 Write failing tests for seeding via `events_for` on mount
-- [ ] 4.3 Implement `src/lib/overview/events.svelte.ts`
-- [ ] 4.4 Verify event-store tests pass
+- [x] 4.1 Write failing tests for `events.svelte.ts`: ingest `overview://event`, maintain `paneId → Event[]` ring, derive `currentAction` (latest PreToolUse without matching PostToolUse, cleared on Post/Stop)
+- [x] 4.2 Write failing tests for seeding via `events_for` on mount
+- [x] 4.3 Implement `src/lib/overview/events.svelte.ts`
+- [x] 4.4 Verify event-store tests pass
 
 ## 5. Event-sourced status, currentAction, timeline
 
-- [ ] 5.1 Write failing tests for the event → status mapping (working / waiting / done / error / fallback) per `activity-timeline` scenarios
-- [ ] 5.2 Implement event-sourced status in `runtime.ts`/`view.svelte.ts`; demote PTY-byte heuristic to fallback; keep PTY `exit` authoritative
-- [ ] 5.3 Add `currentAction` to `AgentRow` (`roster.ts`) and surface the per-tool timeline (seeded from `events_for`)
-- [ ] 5.4 Verify status/roster/timeline tests pass
+- [x] 5.1 Write failing tests for the event → status mapping (working / waiting / done / error / fallback) per `activity-timeline` scenarios
+- [x] 5.2 Implement event-sourced status in `runtime.ts`/`view.svelte.ts`; demote PTY-byte heuristic to fallback; keep PTY `exit` authoritative
+- [x] 5.3 Add `currentAction` to `AgentRow` (`roster.ts`) and surface the per-tool timeline (seeded from `events_for`)
+- [x] 5.4 Verify status/roster/timeline tests pass
 
 ## 6. Event-triggered transcript reads
 
-- [ ] 6.1 Write failing tests: `activity_for` invoked on `Stop`/`PostToolUse`; ~5s safety poll backstops; no fixed 1.5s loop remains
-- [ ] 6.2 Implement event-triggered reads + safety poll in `+page.svelte` / `activity.svelte.ts`; remove the 1.5s cadence
-- [ ] 6.3 Verify polling tests pass
+- [x] 6.1 Write failing tests: `activity_for` invoked on `Stop`/`PostToolUse`; ~5s safety poll backstops; no fixed 1.5s loop remains
+- [x] 6.2 Implement event-triggered reads + safety poll in `+page.svelte` / `activity.svelte.ts`; remove the 1.5s cadence
+- [x] 6.3 Verify polling tests pass
 
 ## 7. Pending question via event + retire sidecar
 
-- [ ] 7.1 Write failing tests: pending question surfaced from the `PreToolUse[AskUserQuestion]` event; cleared on Post/Stop; no sidecar read
+- [x] 7.1 Write failing tests: pending question surfaced from the `PreToolUse[AskUserQuestion]` event; cleared on Post/Stop; no sidecar read
 - [ ] 7.2 Source pending question from the event store (DEFERRED: keep `read_pending_questions` dormant-but-tested until `add-agent-desktop` archives — removing it now would orphan the enforced agent-overview scenario "Pending question comes from the sidecar")
 - [x] 7.3 Delete `src-tauri/resources/question-hook.cjs` and any now-dead references
-- [ ] 7.4 Verify question tests pass
+- [x] 7.4 Verify question tests pass
 
 ## 8. Persistence rehydration + backfill
 
@@ -58,7 +58,7 @@
 
 ## 9. Integration & validation
 
-- [ ] 9.1 Integration test: a simulated event sequence (incl. a restart seeded from disk) drives expected `status`/`currentAction`/timeline transitions
-- [ ] 9.2 Run full svelte-check + frontend + Rust test suites green
-- [ ] 9.3 `openspec validate add-activity-event-pipeline --strict` passes
+- [x] 9.1 Integration test: a simulated event sequence (incl. a restart seeded from disk) drives expected `status`/`currentAction`/timeline transitions
+- [x] 9.2 Run full svelte-check + frontend + Rust test suites green
+- [x] 9.3 `openspec validate add-activity-event-pipeline --strict` passes
 - [ ] 9.4 Manual smoke: launch a session, confirm live status/currentAction/timeline, answer a question, restart the app, confirm the timeline rehydrates
