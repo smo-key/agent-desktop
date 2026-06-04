@@ -42,4 +42,19 @@ describe('portal action', () => {
     action.destroy();
     expect(node.parentElement).toBe(home);
   });
+
+  it('keeps the node home when the initial target is null', () => {
+    const { home, node } = setup();
+    portal(node, null);
+    expect(node.parentElement).toBe(home);
+  });
+
+  it('is a no-op when re-targeted to the same element (node stays put)', () => {
+    const { node, target } = setup();
+    const action = portal(node, target);
+    const before = node.parentElement;
+    action.update(target);
+    expect(node.parentElement).toBe(before);
+    expect(node.parentElement).toBe(target);
+  });
 });

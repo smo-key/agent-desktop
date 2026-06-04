@@ -4,6 +4,7 @@
 // and the inbox focus slot WITHOUT remounting it — moving where a terminal is shown
 // never spawns or kills a PTY. A comment node marks the element's home position so
 // `null` (or destroy) puts it back exactly where Svelte expects to remove it.
+// Precondition: the element's original parent must stay attached to the document until the action is destroyed (it is the restore anchor's home).
 
 export interface PortalAction {
   update(target: HTMLElement | null): void;
@@ -17,6 +18,7 @@ export function portal(node: HTMLElement, target: HTMLElement | null): PortalAct
 
   function move(to: HTMLElement | null): void {
     if (to) {
+      if (node.parentElement === to) return; // already there — don't re-append (avoids disrupting a live terminal)
       to.appendChild(node);
     } else {
       // Back home: re-insert right after the anchor comment.
