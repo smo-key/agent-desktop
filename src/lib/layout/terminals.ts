@@ -32,6 +32,17 @@ export interface TerminalHandle {
    * when the pane's process has exited / no PTY is wired.
    */
   sendKeys(data: string): boolean;
+  /**
+   * Focus this pane's xterm so keystrokes go straight to its PTY. Called when the
+   * inbox makes this agent the focused one, so you type into the live terminal
+   * without a separate input box.
+   */
+  focus(): void;
+  /**
+   * Scroll this pane's xterm viewport to the bottom (the live prompt). Called
+   * alongside focus() on entry so you land on the latest output.
+   */
+  scrollToBottom(): void;
 }
 
 const handles = new Map<string, TerminalHandle>();
@@ -46,4 +57,14 @@ export function unregisterTerminal(paneId: string): void {
 
 export function getTerminal(paneId: string): TerminalHandle | undefined {
   return handles.get(paneId);
+}
+
+/** Focus a pane's terminal if it is registered (no-op otherwise). */
+export function focusTerminal(paneId: string): void {
+  handles.get(paneId)?.focus();
+}
+
+/** Scroll a pane's terminal to the bottom if it is registered (no-op otherwise). */
+export function scrollTerminalToBottom(paneId: string): void {
+  handles.get(paneId)?.scrollToBottom();
 }

@@ -374,6 +374,14 @@
             data: Array.from(new TextEncoder().encode(data))
           }).catch(() => {});
           return true;
+        },
+        // Inbox: focus this pane's xterm so typing goes straight to the PTY, and
+        // pin the viewport to the live prompt on entry.
+        focus: () => {
+          term?.focus();
+        },
+        scrollToBottom: () => {
+          term?.scrollToBottom();
         }
       });
 

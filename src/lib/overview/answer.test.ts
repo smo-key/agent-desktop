@@ -23,7 +23,9 @@ function fakeHandle(alive = true): TerminalHandle & { keys: string[] } {
       if (!alive) return false;
       keys.push(data);
       return true;
-    }
+    },
+    focus: () => {},
+    scrollToBottom: () => {}
   };
 }
 
