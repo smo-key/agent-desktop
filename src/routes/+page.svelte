@@ -228,9 +228,9 @@
       return;
     }
 
-    // Cmd-O cycles the top-level view: overview (cards) -> windows (terminals) ->
-    // grid -> overview. Available regardless of store state — the overviews are
-    // meaningful even before any pane is seeded.
+    // Cmd-O cycles the top-level view: overview -> grid -> overview. Available
+    // regardless of store state — the views are meaningful even before any pane
+    // is seeded.
     if (meta && !e.shiftKey && (key === 'o' || key === 'O')) {
       e.preventDefault();
       view.cycle();
@@ -310,9 +310,9 @@
       <span class="title">agent-desktop</span>
     </div>
 
-    <!-- Top-level view control, centered: Overview (cards) · Windows (terminals)
-         · Grid. Cmd-O cycles the same. data-tauri-drag-region is OFF so clicks
-         register instead of dragging the window. -->
+    <!-- Top-level view control, centered: Overview · Grid. Cmd-O cycles the
+         same. data-tauri-drag-region is OFF so clicks register instead of
+         dragging the window. -->
     <div class="view-seg" data-tauri-drag-region="false">
       {#each viewSegments as seg (seg.mode)}
         <button
@@ -364,11 +364,11 @@
     <UsageBar />
   </div>
 
-  <!-- The OVERVIEW surfaces (cards + terminal windows). Rendered only while one is
-       the active top-level view; the grid above stays mounted (hidden) so its PTYs
-       are untouched. Both read the snapshots + workspace + subagent stores (pure
-       view-model math), share the project panel/filter, and the Windows view reads
-       the live xterm tails of those same mounted panes. -->
+  <!-- The INBOX overview surface. Rendered only while overview is the active
+       top-level view; the grid above stays mounted (hidden) so its PTYs are
+       untouched. The inbox reads the snapshots + workspace + subagent stores
+       (pure view-model math) and teleports the live grid surface into its focus
+       pane — no PTY is ever double-spawned. -->
   {#if view.isOverview}
     <Inbox />
   {/if}
@@ -390,10 +390,10 @@
 
 <style>
   .app {
-    /* Positioned ancestor for the absolutely-positioned Overview
-       (position:absolute;inset:0). Without this it'd resolve its containing
-       block to the viewport and cover the title bar; with .app relative it sits
-       within the app area, below the title bar. */
+    /* Positioned ancestor (position:relative) and flex column for the app body.
+       Without position:relative, any absolutely-positioned descendants (e.g.
+       workspace tiles) would resolve their containing block to the viewport and
+       cover the title bar. The flex column stacks title bar above the body. */
     position: relative;
     display: flex;
     flex-direction: column;

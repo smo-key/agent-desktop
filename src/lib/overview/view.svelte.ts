@@ -1,9 +1,9 @@
 // Runes store for the TOP-LEVEL view mode (Stage 3 of agent-overview; spec:
 // Overview As A Primary View). The app has two top-level surfaces:
 //
-//   - 'overview' — the mission-control roster of agent CARDS (Overview.svelte).
-//                  The DEFAULT: scan every agent + its subagents, message/launch
-//                  from one place.
+//   - 'overview' — the inbox overview (Inbox.svelte). The DEFAULT: roster of
+//                  every agent grouped by status; selecting one teleports the
+//                  live surface into a focus pane without respawning the PTY.
 //   - 'grid'     — the terminal grid (the tiling PaneNodes). Where you actually
 //                  drive an agent's TUI; "dig in" / selecting an agent lands here,
 //                  focused on that agent's pane.

@@ -30,7 +30,6 @@
   import { isAttention, attentionQueue, resolveFocus, nextInQueue, shouldClearPin } from './inbox';
   import { toRosterWorkspaces, toNavWorkspaces } from './rosterInputs';
   import { runtimeMap } from './runtime';
-  import { aggregate } from './usage';
   import { navigateTarget } from './navigate';
   import { activity } from './activity.svelte';
   import { events } from './events.svelte';
@@ -71,14 +70,11 @@
   const queue = $derived(attentionQueue(rows));
   const attnCount = $derived(queue.length);
 
-  const subagentCosts = $derived([] as { cost: number | null }[]);
-  const totals = $derived(aggregate(rows, subagentCosts));
-
-  // Group metadata (label + glyph) for the left list, in attn -> flight -> done order.
-  const LANES: Record<AgentLane, { title: string; glyph: string }> = {
-    attn: { title: 'Needs you', glyph: '!' },
-    flight: { title: 'In flight', glyph: '▸' },
-    done: { title: 'Completed', glyph: '✓' }
+  // Group metadata (label) for the left list, in attn -> flight -> done order.
+  const LANES: Record<AgentLane, { title: string }> = {
+    attn: { title: 'Needs you' },
+    flight: { title: 'In flight' },
+    done: { title: 'Completed' }
   };
 
   // The user's explicit selection (a watched agent), or null to let the queue drive.

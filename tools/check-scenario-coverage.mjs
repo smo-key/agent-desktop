@@ -199,15 +199,16 @@ const MANUAL_SCENARIOS = {
   //   - navigate.test.ts: selecting_an_agent_focuses_its_pane (the PURE target
   //     resolution paneId -> {workspaceId, leafId}; the live store mutation + view
   //     switch is the MANUAL part of the same flow, confirmed in-app).
-  //   - view.svelte.test.ts: switch_between_the_overview_windows_and_grid_views.
-  //   - tail.test.ts: terminal_windows_show_a_limited_live_tail.
+  //   - view.svelte.test.ts: switch_between_the_overview_and_grid_views.
   //   - subagents.rs (Rust): subagents_appear_under_their_parent_agent /
   //     partial_subagent_metadata_does_not_break_the_roster.
-  // The single MANUAL aspect is the end-to-end new-agent launch — the live launcher
-  // dialog + spawn-in-folder + the freshly-created pane appearing as a roster row.
-  // The launcher itself (plan/recents/initial-input) has headless coverage under
-  // session-launcher; what is live here is the overview's "＋ New agent" opening it
-  // and the resulting pane rostering, which needs a real window + PTY.
+  // The MANUAL set covers the three live-only inbox behaviors:
+  //   - end-to-end new-agent launch: the live launcher dialog + spawn-in-folder +
+  //     the freshly-created pane appearing as a roster row (real window + PTY).
+  //   - terminal focus + scroll-to-bottom on entry to an agent: requires a live
+  //     xterm instance; pure selection logic is unit-tested in inbox.test.ts.
+  //   - the live surface teleported into the focus pane without respawning: the
+  //     surfaceSlot portal wiring requires a real DOM + mounted PTY to confirm.
   'agent-overview': new Set([
     'new_agent_action_launches_and_rosters',
     'entering_an_agent_focuses_its_terminal_and_scrolls_to_the_bottom',
