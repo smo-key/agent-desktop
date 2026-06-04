@@ -119,6 +119,19 @@ fn pty_write(manager: State<'_, Arc<PtyManager>>, id: PaneId, data: Vec<u8>) -> 
     manager.write(id, data)
 }
 
+/// Open `path` in the Cursor editor (macOS `open -a Cursor <path>`). The frontend
+/// resolves a relative filename against the agent's cwd before calling, so `path`
+/// is absolute. Best-effort: spawns and returns; a launch failure is surfaced as a
+/// string the frontend can log/ignore (never blocks the UI).
+#[tauri::command]
+fn open_in_editor(path: String) -> Result<(), String> {
+    std::process::Command::new("open")
+        .args(["-a", "Cursor", &path])
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("open -a Cursor {path}: {e}"))
+}
+
 /// Resize a pane's PTY (delivers SIGWINCH to the child).
 #[tauri::command]
 fn pty_resize(
@@ -511,6 +524,7 @@ pub fn run() {
             pty_write,
             pty_resize,
             pty_kill,
+            open_in_editor,
             layout_load,
             layout_save,
             recents_load,

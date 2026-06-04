@@ -39,6 +39,8 @@
   import { subagents, type Subagent } from './subagents.svelte';
   import { activity } from './activity.svelte';
   import { events } from './events.svelte';
+  import { renderMarkdown } from './markdown';
+  import { openInEditor } from './editor';
   import { view } from './view.svelte';
   import { projects } from '$lib/projects/projects.svelte';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
@@ -141,11 +143,6 @@
     done: true
   });
 
-  /** Whether an agent is alive (has a PTY to message) — not finished/errored. */
-  function isAlive(status: AgentStatus): boolean {
-    return status !== 'finished' && status !== 'error';
-  }
-
   // Right-click context menu for an agent card.
   let menu = $state<{ open: boolean; x: number; y: number; items: MenuItem[] }>({
     open: false,
@@ -218,10 +215,29 @@
 
   // ---- Display helpers (formatting only; no logic) -------------------------
 
-  /** The card's activity line: the explicit in-progress task, else the agent's
-   *  last message (transcript summary), else null (renders as "—"). */
-  function activityLine(row: { task: string | null; summary: string | null }): string | null {
-    return row.task ?? row.summary;
+  /** The recent assistant messages for a pane (newest LAST), for the transcript
+   *  preview. Falls back to the one-line summary when no message list is available. */
+  function messagesFor(paneId: string, summary: string | null): string[] {
+    const msgs = activity.forPane(paneId).messages;
+    if (msgs && msgs.length > 0) return msgs;
+    return summary ? [summary] : [];
+  }
+
+  /** Delegated click on the transcript: a clicked filename (`.md-file`) opens in
+   *  the editor (resolved against the agent's cwd) and never navigates the card. */
+  function onTranscriptClick(e: MouseEvent, cwd: string | null) {
+    const target = e.target as HTMLElement | null;
+    const fileEl = target?.closest('.md-file') as HTMLElement | null;
+    if (fileEl?.dataset.file) {
+      e.stopPropagation();
+      void openInEditor(cwd, fileEl.dataset.file);
+    }
+  }
+
+  /** Whether the agent currently needs the user's input (the only state in which
+   *  the inline message box is shown). */
+  function needsInput(status: AgentStatus): boolean {
+    return status === 'waiting';
   }
 
   /** The {icon,color} for an agent's project avatar (neutral folder when none). */
@@ -357,10 +373,11 @@
             </button>
 
             {#if !collapsed}
-            <div class="agrid">
+            <div class="agrid" class:full={lane === 'attn'}>
               {#each laneRows as row (row.paneId)}
                 {@const subs = subagentsFor(row.paneId)}
                 {@const av = projAvatar(row.projectId)}
+                {@const msgs = messagesFor(row.paneId, row.summary)}
                 <!-- The card is a clickable region that navigates; the message box
                      stops propagation so typing/sending never navigates. -->
                 <div
@@ -387,12 +404,9 @@
                   </div>
 
                   <!-- A pending AskUserQuestion: the agent asked YOU and is waiting.
-                       Shown as a prominent callout with its options (click to answer)
-                       and a free-text field. Clicks/keys here stop propagation so
-                       answering never navigates the card. The structured form drives
-                       the FIRST pending question (the one on screen in the TUI); when
-                       only the compact text is available we fall back to a plain
-                       callout. -->
+                       Flattened (no nested boxes): the prompt, then flat option
+                       rows, then a free-text reply. Clicks/keys stop propagation so
+                       answering never navigates the card. -->
                   {#if row.questions && row.questions.length > 0}
                     {@const q = row.questions[0]}
                     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -401,31 +415,23 @@
                       onclick={(e) => e.stopPropagation()}
                       onkeydown={(e) => e.stopPropagation()}
                     >
-                      <div class="qask-head">
+                      <p class="qask-q">
                         <span class="qask-ic" aria-hidden="true">?</span>
                         {#if q.header}<span class="qask-tag">{q.header}</span>{/if}
-                        <span class="qask-text">{q.question}</span>
-                      </div>
-                      {#if q.options.length > 0}
-                        <div class="qopts">
-                          {#each q.options as opt, i (i)}
-                            <button
-                              type="button"
-                              class="qopt"
-                              title={opt.description || opt.label}
-                              onclick={() => pickOption(row.paneId, i)}
-                            >
-                              <span class="qopt-num" aria-hidden="true">{i + 1}</span>
-                              <span class="qopt-body">
-                                <span class="qopt-label">{opt.label}</span>
-                                {#if opt.description}
-                                  <span class="qopt-desc">{opt.description}</span>
-                                {/if}
-                              </span>
-                            </button>
-                          {/each}
-                        </div>
-                      {/if}
+                        {q.question}
+                      </p>
+                      {#each q.options as opt, i (i)}
+                        <button
+                          type="button"
+                          class="qopt"
+                          title={opt.description || opt.label}
+                          onclick={() => pickOption(row.paneId, i)}
+                        >
+                          <span class="qopt-num" aria-hidden="true">{i + 1}</span>
+                          <span class="qopt-label">{opt.label}</span>
+                          {#if opt.description}<span class="qopt-desc">— {opt.description}</span>{/if}
+                        </button>
+                      {/each}
                       <div class="qreply">
                         <input
                           type="text"
@@ -449,25 +455,38 @@
                       </div>
                     </div>
                   {:else if row.question}
-                    <div class="qask" title={row.question}>
-                      <div class="qask-head">
-                        <span class="qask-ic" aria-hidden="true">?</span>
-                        <span class="qask-text">{row.question}</span>
-                      </div>
+                    <p class="qask-line" title={row.question}>
+                      <span class="qask-ic" aria-hidden="true">?</span>
+                      {row.question}
+                    </p>
+                  {/if}
+
+                  <!-- Transcript preview: recent assistant messages as formatted
+                       Markdown (filenames are clickable → open in the editor).
+                       Clipped to 8 lines with older messages faded; the FULL latest
+                       message is shown when the agent needs input. -->
+                  {#if msgs.length > 0}
+                    <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+                    <div
+                      class="transcript"
+                      class:full={needsInput(row.status)}
+                      onclick={(e) => onTranscriptClick(e, row.cwd)}
+                    >
+                      {#each msgs as m, i (i)}
+                        <div class="msg" class:latest={i === msgs.length - 1}>
+                          {@html renderMarkdown(m)}
+                        </div>
+                      {/each}
                     </div>
                   {/if}
 
-                  <!-- Activity: the in-progress task, else the agent's last message. -->
-                  <div class="task" title={activityLine(row) ?? ''}>{activityLine(row) ?? '—'}</div>
-
-                  <!-- Context bar (the segmented task strip's single-bar fallback). -->
-                  <div class="bar" class:unknown={row.contextPct === null}>
-                    {#if row.contextPct !== null}
-                      <i
-                        style:width={`${Math.max(0, Math.min(100, row.contextPct))}%`}
-                      ></i>
-                    {/if}
-                  </div>
+                  <!-- The current in-flight action (event-sourced), while working. -->
+                  {#if row.status === 'working' && row.currentAction}
+                    <div class="doing">
+                      <span class="doing-ic" aria-hidden="true"></span>
+                      <span class="doing-text">{row.currentAction}</span>
+                    </div>
+                  {/if}
 
                   <!-- Subagents nested under the parent agent. -->
                   {#if subs.length > 0}
@@ -483,17 +502,26 @@
                     </ul>
                   {/if}
 
-                  <!-- Telemetry footer: context % + session cost (mono). -->
-                  <div class="ac-foot">
-                    <span title="Context window used">ctx {pct(row.contextPct)}</span>
+                  <!-- One-line statusline: a slim context gauge + ctx% + session
+                       cost, all on a single row (replaces the old two-line bar +
+                       footer). -->
+                  <div class="statusline">
+                    <span class="ctx" class:unknown={row.contextPct === null} title="Context window used">
+                      <span class="ctx-track">
+                        {#if row.contextPct !== null}
+                          <i style:width={`${Math.max(0, Math.min(100, row.contextPct))}%`}></i>
+                        {/if}
+                      </span>
+                      ctx {pct(row.contextPct)}
+                    </span>
                     <span class="grow"></span>
                     <span class="cost" title="Session cost">{cost(row.cost)}</span>
                   </div>
 
-                  <!-- Inline message box — only for LIVE agents (a finished or
-                       errored agent has no PTY to message). Clicks/keys here are
-                       stopped so they never navigate the card. -->
-                  {#if isAlive(row.status)}
+                  <!-- Inline message box — ONLY when the agent needs your input, and
+                       only when a structured question isn't already offering a reply.
+                       Clicks/keys here are stopped so they never navigate the card. -->
+                  {#if needsInput(row.status) && !(row.questions && row.questions.length > 0)}
                     <!-- svelte-ignore a11y_no_static_element_interactions -->
                     <div
                       class="ac-reply"
@@ -832,6 +860,11 @@
     gap: 14px;
     align-items: start;
   }
+  /* Needs-attention cards span the full width (one column) so the agent waiting on
+     you reads as the priority row. */
+  .agrid.full {
+    grid-template-columns: 1fr;
+  }
   @media (max-width: 840px) {
     .agrid {
       grid-template-columns: 1fr;
@@ -931,6 +964,30 @@
     background: var(--blue-tint);
     color: var(--blue-300);
   }
+  /* Animate the WORKING status: the badge dot pulses (a soft breathing ring) so an
+     actively-working agent reads as live at a glance. */
+  .b-active .sdot {
+    animation: workpulse 1.4s var(--ease-out) infinite;
+  }
+  @keyframes workpulse {
+    0% {
+      box-shadow: 0 0 0 0 rgba(86, 156, 255, 0.5);
+      opacity: 1;
+    }
+    70% {
+      box-shadow: 0 0 0 5px rgba(86, 156, 255, 0);
+      opacity: 0.6;
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(86, 156, 255, 0);
+      opacity: 1;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .b-active .sdot {
+      animation: none;
+    }
+  }
   .b-review {
     background: var(--orange-tint);
     color: var(--orange-300);
@@ -955,26 +1012,44 @@
     background: var(--orange-tint);
     border: 1px solid rgba(238, 126, 77, 0.3);
   }
-  .qask-head {
+  /* The flattened prompt line: inline icon + optional tag + the question text. */
+  .qask-q {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--orange-200);
+    font-weight: 600;
+  }
+  /* Compact (free-text-only) question — a single inline line, no box. */
+  .qask-line {
+    margin: 0;
     display: flex;
     align-items: flex-start;
     gap: 8px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--orange-200);
+    font-weight: 600;
   }
   .qask-ic {
-    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    vertical-align: -3px;
     width: 16px;
     height: 16px;
+    margin-right: 6px;
     border-radius: 50%;
     background: var(--orange-400);
     color: var(--space-900);
     font-family: var(--font-mono);
     font-size: 11px;
     font-weight: 700;
-    line-height: 16px;
-    text-align: center;
   }
   .qask-tag {
-    flex: none;
+    display: inline-block;
+    vertical-align: 1px;
+    margin-right: 6px;
     font-family: var(--font-mono);
     font-size: 9px;
     font-weight: 600;
@@ -984,28 +1059,16 @@
     background: rgba(238, 126, 77, 0.16);
     border-radius: 4px;
     padding: 2px 6px;
-    line-height: 1.3;
-  }
-  .qask-text {
-    font-size: 12.5px;
-    line-height: 1.4;
-    color: var(--orange-200);
-    font-weight: 600;
   }
 
-  /* The selectable options (click to answer). */
-  .qopts {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
+  /* Flat option rows (no nested body wrapper): number · label · inline desc. */
   .qopt {
     display: flex;
-    align-items: flex-start;
+    align-items: baseline;
     gap: 8px;
     width: 100%;
     text-align: left;
-    padding: 7px 9px;
+    padding: 6px 9px;
     border-radius: var(--r-sm);
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--line-subtle);
@@ -1024,6 +1087,7 @@
   }
   .qopt-num {
     flex: none;
+    align-self: center;
     width: 16px;
     height: 16px;
     border-radius: 4px;
@@ -1035,28 +1099,20 @@
     line-height: 16px;
     text-align: center;
   }
-  .qopt-body {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
   .qopt-label {
+    flex: none;
     font-size: 12.5px;
     font-weight: 600;
     color: var(--fg-1);
-    line-height: 1.3;
   }
   .qopt-desc {
+    flex: 1 1 auto;
+    min-width: 0;
     font-size: 11px;
-    line-height: 1.35;
     color: var(--fg-3);
     overflow: hidden;
     text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
+    white-space: nowrap;
   }
 
   /* Free-text answer field inside the question callout. */
@@ -1088,41 +1144,137 @@
     box-shadow: 0 0 0 3px rgba(238, 126, 77, 0.18);
   }
 
-  .task {
-    font-size: 13px;
-    color: var(--fg-2);
-    line-height: 1.45;
+  /* ---- Transcript preview (recent messages, rendered Markdown) ------------ */
+  /* Newest message at the BOTTOM, prominent; older messages above it, faded. The
+     block is clipped to ~8 lines with a soft top fade; `.full` (the agent needs
+     input) removes the clamp so the entire latest message is readable. */
+  .transcript {
+    --line: 1.5em;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 8px;
+    max-height: calc(var(--line) * 8);
     overflow: hidden;
-    text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    min-height: 19px;
+    font-size: 12.5px;
+    line-height: var(--line);
+    -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 34px);
+    mask-image: linear-gradient(180deg, transparent 0, #000 34px);
+  }
+  .transcript.full {
+    max-height: none;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .msg {
+    color: var(--fg-3);
+    opacity: 0.42;
+    overflow-wrap: anywhere;
+  }
+  .msg.latest {
+    color: var(--fg-2);
+    opacity: 1;
+  }
+  /* Markdown elements inside a message (compact, preview-scale). */
+  .msg :global(p) {
+    margin: 0 0 6px;
+  }
+  .msg :global(p:last-child) {
+    margin-bottom: 0;
+  }
+  .msg :global(h1),
+  .msg :global(h2),
+  .msg :global(h3),
+  .msg :global(h4) {
+    margin: 0 0 4px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg-1);
+  }
+  .msg :global(ul) {
+    margin: 0 0 6px;
+    padding-left: 16px;
+  }
+  .msg :global(li) {
+    margin: 1px 0;
+  }
+  .msg :global(strong) {
+    color: var(--fg-1);
+    font-weight: 600;
+  }
+  .msg :global(code) {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 4px;
+    padding: 1px 4px;
+  }
+  .msg :global(pre) {
+    margin: 0 0 6px;
+    padding: 8px 10px;
+    background: var(--space-850);
+    border: 1px solid var(--line-subtle);
+    border-radius: var(--r-sm);
+    overflow-x: auto;
+  }
+  .msg :global(pre code) {
+    background: none;
+    padding: 0;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .msg :global(blockquote) {
+    margin: 0 0 6px;
+    padding-left: 9px;
+    border-left: 2px solid var(--line-default);
+    color: var(--fg-3);
+  }
+  .msg :global(a) {
+    color: var(--blue-300);
+    text-decoration: none;
+  }
+  /* Clickable filename → opens in the editor. Blue, looks like a link. */
+  .msg :global(.md-file) {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--blue-300);
+    background: rgba(61, 123, 255, 0.1);
+    border: none;
+    border-radius: 4px;
+    padding: 0 4px;
+    cursor: pointer;
+    transition:
+      background var(--dur-fast),
+      color var(--dur-fast);
+  }
+  .msg :global(.md-file:hover) {
+    color: var(--blue-200);
+    background: rgba(61, 123, 255, 0.22);
+    text-decoration: underline;
   }
 
-  /* Context bar (single-bar fallback for the segmented task strip). */
-  .bar {
-    height: 5px;
-    border-radius: 2px;
-    background: var(--space-600);
+  /* Current in-flight action (event-sourced), shown while working. */
+  .doing {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--blue-300);
+    min-width: 0;
+  }
+  .doing-ic {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--blue-400);
+    animation: workpulse 1.4s var(--ease-out) infinite;
+  }
+  .doing-text {
     overflow: hidden;
-  }
-  .bar.unknown {
-    background: repeating-linear-gradient(
-      -45deg,
-      var(--space-600),
-      var(--space-600) 4px,
-      var(--space-700) 4px,
-      var(--space-700) 8px
-    );
-  }
-  .bar i {
-    display: block;
-    height: 100%;
-    border-radius: 2px;
-    background: linear-gradient(90deg, var(--blue-500), var(--blue-400));
-    transition: width var(--dur-slow) var(--ease-out);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* ---- Subagents ---------------------------------------------------------- */
@@ -1176,22 +1328,53 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* ---- Telemetry footer --------------------------------------------------- */
-  .ac-foot {
+  /* ---- One-line statusline (ctx gauge + ctx% + cost) ---------------------- */
+  .statusline {
     display: flex;
     align-items: center;
-    gap: 11px;
+    gap: 9px;
     font-family: var(--font-mono);
     font-size: 10.5px;
     color: var(--fg-3);
     font-variant-numeric: tabular-nums;
   }
-  .ac-foot .grow {
+  .statusline .grow {
     flex: 1;
   }
-  .ac-foot .cost {
+  .statusline .cost {
     color: var(--fg-1);
     font-weight: 500;
+  }
+  /* Context gauge: a slim inline track that fills to the context %, with the
+     numeric label beside it — the whole thing reads as one line. */
+  .ctx {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .ctx-track {
+    display: inline-block;
+    width: 54px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--space-600);
+    overflow: hidden;
+  }
+  .ctx.unknown .ctx-track {
+    background: repeating-linear-gradient(
+      -45deg,
+      var(--space-600),
+      var(--space-600) 3px,
+      var(--space-700) 3px,
+      var(--space-700) 6px
+    );
+  }
+  .ctx-track i {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--blue-500), var(--blue-400));
+    transition: width var(--dur-slow) var(--ease-out);
   }
 
   /* ---- Inline reply (message the agent) ----------------------------------- */

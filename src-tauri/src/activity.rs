@@ -33,6 +33,12 @@ const TAIL_BYTES: u64 = 256 * 1024;
 const SUMMARY_MAX: usize = 160;
 const QUESTION_MAX: usize = 200;
 
+/// Max chars per recent message in the overview transcript preview (multi-line
+/// preserved). Generous enough for the 8-line preview + full-message-when-waiting.
+const MESSAGE_MAX: usize = 1400;
+/// How many recent assistant text messages to surface (newest last).
+const RECENT_MESSAGES: usize = 6;
+
 // ---------------------------------------------------------------------------
 // Output shape (the frontend contract).
 // ---------------------------------------------------------------------------
@@ -87,6 +93,11 @@ pub struct Activity {
     /// token usage (input + cache tokens / the model's window), or `null`.
     #[serde(default)]
     pub context_pct: Option<f64>,
+    /// The recent assistant TEXT messages (newest LAST), each multi-line preserved
+    /// and truncated — the overview renders these as the transcript preview (the
+    /// last one prominent, older ones faded). `null` when none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messages: Option<Vec<String>>,
 }
 
 /// One pane the frontend wants activity for: its frontend `pane_id` (the map key),
@@ -161,6 +172,28 @@ fn extract_question(input: &Value) -> Option<String> {
         return None;
     }
     Some(truncate(&parts.join(" • "), QUESTION_MAX))
+}
+
+/// The joined text of an assistant entry's text blocks (newline-separated),
+/// trimmed; `None` when the entry carries no non-empty text block. Newlines are
+/// PRESERVED (unlike the collapsed summary) so the overview can render Markdown.
+fn assistant_text(entry: &Value) -> Option<String> {
+    let mut parts = Vec::new();
+    for block in assistant_content(entry) {
+        if block.get("type").and_then(Value::as_str) == Some("text") {
+            if let Some(t) = block.get("text").and_then(Value::as_str) {
+                let t = t.trim();
+                if !t.is_empty() {
+                    parts.push(t.to_string());
+                }
+            }
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
 }
 
 /// The content blocks of an `assistant` entry, or empty.
@@ -258,6 +291,22 @@ pub fn summarize_transcript(path: &Path) -> Activity {
                 }
             }
         }
+    }
+
+    // MESSAGES: the last RECENT_MESSAGES assistant TEXT messages (newest LAST),
+    // multi-line preserved + truncated, for the overview's transcript preview.
+    let mut msgs: Vec<String> = Vec::new();
+    for entry in entries.iter().rev() {
+        if let Some(text) = assistant_text(entry) {
+            msgs.push(truncate(&text, MESSAGE_MAX));
+            if msgs.len() >= RECENT_MESSAGES {
+                break;
+            }
+        }
+    }
+    if !msgs.is_empty() {
+        msgs.reverse(); // newest LAST (the prominent one)
+        out.messages = Some(msgs);
     }
 
     // QUESTION: the LAST AskUserQuestion tool_use, pending iff no later tool_result
@@ -641,5 +690,31 @@ mod tests {
         let map2 = activity_for_panes(base, &panes);
         assert!(map2.get("pane-Q").unwrap().question.is_none());
         assert!(map2.get("pane-Q").unwrap().questions.is_none());
+    }
+
+    /// The recent assistant TEXT messages surface newest-LAST with newlines
+    /// preserved (the overview renders them as the Markdown transcript preview).
+    #[test]
+    fn recent_messages_surface_newest_last() {
+        let tmp = TempDir::new("messages");
+        let path = write_transcript(
+            tmp.path(),
+            "proj",
+            "sess-M",
+            &[
+                assistant(serde_json::json!([{"type":"text","text":"First message"}])),
+                // A tool-only entry between messages is skipped (no text block).
+                assistant(serde_json::json!([{"type":"tool_use","name":"Bash","input":{}}])),
+                assistant(serde_json::json!([{"type":"text","text":"Second\nwith a line"}])),
+            ],
+        );
+        let act = summarize_transcript(&path);
+        let msgs = act.messages.expect("messages present");
+        assert_eq!(msgs.len(), 2, "two text messages, tool-only entry skipped");
+        assert_eq!(msgs[0], "First message");
+        // Newest LAST, newlines PRESERVED (unlike the collapsed one-line summary).
+        assert_eq!(msgs[1], "Second\nwith a line");
+        // The summary is still the collapsed last message (newlines flattened).
+        assert_eq!(act.summary.as_deref(), Some("Second with a line"));
     }
 }
