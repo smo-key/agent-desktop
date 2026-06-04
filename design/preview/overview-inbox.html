@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Overview — Inbox Explorations</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--space-850); color: var(--fg-1); font-family: var(--font-sans); font-size: var(--t-body); -webkit-font-smoothing: antialiased; }
+
+  /* harness */
+  .switch { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 10px;
+    padding: 11px 22px; background: rgba(9,12,18,0.92); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line-subtle); }
+  .switch .lead { font-family: var(--font-mono); font-size: 10px; letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--fg-4); }
+  .switch button { font-family: var(--font-sans); font-weight: 600; font-size: 13px; color: var(--fg-3);
+    background: var(--space-750); border: 1px solid var(--line-subtle); border-radius: var(--r-md); padding: 7px 13px; cursor: pointer; transition: all var(--dur-fast); }
+  .switch button:hover { color: var(--fg-1); border-color: var(--line-default); }
+  .switch button.on { color: #fff; background: var(--blue-500); border-color: var(--blue-500); }
+  .switch .spacer { flex: 1; }
+  .switch .reset { color: var(--fg-3); background: transparent; border: 1px solid var(--line-default); }
+  .switch .reset:hover { color: var(--fg-1); }
+
+  .stage { display: none; height: calc(100vh - 49px); }
+  .stage.on { display: block; }
+
+  /* shared tokens */
+  .pi { border-radius: var(--r-sm); flex: none; display: flex; align-items: center; justify-content: center; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 9.5px; font-weight: 500;
+    letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 8px; border-radius: var(--r-full); white-space: nowrap; }
+  .badge.dotonly { padding: 0; background: none; }
+  .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+  .b-active { background: var(--blue-tint); color: var(--blue-300); }
+  .b-active .dot { animation: pulse 1.4s var(--ease-out) infinite; }
+  .b-review { background: var(--orange-tint); color: var(--orange-300); }
+  .b-nominal { background: var(--nominal-tint); color: #6fe0a6; }
+  .b-abort { background: var(--abort-tint); color: #ff8077; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(86,156,255,.5);opacity:1} 70%{box-shadow:0 0 0 5px rgba(86,156,255,0);opacity:.6} 100%{box-shadow:0 0 0 0 rgba(86,156,255,0);opacity:1} }
+  @media (prefers-reduced-motion: reduce){ .b-active .dot{animation:none} }
+  .cost { font-family: var(--font-mono); font-size: 11px; color: var(--fg-2); font-variant-numeric: tabular-nums; }
+  .ctxmini { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-3); }
+  .ctxmini .track { width: 46px; height: 4px; border-radius: 2px; background: var(--space-600); overflow: hidden; }
+  .ctxmini .track i { display: block; height: 100%; background: linear-gradient(90deg, var(--blue-500), var(--blue-400)); }
+
+  /* ---- the shell: left list | right focus ---- */
+  .inbox { display: grid; height: 100%; }
+  .col-list { border-right: 1px solid var(--line-subtle); background: var(--space-900); display: flex; flex-direction: column; min-height: 0; }
+  .col-focus { background: var(--space-850); min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+
+  /* list header */
+  .lh { display: flex; align-items: center; gap: 10px; padding: 16px 18px 12px; flex: none; }
+  .lh h1 { font-family: var(--font-display); font-weight: 600; font-size: 17px; margin: 0; display: flex; align-items: baseline; gap: 8px; }
+  .lh .count { font-family: var(--font-mono); font-size: 11px; color: var(--fg-3); background: var(--space-750); border: 1px solid var(--line-subtle); border-radius: var(--r-full); padding: 2px 8px; }
+  .lh .launch { margin-left: auto; font-family: var(--font-sans); font-weight: 600; font-size: 12px; color: #fff; background: var(--blue-500); border: none; border-radius: var(--r-md); padding: 7px 11px; cursor: pointer; }
+  .list-scroll { overflow-y: auto; flex: 1; min-height: 0; padding-bottom: 20px; }
+
+  .group-h { display: flex; align-items: center; gap: 8px; padding: 12px 18px 6px; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tracking-label); }
+  .group-h.attn { color: var(--orange-300); }
+  .group-h.flight { color: var(--blue-300); }
+  .group-h.done { color: var(--fg-4); }
+  .group-h .gn { color: var(--fg-4); }
+
+  /* a list row */
+  .row { display: flex; align-items: center; gap: 11px; padding: 10px 16px; cursor: pointer; border-left: 2px solid transparent; transition: background var(--dur-fast); }
+  .row:hover { background: rgba(255,255,255,0.025); }
+  .row.sel { background: rgba(61,123,255,0.10); border-left-color: var(--blue-500); }
+  .row.attn.sel { background: var(--orange-tint); border-left-color: var(--orange-500); }
+  .row .pi { width: 30px; height: 30px; font-size: 14px; }
+  .row .nm { flex: 1; min-width: 0; }
+  .row .nm .t { font-weight: 600; font-size: 13px; color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .nm .s { font-size: 11px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
+  .row .nm .s.q { color: var(--orange-300); }
+  .row .nm .s.doing { font-family: var(--font-mono); font-size: 10.5px; color: var(--blue-300); }
+  .row .rt { flex: none; display: flex; align-items: center; gap: 8px; }
+  .row.unread .nm .t::after { content: ''; }
+  .att-pill { font-family: var(--font-mono); font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--space-900); background: var(--orange-400); border-radius: 4px; padding: 2px 5px; }
+
+  /* compact rail (option 3) */
+  .railrow { display: flex; align-items: center; gap: 10px; padding: 9px 14px; cursor: pointer; border-left: 2px solid transparent; }
+  .railrow:hover { background: rgba(255,255,255,0.025); }
+  .railrow.sel { background: rgba(61,123,255,0.10); border-left-color: var(--blue-500); }
+  .railrow.attn.sel { background: var(--orange-tint); border-left-color: var(--orange-500); }
+  .railrow .pi { width: 32px; height: 32px; font-size: 15px; position: relative; }
+  .railrow .pi .ind { position: absolute; right: -3px; top: -3px; width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--space-900); }
+  .railrow .nm { flex: 1; min-width: 0; }
+  .railrow .nm .t { font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .railrow .nm .s { font-size: 10.5px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .railrow .nm .s.q { color: var(--orange-300); }
+
+  /* ---- focus pane ---- */
+  .focus-head { flex: none; display: flex; align-items: center; gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--line-subtle); background: var(--space-850); }
+  .focus-head .qcount { font-family: var(--font-mono); font-size: 11px; color: var(--orange-300); display: flex; align-items: center; gap: 8px; }
+  .focus-head .qcount .ic { width: 18px; height: 18px; border-radius: var(--r-full); background: var(--orange-400); color: var(--space-900); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 11px; }
+  .focus-head .watching { font-family: var(--font-mono); font-size: 11px; color: var(--blue-300); display: flex; align-items: center; gap: 8px; }
+  .focus-head .spc { flex: 1; }
+  .focus-head .meta { display: flex; align-items: center; gap: 14px; }
+  .focus-head .lnk { font-size: 12px; color: var(--fg-3); background: none; border: none; cursor: pointer; }
+  .focus-head .lnk:hover { color: var(--fg-1); }
+
+  .focus-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+  .focus-body { max-width: 620px; margin: 0 auto; padding: 26px 24px 60px; display: flex; flex-direction: column; gap: 18px; }
+  .focus-deck { position: relative; }
+  /* deck: faint hint of the next card behind (option 2) */
+  .focus-deck.stacked::before { content: ''; position: absolute; left: 14px; right: 14px; top: -10px; height: 30px; background: var(--space-750); border: 1px solid var(--line-subtle); border-radius: var(--r-lg); opacity: .5; }
+  .focus-deck.stacked::after { content: ''; position: absolute; left: 7px; right: 7px; top: -5px; height: 30px; background: var(--space-750); border: 1px solid var(--line-subtle); border-radius: var(--r-lg); opacity: .75; }
+
+  .f-top { display: flex; align-items: center; gap: 13px; }
+  .f-top .pi { width: 40px; height: 40px; font-size: 18px; }
+  .f-top .ft { min-width: 0; flex: 1; }
+  .f-top .ft .t { font-family: var(--font-display); font-weight: 600; font-size: 19px; letter-spacing: var(--tracking-tight); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .f-top .ft .sub { font-size: 12px; color: var(--fg-3); margin-top: 2px; }
+
+  .ctx-lines { display: flex; flex-direction: column; gap: 4px; }
+  .ctx-lines .l { font-size: 13.5px; color: var(--fg-3); opacity: .6; line-height: 1.55; }
+  .ctx-lines .l:last-child { color: var(--fg-2); opacity: 1; }
+  .ctx-lines .l code { font-family: var(--font-mono); font-size: 12px; background: rgba(255,255,255,0.06); border-radius: 4px; padding: 1px 4px; }
+  .ctx-lines .l .file { font-family: var(--font-mono); font-size: 12px; color: var(--blue-300); background: rgba(61,123,255,0.1); border-radius: 4px; padding: 0 4px; cursor: pointer; }
+
+  .q-prompt { font-size: 16px; line-height: 1.45; color: var(--fg-1); font-weight: 500; margin: 0; }
+  .q-prompt .tag { font-family: var(--font-mono); font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--orange-300); background: rgba(238,126,77,0.16); border-radius: 4px; padding: 2px 6px; margin-right: 8px; vertical-align: 2px; }
+  .chips { display: flex; flex-direction: column; gap: 9px; }
+  .chip { display: flex; align-items: center; gap: 11px; text-align: left; font-family: var(--font-sans); font-size: 14px; font-weight: 600; color: var(--fg-1);
+    background: var(--space-750); border: 1px solid var(--line-subtle); border-radius: var(--r-md); padding: 12px 14px; cursor: pointer; transition: all var(--dur-fast); }
+  .chip:hover { background: var(--orange-tint); border-color: rgba(238,126,77,0.5); transform: translateX(2px); }
+  .chip .k { width: 20px; height: 20px; border-radius: var(--r-sm); background: rgba(238,126,77,0.2); color: var(--orange-200); font-family: var(--font-mono); font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex: none; }
+  .chip .d { color: var(--fg-3); font-weight: 400; font-size: 12.5px; }
+  .reply { display: flex; gap: 9px; }
+  .reply input { flex: 1; min-width: 0; font-family: var(--font-sans); font-size: 14px; color: var(--fg-1); background: rgba(20,14,10,0.4); border: 1px solid rgba(238,126,77,0.28); border-radius: var(--r-md); padding: 11px 14px; outline: none; }
+  .reply.plain input { background: rgba(56,65,85,0.35); border-color: var(--line-default); }
+  .reply input::placeholder { color: var(--orange-300); opacity: .6; }
+  .reply.plain input::placeholder { color: var(--fg-4); }
+  .reply .send { width: 42px; flex: none; display: flex; align-items: center; justify-content: center; border-radius: var(--r-md); background: var(--orange-500); color: #fff; border: none; cursor: pointer; font-size: 16px; }
+  .reply.plain .send { background: var(--blue-500); }
+  .cmd { font-family: var(--font-mono); font-size: 13px; color: var(--fg-2); background: var(--space-900); border: 1px solid var(--line-subtle); border-radius: var(--r-md); padding: 11px 13px; overflow-x: auto; white-space: nowrap; }
+  .cmd .c { color: var(--abort-500); }
+  .acts { display: flex; gap: 10px; align-items: center; }
+  .btn-energy { font-family: var(--font-sans); font-weight: 600; font-size: 13.5px; color: var(--space-900); background: var(--orange-500); border: none; border-radius: var(--r-md); padding: 10px 16px; cursor: pointer; }
+  .btn-ghost { font-family: var(--font-sans); font-weight: 600; font-size: 13.5px; color: var(--fg-2); background: transparent; border: 1px solid var(--line-default); border-radius: var(--r-md); padding: 10px 16px; cursor: pointer; }
+  .btn-ghost.danger { color: #ff8077; border-color: rgba(242,86,75,0.4); }
+
+  .next-foot { margin-top: 6px; display: flex; align-items: center; gap: 10px; padding: 13px 16px; background: var(--space-800); border: 1px solid var(--line-subtle); border-radius: var(--r-md); font-size: 13px; color: var(--fg-3); }
+  .next-foot b { color: var(--fg-1); font-weight: 600; }
+  .next-foot .arr { margin-left: auto; color: var(--orange-300); font-family: var(--font-mono); font-size: 12px; }
+
+  /* watching view */
+  .watch-stream { display: flex; flex-direction: column; gap: 7px; font-size: 13.5px; line-height: 1.55; }
+  .watch-stream .l { color: var(--fg-3); opacity: .5; }
+  .watch-stream .l:last-child { color: var(--fg-2); opacity: 1; }
+  .doing { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 12px; color: var(--blue-300); }
+  .doing .d { width: 7px; height: 7px; border-radius: 50%; background: var(--blue-400); animation: pulse 1.4s var(--ease-out) infinite; }
+
+  /* empty / all clear */
+  .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 40px; }
+  .empty .ring { width: 64px; height: 64px; border-radius: 50%; background: var(--nominal-tint); color: #6fe0a6; display: flex; align-items: center; justify-content: center; font-size: 30px; }
+  .empty h3 { font-family: var(--font-display); font-weight: 600; font-size: 18px; margin: 0; color: var(--fg-1); }
+  .empty p { margin: 0; font-size: 13.5px; color: var(--fg-3); max-width: 320px; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<div class="switch">
+  <span class="lead">Inbox layout</span>
+  <button class="on" data-stage="1">1 · Grouped list</button>
+  <button data-stage="2">2 · Priority queue</button>
+  <button data-stage="3">3 · Compact rail</button>
+  <span class="spacer"></span>
+  <span class="note" style="font-size:12px;color:var(--fg-4)">Answer a focused agent → it drains, next one pulls up. Click any agent to watch it.</span>
+  <button class="reset" id="reset">Reset</button>
+</div>
+
+<section class="stage on" id="stage-1">
+  <div class="inbox" style="grid-template-columns: 380px 1fr;">
+    <div class="col-list">
+      <div class="lh"><h1>Agents <span class="count">9</span></h1><button class="launch">＋ Launch</button></div>
+      <div class="list-scroll" id="list-1"></div>
+    </div>
+    <div class="col-focus" id="focus-1"></div>
+  </div>
+</section>
+
+<section class="stage" id="stage-2">
+  <div class="inbox" style="grid-template-columns: 380px 1fr;">
+    <div class="col-list">
+      <div class="lh"><h1>Agents <span class="count">9</span></h1><button class="launch">＋ Launch</button></div>
+      <div class="list-scroll" id="list-2"></div>
+    </div>
+    <div class="col-focus" id="focus-2"></div>
+  </div>
+</section>
+
+<section class="stage" id="stage-3">
+  <div class="inbox" style="grid-template-columns: 280px 1fr;">
+    <div class="col-list">
+      <div class="lh"><h1>Agents <span class="count">9</span></h1><button class="launch">＋ Launch</button></div>
+      <div class="list-scroll" id="list-3"></div>
+    </div>
+    <div class="col-focus" id="focus-3"></div>
+  </div>
+</section>
+
+<script>
+const tint = {
+  blue:   ['var(--blue-tint)','var(--blue-300)'],
+  orange: ['var(--orange-tint)','var(--orange-400)'],
+  green:  ['var(--nominal-tint)','#6fe0a6'],
+  red:    ['var(--abort-tint)','#ff8077'],
+  grey:   ['rgba(255,255,255,0.05)','var(--fg-3)'],
+};
+function piHTML(a, cls='pi') {
+  const [bg,fg] = tint[a.tint] || tint.grey;
+  return `<span class="${cls}" style="background:${bg};color:${fg}">${a.glyph}</span>`;
+}
+
+const AGENTS = [
+  { id:'auth', title:'SKIPA-45: Fix auth redirect loop', glyph:'◆', tint:'blue', lane:'attn', kind:'question', cost:'$2.10', ctx:38,
+    tag:'store',
+    lines:['Traced the loop to the session store losing the <code>returnTo</code> param on refresh.','I can fix this three ways depending on your deployment topology.'],
+    q:'Which session store should the redirect use?',
+    options:[['Redis','shared'],['In-memory','single node'],['Signed cookie','stateless']] },
+  { id:'dialog', title:'Improve dialog focus handling', glyph:'✦', tint:'orange', lane:'attn', kind:'free', cost:'$0.74', ctx:29,
+    lines:['Updated <span class="file">Dialog.svelte</span> to trap focus inside the modal.','One open question before I wire the close handler:'],
+    q:'On close, restore focus to the trigger element, or move it to the first form field?' },
+  { id:'billing', title:'Refactor billing webhooks', glyph:'⬢', tint:'green', lane:'attn', kind:'approval', cost:'$3.40', ctx:55,
+    lines:['Rewrote the webhook handler and squashed the branch history.','Ready to publish — this rewrites remote history:'],
+    cmd:'git push --force origin billing-rework' },
+  { id:'migrate', title:'DB migration runner', glyph:'⚠', tint:'red', lane:'attn', kind:'error', cost:'$1.02', ctx:12,
+    lines:['Ran <span class="file">migrate.ts</span> against staging.','Process exited 1 — migration 0042 failed: relation "invoices" already exists.'] },
+  { id:'parser', title:'Parser perf pass', glyph:'◆', tint:'blue', lane:'flight', kind:'working', cost:'$1.88', ctx:61, doing:'editing tokenizer.rs',
+    lines:['Profiled the hot path — 40% of time is in re-tokenizing unchanged lines.','Adding an incremental token cache keyed by line hash.'] },
+  { id:'csv', title:'SKIPA-39: Add CSV export', glyph:'✦', tint:'orange', lane:'flight', kind:'working', cost:'$0.96', ctx:44, doing:'running tests',
+    lines:['Wired the export endpoint and a streaming CSV encoder.','Running the integration suite now.'] },
+  { id:'docs', title:'Docs overhaul', glyph:'⬢', tint:'green', lane:'flight', kind:'working', cost:'$0.40', ctx:22, doing:'reading CONTRIBUTING.md',
+    lines:['Auditing the docs tree for stale references before the rewrite.'] },
+  { id:'deps', title:'Bump deps to latest', glyph:'◆', tint:'grey', lane:'done', kind:'done', cost:'$0.91', ctx:50, ago:'3m ago',
+    lines:['All dependencies bumped; lockfile regenerated; full test suite green.'] },
+  { id:'flaky', title:'Fix flaky timer test', glyph:'✦', tint:'grey', lane:'done', kind:'done', cost:'$0.43', ctx:33, ago:'8m ago',
+    lines:['Replaced the real timer with a fake clock; the test is deterministic now.'] },
+];
+
+const state = { addressed: new Set(), selected: null };
+
+function effLane(a) { return state.addressed.has(a.id) ? 'flight' : a.lane; }
+function attnQueue() { return AGENTS.filter(a => a.lane === 'attn' && !state.addressed.has(a.id)); }
+function focusAgent() {
+  if (state.selected) { const a = AGENTS.find(x => x.id === state.selected); if (a && effLane(a) !== undefined) return a; }
+  return attnQueue()[0] || null;
+}
+function badge(kind, lane) {
+  if (lane === 'attn') {
+    if (kind === 'error') return `<span class="badge b-abort"><span class="dot"></span>errored</span>`;
+    if (kind === 'approval') return `<span class="badge b-review"><span class="dot"></span>approval</span>`;
+    return `<span class="badge b-review"><span class="dot"></span>needs input</span>`;
+  }
+  if (lane === 'done') return `<span class="badge b-nominal"><span class="dot"></span>finished</span>`;
+  return `<span class="badge b-active"><span class="dot"></span>working</span>`;
+}
+function statusColor(a){ const l=effLane(a); return l==='attn'?'var(--orange-500)':l==='done'?'#6fe0a6':'var(--blue-400)'; }
+
+function resolve(id) { state.addressed.add(id); if (state.selected === id) state.selected = null; render(); }
+function watch(id) { state.selected = id; render(); }
+
+/* ---------- LEFT LISTS ---------- */
+function listRowsGrouped() {
+  const groups = [
+    ['attn','Needs you', AGENTS.filter(a=>effLane(a)==='attn')],
+    ['flight','In flight', AGENTS.filter(a=>effLane(a)==='flight')],
+    ['done','Completed', AGENTS.filter(a=>effLane(a)==='done')],
+  ];
+  const focusId = focusAgent()?.id;
+  let html = '';
+  for (const [key,label,items] of groups) {
+    if (!items.length) continue;
+    html += `<div class="group-h ${key}">${label} <span class="gn">· ${items.length}</span></div>`;
+    for (const a of items) {
+      const sel = a.id === focusId ? (effLane(a)==='attn'?'sel attn':'sel') : '';
+      const second = effLane(a)==='attn'
+        ? `<div class="s q">${a.kind==='approval'?'Approval — '+a.cmd : a.kind==='error'?'Errored — needs you' : a.q}</div>`
+        : effLane(a)==='flight'
+          ? `<div class="s doing">▸ ${state.addressed.has(a.id)?'resuming…':a.doing}</div>`
+          : `<div class="s">${a.cost} · ${a.ago||''}</div>`;
+      html += `<div class="row ${effLane(a)} ${sel}" onclick="watch('${a.id}')">
+        ${piHTML(a)}
+        <div class="nm"><div class="t">${a.title}</div>${second}</div>
+        <div class="rt">${effLane(a)==='attn'?`<span class="att-pill">act</span>`:badge(a.kind, effLane(a)).replace('badge ','badge dotonly ').replace(/>[a-z ]+<\/span>/i,'></span>')}</div>
+      </div>`;
+    }
+  }
+  return html;
+}
+function listRowsPriority() {
+  // one continuous list, attention first (no group headers), a divider after attention
+  const attn = AGENTS.filter(a=>effLane(a)==='attn');
+  const rest = AGENTS.filter(a=>effLane(a)!=='attn').sort((a,b)=> (effLane(a)==='flight'?0:1)-(effLane(b)==='flight'?0:1));
+  const focusId = focusAgent()?.id;
+  const rowOf = (a) => {
+    const sel = a.id === focusId ? (effLane(a)==='attn'?'sel attn':'sel') : '';
+    const second = effLane(a)==='attn'
+      ? `<div class="s q">${a.kind==='approval'?'Approval requested' : a.kind==='error'?'Errored — needs you' : a.q}</div>`
+      : effLane(a)==='flight' ? `<div class="s doing">▸ ${state.addressed.has(a.id)?'resuming…':a.doing}</div>`
+      : `<div class="s">${a.cost} · ${a.ago||''}</div>`;
+    return `<div class="row ${effLane(a)} ${sel}" onclick="watch('${a.id}')">
+      ${piHTML(a)}
+      <div class="nm"><div class="t">${a.title}</div>${second}</div>
+      <div class="rt">${effLane(a)==='attn'?`<span class="badge b-review dotonly"><span class="dot"></span></span>`:`<span class="badge ${effLane(a)==='done'?'b-nominal':'b-active'} dotonly"><span class="dot"></span></span>`}</div>
+    </div>`;
+  };
+  let html = attn.map(rowOf).join('');
+  if (attn.length && rest.length) html += `<div style="height:1px;background:var(--line-subtle);margin:8px 16px"></div>`;
+  html += rest.map(rowOf).join('');
+  return html;
+}
+function listRowsRail() {
+  const focusId = focusAgent()?.id;
+  return AGENTS.slice().sort((a,b)=>{
+    const o = l => l==='attn'?0:l==='flight'?1:2; return o(effLane(a))-o(effLane(b));
+  }).map(a=>{
+    const sel = a.id===focusId ? (effLane(a)==='attn'?'sel attn':'sel') : '';
+    const second = effLane(a)==='attn'
+      ? `<div class="s q">${a.kind==='approval'?'approval' : a.kind==='error'?'errored':'needs input'}</div>`
+      : effLane(a)==='flight' ? `<div class="s">${state.addressed.has(a.id)?'resuming…':a.doing}</div>` : `<div class="s">done · ${a.cost}</div>`;
+    return `<div class="railrow ${effLane(a)} ${sel}" onclick="watch('${a.id}')">
+      <span class="pi" style="background:${(tint[a.tint]||tint.grey)[0]};color:${(tint[a.tint]||tint.grey)[1]}">${a.glyph}<span class="ind" style="background:${statusColor(a)}"></span></span>
+      <div class="nm"><div class="t">${a.title}</div>${second}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ---------- RIGHT FOCUS ---------- */
+function focusHTML(opt) {
+  const a = focusAgent();
+  if (!a) return emptyHTML();
+  const isAttn = effLane(a) === 'attn';
+  const queue = attnQueue();
+  const idx = queue.findIndex(x => x.id === a.id);
+  const watching = !isAttn;
+
+  let head = '';
+  if (isAttn) {
+    head = `<div class="qcount"><span class="ic">!</span> Needs you · ${idx>=0?idx+1:1} of ${queue.length}</div>`;
+  } else {
+    head = `<div class="watching"><span class="badge b-active dotonly"><span class="dot"></span></span> You're watching this agent</div>`;
+  }
+  head += `<span class="spc"></span><div class="meta">
+      <span class="ctxmini"><span class="track"><i style="width:${a.ctx}%"></i></span>ctx ${a.ctx}%</span>
+      <span class="cost">${a.cost}</span>
+      ${watching ? `<button class="lnk" onclick="state.selected=null;render()">Stop watching ✕</button>` : `<button class="lnk" onclick="resolve('${a.id}')">Skip ↓</button>`}
+      <button class="lnk">Open terminal →</button>
+    </div>`;
+
+  // body
+  let body = `<div class="f-top">${piHTML(a)}<div class="ft"><div class="t">${a.title}</div><div class="sub">${badge(a.kind, effLane(a))} &nbsp;·&nbsp; agent-desktop</div></div></div>`;
+  body += `<div class="ctx-lines">${a.lines.map((l,i)=>`<div class="l">${l}</div>`).join('')}</div>`;
+
+  if (isAttn) {
+    if (a.kind === 'question') {
+      body += `<p class="q-prompt"><span class="tag">${a.tag}</span>${a.q}</p>`;
+      body += `<div class="chips">${a.options.map((o,i)=>`<button class="chip" onclick="resolve('${a.id}')"><span class="k">${i+1}</span>${o[0]}<span class="d">${o[1]}</span></button>`).join('')}</div>`;
+      body += `<div class="reply"><input placeholder="Or type your own answer…"><button class="send" onclick="resolve('${a.id}')">↥</button></div>`;
+    } else if (a.kind === 'free') {
+      body += `<p class="q-prompt">${a.q}</p>`;
+      body += `<div class="reply"><input placeholder="Reply to this agent…"><button class="send" onclick="resolve('${a.id}')">↥</button></div>`;
+    } else if (a.kind === 'approval') {
+      body += `<div class="cmd"><span class="c">$</span> ${a.cmd}</div>`;
+      body += `<div class="acts"><button class="btn-energy" onclick="resolve('${a.id}')">✓ Approve &amp; continue</button><button class="btn-ghost" onclick="resolve('${a.id}')">Deny</button></div>`;
+    } else if (a.kind === 'error') {
+      body += `<div class="acts"><button class="btn-ghost" onclick="resolve('${a.id}')">Open terminal →</button><button class="btn-ghost danger" onclick="resolve('${a.id}')">Dismiss</button></div>`;
+    }
+    // option 2: auto-advance hint footer
+    if (opt === 2) {
+      const next = queue.filter(x=>x.id!==a.id)[0];
+      if (next) body += `<div class="next-foot">Up next: <b>${next.title}</b><span class="arr">auto-advances on answer →</span></div>`;
+    }
+  } else {
+    // watching a working/done agent the user opened themselves
+    body += `<div class="watch-stream">${a.lines.map(l=>`<div class="l">${l}</div>`).join('')}</div>`;
+    if (effLane(a) === 'flight') {
+      body += `<div class="doing"><span class="d"></span>${state.addressed.has(a.id)?'resuming after your answer…':a.doing}</div>`;
+      body += `<div class="reply plain"><input placeholder="Message this agent…"><button class="send">↥</button></div>`;
+    } else {
+      body += `<div class="acts"><button class="btn-ghost">Open terminal →</button></div>`;
+    }
+  }
+
+  const deckCls = (opt === 2 && isAttn && queue.length > 1) ? 'focus-deck stacked' : 'focus-deck';
+  return `<div class="focus-head">${head}</div>
+    <div class="focus-scroll"><div class="focus-body"><div class="${deckCls}">${body}</div></div></div>`;
+}
+function emptyHTML() {
+  return `<div class="focus-head"><div class="watching" style="color:var(--fg-4)">Nothing needs you</div><span class="spc"></span></div>
+    <div class="empty">
+      <div class="ring">✓</div>
+      <h3>All clear</h3>
+      <p>No agent is waiting on you. The next time one needs input it'll appear here — or pick any agent on the left to watch it.</p>
+    </div>`;
+}
+
+/* ---------- RENDER ---------- */
+function render() {
+  document.getElementById('list-1').innerHTML = listRowsGrouped();
+  document.getElementById('list-2').innerHTML = listRowsPriority();
+  document.getElementById('list-3').innerHTML = listRowsRail();
+  document.getElementById('focus-1').innerHTML = focusHTML(1);
+  document.getElementById('focus-2').innerHTML = focusHTML(2);
+  document.getElementById('focus-3').innerHTML = focusHTML(3);
+}
+
+const btns = document.querySelectorAll('.switch [data-stage]');
+const stages = { 1:document.getElementById('stage-1'),2:document.getElementById('stage-2'),3:document.getElementById('stage-3') };
+btns.forEach(b => b.addEventListener('click', () => {
+  btns.forEach(x=>x.classList.remove('on')); b.classList.add('on');
+  Object.values(stages).forEach(s=>s.classList.remove('on')); stages[b.dataset.stage].classList.add('on');
+}));
+document.getElementById('reset').addEventListener('click', () => { state.addressed.clear(); state.selected=null; render(); });
+render();
+</script>
+</body>
+</html>

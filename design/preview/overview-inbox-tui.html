@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Overview — Priority Inbox + TUI focus</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--space-850); color: var(--fg-1); font-family: var(--font-sans); font-size: var(--t-body); -webkit-font-smoothing: antialiased; }
+
+  .switch { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 10px;
+    padding: 10px 22px; background: rgba(9,12,18,0.92); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line-subtle); }
+  .switch .lead { font-family: var(--font-mono); font-size: 10px; letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--fg-4); }
+  .switch .note { font-size: 12px; color: var(--fg-4); }
+  .switch .spacer { flex: 1; }
+  .switch .reset { font-family: var(--font-sans); font-weight: 600; font-size: 12px; color: var(--fg-3); background: transparent; border: 1px solid var(--line-default); border-radius: var(--r-md); padding: 6px 12px; cursor: pointer; }
+  .switch .reset:hover { color: var(--fg-1); }
+
+  .pi { border-radius: var(--r-sm); flex: none; display: flex; align-items: center; justify-content: center; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 9.5px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 8px; border-radius: var(--r-full); white-space: nowrap; }
+  .badge.dotonly { padding: 0; background: none !important; }
+  .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+  .b-active { background: var(--blue-tint); color: var(--blue-300); }
+  .b-active .dot { animation: pulse 1.4s var(--ease-out) infinite; }
+  .b-review { background: var(--orange-tint); color: var(--orange-300); }
+  .b-nominal { background: var(--nominal-tint); color: #6fe0a6; }
+  .b-abort { background: var(--abort-tint); color: #ff8077; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(86,156,255,.5);opacity:1} 70%{box-shadow:0 0 0 5px rgba(86,156,255,0);opacity:.6} 100%{box-shadow:0 0 0 0 rgba(86,156,255,0);opacity:1} }
+  @media (prefers-reduced-motion: reduce){ .b-active .dot{animation:none} }
+  .cost { font-family: var(--font-mono); font-size: 11px; color: var(--fg-2); font-variant-numeric: tabular-nums; }
+  .ctxmini { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-3); }
+  .ctxmini .track { width: 46px; height: 4px; border-radius: 2px; background: var(--space-600); overflow: hidden; }
+  .ctxmini .track i { display: block; height: 100%; background: linear-gradient(90deg, var(--blue-500), var(--blue-400)); }
+
+  .inbox { display: grid; grid-template-columns: 360px 1fr; height: calc(100vh - 47px); }
+  .col-list { border-right: 1px solid var(--line-subtle); background: var(--space-900); display: flex; flex-direction: column; min-height: 0; }
+  .col-focus { background: var(--space-850); min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+
+  .lh { display: flex; align-items: center; gap: 10px; padding: 15px 18px 11px; flex: none; }
+  .lh h1 { font-family: var(--font-display); font-weight: 600; font-size: 17px; margin: 0; display: flex; align-items: baseline; gap: 8px; }
+  .lh .count { font-family: var(--font-mono); font-size: 11px; color: var(--fg-3); background: var(--space-750); border: 1px solid var(--line-subtle); border-radius: var(--r-full); padding: 2px 8px; }
+  .lh .sub { font-size: 12px; color: var(--orange-300); font-weight: 600; }
+  .lh .launch { margin-left: auto; font-family: var(--font-sans); font-weight: 600; font-size: 12px; color: #fff; background: var(--blue-500); border: none; border-radius: var(--r-md); padding: 7px 11px; cursor: pointer; }
+  .list-scroll { overflow-y: auto; flex: 1; min-height: 0; padding-bottom: 20px; }
+
+  .row { display: flex; align-items: center; gap: 11px; padding: 10px 16px; cursor: pointer; border-left: 2px solid transparent; transition: background var(--dur-fast); }
+  .row:hover { background: rgba(255,255,255,0.025); }
+  .row.sel { background: rgba(61,123,255,0.10); border-left-color: var(--blue-500); }
+  .row.attn.sel { background: var(--orange-tint); border-left-color: var(--orange-500); }
+  .row .pi { width: 30px; height: 30px; font-size: 14px; }
+  .row .nm { flex: 1; min-width: 0; }
+  .row .nm .t { font-weight: 600; font-size: 13px; color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .nm .s { font-size: 11px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
+  .row .nm .s.q { color: var(--orange-300); }
+  .row .nm .s.doing { font-family: var(--font-mono); font-size: 10.5px; color: var(--blue-300); }
+  .row .rt { flex: none; }
+  .divider { height: 1px; background: var(--line-subtle); margin: 8px 16px; }
+  .group-h { display: flex; align-items: center; gap: 8px; padding: 14px 18px 6px; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tracking-label); }
+  .group-h.attn { color: var(--orange-300); }
+  .group-h.flight { color: var(--blue-300); }
+  .group-h.done { color: var(--fg-4); }
+  .group-h .gn { color: var(--fg-4); }
+  .group-h .rule { flex: 1; height: 1px; background: var(--line-faint); }
+
+  /* ---------------- FOCUS: small header · TUI · small footer ---------------- */
+  .fhead { flex: none; display: flex; align-items: center; gap: 11px; padding: 11px 18px; border-bottom: 1px solid var(--line-subtle); background: var(--space-900); }
+  .fhead .pi { width: 26px; height: 26px; font-size: 13px; }
+  .fhead .ttl { font-weight: 600; font-size: 13.5px; color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .fhead .qpos { font-family: var(--font-mono); font-size: 10px; color: var(--orange-300); background: var(--orange-tint); border-radius: var(--r-full); padding: 3px 9px; white-space: nowrap; flex: none; }
+  .fhead .qpos.watch { color: var(--blue-300); background: var(--blue-tint); }
+  .fhead .spc { flex: 1; }
+  .fhead .nav { display: flex; gap: 4px; flex: none; }
+  .fhead .nav button, .fhead .iconbtn { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-sm); background: var(--space-750); border: 1px solid var(--line-subtle); color: var(--fg-3); cursor: pointer; font-size: 13px; }
+  .fhead .nav button:hover, .fhead .iconbtn:hover { color: var(--fg-1); border-color: var(--line-default); }
+  .fhead .meta { display: flex; align-items: center; gap: 12px; flex: none; }
+
+  /* the TUI placeholder */
+  .tui-wrap { flex: 1; min-height: 0; padding: 14px; display: flex; }
+  .tui { flex: 1; min-height: 0; position: relative; background: #07090d; border: 1px solid var(--line-subtle); border-radius: var(--r-md); overflow: hidden; display: flex; flex-direction: column; outline: none; transition: border-color var(--dur-fast), box-shadow var(--dur-fast); }
+  /* Entering an agent auto-focuses its terminal — a soft ring signals "typing goes here". */
+  .tui.focused { border-color: rgba(61,123,255,0.4); box-shadow: 0 0 0 3px rgba(61,123,255,0.12); }
+  .tui.focused.attn { border-color: rgba(238,126,77,0.45); box-shadow: 0 0 0 3px rgba(238,126,77,0.14); }
+  .tui.attn-click { cursor: pointer; }
+  .tui-bar { flex: none; display: flex; align-items: center; gap: 7px; padding: 8px 12px; border-bottom: 1px solid var(--line-faint); background: rgba(255,255,255,0.015); }
+  .tui-bar .dotz { display: flex; gap: 6px; }
+  .tui-bar .dotz i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .tui-bar .path { font-family: var(--font-mono); font-size: 11px; color: var(--fg-4); margin-left: 4px; }
+  .tui-bar .live { margin-left: auto; font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--fg-4); display: flex; align-items: center; gap: 6px; }
+  .tui-bar .live i { width: 6px; height: 6px; border-radius: 50%; background: var(--nominal-500); }
+  .tui-body { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.65; color: var(--fg-2); white-space: pre-wrap; }
+  .tui-body .dim { color: var(--fg-4); }
+  .tui-body .u { color: var(--blue-300); }
+  .tui-body .tool { color: var(--fg-3); }
+  .tui-body .tool b { color: var(--blue-300); font-weight: 600; }
+  .tui-body .ok { color: var(--nominal-500); }
+  .tui-body .err { color: #ff8077; }
+  .tui-body .warn { color: var(--caution-500); }
+  .tui-body .ask { color: var(--orange-200); }
+  .tui-body .box { color: var(--orange-300); }
+  .tui-body .sel { color: var(--fg-1); background: rgba(238,126,77,0.18); border-radius: 3px; }
+  .tui-body .cursor { display: inline-block; width: 8px; height: 15px; background: var(--fg-2); vertical-align: -2px; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .tui-watermark { position: absolute; right: 12px; bottom: 10px; font-family: var(--font-mono); font-size: 9px; letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--fg-4); opacity: .5; }
+
+  /* small footer (contextual) */
+  .ffoot { flex: none; padding: 11px 16px; border-top: 1px solid var(--line-subtle); background: var(--space-900); display: flex; align-items: center; gap: 9px; }
+  .ffoot .qn { width: 26px; height: 30px; flex: none; border-radius: var(--r-sm); background: rgba(238,126,77,0.16); border: 1px solid rgba(238,126,77,0.3); color: var(--orange-200); font-family: var(--font-mono); font-size: 12px; font-weight: 600; cursor: pointer; }
+  .ffoot .qn:hover { background: rgba(238,126,77,0.3); }
+  .ffoot input { flex: 1; min-width: 0; font-family: var(--font-sans); font-size: 13.5px; color: var(--fg-1); background: rgba(56,65,85,0.32); border: 1px solid var(--line-default); border-radius: var(--r-md); padding: 9px 13px; outline: none; }
+  .ffoot input.warm { background: rgba(20,14,10,0.4); border-color: rgba(238,126,77,0.28); }
+  .ffoot input::placeholder { color: var(--fg-4); }
+  .ffoot input.warm::placeholder { color: var(--orange-300); opacity: .6; }
+  .ffoot .send { width: 40px; height: 36px; flex: none; display: flex; align-items: center; justify-content: center; border-radius: var(--r-md); background: var(--blue-500); color: #fff; border: none; cursor: pointer; font-size: 15px; }
+  .ffoot .send.warm { background: var(--orange-500); }
+  .ffoot .btn-energy { font-family: var(--font-sans); font-weight: 600; font-size: 13px; color: var(--space-900); background: var(--orange-500); border: none; border-radius: var(--r-md); padding: 9px 15px; cursor: pointer; flex: none; }
+  .ffoot .btn-ghost { font-family: var(--font-sans); font-weight: 600; font-size: 13px; color: var(--fg-2); background: transparent; border: 1px solid var(--line-default); border-radius: var(--r-md); padding: 9px 15px; cursor: pointer; flex: none; }
+  .ffoot .btn-ghost.danger { color: #ff8077; border-color: rgba(242,86,75,0.4); }
+  .ffoot .hint { font-size: 11.5px; color: var(--fg-4); margin-left: auto; flex: none; }
+
+  /* empty */
+  .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 40px; }
+  .empty .ring { width: 64px; height: 64px; border-radius: 50%; background: var(--nominal-tint); color: #6fe0a6; display: flex; align-items: center; justify-content: center; font-size: 30px; }
+  .empty h3 { font-family: var(--font-display); font-weight: 600; font-size: 18px; margin: 0; color: var(--fg-1); }
+  .empty p { margin: 0; font-size: 13.5px; color: var(--fg-3); max-width: 340px; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<div class="switch">
+  <span class="lead">Priority inbox · TUI focus</span>
+  <span class="note">Left = grouped roster. Right = small header · live TUI (auto-focused, scrolled to bottom) — no footer; you type straight into the terminal. Click the terminal to simulate answering → queue drains & advances.</span>
+  <span class="spacer"></span>
+  <button class="reset" id="reset">Reset</button>
+</div>
+
+<div class="inbox">
+  <div class="col-list">
+    <div class="lh"><h1>Agents <span class="count">9</span></h1><span class="sub" id="attsub"></span><button class="launch">＋ Launch</button></div>
+    <div class="list-scroll" id="list"></div>
+  </div>
+  <div class="col-focus" id="focus"></div>
+</div>
+
+<script>
+const tint = { blue:['var(--blue-tint)','var(--blue-300)'], orange:['var(--orange-tint)','var(--orange-400)'], green:['var(--nominal-tint)','#6fe0a6'], red:['var(--abort-tint)','#ff8077'], grey:['rgba(255,255,255,0.05)','var(--fg-3)'] };
+function pi(a, w=30){ const [bg,fg]=tint[a.tint]||tint.grey; return `<span class="pi" style="width:${w}px;height:${w}px;background:${bg};color:${fg}">${a.glyph}</span>`; }
+
+const AGENTS = [
+  { id:'auth', title:'SKIPA-45: Fix auth redirect loop', glyph:'◆', tint:'blue', lane:'attn', kind:'question', cost:'$2.10', ctx:38, cwd:'~/skipa/web',
+    q:'Which session store should the redirect use?', options:[['Redis','shared'],['In-memory','single node'],['Signed cookie','stateless']] },
+  { id:'dialog', title:'Improve dialog focus handling', glyph:'✦', tint:'orange', lane:'attn', kind:'free', cost:'$0.74', ctx:29, cwd:'~/agent-desktop',
+    q:'On close, restore focus to the trigger element, or move it to the first form field?' },
+  { id:'billing', title:'Refactor billing webhooks', glyph:'⬢', tint:'green', lane:'attn', kind:'approval', cost:'$3.40', ctx:55, cwd:'~/skipa/api',
+    cmd:'git push --force origin billing-rework' },
+  { id:'migrate', title:'DB migration runner', glyph:'⚠', tint:'red', lane:'attn', kind:'error', cost:'$1.02', ctx:12, cwd:'~/skipa/api' },
+  { id:'parser', title:'Parser perf pass', glyph:'◆', tint:'blue', lane:'flight', kind:'working', cost:'$1.88', ctx:61, cwd:'~/lang/core', doing:'editing tokenizer.rs' },
+  { id:'csv', title:'SKIPA-39: Add CSV export', glyph:'✦', tint:'orange', lane:'flight', kind:'working', cost:'$0.96', ctx:44, cwd:'~/skipa/web', doing:'running tests' },
+  { id:'docs', title:'Docs overhaul', glyph:'⬢', tint:'green', lane:'flight', kind:'working', cost:'$0.40', ctx:22, cwd:'~/skipa/docs', doing:'reading CONTRIBUTING.md' },
+  { id:'deps', title:'Bump deps to latest', glyph:'◆', tint:'grey', lane:'done', kind:'done', cost:'$0.91', ctx:50, cwd:'~/agent-desktop', ago:'3m ago' },
+  { id:'flaky', title:'Fix flaky timer test', glyph:'✦', tint:'grey', lane:'done', kind:'done', cost:'$0.43', ctx:33, cwd:'~/lang/core', ago:'8m ago' },
+];
+
+const state = { addressed: new Set(), selected: null };
+const eff = a => state.addressed.has(a.id) ? 'flight' : a.lane;
+const queue = () => AGENTS.filter(a => a.lane==='attn' && !state.addressed.has(a.id));
+function focusA(){ if(state.selected){ const a=AGENTS.find(x=>x.id===state.selected); if(a) return a; } return queue()[0]||null; }
+function badge(a){ const l=eff(a); if(l==='attn'){ if(a.kind==='error')return'b-abort'; return'b-review'; } return l==='done'?'b-nominal':'b-active'; }
+function badgeTxt(a){ const l=eff(a); if(l==='attn'){ if(a.kind==='error')return'errored'; if(a.kind==='approval')return'approval'; return'needs input'; } return l==='done'?'finished':'working'; }
+
+function resolve(id){ state.addressed.add(id); if(state.selected===id) state.selected=null; render(); }
+function watch(id){ state.selected=id; render(); }
+function navQueue(dir){ const q=queue(); if(!q.length)return; const cur=focusA(); let i=q.findIndex(x=>x.id===cur?.id); if(i<0)i=0; i=(i+dir+q.length)%q.length; state.selected=q[i].id; render(); }
+
+/* ---------------- LEFT (grouped list) ---------------- */
+function renderList(){
+  const fid = focusA()?.id;
+  const row = a => {
+    const l=eff(a); const sel = a.id===fid ? (l==='attn'?'sel attn':'sel') : '';
+    const s = l==='attn' ? `<div class="s q">${a.kind==='approval'?'Approval requested':a.kind==='error'?'Errored — needs you':a.q}</div>`
+            : l==='flight' ? `<div class="s doing">▸ ${state.addressed.has(a.id)?'resuming…':a.doing}</div>`
+            : `<div class="s">${a.cost} · ${a.ago||''}</div>`;
+    // Status circle only (no "act" pill): orange = needs you, blue pulse = working, green = done.
+    const dot = `<span class="badge ${l==='attn'?'b-review':l==='done'?'b-nominal':'b-active'} dotonly"><span class="dot"></span></span>`;
+    return `<div class="row ${l} ${sel}" onclick="watch('${a.id}')">${pi(a)}<div class="nm"><div class="t">${a.title}</div>${s}</div><div class="rt">${dot}</div></div>`;
+  };
+  const groups = [
+    ['attn','Needs you', AGENTS.filter(a=>eff(a)==='attn')],
+    ['flight','In flight', AGENTS.filter(a=>eff(a)==='flight')],
+    ['done','Completed', AGENTS.filter(a=>eff(a)==='done')],
+  ];
+  let html = '';
+  for(const [key,label,items] of groups){
+    if(!items.length) continue;
+    html += `<div class="group-h ${key}">${label} <span class="gn">· ${items.length}</span><span class="rule"></span></div>`;
+    html += items.map(row).join('');
+  }
+  document.getElementById('list').innerHTML = html;
+  const n = queue().length;
+  document.getElementById('attsub').textContent = n ? `${n} need${n===1?'s':''} you` : 'all clear';
+}
+
+/* ---------------- TUI placeholder content ---------------- */
+function tuiBody(a){
+  const C = (cls,txt)=>`<span class="${cls}">${txt}</span>`;
+  switch(a.kind){
+    case 'question': return [
+      C('u','› fix the redirect loop on /login'),
+      '',
+      C('tool','● <b>Read</b> auth/session.ts'),
+      C('tool','● <b>Grep</b> "returnTo" (7 matches)'),
+      C('dim','  The loop comes from the session store dropping returnTo on refresh.'),
+      C('dim','  Three fixes are viable depending on how you deploy.'),
+      '',
+      C('box','╭─ '+C('ask','Which session store should the redirect use?')+' ──────────╮'),
+      C('box','│ ')+C('sel','❯ 1. Redis (shared)')+'                                  '+C('box','│'),
+      C('box','│   2. In-memory (single node)                       │'),
+      C('box','│   3. Signed cookie (stateless)                     │'),
+      C('box','╰────────────────────────────────────────────────────╯'),
+      C('dim','  ↑/↓ to select · enter to confirm'),
+    ].join('\n');
+    case 'free': return [
+      C('u','› improve focus handling in the dialog'),
+      '',
+      C('tool','● <b>Edit</b> Dialog.svelte  (+14 −3)'),
+      C('dim','  Trapped focus inside the modal while open.'),
+      '',
+      C('ask','I need one decision before wiring the close handler:'),
+      C('ask','On close, should focus return to the trigger element, or move to the first form field?'),
+      '',
+      C('dim','Waiting for your reply ')+C('cursor',''),
+    ].join('\n');
+    case 'approval': return [
+      C('u','› refactor the billing webhooks and publish'),
+      '',
+      C('tool','● <b>Edit</b> webhooks/handler.ts  (+88 −60)'),
+      C('tool','● <b>Bash</b> git rebase -i origin/main'),
+      C('dim','  Branch history squashed to one commit.'),
+      '',
+      C('box','╭─ '+C('warn','Permission required')+' ───────────────────────────────╮'),
+      C('box','│ ')+C('ask','Run this command? It rewrites remote history.')+'     '+C('box','│'),
+      C('box','│                                                    │'),
+      C('box','│   ')+C('err','$ git push --force origin billing-rework')+'        '+C('box','│'),
+      C('box','╰────────────────────────────────────────────────────╯'),
+    ].join('\n');
+    case 'error': return [
+      C('u','› run the pending migrations against staging'),
+      '',
+      C('tool','● <b>Bash</b> tsx migrate.ts --env staging'),
+      C('dim','  applying 0041_add_indexes … ok'),
+      C('dim','  applying 0042_invoices …'),
+      C('err','  ✗ migration 0042 failed'),
+      C('err','    error: relation "invoices" already exists'),
+      C('err','  process exited with code 1'),
+      '',
+      C('warn','● Agent stopped — needs your call.'),
+    ].join('\n');
+    case 'working': return [
+      C('u','› '+ (a.id==='parser'?'speed up the parser':'a'==='a'?a.title.toLowerCase():a.title)),
+      '',
+      C('tool','● <b>Read</b> '+(a.doing.includes('tokenizer')?'tokenizer.rs':a.doing.includes('tests')?'export.test.ts':'CONTRIBUTING.md')),
+      a.id==='parser'?C('dim','  40% of time is re-tokenizing unchanged lines.'):C('dim','  Working through the task…'),
+      C('tool','● <b>'+(a.doing.includes('tests')?'Bash':'Edit')+'</b> '+a.doing),
+      '',
+      C('ok','● Working')+C('dim',' · '+a.doing+' ')+C('cursor',''),
+    ].join('\n');
+    case 'done': return [
+      C('u','› '+a.title.toLowerCase()),
+      '',
+      C('tool','● <b>Bash</b> npm test'),
+      C('ok','  ✓ all suites passed'),
+      '',
+      C('ok','● Done')+C('dim',' · session ended '+(a.ago||'')),
+    ].join('\n');
+  }
+  return '';
+}
+
+/* ---------------- RIGHT (focus) ---------------- */
+function renderFocus(){
+  const el = document.getElementById('focus');
+  const a = focusA();
+  if(!a){ el.innerHTML = `
+    <div class="fhead"><span class="qpos watch" style="color:var(--fg-4);background:rgba(255,255,255,0.05)">inbox zero</span><span class="ttl" style="color:var(--fg-3);font-weight:500">Nothing needs you</span><span class="spc"></span></div>
+    <div class="empty"><div class="ring">✓</div><h3>All clear</h3><p>No agent is waiting on you. The next one that needs input lands here automatically — or pick any agent on the left to watch its terminal.</p></div>`;
+    return;
+  }
+  const l = eff(a); const isAttn = l==='attn'; const q = queue();
+  const idx = q.findIndex(x=>x.id===a.id);
+
+  // header
+  const pos = isAttn ? `<span class="qpos">needs you · ${idx>=0?idx+1:1}/${q.length}</span>`
+            : l==='done' ? `<span class="qpos watch" style="color:#6fe0a6;background:var(--nominal-tint)">finished</span>`
+            : `<span class="qpos watch">watching</span>`;
+  const nav = isAttn && q.length>1 ? `<div class="nav"><button onclick="navQueue(-1)" title="Previous">↑</button><button onclick="navQueue(1)" title="Next">↓</button></div>` : '';
+  const head = `<div class="fhead">
+    ${pi(a,26)}
+    <span class="ttl">${a.title}</span>
+    ${pos}
+    <span class="spc"></span>
+    <div class="meta"><span class="ctxmini"><span class="track"><i style="width:${a.ctx}%"></i></span>${a.ctx}%</span><span class="cost">${a.cost}</span></div>
+    ${nav}
+    <button class="iconbtn" title="Open in terminal grid">⤢</button>
+  </div>`;
+
+  // tui — the terminal IS the input surface (no footer). Entering an agent
+  // auto-focuses it + scrolls to bottom; you type straight into the live session.
+  const sim = isAttn ? `onclick="resolve('${a.id}')"` : '';
+  const watermark = isAttn ? 'placeholder · click to simulate answering in the terminal' : 'placeholder · real TUI mounts here';
+  const tui = `<div class="tui-wrap"><div class="tui focused ${isAttn?'attn attn-click':''}" tabindex="0" ${sim}>
+    <div class="tui-bar"><span class="dotz"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span><span class="path">claude — ${a.cwd}</span><span class="live"><i ${l==='flight'?'':'style="background:var(--orange-500)"'}></i> ${isAttn?'awaiting input':l==='done'?'ended':'live'}</span></div>
+    <div class="tui-body" id="tuibody">${tuiBody(a)}</div>
+    <div class="tui-watermark">${watermark}</div>
+  </div></div>`;
+
+  el.innerHTML = head + tui;
+
+  // Auto-focus the terminal and pin it to the bottom on entry.
+  const body = document.getElementById('tuibody');
+  if(body) body.scrollTop = body.scrollHeight;
+  const t = el.querySelector('.tui');
+  if(t) t.focus({ preventScroll: true });
+}
+
+function render(){ renderList(); renderFocus(); }
+document.getElementById('reset').addEventListener('click', ()=>{ state.addressed.clear(); state.selected=null; render(); });
+render();
+</script>
+</body>
+</html>
