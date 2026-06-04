@@ -11,7 +11,9 @@
   import { snapshots } from '$lib/usage/snapshots.svelte';
   import { appSessionIds } from '$lib/usage/appSessions';
   import UsageBar from '$lib/usage/UsageBar.svelte';
-  import Overview from '$lib/overview/Overview.svelte';
+  import Inbox from '$lib/overview/Inbox.svelte';
+  import { portal } from '$lib/layout/portal';
+  import { surfaceSlot } from '$lib/layout/surfaceSlot.svelte';
   import { runtimeMap } from '$lib/overview/runtime';
   import { view, type ViewMode } from '$lib/overview/view.svelte';
   import { subagents, type SessionRef } from '$lib/overview/subagents.svelte';
@@ -347,7 +349,7 @@
     <!-- The workspace area. EVERY workspace's PaneNode stays mounted; inactive
          ones are display:none so their xterm + PTY survive untouched. Only the
          active workspace is interactive and feeds WebGL/rects. -->
-    <main class="surface">
+    <main class="surface" use:portal={surfaceSlot.target}>
       {#each workspace.workspaces as ws (ws.id)}
         {@const isActive = ws.id === workspace.activeWorkspaceId}
         <div class="workspace" class:hidden={!isActive}>
@@ -368,7 +370,7 @@
        view-model math), share the project panel/filter, and the Windows view reads
        the live xterm tails of those same mounted panes. -->
   {#if view.isOverview}
-    <Overview />
+    <Inbox />
   {/if}
   {:else}
     <!-- Minimal splash while the persisted layout is restoring; replaced by the
