@@ -1,18 +1,52 @@
 ## ADDED Requirements
 
-### Requirement: Agent Roster Overview
-The system SHALL provide an Overview surface that lists every running agent (each terminal pane running a Claude session) with its name/cwd, model, current task, context percentage, cost (from the agent's latest usage snapshot), and a working/needs-input/finished/errored status derived from the agent's live terminal activity and process state.
+### Requirement: Agent Inbox Overview
 
-#### Scenario: Roster reflects running agents
-- **WHEN** the overview is shown and one or more panes are running Claude sessions
-- **THEN** it lists one entry per agent showing that agent's model, current task (the in-progress `activeForm`), context percentage, and cost taken from its latest snapshot
+The overview SHALL present every agent as an inbox: a grouped roster (Needs you /
+In flight / Completed) on the left, and a single focus pane on the right that shows
+the selected agent's live terminal. The focus pane SHALL auto-fill from the
+attention queue, advance to the next when the focused agent is addressed, and show
+an "All clear" state when nothing needs the user and nothing is selected.
 
-#### Scenario: Agent status reflects working, waiting, finished, and errored
-- **WHEN** an agent's terminal produced output within the working window (claude is streaming)
-- **THEN** its status is `working`
-- **AND** when it is alive but its terminal has been quiet past the working window its status is `waiting` (needs the user's input)
-- **AND** when its process has exited with a zero/unknown code its status is `finished`
-- **AND** when its process has exited with a non-zero code its status is `error`
+#### Scenario: Attention queue surfaces waiting and errored agents
+
+- **WHEN** the roster contains working, waiting, finished, and errored agents
+- **THEN** the attention queue lists only the waiting and errored agents, in roster order
+
+#### Scenario: Focus resolves to the user selection before the queue
+
+- **WHEN** the user has selected an agent that still exists in the roster
+- **THEN** the focus pane shows that agent, not the head of the attention queue
+
+#### Scenario: Focus falls back to the attention queue when nothing is selected
+
+- **WHEN** no agent is selected
+- **THEN** the focus pane shows the first agent in the attention queue
+
+#### Scenario: Focus is empty when nothing needs attention and nothing is selected
+
+- **WHEN** no agent needs attention and none is selected
+- **THEN** the focus pane shows the "All clear" state
+
+#### Scenario: Addressed attention agent advances the focus to the next
+
+- **WHEN** the focused attention agent transitions out of needing attention
+- **THEN** the focus advances to the next agent in the attention queue
+
+#### Scenario: Queue navigation steps through waiting agents
+
+- **WHEN** the user steps the focus header's queue navigation
+- **THEN** the focus moves to the next or previous agent in the attention queue, wrapping at the ends
+
+#### Scenario: Entering an agent focuses its terminal and scrolls to the bottom
+
+- **WHEN** an agent becomes the focused one in the inbox
+- **THEN** its live terminal is focused and scrolled to the bottom
+
+#### Scenario: The live surface is teleported into the focus pane without respawning
+
+- **WHEN** an agent is shown in the focus pane and then expanded to the grid
+- **THEN** the same live terminal session is used throughout, with no PTY respawn
 
 ### Requirement: Navigate To An Agent
 The system SHALL let the user open an agent from the overview, switching to the terminal grid with that agent's workspace active and its pane focused.

@@ -208,7 +208,11 @@ const MANUAL_SCENARIOS = {
   // The launcher itself (plan/recents/initial-input) has headless coverage under
   // session-launcher; what is live here is the overview's "＋ New agent" opening it
   // and the resulting pane rostering, which needs a real window + PTY.
-  'agent-overview': new Set(['new_agent_action_launches_and_rosters']),
+  'agent-overview': new Set([
+    'new_agent_action_launches_and_rosters',
+    'entering_an_agent_focuses_its_terminal_and_scrolls_to_the_bottom',
+    'the_live_surface_is_teleported_into_the_focus_pane_without_respawning',
+  ]),
   // activity-events: the live socket end-to-end is covered headlessly by the Rust
   // accept test, so nothing is MANUAL here.
   'activity-events': new Set(),
