@@ -38,6 +38,28 @@ export interface PersistedSession {
   program: string;
   /** Working directory; `null` inherits the app cwd. */
   cwd: string | null;
+  /**
+   * OPTIONAL id of the project this pane was launched under. Persisted (unlike
+   * `initialInput`) so an agent keeps its project identity / avatar across a
+   * restart. Re-spawn ignores it (only program + cwd drive the PTY).
+   */
+  projectId?: string;
+  /**
+   * OPTIONAL app-owned Claude session id. Persisted for `claude` panes so the
+   * pane can be resumed with `--resume <sessionId>` on restart, continuing from
+   * its prior transcript. When absent in the serialized JSON (older saved state
+   * or non-claude pane), `restoreState` assigns a NEW id and spawns fresh (no
+   * resume). Present on the restored registry for every `claude` pane.
+   */
+  sessionId?: string;
+  /**
+   * Set on a RESTORED claude pane so its first spawn uses `--resume <sessionId>`
+   * to continue the prior transcript, rather than starting a fresh session.
+   * Absent on fresh launches, splits, and restored panes without a saved sessionId.
+   * NOT serialized — it is only meaningful at runtime (cleared once the pane has
+   * spawned and the transcript is already resumed).
+   */
+  resume?: boolean;
 }
 
 /** One serialized workspace: identity + name + its pane tree + its registry. */
@@ -111,9 +133,9 @@ function cloneWorkspace(ws: Workspace): Workspace {
 }
 
 /**
- * Build a registry containing ONLY `{program, cwd}` for the paneIds referenced
- * by leaves in `root`. Missing entries default to a login-shell-ish program so a
- * re-spawn always has something to run.
+ * Build a registry containing `{program, cwd, projectId?, sessionId?}` for the
+ * paneIds referenced by leaves in `root`. Missing entries default to a
+ * login-shell-ish program so a re-spawn always has something to run.
  */
 function projectRegistry(
   root: Node,
@@ -124,7 +146,13 @@ function projectRegistry(
     const src = registry[leafNode.paneId];
     out[leafNode.paneId] = {
       program: src?.program ?? '/bin/zsh',
-      cwd: src?.cwd ?? null
+      cwd: src?.cwd ?? null,
+      // Keep the project binding when present (omitted key serializes cleanly).
+      ...(src?.projectId ? { projectId: src.projectId } : {}),
+      // Persist the claude session id so the pane can resume the prior transcript
+      // on restart (via `--resume <sessionId>`). Omit when absent so the JSON
+      // stays clean for shell panes and older saved states that had no id.
+      ...(src?.sessionId ? { sessionId: src.sessionId } : {})
     };
   }
   return out;
@@ -154,7 +182,10 @@ export function restoreState(raw: string | null | undefined, newId: IdFactory): 
     if (!isRecord(parsed)) return fallback(newId);
 
     const list = parsed.workspaces;
-    if (!Array.isArray(list) || list.length === 0) return fallback(newId);
+    if (!Array.isArray(list)) return fallback(newId);
+    // An explicitly-empty saved layout (the user closed every agent) restores to
+    // NO workspaces — we honor that rather than fabricating a fresh agent.
+    if (list.length === 0) return { workspaces: [], activeWorkspaceId: '' };
 
     const workspaces: RestoredWorkspace[] = list.map((w) => restoreWorkspace(w));
 
@@ -208,9 +239,25 @@ function sanitizeRegistry(
   for (const leafNode of leavesInOrder(root)) {
     const raw = src[leafNode.paneId];
     if (isRecord(raw)) {
+      const program = typeof raw.program === 'string' ? raw.program : '/bin/zsh';
+      // A persisted sessionId means we can resume the prior transcript on restart.
+      // When present, carry it through and set resume:true so TerminalPane emits
+      // `--resume <id>` instead of `--session-id <id>`.
+      // When absent (older saved state / non-claude pane), generate a fresh id
+      // (claude panes only) so the overview can locate the new transcript.
+      const persistedSessionId =
+        typeof raw.sessionId === 'string' && raw.sessionId ? raw.sessionId : undefined;
+      const sessionId =
+        program === 'claude' ? (persistedSessionId ?? crypto.randomUUID()) : undefined;
+      const resume = program === 'claude' && !!persistedSessionId;
       out[leafNode.paneId] = {
-        program: typeof raw.program === 'string' ? raw.program : '/bin/zsh',
-        cwd: typeof raw.cwd === 'string' ? raw.cwd : null
+        program,
+        cwd: typeof raw.cwd === 'string' ? raw.cwd : null,
+        ...(typeof raw.projectId === 'string' && raw.projectId
+          ? { projectId: raw.projectId }
+          : {}),
+        ...(sessionId ? { sessionId } : {}),
+        ...(resume ? { resume: true } : {})
       };
     } else {
       out[leafNode.paneId] = { program: '/bin/zsh', cwd: null };
@@ -230,7 +277,7 @@ function fallback(newId: IdFactory): RestoredState {
         id,
         name: 'Session 1',
         ws,
-        registry: { [paneId]: { program: 'claude', cwd: null } }
+        registry: { [paneId]: { program: 'claude', cwd: null, sessionId: crypto.randomUUID() } }
       }
     ],
     activeWorkspaceId: id

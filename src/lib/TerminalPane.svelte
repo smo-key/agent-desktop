@@ -66,9 +66,16 @@
     initialInput = undefined as string | undefined,
     /**
      * OPTIONAL app-owned Claude session id (claude panes only). Injected as
-     * `--session-id <id>` so the overview can locate this exact agent's transcript.
+     * `--session-id <id>` (fresh) or `--resume <id>` (when resume is true) so the
+     * overview can locate this exact agent's transcript.
      */
-    sessionId = undefined as string | undefined
+    sessionId = undefined as string | undefined,
+    /**
+     * When true, the pane was restored from a prior saved session and will use
+     * `--resume <sessionId>` so claude continues from its prior transcript.
+     * Absent (false/undefined) for fresh launches and splits.
+     */
+    resume = undefined as boolean | undefined
   }: {
     paneId: string;
     program?: string;
@@ -79,6 +86,7 @@
     visible?: boolean;
     initialInput?: string;
     sessionId?: string;
+    resume?: boolean;
   } = $props();
 
   // Single-shot sender for the optional initial prompt. Constructed in onMount
@@ -313,6 +321,7 @@
         args,
         paneId,
         sessionId,
+        resume,
         usagePaths
       });
 

@@ -44,15 +44,24 @@ export interface SpawnOverrideInput {
   paneId: string;
   /**
    * The APP-OWNED Claude session id for this pane (a uuid generated at launch).
-   * Injected as `--session-id <id>` so the overview can locate THIS agent's exact
+   * Injected as `--session-id <id>` (fresh pane) or `--resume <id>` (restored
+   * pane with resume:true) so the overview can locate THIS agent's exact
    * transcript (`~/.claude/projects/<cwd>/<id>.jsonl`) — matching by cwd alone is
    * ambiguous when several sessions share a folder. Absent for non-claude panes.
    */
   sessionId?: string;
   /**
+   * When `true` AND `sessionId` is set: inject `--resume <sessionId>` so the
+   * restored pane continues from its prior transcript instead of starting fresh.
+   * Mutually exclusive with `--session-id` — only one flag is emitted.
+   * Falsey (default) keeps the existing `--session-id <sessionId>` behaviour.
+   */
+  resume?: boolean;
+  /**
    * Resolved usage paths, or `null` if they could not be fetched. When null we
-   * still inject `--session-id` (so activity works) but skip the statusline
-   * wrapper override — a missing wrapper must never break launching a session.
+   * still inject `--session-id` / `--resume` (so activity works) but skip the
+   * statusline wrapper override — a missing wrapper must never break launching a
+   * session.
    */
   usagePaths: UsagePaths | null;
 }
@@ -110,7 +119,7 @@ export function quoteCommand(path: string): string {
  * Pure: never mutates the input `args` array.
  */
 export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
-  const { program, args, paneId, sessionId, usagePaths } = input;
+  const { program, args, paneId, sessionId, resume, usagePaths } = input;
 
   // Only `claude` panes are wrapped; everything else spawns verbatim.
   if (program !== 'claude') {
@@ -122,8 +131,14 @@ export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
   // App-owned session id FIRST, so the overview can locate this exact agent's
   // transcript. Added even when the wrapper is unavailable (activity is decoupled
   // from the statusline snapshot).
+  // When `resume` is true, use `--resume <id>` so the restored pane continues
+  // from its prior transcript. Otherwise use `--session-id <id>` for fresh panes.
   if (sessionId) {
-    injected.push('--session-id', sessionId);
+    if (resume) {
+      injected.push('--resume', sessionId);
+    } else {
+      injected.push('--session-id', sessionId);
+    }
   }
 
   // Per-session settings override. ALWAYS present for a claude pane:

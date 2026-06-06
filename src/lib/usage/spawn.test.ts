@@ -215,4 +215,44 @@ describe('buildSpawnOverride', () => {
     });
     expect(input).toEqual(['--resume']);
   });
+
+  it('Resume flag emits --resume instead of --session-id', () => {
+    // A restored claude pane with resume:true must use `--resume <id>` so it
+    // continues the prior transcript; `--session-id` must NOT appear.
+    const resumed = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'pane-r',
+      sessionId: 'sess-resume-1',
+      resume: true,
+      usagePaths: PATHS
+    });
+    expect(resumed.args.slice(0, 2)).toEqual(['--resume', 'sess-resume-1']);
+    expect(resumed.args[2]).toBe('--settings');
+    expect(resumed.args).not.toContain('--session-id');
+
+    // Without resume, the existing --session-id behaviour is unchanged.
+    const fresh = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'pane-f',
+      sessionId: 'sess-fresh-1',
+      resume: false,
+      usagePaths: PATHS
+    });
+    expect(fresh.args.slice(0, 2)).toEqual(['--session-id', 'sess-fresh-1']);
+    expect(fresh.args[2]).toBe('--settings');
+    expect(fresh.args).not.toContain('--resume');
+
+    // resume:true without a sessionId is a no-op (no flag injected).
+    const noId = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'pane-n',
+      resume: true,
+      usagePaths: null
+    });
+    expect(noId.args).not.toContain('--resume');
+    expect(noId.args).not.toContain('--session-id');
+  });
 });

@@ -126,6 +126,8 @@
         program={session?.program ?? '/bin/zsh'}
         cwd={session?.cwd ?? null}
         initialInput={session?.initialInput}
+        sessionId={session?.sessionId}
+        resume={session?.resume}
         active={webglActive}
         deferFit={activeWorkspace && workspace.dragging}
         visible={activeWorkspace}

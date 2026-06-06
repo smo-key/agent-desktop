@@ -49,6 +49,35 @@ export interface PaneSession {
    * Absent for every pane except one freshly created by the launcher.
    */
   initialInput?: string;
+  /**
+   * OPTIONAL id of the PROJECT this pane was launched under (its identity becomes
+   * the agent's avatar / project-panel grouping). Recorded EXPLICITLY at launch
+   * and PERSISTED (unlike `initialInput`); never inferred. Absent for panes not
+   * launched under a project (e.g. split shells, restored pre-projects sessions).
+   */
+  projectId?: string;
+  /**
+   * The APP-OWNED Claude session id for a `claude` pane (a uuid generated when the
+   * pane is created, or carried over from a persisted save). Passed to claude as
+   * `--session-id` (fresh) or `--resume` (restored with resume:true) and used by
+   * the overview to locate THIS agent's EXACT transcript
+   * (`~/.claude/projects/<cwd>/<id>.jsonl`) — matching by cwd alone is ambiguous
+   * when several sessions share a folder. Absent for non-claude (shell) panes.
+   */
+  sessionId?: string;
+  /**
+   * Set on a RESTORED claude pane so its first spawn uses `--resume <sessionId>`
+   * to continue the prior transcript, rather than starting a fresh session.
+   * Absent (falsey) for fresh launches, splits, and restored panes without a
+   * saved sessionId (older saved state falls back to a fresh session).
+   */
+  resume?: boolean;
+}
+
+/** A fresh Claude session id for a `claude` pane (so the app owns it and can find
+ *  the agent's exact transcript), else `undefined` for non-claude panes. */
+function claudeSessionId(program: string): string | undefined {
+  return program === 'claude' ? crypto.randomUUID() : undefined;
 }
 
 /**
@@ -112,13 +141,16 @@ function makeEntry(
   program: string,
   cwd: string | null,
   paneId: string = nextPaneId(),
-  initialInput?: string
+  initialInput?: string,
+  projectId?: string
 ): WorkspaceEntry {
   return {
     id: nextWorkspaceId(),
     name,
     ws: freshWorkspace(paneId, nextNodeId),
-    registry: { [paneId]: { program, cwd, initialInput } }
+    registry: {
+      [paneId]: { program, cwd, initialInput, projectId, sessionId: claudeSessionId(program) }
+    }
   };
 }
 
@@ -225,33 +257,36 @@ export class WorkspaceStore {
   newWorkspace(
     program: string = 'claude',
     cwd: string | null = this.activeCwd(),
-    initialInput?: string
+    initialInput?: string,
+    projectId?: string
   ): string {
     const name = this.nextSessionName();
-    const entry = makeEntry(name, program, cwd, nextPaneId(), initialInput);
+    const entry = makeEntry(name, program, cwd, nextPaneId(), initialInput, projectId);
     this.workspaces = [...this.workspaces, entry];
     this.activeWorkspaceId = entry.id;
     return entry.id;
   }
 
   /**
-   * Close a workspace by id. Closing the LAST workspace is a no-op (there must
-   * always be one). When the closed workspace was active, activation moves to a
-   * neighbor (next, else prev). Callers that want a "this has live panes —
-   * confirm?" gate should consult `hasPanes(id)` first; this method itself just
-   * removes the entry (its TerminalPanes unmount, killing their PTYs in order).
+   * Close a workspace by id. Closing the LAST workspace is allowed — the app's
+   * primary surface is the overview, and an empty workspace list is a valid state
+   * (its empty state, no fabricated agent). When the closed workspace was active,
+   * activation moves to a neighbor (next, else prev, else none). Callers that want
+   * a "this has live panes — confirm?" gate should consult `hasPanes(id)` first;
+   * this method itself just removes the entry (its TerminalPanes unmount, killing
+   * their PTYs in order).
    */
   closeWorkspace(id: string) {
     const idx = this.workspaces.findIndex((w) => w.id === id);
     if (idx < 0) return;
-    if (this.workspaces.length <= 1) return; // always keep one workspace
 
     const wasActive = this.activeWorkspaceId === id;
     const next = this.workspaces.filter((w) => w.id !== id);
     this.workspaces = next;
 
     if (wasActive) {
-      // Activate the entry that now occupies the closed slot, else the new last.
+      // Activate the entry that now occupies the closed slot, else the new last,
+      // else none (the list is now empty — the overview's empty state shows).
       const fallback = next[Math.min(idx, next.length - 1)];
       this.activeWorkspaceId = fallback ? fallback.id : '';
     }
@@ -282,11 +317,15 @@ export class WorkspaceStore {
   spawnPaneId(
     program: string = loginShell(),
     cwd: string | null = null,
-    initialInput?: string
+    initialInput?: string,
+    projectId?: string
   ): string {
     const entry = this.requireActive();
     const id = nextPaneId();
-    entry.registry = { ...entry.registry, [id]: { program, cwd, initialInput } };
+    entry.registry = {
+      ...entry.registry,
+      [id]: { program, cwd, initialInput, projectId, sessionId: claudeSessionId(program) }
+    };
     return id;
   }
 
@@ -334,12 +373,13 @@ export class WorkspaceStore {
     program: string,
     cwd: string | null,
     initialInput?: string,
-    where: SplitWhere = 'after'
+    where: SplitWhere = 'after',
+    projectId?: string
   ): string | null {
     const entry = this.active;
     if (!entry) return null;
     if (!findLeaf(entry.ws.root, entry.ws.focusedId)) return null;
-    const newPaneId = this.spawnPaneId(program, cwd, initialInput);
+    const newPaneId = this.spawnPaneId(program, cwd, initialInput, projectId);
 
     const root = splitLeaf(
       entry.ws.root,
@@ -379,20 +419,28 @@ export class WorkspaceStore {
     cwd: string;
     placement: 'tab' | 'split-right' | 'split-down';
     initialInput?: string;
+    projectId?: string;
   }): string {
-    const { program, cwd, initialInput } = plan;
+    const { program, cwd, initialInput, projectId } = plan;
     // A split needs a focused leaf in the active workspace; otherwise open a tab.
     const canSplit = this.focusedPaneId !== null;
     const placement =
       plan.placement !== 'tab' && !canSplit ? 'tab' : plan.placement;
 
     if (placement === 'tab') {
-      this.newWorkspace(program, cwd, initialInput);
+      this.newWorkspace(program, cwd, initialInput, projectId);
       return this.focusedPaneId ?? '';
     }
 
     const direction: Direction = placement === 'split-right' ? 'row' : 'col';
-    const newPaneId = this.splitWith(direction, program, cwd, initialInput, 'after');
+    const newPaneId = this.splitWith(
+      direction,
+      program,
+      cwd,
+      initialInput,
+      'after',
+      projectId
+    );
     return newPaneId ?? '';
   }
 
@@ -529,6 +577,32 @@ export class WorkspaceStore {
         this.setFocusIn(entry.id, leaf.id);
         return;
       }
+    }
+  }
+
+  /**
+   * Close the agent in pane `paneId` wherever it lives (used by the overview's
+   * agent context menu). If its workspace has OTHER panes, close just that leaf
+   * (its TerminalPane unmounts, killing the PTY); if it is the ONLY pane, close
+   * the whole workspace (subject to the last-workspace guard in `closeWorkspace`).
+   * No-op when the pane no longer exists. Never throws.
+   */
+  closeAgent(paneId: string): void {
+    for (const entry of this.workspaces) {
+      const leaf = leafByPaneId(entry.ws.root, paneId);
+      if (!leaf) continue;
+      if (leavesInOrder(entry.ws.root).length > 1) {
+        // More than one pane here: remove just this leaf + prune its registry entry.
+        entry.ws = closeLeaf(entry.ws, leaf.id);
+        if (!leafByPaneId(entry.ws.root, paneId)) {
+          const { [paneId]: _removed, ...rest } = entry.registry;
+          entry.registry = rest;
+        }
+      } else {
+        // The only pane in its workspace: close the whole workspace.
+        this.closeWorkspace(entry.id);
+      }
+      return;
     }
   }
 

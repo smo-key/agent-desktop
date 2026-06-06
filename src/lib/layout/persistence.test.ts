@@ -81,8 +81,39 @@ describe('Serialize Workspace Layout And Session Registry', () => {
 
     // A registry entry exists for every paneId referenced by a Leaf.
     expect(Object.keys(w.registry).sort()).toEqual(['p1', 'p2']);
+    // The serialized registry carries {program, cwd} (+ optional projectId /
+    // sessionId) — other live junk (pid, args, buffers) is dropped.
+    // No sessionId in the in-memory entry here, so none in the serialized output.
     expect(w.registry.p1).toEqual({ program: 'claude', cwd: '/a' });
     expect(w.registry.p2).toEqual({ program: '/bin/zsh', cwd: '/b' });
+  });
+
+  it('sessionId persisted for claude panes and round-trips', () => {
+    const ws = rowWorkspace(); // p1 (claude), p2 (shell)
+    const reg = {
+      p1: { program: 'claude', cwd: '/my-project', sessionId: 'sess-abc-123' },
+      p2: { program: '/bin/zsh', cwd: '/my-project' }
+    };
+    const state = serializeState([entry('ws-1', 'Session 1', ws, reg)], 'ws-1');
+    const w = state.workspaces[0];
+
+    // claude pane: sessionId persisted.
+    expect(w.registry.p1).toEqual({ program: 'claude', cwd: '/my-project', sessionId: 'sess-abc-123' });
+    // shell pane: no sessionId key (omitted, keeps JSON clean).
+    expect(w.registry.p2).toEqual({ program: '/bin/zsh', cwd: '/my-project' });
+    expect(w.registry.p2.sessionId).toBeUndefined();
+
+    // Round-trip through restoreState: the persisted sessionId is preserved and
+    // resume:true is set so the pane spawns with `--resume <sessionId>`.
+    const restored = restoreState(JSON.stringify(state), ids('fresh'));
+    const rp1 = restored.workspaces[0].registry.p1;
+    expect(rp1.sessionId).toBe('sess-abc-123');
+    expect(rp1.resume).toBe(true);
+
+    // A pane without a persisted sessionId (shell or older state) has no resume.
+    const rp2 = restored.workspaces[0].registry.p2;
+    expect(rp2.sessionId).toBeUndefined();
+    expect(rp2.resume).toBeUndefined();
   });
 
   it('Live process state is not serialized', () => {
@@ -197,7 +228,9 @@ describe('Restore With Invariant Validation', () => {
     // The tree was rebuilt and focusedId applied.
     expect(w.ws.focusedId).toBe('L1');
     expect((w.ws.root as Split).type).toBe('split');
-    expect(w.registry.p1).toEqual({ program: 'claude', cwd: '/a' });
+    expect(w.registry.p1.program).toBe('claude');
+    expect(w.registry.p1.cwd).toBe('/a');
+    expect(typeof w.registry.p1.sessionId).toBe('string');
   });
 
   it('Ratios normalized on restore', () => {
@@ -369,9 +402,13 @@ describe('Graceful Fallback On Corrupt State', () => {
     expectFreshClaudeWorkspace(restoreState('', ids('fresh')));
   });
 
-  it('Empty workspace list falls back to fresh workspace', () => {
+  it('Empty workspace list restores to no workspaces (no fabricated agent)', () => {
+    // An explicitly-empty saved layout (the user closed every agent) stays empty,
+    // rather than fabricating a fresh agent the user didn't ask for.
     const state = { version: PERSIST_VERSION, activeWorkspaceId: '', workspaces: [] };
-    expectFreshClaudeWorkspace(restoreState(JSON.stringify(state), ids('fresh')));
+    const restored = restoreState(JSON.stringify(state), ids('fresh'));
+    expect(restored.workspaces).toHaveLength(0);
+    expect(restored.activeWorkspaceId).toBe('');
   });
 
   it('Wrong-shape top-level object falls back to fresh workspace', () => {
