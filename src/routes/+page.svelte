@@ -5,13 +5,15 @@
   import SessionRail from '$lib/layout/SessionRail.svelte';
   import Launcher from '$lib/launcher/Launcher.svelte';
   import { launcher } from '$lib/launcher/launcherStore.svelte';
+  import HelpModal from '$lib/ui/HelpModal.svelte';
+  import { help } from '$lib/ui/helpStore.svelte';
+  import { startNewSession } from '$lib/launcher/newSession';
   import { workspace } from '$lib/layout/workspace.svelte';
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
   import { restorePersistedLayout, watchAndPersist } from '$lib/layout/store-backend.svelte';
   import { snapshots } from '$lib/usage/snapshots.svelte';
   import { appSessionIds } from '$lib/usage/appSessions';
-  import UsageBar from '$lib/usage/UsageBar.svelte';
-  import UsageMeter from '$lib/usage/UsageMeter.svelte';
+  import AppFooter from '$lib/usage/AppFooter.svelte';
   import Inbox from '$lib/overview/Inbox.svelte';
   import { portal } from '$lib/layout/portal';
   import { surfaceSlot } from '$lib/layout/surfaceSlot.svelte';
@@ -192,15 +194,41 @@
     const alt = e.altKey;
     const key = e.key;
 
+    // Help overlay: Cmd-/ toggles it from anywhere; bare ? opens it too, but only
+    // when NOT typing into a field/terminal, so a literal "?" still reaches prompts
+    // and the xterm terminal (Cmd-/ is the always-safe path). Handled before the
+    // per-view guards so help works in every view; `help.open` below then blocks the
+    // pane shortcuts beneath the modal (the modal owns its own Esc).
+    if (meta && key === '/') {
+      e.preventDefault();
+      help.toggle();
+      return;
+    }
+    if (key === '?' && !meta && !alt && !e.ctrlKey && !isEditableTarget(e.target)) {
+      e.preventDefault();
+      help.show();
+      return;
+    }
+    // While the help modal is open it owns the keyboard: Esc closes it (the modal's
+    // own handler only fires when focus is inside it, so cover it here too) and we
+    // block the pane shortcuts beneath.
+    if (help.open) {
+      if (key === 'Escape') {
+        e.preventDefault();
+        help.close();
+      }
+      return;
+    }
+
     // While the launcher modal is open it owns the keyboard (its own Esc /
     // Cmd-Enter); don't let app pane shortcuts fire underneath it.
     if (launcher.open) return;
 
-    // Cmd-N opens the launcher. Available even before the store is seeded so the
-    // very first session can be launched through the full flow if desired.
+    // Cmd-N starts a new session: straight into the selected project (no popup), or
+    // the launcher when no single project is in focus. Same path as the inbox "+".
     if (meta && (key === 'n' || key === 'N')) {
       e.preventDefault();
-      launcher.show();
+      startNewSession();
       return;
     }
 
@@ -251,6 +279,16 @@
     }
   }
 
+  // True when the event target is a text-entry surface (an input/textarea/
+  // contenteditable, or the xterm terminal — which captures keys via a hidden
+  // <textarea>). Used to keep the bare-? help shortcut from hijacking a typed "?".
+  function isEditableTarget(target: EventTarget | null): boolean {
+    const el = target as HTMLElement | null;
+    if (!el || !el.tagName) return false;
+    const tag = el.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable === true;
+  }
+
   function arrowDir(key: string): SpatialDir | null {
     switch (key) {
       case 'ArrowLeft':
@@ -274,17 +312,20 @@
        lights float over the left of this bar, so we pad-left to clear them and
        make the whole bar a drag region instead of drawing our own dots. -->
   <header class="titlebar" data-tauri-drag-region>
-    <!-- The ENTIRE bar is a drag region: every child is non-interactive
-         (pointer-events:none) so there is no dead zone — logo left, centered
-         title, usage meter right. -->
-    <div class="tb-left">
+    <!-- The ENTIRE bar is a drag region. Tauri only starts a drag when the
+         mousedown TARGET carries `data-tauri-drag-region`, so every layout cell
+         gets it too (otherwise their empty areas are dead zones). Interactive
+         bits opt out via pointer-events (logo/title are :none so they pass the
+         drag through; the usage meter's hover targets keep pointer events). -->
+    <div class="tb-left" data-tauri-drag-region></div>
+    <div class="tb-center" data-tauri-drag-region>
       <img class="logo" src="/logomark.svg" alt="" aria-hidden="true" />
+      <span class="title">Agent Mission Control</span>
     </div>
-    <div class="tb-center">
-      <span class="title">Agent Desktop</span>
-    </div>
-    <div class="tb-right">
-      <UsageMeter />
+    <div class="tb-right" data-tauri-drag-region>
+      <!-- Opt back into pointer events (the bar is a drag region) so the button is
+           clickable. Opens the same shortcuts modal as Cmd-/ and bare ?. -->
+      <button class="help-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (⌘/)" onclick={() => help.show()}>?</button>
     </div>
   </header>
 
@@ -315,9 +356,10 @@
     </main>
   </div>
 
-    <!-- Two-row usage dashboard, pinned full-width at the bottom below the body.
-         Reads the snapshots store + workspace focus; all rollup math is pure. -->
-    <UsageBar />
+    <!-- Persistent footer, pinned full-width below the body: project chip + 5h/7d
+         limit bars (left) | git + context bar (right). All math is in the pure
+         `footerView`. -->
+    <AppFooter />
   </div>
 
   <!-- The INBOX overview surface. Rendered only while overview is the active
@@ -343,6 +385,7 @@
      pane context-menu "New Session" item, and the Cmd-N shortcut (all via the
      shared `launcher` store). Position:fixed backdrop, so it lives at the root. -->
 <Launcher />
+<HelpModal />
 
 <style>
   .app {
@@ -386,13 +429,46 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: 8px;
   }
   .tb-right {
     flex: 1 1 0;
     display: flex;
     align-items: center;
     justify-content: flex-end;
+    gap: 8px;
     min-width: 0;
+  }
+
+  .help-btn {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--line-subtle);
+    border-radius: var(--r-full);
+    background: transparent;
+    color: var(--fg-3);
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    /* The title bar is a drag region (pointer-events suppressed on its children);
+       re-enable here so the button is hoverable/clickable. */
+    pointer-events: auto;
+    transition:
+      color var(--dur-fast),
+      border-color var(--dur-fast),
+      background var(--dur-fast);
+  }
+  .help-btn:hover {
+    color: var(--fg-1);
+    border-color: var(--line-strong);
+    background: rgba(255, 255, 255, 0.05);
   }
 
   .logo {
