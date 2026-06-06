@@ -47,6 +47,12 @@ pub struct GitStatus {
     /// Whether the worktree is dirty, or `null` when git couldn't answer.
     #[serde(default)]
     pub dirty: Option<bool>,
+    /// Commits ahead of the upstream branch (not yet pushed), or `null`.
+    #[serde(default)]
+    pub ahead: Option<i64>,
+    /// Commits behind `origin/main`, or `null`.
+    #[serde(default)]
+    pub behind: Option<i64>,
 }
 
 /// A per-pane usage snapshot, mirroring the JSON the statusline wrapper writes.
@@ -284,7 +290,7 @@ mod tests {
                 "pane_id":"pane-1","session_id":"sess-1","model":"Claude Opus",
                 "task":"Refactoring the watcher","context_pct":42.5,
                 "rate_limits":{"five_hour":{"used_percentage":10}},
-                "cost":1.25,"git":{"branch":"main","dirty":true},"ts":1717200000
+                "cost":1.25,"git":{"branch":"main","dirty":true,"ahead":2,"behind":0},"ts":1717200000
             }"#,
         );
         let snap = read_snapshot(&tmp.path().join("pane-1.json")).expect("must parse");
@@ -298,7 +304,9 @@ mod tests {
             snap.git,
             Some(GitStatus {
                 branch: Some("main".into()),
-                dirty: Some(true)
+                dirty: Some(true),
+                ahead: Some(2),
+                behind: Some(0)
             })
         );
         assert_eq!(snap.ts, 1_717_200_000);
@@ -329,7 +337,9 @@ mod tests {
             snap.git,
             Some(GitStatus {
                 branch: None,
-                dirty: None
+                dirty: None,
+                ahead: None,
+                behind: None
             })
         );
     }

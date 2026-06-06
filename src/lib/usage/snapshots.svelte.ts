@@ -12,10 +12,17 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-/** Git branch + dirty for a pane's workspace dir (stable shape; fields nullable). */
+/**
+ * Git status for a pane's workspace dir (stable shape; fields nullable). `branch`
+ * + `dirty` are the original fields; `ahead` (vs upstream) and `behind` (vs
+ * origin/main) are additive and OPTIONAL so a legacy snapshot without them still
+ * types. The wrapper always emits all four (null off-repo).
+ */
 export interface GitStatus {
   branch: string | null;
   dirty: boolean | null;
+  ahead?: number | null;
+  behind?: number | null;
 }
 
 /**
