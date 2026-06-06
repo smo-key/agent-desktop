@@ -17,6 +17,7 @@
   import { workspace } from '$lib/layout/workspace.svelte';
   import { snapshots } from '$lib/usage/snapshots.svelte';
   import { launcher } from '$lib/launcher/launcherStore.svelte';
+  import { buildLaunchPlan } from '$lib/launcher/plan';
   import { surfaceSlot } from '$lib/layout/surfaceSlot.svelte';
   import { focusTerminal, scrollTerminalToBottom } from '$lib/layout/terminals';
   import {
@@ -27,7 +28,7 @@
     type AgentRow,
     type AgentStatus
   } from './roster';
-  import { isAttention, attentionQueue, resolveFocus, nextInQueue, shouldClearPin } from './inbox';
+  import { isAttention, attentionQueue, resolveFocus, nextInQueue } from './inbox';
   import { toRosterWorkspaces, toNavWorkspaces } from './rosterInputs';
   import { runtimeMap } from './runtime';
   import { navigateTarget } from './navigate';
@@ -77,8 +78,26 @@
     done: { title: 'Completed' }
   };
 
-  // The user's explicit selection (a watched agent), or null to let the queue drive.
+  // The user's explicit pin (a watched agent), or null to let attention drive.
   let userSelected = $state<string | null>(null);
+
+  // The agent actually SHOWN in the focus pane. It deliberately LAGS automatic,
+  // status-driven advances (#2): when the agent you're looking at stops needing
+  // you, the focus waits ADVANCE_DELAY_MS before moving on (so you see the result
+  // first); and it never advances to nothing (#1) — if attention wants nobody but
+  // the shown agent still exists, we keep showing it. User clicks are immediate.
+  let shownId = $state<string | null>(null);
+  let advanceTimer: ReturnType<typeof setTimeout> | undefined;
+  const ADVANCE_DELAY_MS = 2000;
+  function clearAdvance() {
+    if (advanceTimer) {
+      clearTimeout(advanceTimer);
+      advanceTimer = undefined;
+    }
+  }
+
+  // Whether the left roster sidebar is collapsed to a thin rail.
+  let listCollapsed = $state(false);
 
   // Right-click context menu for a roster row (open / close the agent).
   let menu = $state<{ open: boolean; x: number; y: number; items: MenuItem[] }>({
@@ -88,37 +107,50 @@
     items: []
   });
 
-  // The focused agent (pure): user selection > attention queue > none.
-  const focus = $derived(resolveFocus(rows, userSelected));
+  // The focused (shown) agent row.
+  const focus = $derived(rows.find((r) => r.paneId === shownId) ?? null);
 
-  // Drive the live surface from the focused agent: activate its workspace + focus
-  // its leaf (the existing display:none swap), then point the teleport target at
-  // our focus slot. With no focus, clear the target so the surface goes home
-  // (hidden) and the empty panel shows. Also auto-focus the terminal + scroll to
-  // bottom on entry.
+  // Reconcile the SHOWN agent toward what attention wants (resolveFocus = pin >
+  // attention queue). First focus, or the shown agent being closed, switches
+  // immediately; a status-driven advance to a DIFFERENT agent waits the grace
+  // period; and when attention wants nobody we keep the current agent.
+  $effect(() => {
+    const target = resolveFocus(rows, userSelected);
+    let wantId = target?.paneId ?? null;
+    const shownExists = shownId !== null && rows.some((r) => r.paneId === shownId);
+    if (wantId === null && shownExists) wantId = shownId; // keep-current, don't advance to nothing
+    if (wantId === shownId) {
+      clearAdvance();
+      return;
+    }
+    if (!shownExists) {
+      // First focus, or the shown agent was closed -> switch immediately.
+      clearAdvance();
+      shownId = wantId;
+      return;
+    }
+    // The shown agent is still here but a different agent now wants focus -> wait.
+    clearAdvance();
+    const next = wantId;
+    advanceTimer = setTimeout(() => {
+      advanceTimer = undefined;
+      shownId = next;
+    }, ADVANCE_DELAY_MS);
+  });
+
+  // Teleport the live surface to the shown agent + auto-focus its terminal on
+  // entry. With no shown agent, clear the target so the surface goes home (hidden)
+  // and the empty panel shows.
   let focusSlot = $state<HTMLDivElement | null>(null);
   let lastFocusId: string | null = null;
-  let lastFocusStatus: AgentStatus | null = null;
 
   $effect(() => {
     const f = focus;
     if (!f || !focusSlot) {
       surfaceSlot.clear();
       lastFocusId = null;
-      lastFocusStatus = null;
       return;
     }
-    // Address-advance: if the pinned agent just left attention, drop the pin so
-    // resolveFocus moves to the next in the queue on the next pass.
-    if (
-      lastFocusId === f.paneId &&
-      lastFocusStatus !== null &&
-      shouldClearPin(lastFocusStatus, f.status, userSelected === f.paneId)
-    ) {
-      userSelected = null;
-    }
-
-    // Point the surface at this agent's workspace/leaf and teleport it into the slot.
     const target = navigateTarget(navWorkspaces, f.paneId);
     if (target) {
       workspace.setActiveWorkspace(target.workspaceId);
@@ -138,22 +170,29 @@
       );
     }
     lastFocusId = f.paneId;
-    lastFocusStatus = f.status;
   });
 
-  // Release the teleport target when the inbox is torn down (view -> grid) so the
-  // surface returns to the grid body.
-  $effect(() => () => surfaceSlot.clear());
+  // Release the teleport target + cancel any pending advance on teardown.
+  $effect(() => () => {
+    clearAdvance();
+    surfaceSlot.clear();
+  });
 
-  /** Select (watch) an agent: pin it as the focused row. */
+  /** Select (watch) an agent: show it immediately and pin it. */
   function selectAgent(paneId: string) {
+    clearAdvance();
     userSelected = paneId;
+    shownId = paneId;
   }
 
-  /** Step through the attention queue from the header ↑/↓ controls. */
+  /** Step through the attention queue from the header ↑/↓ controls (immediate). */
   function stepQueue(dir: 1 | -1) {
-    const next = nextInQueue(rows, focus?.paneId ?? null, dir);
-    if (next) userSelected = next;
+    const next = nextInQueue(rows, shownId, dir);
+    if (next) {
+      clearAdvance();
+      userSelected = next;
+      shownId = next;
+    }
   }
 
   /** Close (terminate) an agent's session, after a confirm. Clears the pin when it
@@ -187,8 +226,17 @@
     return titles.titleFor(paneId) ?? fallback;
   }
 
+  /** New session: when a project is already selected, launch straight into it (no
+   *  dialog); otherwise open the launcher to pick/create a project. */
   function newAgent() {
-    launcher.show();
+    const proj = projectForId(projects.list, projectFilter.selected);
+    if (proj) {
+      workspace.launch(
+        buildLaunchPlan({ folder: proj.path, prompt: '', placement: 'tab', projectId: proj.id })
+      );
+    } else {
+      launcher.show();
+    }
   }
 
   // ---- Display helpers ------------------------------------------------------
@@ -238,8 +286,21 @@
 <div class="inbox-shell">
   <ProjectPanel rows={allRows} />
 
-  <section class="inbox" aria-label="Agent inbox">
-    <!-- LEFT: grouped roster -->
+  <section class="inbox" class:list-collapsed={listCollapsed} aria-label="Agent inbox">
+    <!-- LEFT: grouped roster (collapsible to a thin rail) -->
+    {#if listCollapsed}
+      <div class="col-list collapsed">
+        <button
+          type="button"
+          class="rail-btn"
+          onclick={() => (listCollapsed = false)}
+          title="Expand sidebar"
+          aria-label="Expand sidebar"
+        >»</button>
+        <button type="button" class="rail-btn" onclick={newAgent} title="New session (⌘N)" aria-label="New session">＋</button>
+        {#if attnCount > 0}<span class="rail-attn" title={`${attnCount} need you`}>{attnCount}</span>{/if}
+      </div>
+    {:else}
     <div class="col-list">
       <div class="lh">
         <img class="logo" src="/logomark.svg" alt="" aria-hidden="true" />
@@ -247,13 +308,20 @@
         <span class="sub">
           {#if attnCount > 0}{attnCount} need{attnCount === 1 ? 's' : ''} you{:else}all clear{/if}
         </span>
-        <button type="button" class="launch" onclick={newAgent} title="Launch a new agent (⌘N)">＋</button>
+        <button type="button" class="launch" onclick={newAgent} title="New session (⌘N)">＋</button>
+        <button
+          type="button"
+          class="collapse"
+          onclick={() => (listCollapsed = true)}
+          title="Collapse sidebar"
+          aria-label="Collapse sidebar"
+        >«</button>
       </div>
 
       {#if rows.length === 0}
         <div class="empty-list">
           <p>No agents yet.</p>
-          <button type="button" class="btn-primary" onclick={newAgent}>＋ Launch mission</button>
+          <button type="button" class="btn-primary" onclick={newAgent}>＋ New session</button>
         </div>
       {:else}
         <div class="list-scroll">
@@ -284,6 +352,7 @@
         </div>
       {/if}
     </div>
+    {/if}
 
     <!-- RIGHT: focus pane (header + teleported live TUI / All clear) -->
     <div class="col-focus">
@@ -353,8 +422,18 @@
     flex: 1 1 auto; min-width: 0; height: 100%; min-height: 0;
     background: var(--space-850); color: var(--fg-1); font-family: var(--font-sans);
   }
+  /* Collapsed: the roster shrinks to a thin icon rail. */
+  .inbox.list-collapsed { grid-template-columns: 46px 1fr; }
 
   .col-list { border-right: 1px solid var(--line-subtle); background: var(--space-900); display: flex; flex-direction: column; min-height: 0; }
+  /* Thin collapsed rail: expand + new-session buttons, stacked. */
+  .col-list.collapsed { align-items: center; gap: 8px; padding: 12px 0; }
+  .rail-btn { width: 30px; height: 30px; flex: none; display: flex; align-items: center; justify-content: center; border-radius: var(--r-md); background: var(--space-750); border: 1px solid var(--line-subtle); color: var(--fg-2); cursor: pointer; font-size: 14px; font-weight: 600; }
+  .rail-btn:hover { color: var(--fg-1); border-color: var(--line-default); }
+  .rail-attn { font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--space-900); background: var(--orange-400); border-radius: var(--r-full); padding: 2px 6px; }
+  /* Collapse (« ) button sits at the end of the list header. */
+  .lh .collapse { width: 26px; height: 26px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-md); background: var(--space-750); border: 1px solid var(--line-subtle); color: var(--fg-3); cursor: pointer; font-size: 14px; }
+  .lh .collapse:hover { color: var(--fg-1); border-color: var(--line-default); }
   .lh { display: flex; align-items: center; gap: 10px; padding: 15px 16px 11px; flex: none; }
   .lh .logo { width: 22px; height: 22px; }
   .lh h1 { font-family: var(--font-display); font-weight: 600; font-size: 17px; margin: 0; display: flex; align-items: baseline; gap: 8px; }

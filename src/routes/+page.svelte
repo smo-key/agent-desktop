@@ -11,10 +11,10 @@
   import { snapshots } from '$lib/usage/snapshots.svelte';
   import { appSessionIds } from '$lib/usage/appSessions';
   import UsageBar from '$lib/usage/UsageBar.svelte';
+  import UsageMeter from '$lib/usage/UsageMeter.svelte';
   import Inbox from '$lib/overview/Inbox.svelte';
   import { portal } from '$lib/layout/portal';
   import { surfaceSlot } from '$lib/layout/surfaceSlot.svelte';
-  import { runtimeMap } from '$lib/overview/runtime';
   import { view } from '$lib/overview/view.svelte';
   import { subagents, type SessionRef } from '$lib/overview/subagents.svelte';
   import { activity, type PaneRef } from '$lib/overview/activity.svelte';
@@ -167,30 +167,12 @@
     if (workspace.workspaces.length === 0 && view.isGrid) view.show('overview');
   });
 
-  // Auto-retire finished agents: the moment an agent's process EXITS (cleanly or
-  // with an error), close its pane/workspace so it disappears from every surface —
-  // and, if you were looking at that very pane in the grid, drop you back to the
-  // overview rather than stranding you in a dead terminal. The runtime registry is
-  // non-reactive (it's a per-byte side channel), so we scan it on a 1s clock. The
-  // last remaining workspace can't be removed (closeWorkspace keeps one), so a lone
-  // finished agent lingers instead of leaving the app paneless.
-  $effect(() => {
-    const id = setInterval(() => {
-      const exited = Object.entries(runtimeMap())
-        .filter(([, r]) => r.exited)
-        .map(([paneId]) => paneId);
-      if (exited.length === 0) return;
-      const live = workspace.allPaneIds();
-      const focused = workspace.focusedPaneId;
-      for (const paneId of exited) {
-        if (!live.has(paneId)) continue; // already retired
-        const wasViewing = view.isGrid && paneId === focused;
-        workspace.closeAgent(paneId);
-        if (wasViewing) view.show('overview');
-      }
-    }, 1000);
-    return () => clearInterval(id);
-  });
+  // NOTE: finished (exited) agents are intentionally NOT auto-closed. They linger
+  // in the inbox's "Completed" group so you keep seeing your finished work (and
+  // they are remembered across restarts — the layout, including exited claude
+  // sessions, is persisted and resumed with `claude --resume`). Close a session
+  // explicitly from the inbox (the ✕ in the focus header or the row's right-click
+  // menu). This also satisfies "don't auto-advance away to nothing".
 
   // Keyboard shortcuts (macOS):
   //   Cmd-N            open the session LAUNCHER (folder picker + recents +
@@ -292,16 +274,18 @@
        lights float over the left of this bar, so we pad-left to clear them and
        make the whole bar a drag region instead of drawing our own dots. -->
   <header class="titlebar" data-tauri-drag-region>
+    <!-- The ENTIRE bar is a drag region: every child is non-interactive
+         (pointer-events:none) so there is no dead zone — logo left, centered
+         title, usage meter right. -->
     <div class="tb-left">
       <img class="logo" src="/logomark.svg" alt="" aria-hidden="true" />
-      <span class="title">agent-desktop</span>
     </div>
-
-    <!-- Right group: equal-flex spacer balancing the left so the title stays put.
-         (The app has a single top-level surface — the inbox — so there is no view
-         switcher; the grid persists only as the hidden home the inbox teleports
-         each agent's live terminal out of.) -->
-    <div class="tb-right"></div>
+    <div class="tb-center">
+      <span class="title">Agent Desktop</span>
+    </div>
+    <div class="tb-right">
+      <UsageMeter />
+    </div>
   </header>
 
   <!-- Hold off rendering the workspace area (grid + overview + workflow) until the
@@ -388,14 +372,20 @@
     -webkit-user-select: none;
   }
 
-  /* Left group (logo + title) and right group each take equal flex, balancing the
-     bar. (No center control — the inbox is the sole top-level surface.) */
+  /* Left (logo) and right (usage meter) take equal flex so the centered title
+     sits in the true horizontal center of the bar. */
   .tb-left {
     flex: 1 1 0;
     display: flex;
     align-items: center;
     gap: 9px;
     min-width: 0;
+  }
+  .tb-center {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   .tb-right {
     flex: 1 1 0;

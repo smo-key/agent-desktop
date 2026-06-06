@@ -3,109 +3,71 @@
   // points via the shared `launcher` store (SessionRail "+ new session" row, the
   // pane context-menu "New Session" item, and the Cmd-N shortcut). It lets the
   // user:
-  //   1. choose a target folder — a "Browse…" button calling the native picker
-  //      (pickFolder) OR a one-click recent-folders list;
-  //   2. optionally enter a multi-line initial prompt;
-  //   3. pick a placement — New session (tab) / Split right / Split down.
-  // On confirm it builds a PURE launch plan (plan.ts), hands it to
+  //   1. choose/create a project — its folder is the launch cwd.
+  // A session always opens as a new tab. On confirm it builds a PURE launch plan
+  // (plan.ts, with an empty initial prompt — the agent starts at an idle prompt),
+  // hands it to
   // `workspace.launch(plan)` (which records {program:'claude', cwd, initialInput}
   // in the registry — the existing TerminalPane spawn path then applies the
   // --settings wrapper override + AGENT_DESKTOP_PANE env; we do NOT duplicate
   // that), records the folder as most-recent, and closes. Cancelling (Esc /
   // backdrop / Cancel) aborts: no session, no PTY, recents unchanged.
 
-  import { onMount, tick, untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { launcher } from './launcherStore.svelte';
-  import { recents } from './recents.svelte';
-  import { pickFolder } from './pick';
-  import { buildLaunchPlan, type Placement } from './plan';
+  import { buildLaunchPlan } from './plan';
   import { workspace } from '../layout/workspace.svelte';
+  import { projects } from '../projects/projects.svelte';
+  import { projectForId } from '../projects/projects';
+  import ProjectSelect from '../projects/ProjectSelect.svelte';
 
   // --- Local form state (the launcher store holds only open/close) ----------
-  // The chosen folder (absolute path), '' until picked or chosen from recents.
-  let folder = $state('');
-  // The optional multi-line initial prompt.
-  let prompt = $state('');
-  // The chosen placement. Defaults to a new tab (always available).
-  let placement = $state<Placement>('tab');
-  // Whether the native picker is mid-flight (disables the Browse button).
-  let browsing = $state(false);
+  // The chosen project id (supplies the launch folder), null until picked/created.
+  let selectedProjectId = $state<string | null>(null);
 
-  // The prompt textarea, focused when the modal opens.
-  let promptEl = $state<HTMLTextAreaElement | null>(null);
+  // The resolved project (its folder is where the agent launches).
+  const project = $derived(projectForId(projects.list, selectedProjectId));
 
-  // A split placement is only possible when a pane is focused (a workspace with
-  // at least one leaf). On a brand-new/empty workspace, split is disabled and the
-  // launch falls back to a new tab (enforced again in buildLaunchPlan + the store).
-  const canSplit = $derived(workspace.focusedPaneId !== null);
+  // A launch needs a chosen project (which supplies the folder).
+  const canLaunch = $derived(project !== null);
 
-  // A launch needs a chosen folder. (A prompt is optional.)
-  const canLaunch = $derived(folder.trim() !== '');
-
-  // Load persisted recents once on mount; (re)opening the modal shows them.
+  // Load persisted projects once on mount; (re)opening the modal shows them.
   onMount(() => {
-    void recents.load();
+    void projects.load();
   });
 
-  // When the modal opens (the open transition only), reset transient form state
-  // and focus the prompt so the user can pick a recent + type immediately. Keep
-  // the chosen folder cleared so a stale path from a previous (cancelled) open
-  // never leaks into a new launch. The form writes are `untrack`ed so this effect
-  // depends ONLY on `launcher.open` (it must not re-run when the user later edits
-  // the form, which would wipe their input).
+  // When the modal opens (the open transition only), reset the transient project
+  // choice. The write is `untrack`ed so this effect depends ONLY on `launcher.open`
+  // (it must not re-run when the user picks a project).
   $effect(() => {
     if (!launcher.open) return;
     untrack(() => {
-      folder = '';
-      prompt = '';
-      // If no pane is focused, force a tab (split is disabled in that case).
-      if (workspace.focusedPaneId === null) placement = 'tab';
+      selectedProjectId = null;
     });
-    void tick().then(() => promptEl?.focus());
   });
-
-  async function browse() {
-    if (browsing) return;
-    browsing = true;
-    try {
-      // Seed the dialog at the current folder if one is chosen, else let it use
-      // the OS default. Cancel -> null leaves the chosen folder unchanged.
-      const picked = await pickFolder(folder.trim() || undefined);
-      if (picked) folder = picked;
-    } finally {
-      browsing = false;
-    }
-  }
-
-  function chooseRecent(path: string) {
-    folder = path;
-  }
 
   function cancel() {
     launcher.close();
   }
 
   async function confirm() {
-    const cwd = folder.trim();
-    if (!cwd) return; // no folder chosen -> abort (button is also disabled)
+    if (!project) return; // no project chosen -> abort (button is also disabled)
 
     // Build the NORMALIZED plan (pure): program is always claude, the prompt is
-    // verbatim (never a synthesized /command), and a split with no focused pane
-    // falls back to a new tab.
-    const plan = buildLaunchPlan(
-      { folder: cwd, prompt, placement },
-      canSplit
-    );
+    // verbatim (never a synthesized /command), the cwd is the project's folder,
+    // and the projectId binds the agent to its project. A session always opens as
+    // a new session (tab) — there is no split-placement choice in the launcher.
+    const plan = buildLaunchPlan({
+      folder: project.path,
+      prompt: '',
+      placement: 'tab',
+      projectId: project.id
+    });
 
     // Hand the plan to the store: it creates the tab/split and records the new
-    // pane's {program:'claude', cwd, initialInput} in the registry. Rendering the
-    // new leaf spawns the PTY via TerminalPane (which applies the --settings
-    // wrapper override + AGENT_DESKTOP_PANE env — reused, not duplicated here).
+    // pane's {program:'claude', cwd, initialInput, projectId} in the registry.
+    // Rendering the new leaf spawns the PTY via TerminalPane.
     workspace.launch(plan);
-
-    // Record the launched folder as most-recent AFTER a successful launch (the
-    // pure model dedupes + caps; persistence is best-effort and never blocks).
-    void recents.add(plan.cwd);
 
     launcher.close();
   }
@@ -149,85 +111,20 @@
         <button class="x" aria-label="Close" onclick={cancel}>×</button>
       </header>
 
-      <!-- Folder section: Browse + the chosen path + a one-click recents list. -->
+      <!-- Project section: pick an existing project (its folder is the launch
+           cwd) or create one (name + folder + icon). -->
       <section class="field">
-        <div class="label-row">
-          <span class="label">Folder</span>
-          <button class="browse" onclick={browse} disabled={browsing}>
-            {browsing ? 'Opening…' : 'Browse…'}
-          </button>
-        </div>
-        <div class="chosen" class:empty={!folder.trim()} title={folder}>
-          {folder.trim() || 'No folder chosen'}
-        </div>
-
-        {#if recents.list.length > 0}
-          <div class="recents-label">Recent</div>
-          <ul class="recents">
-            {#each recents.list as path (path)}
-              <li>
-                <button
-                  class="recent"
-                  class:selected={folder.trim() === path}
-                  title={path}
-                  onclick={() => chooseRecent(path)}
-                >
-                  {path}
-                </button>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      </section>
-
-      <!-- Optional initial prompt (multi-line). Plain Enter = newline. -->
-      <section class="field">
-        <label class="label" for="launcher-prompt">
-          Initial prompt <span class="optional">(optional)</span>
-        </label>
-        <textarea
-          id="launcher-prompt"
-          class="prompt"
-          rows="3"
-          placeholder="What should this session start working on? (leave blank for an idle prompt)"
-          bind:this={promptEl}
-          bind:value={prompt}
-        ></textarea>
-      </section>
-
-      <!-- Placement choice. Split options disabled when no pane is focused. -->
-      <section class="field">
-        <span class="label">Placement</span>
-        <div class="placements">
-          <label class="placement">
-            <input type="radio" value="tab" bind:group={placement} />
-            <span>New session (tab)</span>
-          </label>
-          <label class="placement" class:disabled={!canSplit}>
-            <input
-              type="radio"
-              value="split-right"
-              bind:group={placement}
-              disabled={!canSplit}
-            />
-            <span>Split right</span>
-          </label>
-          <label class="placement" class:disabled={!canSplit}>
-            <input
-              type="radio"
-              value="split-down"
-              bind:group={placement}
-              disabled={!canSplit}
-            />
-            <span>Split down</span>
-          </label>
-        </div>
+        <span class="label">Project</span>
+        <ProjectSelect
+          value={selectedProjectId}
+          onChange={(id) => (selectedProjectId = id)}
+        />
       </section>
 
       <footer class="actions">
         <button class="cancel" onclick={cancel}>Cancel</button>
         <button class="launch" onclick={confirm} disabled={!canLaunch}>
-          Launch session
+          New session
         </button>
       </footer>
     </div>
@@ -242,26 +139,25 @@
     display: flex;
     align-items: flex-start;
     justify-content: center;
-    padding-top: 12vh;
-    background: rgba(1, 4, 9, 0.6);
-    backdrop-filter: blur(2px);
+    padding-top: 10vh;
+    background: rgba(4, 6, 10, 0.66);
+    backdrop-filter: blur(3px);
   }
 
   .dialog {
-    width: min(560px, calc(100vw - 32px));
-    max-height: 76vh;
+    width: min(580px, calc(100vw - 32px));
+    max-height: 80vh;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    padding: 16px 18px 14px;
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 12px;
-    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
-    color: #e6edf3;
-    font-family:
-      ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+    gap: 16px;
+    padding: 18px 20px 16px;
+    background: var(--space-800);
+    border: 1px solid var(--line-default);
+    border-radius: var(--r-xl);
+    box-shadow: var(--shadow-lg);
+    color: var(--fg-1);
+    font-family: var(--font-sans);
     outline: none;
   }
 
@@ -272,23 +168,25 @@
   }
   .head h2 {
     margin: 0;
-    font-size: 15px;
+    font-family: var(--font-display);
+    font-size: 17px;
     font-weight: 600;
+    letter-spacing: var(--tracking-tight);
   }
   .x {
-    width: 24px;
-    height: 24px;
+    width: 28px;
+    height: 28px;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     background: transparent;
-    color: #8b949e;
+    color: var(--fg-3);
     font-size: 18px;
     line-height: 1;
     cursor: pointer;
   }
   .x:hover {
-    background: #21262d;
-    color: #f0f6fc;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--fg-1);
   }
 
   .field {
@@ -297,180 +195,48 @@
     gap: 6px;
   }
 
-  .label-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
   .label {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.07em;
     text-transform: uppercase;
-    color: #8b949e;
+    color: var(--fg-3);
   }
-  .optional {
-    font-weight: 400;
-    text-transform: none;
-    letter-spacing: 0;
-    color: #6e7681;
-  }
-
-  .browse {
-    padding: 3px 10px;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    background: #21262d;
-    color: #c9d1d9;
-    font-size: 12px;
-    cursor: pointer;
-  }
-  .browse:hover:not(:disabled) {
-    border-color: #58a6ff;
-    color: #fff;
-  }
-  .browse:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-
-  .chosen {
-    padding: 7px 9px;
-    border: 1px solid #30363d;
-    border-radius: 7px;
-    background: #0d1117;
-    font-family:
-      ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
-    font-size: 12px;
-    color: #c9d1d9;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .chosen.empty {
-    color: #6e7681;
-    font-style: italic;
-  }
-
-  .recents-label {
-    margin-top: 2px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: #6e7681;
-  }
-  .recents {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    max-height: 132px;
-    overflow-y: auto;
-  }
-  .recent {
-    width: 100%;
-    padding: 5px 8px;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    background: transparent;
-    color: #adbac7;
-    font-family:
-      ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
-    font-size: 12px;
-    text-align: left;
-    cursor: pointer;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .recent:hover {
-    background: #1c2128;
-    color: #e6edf3;
-  }
-  .recent.selected {
-    border-color: #1f6feb;
-    background: #182030;
-    color: #e6edf3;
-  }
-
-  .prompt {
-    width: 100%;
-    box-sizing: border-box;
-    padding: 8px 9px;
-    border: 1px solid #30363d;
-    border-radius: 7px;
-    background: #0d1117;
-    color: #e6edf3;
-    font-family:
-      ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
-    font-size: 12.5px;
-    line-height: 1.45;
-    resize: vertical;
-    outline: none;
-  }
-  .prompt:focus {
-    border-color: #58a6ff;
-  }
-
-  .placements {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .placement {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
-    border: 1px solid #30363d;
-    border-radius: 7px;
-    background: #0d1117;
-    font-size: 12.5px;
-    color: #c9d1d9;
-    cursor: pointer;
-  }
-  .placement:hover {
-    border-color: #444c56;
-  }
-  .placement.disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-
   .actions {
     display: flex;
     justify-content: flex-end;
-    gap: 8px;
+    gap: 10px;
     margin-top: 2px;
   }
   .cancel,
   .launch {
-    padding: 7px 14px;
-    border-radius: 7px;
-    font-size: 12.5px;
+    padding: 9px 16px;
+    border-radius: var(--r-md);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 600;
     cursor: pointer;
+    transition:
+      background var(--dur-fast),
+      border-color var(--dur-fast);
   }
   .cancel {
-    border: 1px solid #30363d;
-    background: #21262d;
-    color: #c9d1d9;
+    border: 1px solid var(--line-default);
+    background: var(--space-650);
+    color: var(--fg-1);
   }
   .cancel:hover {
-    border-color: #444c56;
-    color: #fff;
+    background: var(--space-600);
   }
   .launch {
-    border: 1px solid #238636;
-    background: #238636;
+    border: 1px solid transparent;
+    background: var(--blue-500);
     color: #fff;
-    font-weight: 600;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset;
   }
   .launch:hover:not(:disabled) {
-    background: #2ea043;
-    border-color: #2ea043;
+    background: var(--blue-600);
   }
   .launch:disabled {
     opacity: 0.5;
