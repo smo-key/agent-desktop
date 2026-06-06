@@ -81,23 +81,28 @@
   // The user's explicit pin (a watched agent), or null to let attention drive.
   let userSelected = $state<string | null>(null);
 
-  // The agent actually SHOWN in the focus pane. It deliberately LAGS automatic,
-  // status-driven advances (#2): when the agent you're looking at stops needing
-  // you, the focus waits ADVANCE_DELAY_MS before moving on (so you see the result
-  // first); and it never advances to nothing (#1) — if attention wants nobody but
-  // the shown agent still exists, we keep showing it. User clicks are immediate.
+  // The agent actually SHOWN in the focus pane. Automatic, status-driven advances
+  // LAG by ADVANCE_DELAY_MS: when the agent you're on stops needing you (e.g. it
+  // goes Working) and another agent needs you, the focus moves to the TOP of the
+  // queue after the grace; it never advances to nothing (you keep the agent if
+  // nobody else needs you). User clicks / keyboard nav are immediate.
   let shownId = $state<string | null>(null);
   let advanceTimer: ReturnType<typeof setTimeout> | undefined;
-  const ADVANCE_DELAY_MS = 2000;
+  let pendingTarget: string | null = null;
+  // Plain (non-reactive) trackers to detect the shown agent leaving attention.
+  let lastShownId: string | null = null;
+  let lastShownStatus: AgentStatus | null = null;
+  const ADVANCE_DELAY_MS = 1000;
   function clearAdvance() {
     if (advanceTimer) {
       clearTimeout(advanceTimer);
       advanceTimer = undefined;
     }
+    pendingTarget = null;
   }
 
-  // Whether the left roster sidebar is collapsed to a thin rail.
-  let listCollapsed = $state(false);
+  // Whether the project pane (left of the roster) is collapsed.
+  let projectPaneCollapsed = $state(false);
 
   // Right-click context menu for a roster row (open / close the agent).
   let menu = $state<{ open: boolean; x: number; y: number; items: MenuItem[] }>({
@@ -111,14 +116,38 @@
   const focus = $derived(rows.find((r) => r.paneId === shownId) ?? null);
 
   // Reconcile the SHOWN agent toward what attention wants (resolveFocus = pin >
-  // attention queue). First focus, or the shown agent being closed, switches
-  // immediately; a status-driven advance to a DIFFERENT agent waits the grace
-  // period; and when attention wants nobody we keep the current agent.
+  // attention queue). First focus / the shown agent being closed switches
+  // immediately; an advance to a DIFFERENT agent waits the grace; attention wanting
+  // nobody keeps the current agent.
   $effect(() => {
+    const shownRow = rows.find((r) => r.paneId === shownId) ?? null;
+    // The agent we're on just LEFT attention (handled / went Working)?
+    const sameAgent = shownId !== null && shownId === lastShownId;
+    const leftAttention =
+      sameAgent &&
+      lastShownStatus !== null &&
+      isAttention(lastShownStatus) &&
+      shownRow !== null &&
+      !isAttention(shownRow.status);
+    lastShownId = shownId;
+    lastShownStatus = shownRow?.status ?? null;
+
+    // A PINNED agent we're on that left attention yields to the queue: drop the pin
+    // so focus advances to the top (resolveFocus would otherwise keep it pinned).
+    if (
+      leftAttention &&
+      userSelected === shownId &&
+      attentionQueue(rows).some((r) => r.paneId !== shownId)
+    ) {
+      userSelected = null;
+      return;
+    }
+
     const target = resolveFocus(rows, userSelected);
     let wantId = target?.paneId ?? null;
-    const shownExists = shownId !== null && rows.some((r) => r.paneId === shownId);
+    const shownExists = shownRow !== null;
     if (wantId === null && shownExists) wantId = shownId; // keep-current, don't advance to nothing
+
     if (wantId === shownId) {
       clearAdvance();
       return;
@@ -126,14 +155,21 @@
     if (!shownExists) {
       // First focus, or the shown agent was closed -> switch immediately.
       clearAdvance();
+      userSelected = null;
       shownId = wantId;
       return;
     }
-    // The shown agent is still here but a different agent now wants focus -> wait.
+    // A different agent now wants focus -> advance after the grace. Schedule ONCE
+    // per target: the roster recomputes every second, so without this guard the
+    // timer would reset each tick and never fire.
+    if (advanceTimer && pendingTarget === wantId) return;
     clearAdvance();
+    pendingTarget = wantId;
     const next = wantId;
     advanceTimer = setTimeout(() => {
       advanceTimer = undefined;
+      pendingTarget = null;
+      userSelected = null;
       shownId = next;
     }, ADVANCE_DELAY_MS);
   });
@@ -239,6 +275,28 @@
     }
   }
 
+  // Flat roster order (Needs you -> In flight -> Completed) for keyboard nav.
+  const orderedRows = $derived(LANE_ORDER.flatMap((lane) => grouped[lane]));
+
+  /** Keyboard nav between agents in the list: ⌘↑ (previous) / ⌘↓ (next). The
+   *  terminal owns plain keys, so a ⌘ modifier keeps nav out of the PTY. */
+  function onNavKey(e: KeyboardEvent) {
+    if (launcher.open) return;
+    if (!e.metaKey || e.altKey || e.ctrlKey || e.shiftKey) return;
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    if (orderedRows.length === 0) return;
+    e.preventDefault();
+    const dir = e.key === 'ArrowDown' ? 1 : -1;
+    const i = orderedRows.findIndex((r) => r.paneId === shownId);
+    const ni =
+      i < 0
+        ? dir === 1
+          ? 0
+          : orderedRows.length - 1
+        : Math.min(orderedRows.length - 1, Math.max(0, i + dir));
+    selectAgent(orderedRows[ni].paneId);
+  }
+
   // ---- Display helpers ------------------------------------------------------
 
   function projAvatar(projectId: string | null): { icon: string; color: string } {
@@ -283,24 +341,17 @@
   }
 </script>
 
-<div class="inbox-shell">
-  <ProjectPanel rows={allRows} />
+<svelte:window onkeydown={onNavKey} />
 
-  <section class="inbox" class:list-collapsed={listCollapsed} aria-label="Agent inbox">
-    <!-- LEFT: grouped roster (collapsible to a thin rail) -->
-    {#if listCollapsed}
-      <div class="col-list collapsed">
-        <button
-          type="button"
-          class="rail-btn"
-          onclick={() => (listCollapsed = false)}
-          title="Expand sidebar"
-          aria-label="Expand sidebar"
-        >»</button>
-        <button type="button" class="rail-btn" onclick={newAgent} title="New session (⌘N)" aria-label="New session">＋</button>
-        {#if attnCount > 0}<span class="rail-attn" title={`${attnCount} need you`}>{attnCount}</span>{/if}
-      </div>
-    {:else}
+<div class="inbox-shell" class:project-collapsed={projectPaneCollapsed}>
+  <ProjectPanel
+    rows={allRows}
+    collapsed={projectPaneCollapsed}
+    onToggle={() => (projectPaneCollapsed = !projectPaneCollapsed)}
+  />
+
+  <section class="inbox" aria-label="Agent inbox">
+    <!-- LEFT: grouped roster -->
     <div class="col-list">
       <div class="lh">
         <img class="logo" src="/logomark.svg" alt="" aria-hidden="true" />
@@ -309,13 +360,6 @@
           {#if attnCount > 0}{attnCount} need{attnCount === 1 ? 's' : ''} you{:else}all clear{/if}
         </span>
         <button type="button" class="launch" onclick={newAgent} title="New session (⌘N)">＋</button>
-        <button
-          type="button"
-          class="collapse"
-          onclick={() => (listCollapsed = true)}
-          title="Collapse sidebar"
-          aria-label="Collapse sidebar"
-        >«</button>
       </div>
 
       {#if rows.length === 0}
@@ -352,7 +396,6 @@
         </div>
       {/if}
     </div>
-    {/if}
 
     <!-- RIGHT: focus pane (header + teleported live TUI / All clear) -->
     <div class="col-focus">
@@ -417,23 +460,14 @@
 <style>
   .inbox-shell { display: flex; flex-direction: row; flex: 1 1 auto; width: 100%; min-height: 0; }
   .inbox-shell :global(.ppanel) { flex: 0 0 220px; width: 220px; }
+  /* Collapsed: the project pane shrinks to a thin icon rail. */
+  .inbox-shell.project-collapsed :global(.ppanel) { flex: 0 0 48px; width: 48px; }
   .inbox {
     display: grid; grid-template-columns: 360px 1fr;
     flex: 1 1 auto; min-width: 0; height: 100%; min-height: 0;
     background: var(--space-850); color: var(--fg-1); font-family: var(--font-sans);
   }
-  /* Collapsed: the roster shrinks to a thin icon rail. */
-  .inbox.list-collapsed { grid-template-columns: 46px 1fr; }
-
   .col-list { border-right: 1px solid var(--line-subtle); background: var(--space-900); display: flex; flex-direction: column; min-height: 0; }
-  /* Thin collapsed rail: expand + new-session buttons, stacked. */
-  .col-list.collapsed { align-items: center; gap: 8px; padding: 12px 0; }
-  .rail-btn { width: 30px; height: 30px; flex: none; display: flex; align-items: center; justify-content: center; border-radius: var(--r-md); background: var(--space-750); border: 1px solid var(--line-subtle); color: var(--fg-2); cursor: pointer; font-size: 14px; font-weight: 600; }
-  .rail-btn:hover { color: var(--fg-1); border-color: var(--line-default); }
-  .rail-attn { font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--space-900); background: var(--orange-400); border-radius: var(--r-full); padding: 2px 6px; }
-  /* Collapse (« ) button sits at the end of the list header. */
-  .lh .collapse { width: 26px; height: 26px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-md); background: var(--space-750); border: 1px solid var(--line-subtle); color: var(--fg-3); cursor: pointer; font-size: 14px; }
-  .lh .collapse:hover { color: var(--fg-1); border-color: var(--line-default); }
   .lh { display: flex; align-items: center; gap: 10px; padding: 15px 16px 11px; flex: none; }
   .lh .logo { width: 22px; height: 22px; }
   .lh h1 { font-family: var(--font-display); font-weight: 600; font-size: 17px; margin: 0; display: flex; align-items: baseline; gap: 8px; }
