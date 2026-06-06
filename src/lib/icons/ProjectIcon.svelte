@@ -18,13 +18,13 @@
 
 <div
   class="proj-ic"
-  class:has-logo={logo}
   style:width={`${size}px`}
   style:height={`${size}px`}
   style:border-radius={radius}
   style:background={hexA(color, 0.14)}
   style:border-color={hexA(color, 0.3)}
   style:color
+  style:padding={logo ? `${Math.max(2, Math.round(size * 0.16))}px` : undefined}
 >
   {#if logo}
     <img class="proj-logo" src={logo} alt="" style:border-radius="var(--r-xs)" />
@@ -43,10 +43,8 @@
     flex: none;
     overflow: hidden;
   }
-  /* Inset the logo so it floats inside the tile rather than filling it edge-to-edge. */
-  .proj-ic.has-logo {
-    padding: 16%;
-  }
+  /* The logo is inset via inline px padding (proportional to `size`) so it floats
+     inside the tile rather than filling it edge-to-edge. */
   .proj-logo {
     width: 100%;
     height: 100%;
