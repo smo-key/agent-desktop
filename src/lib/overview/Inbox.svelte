@@ -34,13 +34,13 @@
   import { activity } from './activity.svelte';
   import { events } from './events.svelte';
   import { titles } from './titles.svelte';
-  import { view } from './view.svelte';
   import { projects } from '$lib/projects/projects.svelte';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import { filterRowsByProject } from '$lib/projects/projectRollup';
   import { projectForId } from '$lib/projects/projects';
   import ProjectPanel from '$lib/projects/ProjectPanel.svelte';
   import ProjectIcon from '$lib/icons/ProjectIcon.svelte';
+  import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
 
   // 1-second clock so working -> waiting flips as the PTY goes quiet (matches the
   // old Overview). Epoch ms to match the runtime registry.
@@ -79,6 +79,14 @@
 
   // The user's explicit selection (a watched agent), or null to let the queue drive.
   let userSelected = $state<string | null>(null);
+
+  // Right-click context menu for a roster row (open / close the agent).
+  let menu = $state<{ open: boolean; x: number; y: number; items: MenuItem[] }>({
+    open: false,
+    x: 0,
+    y: 0,
+    items: []
+  });
 
   // The focused agent (pure): user selection > attention queue > none.
   const focus = $derived(resolveFocus(rows, userSelected));
@@ -148,15 +156,35 @@
     if (next) userSelected = next;
   }
 
-  /** Expand the focused agent into the full terminal grid. */
-  function expandToGrid() {
-    const f = focus;
-    if (!f) return;
-    const target = navigateTarget(navWorkspaces, f.paneId);
-    if (!target) return;
-    workspace.setActiveWorkspace(target.workspaceId);
-    workspace.setFocusIn(target.workspaceId, target.leafId);
-    view.show('grid');
+  /** Close (terminate) an agent's session, after a confirm. Clears the pin when it
+   *  was the focused row so the focus advances to the next agent (or "All clear"). */
+  function closeAgent(paneId: string, name: string) {
+    const ok =
+      typeof confirm === 'function'
+        ? confirm(`Close "${name}"? Its terminal will be terminated.`)
+        : true;
+    if (!ok) return;
+    if (userSelected === paneId) userSelected = null;
+    workspace.closeAgent(paneId);
+  }
+
+  /** Right-click a roster row: open (watch) or close that agent. */
+  function openAgentMenu(e: MouseEvent, paneId: string, name: string) {
+    e.preventDefault();
+    menu = {
+      open: true,
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { label: 'Open terminal', onClick: () => selectAgent(paneId) },
+        { label: 'Close session', danger: true, onClick: () => closeAgent(paneId, name) }
+      ]
+    };
+  }
+
+  /** The agent's display title (Haiku title or its fallback name). */
+  function displayName(paneId: string, fallback: string): string {
+    return titles.titleFor(paneId) ?? fallback;
   }
 
   function newAgent() {
@@ -241,6 +269,7 @@
                   class="row {lane}"
                   class:sel={focus?.paneId === r.paneId}
                   onclick={() => selectAgent(r.paneId)}
+                  oncontextmenu={(e) => openAgentMenu(e, r.paneId, displayName(r.paneId, r.name))}
                 >
                   <ProjectIcon {...projAvatar(r.projectId)} size={30} />
                   <span class="nm">
@@ -280,7 +309,13 @@
               <button type="button" onclick={() => stepQueue(1)} title="Next">↓</button>
             </span>
           {/if}
-          <button type="button" class="iconbtn" onclick={expandToGrid} title="Expand to grid">⤢</button>
+          <button
+            type="button"
+            class="iconbtn danger"
+            onclick={() => closeAgent(focus.paneId, displayName(focus.paneId, focus.name))}
+            title="Close session"
+            aria-label="Close session"
+          >✕</button>
         </div>
         <!-- The single mounted workspace surface is teleported in here. -->
         <div class="focus-slot" class:attn={isAttention(focus.status)} bind:this={focusSlot}></div>
@@ -300,6 +335,14 @@
       {/if}
     </div>
   </section>
+
+  <ContextMenu
+    open={menu.open}
+    x={menu.x}
+    y={menu.y}
+    items={menu.items}
+    onClose={() => (menu = { ...menu, open: false })}
+  />
 </div>
 
 <style>
@@ -347,6 +390,7 @@
   .fhead .nav { display: flex; gap: 4px; flex: none; }
   .fhead .nav button, .fhead .iconbtn { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-sm); background: var(--space-750); border: 1px solid var(--line-subtle); color: var(--fg-3); cursor: pointer; font-size: 13px; }
   .fhead .nav button:hover, .fhead .iconbtn:hover { color: var(--fg-1); border-color: var(--line-default); }
+  .fhead .iconbtn.danger:hover { color: #ff8077; border-color: rgba(242, 86, 75, 0.4); background: var(--abort-tint); }
 
   .focus-slot { flex: 1; min-height: 0; display: flex; padding: 10px; }
   /* The teleported surface fills the slot. */

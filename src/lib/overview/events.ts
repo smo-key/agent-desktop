@@ -100,11 +100,13 @@ function questionText(questions: PendingQuestion[]): string | null {
  * authoritative — this never returns `error`/`finished` from a crash):
  *  - a pending `AskUserQuestion` in flight        → `waiting` (+ the question)
  *  - any other tool in flight (Pre w/o its Post)  → `working` (+ currentAction)
- *  - last event `UserPromptSubmit`/`PostToolUse`/`SessionStart` → `working`
+ *  - last event `UserPromptSubmit`/`PostToolUse` → `working`
  *  - last event `Stop`/`SubagentStop`             → `waiting` (turn done, your move)
  *  - last event `Notification`                    → `waiting` (needs permission/input)
  *  - last event `SessionEnd`                      → `finished`
- *  - nothing determinable                         → `null` (roster falls back to PTY)
+ *  - last event `SessionStart` (or anything else) → `null` — a just-started,
+ *      promptless session is idle, so it defers to the PTY heuristic (never pinned
+ *      to "working")
  *
  * `currentAction` is the latest PreToolUse summary with no matching PostToolUse,
  * cleared when that tool's PostToolUse or a turn-ending Stop arrives.
@@ -153,7 +155,6 @@ export function deriveEventActivity(events: AgentEvent[]): EventActivity {
   switch (last.hookEventName) {
     case 'UserPromptSubmit':
     case 'PostToolUse':
-    case 'SessionStart':
       status = 'working';
       break;
     case 'Stop':
@@ -165,6 +166,11 @@ export function deriveEventActivity(events: AgentEvent[]): EventActivity {
       status = 'finished';
       break;
     default:
+      // `SessionStart` (and anything else not above) is NOT work: a session that
+      // has only just started — no prompt submitted, no tool run — sits idle at
+      // the prompt. null defers to the roster's PTY heuristic (working while the
+      // TUI boots, waiting once quiet), so a promptless session is never stuck on
+      // "working".
       status = null;
   }
   return { status, currentAction: null, question: null, questions: null };

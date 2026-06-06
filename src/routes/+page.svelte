@@ -15,7 +15,7 @@
   import { portal } from '$lib/layout/portal';
   import { surfaceSlot } from '$lib/layout/surfaceSlot.svelte';
   import { runtimeMap } from '$lib/overview/runtime';
-  import { view, type ViewMode } from '$lib/overview/view.svelte';
+  import { view } from '$lib/overview/view.svelte';
   import { subagents, type SessionRef } from '$lib/overview/subagents.svelte';
   import { activity, type PaneRef } from '$lib/overview/activity.svelte';
   import { events } from '$lib/overview/events.svelte';
@@ -23,12 +23,6 @@
   import { triggersTranscriptRead, SAFETY_POLL_MS } from '$lib/overview/poll';
   import { appSessionRefs } from '$lib/overview/sessionRefs';
   import { type SpatialDir } from '$lib/layout/tree';
-
-  // The top-level view segments (title-bar control). Order matches `view.cycle()`.
-  const viewSegments: { mode: ViewMode; label: string }[] = [
-    { mode: 'overview', label: 'Overview' },
-    { mode: 'grid', label: 'Grid' }
-  ];
 
   // True once the persisted layout has loaded (or fallen back to fresh). We hold
   // off rendering the workspace area until then so we never flash a throwaway
@@ -228,19 +222,12 @@
       return;
     }
 
-    // Cmd-O cycles the top-level view: overview -> grid -> overview. Available
-    // regardless of store state — the views are meaningful even before any pane
-    // is seeded.
-    if (meta && !e.shiftKey && (key === 'o' || key === 'O')) {
-      e.preventDefault();
-      view.cycle();
-      return;
-    }
-
     // The remaining shortcuts MUTATE the active workspace's pane layout/focus, so
-    // they are GRID-ONLY: in the Overview there is no live grid to act on (and the
-    // user expects those keys inert). The view-level shortcuts above (N/O) already
-    // returned, so they keep working in every view.
+    // they are GRID-ONLY. The grid is no longer a navigable top-level view (the
+    // inbox shows each agent's live terminal in its focus pane), so `view.isGrid`
+    // is never true and these stay inert — the grid surface persists only as the
+    // hidden home the inbox teleports terminals out of. Cmd-N (launcher) above
+    // still works in every view.
     if (!view.isGrid) return;
 
     // Ignore the remaining (pane) shortcuts before the store is seeded.
@@ -310,25 +297,10 @@
       <span class="title">agent-desktop</span>
     </div>
 
-    <!-- Top-level view control, centered: Overview · Grid. Cmd-O cycles the
-         same. data-tauri-drag-region is OFF so clicks register instead of
-         dragging the window. -->
-    <div class="view-seg" data-tauri-drag-region="false">
-      {#each viewSegments as seg (seg.mode)}
-        <button
-          type="button"
-          class="seg-btn"
-          class:on={view.mode === seg.mode}
-          title={`${seg.label} (⌘O)`}
-          onclick={() => view.show(seg.mode)}
-        >
-          {seg.label}
-        </button>
-      {/each}
-    </div>
-
-    <!-- Right group: empty, but kept as an equal-flex spacer so the view switcher
-         stays in the true horizontal center of the bar. -->
+    <!-- Right group: equal-flex spacer balancing the left so the title stays put.
+         (The app has a single top-level surface — the inbox — so there is no view
+         switcher; the grid persists only as the hidden home the inbox teleports
+         each agent's live terminal out of.) -->
     <div class="tb-right"></div>
   </header>
 
@@ -416,8 +388,8 @@
     -webkit-user-select: none;
   }
 
-  /* Left group (logo + title) and right group (env) each take equal flex so the
-     view switcher between them sits in the true horizontal center of the bar. */
+  /* Left group (logo + title) and right group each take equal flex, balancing the
+     bar. (No center control — the inbox is the sole top-level surface.) */
   .tb-left {
     flex: 1 1 0;
     display: flex;
@@ -449,44 +421,10 @@
     pointer-events: none;
   }
 
-  /* Top-level view segmented control. pointer-events re-enabled (the bar is a
-     drag region) so clicks land; sits just right of the title. */
-  .view-seg {
-    pointer-events: auto;
-    flex: none;
-    display: inline-flex;
-    gap: 2px;
-    padding: 3px;
-    border-radius: var(--r-md);
-    background: var(--space-800);
-    border: 1px solid var(--line-subtle);
-  }
-  .seg-btn {
-    height: 20px;
-    padding: 0 11px;
-    border: none;
-    border-radius: 5px;
-    background: none;
-    color: var(--fg-3);
-    font-size: 11px;
-    font-weight: 600;
-    font-family: var(--font-sans);
-    cursor: pointer;
-    transition:
-      background var(--dur-fast),
-      color var(--dur-fast);
-  }
-  .seg-btn:hover {
-    color: var(--fg-1);
-  }
-  .seg-btn.on {
-    background: var(--space-650);
-    color: var(--fg-1);
-  }
-
   /* The grid-view wrapper fills the region below the title bar (body + usage bar)
-     as a flex column. Hidden (not unmounted) while the Overview is active so every
-     workspace's xterm/PTY survives the switch untouched. */
+     as a flex column. It is no longer a navigable view — it stays mounted but
+     hidden (display:none) as the home the inbox teleports each agent's live
+     terminal out of, so every workspace's xterm/PTY survives untouched. */
   .grid-view {
     flex: 1 1 auto;
     min-height: 0;

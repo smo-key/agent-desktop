@@ -33,6 +33,22 @@ describe('deriveEventActivity', () => {
     expect(a.status).toBe('working');
   });
 
+  it('Session start alone is not working', () => {
+    // A freshly started, promptless session must NOT be pinned to "working": it
+    // returns null so the roster's PTY heuristic decides (working while the TUI
+    // boots, then waiting once it goes quiet).
+    expect(deriveEventActivity([ev('SessionStart')]).status).toBeNull();
+    // A SessionStart trailing earlier completed work is likewise idle, not working.
+    const resumed = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:npm test' }),
+      ev('PostToolUse', { toolName: 'Bash' }),
+      ev('Stop'),
+      ev('SessionStart')
+    ]);
+    expect(resumed.status).toBeNull();
+  });
+
   it('Current action reflects running tool', () => {
     const a = deriveEventActivity([
       ev('UserPromptSubmit'),
