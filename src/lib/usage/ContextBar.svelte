@@ -1,7 +1,9 @@
 <script lang="ts">
-  // The focused pane's context window usage: a "ctx" label + a StatusBar (colored
-  // by fullness) + the percent. A dim dash + striped bar when unknown.
+  // The focused pane's context window usage: a "ctx" label, the percent (colored
+  // by fullness), then the colored StatusBar to the RIGHT of the percent. A dim
+  // dash + striped bar when unknown.
   import StatusBar from './StatusBar.svelte';
+  import { barColor } from './barColor';
 
   let { pct }: { pct: number | null } = $props();
 
@@ -12,11 +14,13 @@
 
 <div class="ctx" aria-label="Focused pane context window used">
   <span class="label">ctx</span>
+  <span class="val" class:dim={pct === null} style:color={pct === null ? null : barColor(pct)}>
+    {fmt(pct)}
+  </span>
   <StatusBar
     {pct}
     label={pct === null ? 'context unknown' : `context ${Math.round(pct)}%`}
   />
-  <span class="val" class:dim={pct === null}>{fmt(pct)}</span>
 </div>
 
 <style>
@@ -38,8 +42,8 @@
     flex: 0 0 96px;
   }
   .val {
-    color: var(--fg-1);
     font-size: 11px;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
     font-family: var(--font-mono);
     min-width: 30px;
@@ -47,5 +51,6 @@
   }
   .val.dim {
     color: var(--fg-4);
+    font-weight: 400;
   }
 </style>

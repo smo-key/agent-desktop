@@ -24,12 +24,22 @@
   const view = $derived(
     footerView(snapshots.byPane, focusedPaneId, projectId, projects.list)
   );
+
+  // A 1-second heartbeat clock (unix SECONDS) so the limit bars' time-remaining
+  // shorthand counts down on its own without needing a new snapshot.
+  let now = $state(Math.floor(Date.now() / 1000));
+  $effect(() => {
+    const id = setInterval(() => {
+      now = Math.floor(Date.now() / 1000);
+    }, 1000);
+    return () => clearInterval(id);
+  });
 </script>
 
 <footer class="app-footer" aria-label="Status footer">
   <div class="zone left">
     <ProjectChip project={view.project} />
-    <LimitBars fiveHour={view.fiveHour} sevenDay={view.sevenDay} />
+    <LimitBars fiveHour={view.fiveHour} sevenDay={view.sevenDay} {now} />
   </div>
 
   <div class="zone right">
