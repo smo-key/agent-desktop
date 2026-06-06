@@ -33,12 +33,12 @@ describe('deriveEventActivity', () => {
     expect(a.status).toBe('working');
   });
 
-  it('Session start alone is not working', () => {
-    // A freshly started, promptless session must NOT be pinned to "working": it
-    // returns null so the roster's PTY heuristic decides (working while the TUI
-    // boots, then waiting once it goes quiet).
-    expect(deriveEventActivity([ev('SessionStart')]).status).toBeNull();
-    // A SessionStart trailing earlier completed work is likewise idle, not working.
+  it('Session start is idle waiting, not working', () => {
+    // A freshly started, promptless session is idle at the prompt awaiting your
+    // input — a STABLE `waiting`, never "working" (and never bouncing off the
+    // PTY heuristic as the idle TUI redraws).
+    expect(deriveEventActivity([ev('SessionStart')]).status).toBe('waiting');
+    // A SessionStart trailing earlier completed work (a resume) is likewise idle.
     const resumed = deriveEventActivity([
       ev('UserPromptSubmit'),
       ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:npm test' }),
@@ -46,7 +46,7 @@ describe('deriveEventActivity', () => {
       ev('Stop'),
       ev('SessionStart')
     ]);
-    expect(resumed.status).toBeNull();
+    expect(resumed.status).toBe('waiting');
   });
 
   it('Current action reflects running tool', () => {

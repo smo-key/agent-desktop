@@ -103,10 +103,11 @@ function questionText(questions: PendingQuestion[]): string | null {
  *  - last event `UserPromptSubmit`/`PostToolUse` → `working`
  *  - last event `Stop`/`SubagentStop`             → `waiting` (turn done, your move)
  *  - last event `Notification`                    → `waiting` (needs permission/input)
+ *  - last event `SessionStart`                    → `waiting` — idle at the prompt
+ *      (freshly started or just resumed), a STABLE status so it doesn't bounce
+ *      with the idle TUI's redraws; it never reads "working" until you prompt it
  *  - last event `SessionEnd`                      → `finished`
- *  - last event `SessionStart` (or anything else) → `null` — a just-started,
- *      promptless session is idle, so it defers to the PTY heuristic (never pinned
- *      to "working")
+ *  - nothing determinable                         → `null` (roster falls back to PTY)
  *
  * `currentAction` is the latest PreToolUse summary with no matching PostToolUse,
  * cleared when that tool's PostToolUse or a turn-ending Stop arrives.
@@ -160,17 +161,19 @@ export function deriveEventActivity(events: AgentEvent[]): EventActivity {
     case 'Stop':
     case 'SubagentStop':
     case 'Notification':
+    case 'SessionStart':
+      // A session sitting at the prompt — freshly started with no prompt yet, or
+      // resumed after a turn — is idle, AWAITING YOUR INPUT. Give it a STABLE
+      // `waiting` rather than deferring to the PTY heuristic: claude's idle TUI
+      // keeps redrawing (cursor blink, status line), so the PTY signal bounces
+      // working↔waiting. An event-sourced status holds steady until you actually
+      // submit a prompt (→ `UserPromptSubmit` → working).
       status = 'waiting';
       break;
     case 'SessionEnd':
       status = 'finished';
       break;
     default:
-      // `SessionStart` (and anything else not above) is NOT work: a session that
-      // has only just started — no prompt submitted, no tool run — sits idle at
-      // the prompt. null defers to the roster's PTY heuristic (working while the
-      // TUI boots, waiting once quiet), so a promptless session is never stuck on
-      // "working".
       status = null;
   }
   return { status, currentAction: null, question: null, questions: null };
