@@ -194,13 +194,14 @@ function detectTask(sessionId) {
 }
 
 /**
- * Git branch + dirty flag for the workspace dir, by shelling out to git with
- * short timeouts. Returns { branch: string|null, dirty: boolean|null }. Always
- * returns an object (never null) so the card has a stable shape; individual
- * fields are null when git can't answer. Fully guarded.
+ * Git branch + dirty flag + ahead/behind counts for the workspace dir, by
+ * shelling out to git with short timeouts. Returns
+ * { branch, dirty, ahead, behind } — always an object (never null) so the
+ * snapshot has a stable shape; individual fields are null when git can't answer.
+ * `behind` is vs origin/main; `ahead` is vs the upstream branch. Fully guarded.
  */
 function gitStatus(workspaceDir) {
-  const out = { branch: null, dirty: null };
+  const out = { branch: null, dirty: null, ahead: null, behind: null };
   try {
     const dir = str(workspaceDir);
     if (!dir) return out;
@@ -218,6 +219,20 @@ function gitStatus(workspaceDir) {
     // `--porcelain` prints one line per change; empty stdout => clean tree.
     const porcelain = runGit(['status', '--porcelain']);
     if (porcelain !== null) out.dirty = porcelain.length > 0;
+    // Commits BEHIND origin/main (matches the user's Claude statusline). Null
+    // when origin/main is unavailable (no remote / not fetched).
+    const behind = runGit(['rev-list', 'HEAD..origin/main', '--count', '--no-merges']);
+    if (behind !== null) {
+      const n = parseInt(behind, 10);
+      if (Number.isFinite(n)) out.behind = n;
+    }
+    // Commits AHEAD of the upstream tracking branch (not yet pushed). Null when
+    // there is no upstream set.
+    const ahead = runGit(['rev-list', '@{upstream}..HEAD', '--count']);
+    if (ahead !== null) {
+      const n = parseInt(ahead, 10);
+      if (Number.isFinite(n)) out.ahead = n;
+    }
   } catch {
     // leave nulls
   }

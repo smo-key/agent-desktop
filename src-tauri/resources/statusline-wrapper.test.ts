@@ -112,11 +112,16 @@ describe('statusline-wrapper snapshot write', () => {
       five_hour: { used_percentage: 10, resets_at: 1234567890 },
       seven_day: { used_percentage: 20, resets_at: 1234567999 },
     });
-    // git is always an object (branch + dirty), values may be null off-repo.
+    // git is always an object (branch + dirty + ahead + behind); values may be
+    // null off-repo (the temp workspace dir is not a git repo).
     expect(typeof snap.git).toBe('object');
     expect(snap.git).not.toBeNull();
     expect(snap.git).toHaveProperty('branch');
     expect(snap.git).toHaveProperty('dirty');
+    expect(snap.git).toHaveProperty('ahead');
+    expect(snap.git).toHaveProperty('behind');
+    expect((snap.git as Record<string, unknown>).ahead).toBeNull();
+    expect((snap.git as Record<string, unknown>).behind).toBeNull();
     // ts is a unix-SECONDS integer (not ms).
     expect(Number.isInteger(snap.ts)).toBe(true);
     const nowSec = Math.floor(Date.now() / 1000);
