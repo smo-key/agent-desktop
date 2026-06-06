@@ -69,7 +69,6 @@
 
   const grouped = $derived(groupByLane(rows));
   const queue = $derived(attentionQueue(rows));
-  const attnCount = $derived(queue.length);
 
   // Group metadata (label) for the left list, in attn -> flight -> done order.
   const LANES: Record<AgentLane, { title: string }> = {
@@ -330,12 +329,9 @@
     return r.currentAction ?? r.summary ?? 'Working…';
   }
 
-  /** The focus header's state chip text. */
+  /** The focus header's state chip text (no counts). */
   function focusChip(r: AgentRow): string {
-    if (isAttention(r.status)) {
-      const i = queue.findIndex((q) => q.paneId === r.paneId);
-      return `needs you · ${i >= 0 ? i + 1 : 1}/${queue.length}`;
-    }
+    if (isAttention(r.status)) return r.status === 'error' ? 'errored' : 'needs input';
     if (r.status === 'finished') return 'finished';
     return 'watching';
   }
@@ -356,9 +352,6 @@
       <div class="lh">
         <img class="logo" src="/logomark.svg" alt="" aria-hidden="true" />
         <h1>Agents <span class="count">{rows.length}</span></h1>
-        <span class="sub">
-          {#if attnCount > 0}{attnCount} need{attnCount === 1 ? 's' : ''} you{:else}all clear{/if}
-        </span>
         <button type="button" class="launch" onclick={newAgent} title="New session (⌘N)">＋</button>
       </div>
 
@@ -472,7 +465,6 @@
   .lh .logo { width: 22px; height: 22px; }
   .lh h1 { font-family: var(--font-display); font-weight: 600; font-size: 17px; margin: 0; display: flex; align-items: baseline; gap: 8px; }
   .lh .count { font-family: var(--font-mono); font-size: 11px; color: var(--fg-3); background: var(--space-750); border: 1px solid var(--line-subtle); border-radius: var(--r-full); padding: 2px 8px; }
-  .lh .sub { font-size: 12px; color: var(--orange-300); font-weight: 600; }
   .lh .launch { margin-left: auto; font-family: var(--font-sans); font-weight: 700; font-size: 15px; color: #fff; background: var(--blue-500); border: none; border-radius: var(--r-md); width: 30px; height: 30px; cursor: pointer; }
   .list-scroll { overflow-y: auto; flex: 1; min-height: 0; padding-bottom: 20px; }
   .empty-list { padding: 40px 18px; text-align: center; color: var(--fg-3); display: flex; flex-direction: column; gap: 12px; }
