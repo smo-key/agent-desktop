@@ -7,10 +7,11 @@ from `.claude/workflow.yaml`; auth from env `JIRA_EMAIL` and `JIRA_API_TOKEN`
 
 `ref` format: an issue key like `PROJ-123`.
 
-Common auth prefix (used in every call):
+Common prefix (set these once before any call — `BASE` comes from config, not an
+env var, so copy `jira.baseUrl` into it):
 ```bash
 AUTH="-u ${JIRA_EMAIL}:${JIRA_API_TOKEN}"
-BASE="${JIRA_BASEURL}"   # from config jira.baseUrl
+BASE="<value of jira.baseUrl from .claude/workflow.yaml>"
 ```
 
 - **resolve(ref)** —
@@ -58,7 +59,6 @@ BASE="${JIRA_BASEURL}"   # from config jira.baseUrl
 ## Verify your setup (dry run)
 
 ```bash
-curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
-  "$JIRA_BASEURL/rest/api/3/myself" -H "Accept: application/json"
+curl -s $AUTH "$BASE/rest/api/3/myself" -H "Accept: application/json"
 ```
 Expected: your account JSON (not 401).
