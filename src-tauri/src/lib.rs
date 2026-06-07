@@ -459,6 +459,24 @@ fn voice_bundled_model_path(app: AppHandle) -> Result<Option<String>, String> {
     Ok(path.is_file().then(|| path.to_string_lossy().into_owned()))
 }
 
+/// Resolve the absolute on-disk path of the FINAL-pass whisper model for the given
+/// `tier` (`fast` → small, `accurate` → large-v3-turbo) under
+/// `<app_data_dir>/models/<filename>`. Returns the path only when that file is
+/// actually present (it is downloaded on first use), so the voice pipeline can
+/// fall back to the bundled tiny model (`voice_bundled_model_path`) when the
+/// tier's larger model has not been downloaded yet. The filename is the single
+/// source of truth in `models::final_model_for`.
+#[tauri::command]
+fn voice_model_path(app: AppHandle, tier: String) -> Result<Option<String>, String> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    let spec = models::final_model_for(models::Tier::from_str(&tier));
+    let path = models::model_path(&base, spec);
+    Ok(path.is_file().then(|| path.to_string_lossy().into_owned()))
+}
+
 /// Install the baked statusline wrapper to `<app_data_dir>/bin/statusline-wrapper.js`
 /// (mode 0755 on Unix) and ensure `<app_data_dir>/snapshots/` exists. Returns the
 /// absolute wrapper path + snapshot dir. Idempotent: the wrapper is rewritten on
@@ -797,7 +815,8 @@ pub fn run() {
             models::voice_download_models,
             models::voice_models_status,
             polish::voice_polish,
-            voice_bundled_model_path
+            voice_bundled_model_path,
+            voice_model_path
         ])
         .on_window_event(|window, event| {
             // Kill + reap every pane on app quit so no zombie/orphan processes

@@ -12,7 +12,7 @@
   // drive the store via setState/setPartial/setFinal/setError.
 
   import { voiceStore } from './voiceStore.svelte';
-  import { MicCapture } from './capture';
+  import { DictationPipeline } from './pipeline';
   import { classifyMicError, MIC_DENIED_GUIDANCE, micGuidanceFor } from './permission';
   import { ensureModels } from './models';
   import { modelDownload } from './modelStore.svelte';
@@ -31,27 +31,29 @@
     void ensureModels(voice.prefs.modelTier, voice.prefs.polish);
   });
 
-  // Mic-capture lifecycle is owned HERE (this feature owns VoicePanel), not in
-  // +page.svelte. A single $effect watches `voiceStore.open`: on open it runs the
-  // permission-gated start sequence; on close (or component teardown) it stops
-  // capture and releases the OS mic. The audio handoff to the STT slice (onChunk
-  // / onStop) is documented in capture.ts; this slice does not consume it yet.
+  // The full DICTATION PIPELINE is owned HERE (this feature owns VoicePanel), not
+  // in +page.svelte. A single $effect watches `voiceStore.open`: on open it builds
+  // a `DictationPipeline` and runs the permission-gated capture→record→(live
+  // partials) start sequence; on teardown it DISCARDS (stops capture + releases the
+  // OS mic, no transcription). Finalization is an EXPLICIT user action — see the
+  // "Stop & insert" button below — so closing/teardown never silently transcribes.
+  let pipeline = $state<DictationPipeline | null>(null);
+
   $effect(() => {
     if (!voiceStore.open) return;
 
-    const capture = new MicCapture();
+    const p = new DictationPipeline();
     let cancelled = false;
+    pipeline = p;
 
     voiceStore.setState('requesting');
-    capture
-      .start()
+    p.start()
       .then(() => {
         if (cancelled) {
           // Panel closed mid-request: don't leave the mic on.
-          capture.stop();
-          return;
+          p.cancel();
         }
-        voiceStore.setState('recording');
+        // start() already set 'recording' on success.
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -66,12 +68,29 @@
         // Do NOT proceed to record.
       });
 
-    // Cleanup on close / teardown: stop the in-flight start and release the mic.
+    // Cleanup on close / teardown: DISCARD — stop capture, release the mic, no
+    // insert. The explicit "Stop & insert" control finalizes BEFORE close, so by
+    // the time this runs the pipeline is already finished (cancel() is a no-op).
     return () => {
       cancelled = true;
-      capture.stop();
+      p.cancel();
+      pipeline = null;
     };
   });
+
+  // EXPLICIT finalize: stop capture, run the final whisper pass, polish per
+  // settings, insert verbatim into the focused terminal (no auto-submit), then
+  // close. The user reviews/edits the text IN THE TERMINAL, not in this panel.
+  function stopAndInsert() {
+    void pipeline?.stopAndInsert();
+  }
+
+  // DISCARD: × / Escape / click-outside. Stops capture + releases the mic without
+  // transcribing or inserting (the $effect cleanup's cancel() does the work). We
+  // call close() which tears the panel down and triggers that cleanup.
+  function discard() {
+    voiceStore.close();
+  }
 
   // The status line for the current phase.
   const status = $derived.by(() => {
@@ -98,9 +117,14 @@
     if (voiceStore.open && e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      voiceStore.close();
+      discard();
     }
   }
+
+  // Show the primary "Stop & insert" control only while there is an utterance to
+  // finalize (recording) — not while requesting the mic, denied, errored, or
+  // already transcribing.
+  const canStopAndInsert = $derived(voiceStore.state === 'recording');
 </script>
 
 <svelte:window onkeydown={onWindowKeydown} />
@@ -113,7 +137,7 @@
     type="button"
     class="voice-scrim"
     aria-label="Dismiss voice input"
-    onclick={() => voiceStore.close()}
+    onclick={() => discard()}
   ></button>
 
   <!-- The floating panel. It's a sibling of the scrim (not nested), so a click on
@@ -134,7 +158,14 @@
         <Icon name="mic" size={15} />
       </span>
       <span class="status" class:err={voiceStore.state === 'error' || voiceStore.state === 'denied'}>{status}</span>
-      <button class="x" aria-label="Stop voice input" onclick={() => voiceStore.close()}>×</button>
+      {#if canStopAndInsert}
+        <!-- PRIMARY action: finalize the utterance (final pass → polish → verbatim
+             insert into the focused terminal) then close. The user reviews the text
+             in the TERMINAL, not here. -->
+        <button class="stop-insert" onclick={stopAndInsert}>Stop &amp; insert</button>
+      {/if}
+      <!-- CANCEL: discard the utterance (stop mic, no transcription, no insert). -->
+      <button class="x" aria-label="Cancel voice input" onclick={() => discard()}>×</button>
     </div>
 
     {#if modelDownload.active && voiceStore.state !== 'denied' && voiceStore.state !== 'error'}
@@ -275,6 +306,25 @@
   .x:hover {
     background: rgba(255, 255, 255, 0.05);
     color: var(--fg-1);
+  }
+
+  /* PRIMARY "Stop & insert" action: visually distinct from the × cancel so the
+     finalize-vs-discard distinction is clear. */
+  .stop-insert {
+    flex: none;
+    padding: 5px 11px;
+    border: none;
+    border-radius: var(--r-md);
+    background: var(--accent, #3b82f6);
+    color: #fff;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .stop-insert:hover {
+    filter: brightness(1.08);
   }
 
   /* The live overlay region: committed (final) text reads normal; the in-progress
