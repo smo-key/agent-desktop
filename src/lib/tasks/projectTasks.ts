@@ -15,16 +15,26 @@
 /** The on-disk schema version for the persisted terminals envelope. */
 export const TASKS_VERSION = 1 as const;
 
-/** A user-created terminal definition (one slot in a project's panel stack). */
+/** The kind of a task: a shell `terminal` (runs a `command`) or a Claude `agent`
+ *  (runs a `prompt`). Legacy entries with no kind are treated as terminals. */
+export type TaskKind = 'terminal' | 'agent';
+
+/** A user-created task definition (one slot in a project's panel stack). A
+ *  `terminal` task runs a shell `command`; an `agent` task runs a Claude `prompt`
+ *  (and carries `command: null`). */
 export interface TaskDef {
   /** Stable unique id. */
   id: string;
   /** Human-readable label shown in the panel. */
   name: string;
-  /** Command line to run; `null` ⇒ the default login shell. */
+  /** What this task runs: a shell `command` (`terminal`) or a Claude `prompt` (`agent`). */
+  kind: TaskKind;
+  /** Command line to run; `null` ⇒ the default login shell (or, for an agent, unused). */
   command: string | null;
   /** Working directory; `null` ⇒ the project's path at start time. */
   cwd: string | null;
+  /** The Claude prompt for an `agent` task. Absent for `terminal` tasks. */
+  prompt?: string;
   /** Lifecycle hint captured at graceful quit: was this terminal running? Drives
    *  selective auto-restart on the next launch. Absent ⇒ treated as not-running. */
   wasRunning?: boolean;
@@ -54,6 +64,17 @@ export function defaultTaskName(command: string | null | undefined): string {
   const cmd = typeof command === 'string' ? command.trim().replace(/\s+/g, ' ') : '';
   if (cmd === '') return 'shell';
   return cmd.length > NAME_MAX ? `${cmd.slice(0, NAME_MAX - 1)}…` : cmd;
+}
+
+/**
+ * Default display name for an `agent` task: a whitespace-collapsed, length-capped
+ * form of its prompt (same shaping as {@link defaultTaskName}), or `agent` when the
+ * prompt is empty.
+ */
+export function defaultAgentName(prompt: string | null | undefined): string {
+  const text = typeof prompt === 'string' ? prompt.trim().replace(/\s+/g, ' ') : '';
+  if (text === '') return 'agent';
+  return text.length > NAME_MAX ? `${text.slice(0, NAME_MAX - 1)}…` : text;
 }
 
 /** Concrete spawn parameters for a terminal, resolved against its project path. */
@@ -211,13 +232,29 @@ function normalize(raw: unknown): TaskDef | null {
   if (typeof r.id !== 'string' || r.id === '') return null;
   const command = typeof r.command === 'string' ? r.command : null;
   const cwd = typeof r.cwd === 'string' ? r.cwd : null;
+  // Legacy/old entries (and anything not exactly one of the two literals) default to
+  // a terminal task — so a legacy terminals.json parses straight into terminal tasks.
+  const kind: TaskKind = r.kind === 'agent' ? 'agent' : 'terminal';
   const name = typeof r.name === 'string' && r.name.trim() !== '' ? r.name : defaultTaskName(command);
-  const def: TaskDef = { id: r.id, name, command, cwd };
+  const def: TaskDef = { id: r.id, name, kind, command, cwd };
+  if (typeof r.prompt === 'string') def.prompt = r.prompt;
   if (typeof r.wasRunning === 'boolean') def.wasRunning = r.wasRunning;
   if (typeof r.lastCommand === 'string' && r.lastCommand.trim() !== '') {
     def.lastCommand = r.lastCommand;
   }
   return def;
+}
+
+/**
+ * One-time migration: parse a legacy `terminals.json` payload (the old name for
+ * this store, which has no `kind` field) into per-project collections with every
+ * task `kind: 'terminal'`. Delegates to {@link parseTasks} — whose `normalize`
+ * already defaults absent/unknown `kind` to `'terminal'` — but is exported under
+ * its own name so the store can call it explicitly for the migration. ANY failure
+ * collapses to empty collections — NEVER throws.
+ */
+export function importLegacyTasks(rawTerminalsJson: string | null | undefined): TasksByProject {
+  return parseTasks(rawTerminalsJson);
 }
 
 /** Serialize collections into the persisted `{ version, projects }` envelope.

@@ -149,6 +149,7 @@ export class ProjectTasksStore {
       // A shell's default name is the shell basename (e.g. `zsh`); a command's is
       // the command. The live OSC title (the running command) overrides it at runtime.
       name: opts.name?.trim() || (command ? defaultTaskName(command) : shellName(this.shell)),
+      kind: 'terminal',
       command,
       cwd: opts.cwd ?? null
     };

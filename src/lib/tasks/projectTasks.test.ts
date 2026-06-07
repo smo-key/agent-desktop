@@ -5,8 +5,10 @@ import {
   removeTask,
   renameTask,
   defaultTaskName,
+  defaultAgentName,
   parseTasks,
   serializeTasks,
+  importLegacyTasks,
   tasksForProject,
   taskSpawnSpec,
   markRunningState,
@@ -25,6 +27,7 @@ function t(over: Partial<TaskDef> = {}): TaskDef {
   return {
     id: 'term-1',
     name: 'dev server',
+    kind: 'terminal',
     command: 'npm run dev',
     cwd: null,
     ...over
@@ -227,5 +230,80 @@ describe('project-terminals — Selective auto-restart on launch', () => {
     map = captureRunningState(map, { a: { running: true, title: 'vim x' } });
     const round = parseTasks(serializeTasks(map));
     expect(tasksForProject(round, 'p')[0].lastCommand).toBe('vim x');
+  });
+});
+
+describe('project-terminals — Task kind (terminal | agent)', () => {
+  it('Terminal task fields', () => {
+    // A terminal task carries kind:'terminal', its command, no prompt, under its project.
+    const def = t({ id: 'a', kind: 'terminal', command: 'npm run dev' });
+    const round = parseTasks(serializeTasks(addTask({}, 'web-app', def)));
+    const stored = tasksForProject(round, 'web-app')[0];
+    expect(stored.kind).toBe('terminal');
+    expect(stored.command).toBe('npm run dev');
+    expect(stored.prompt).toBeUndefined();
+    expect(tasksForProject(round, 'api')).toEqual([]);
+  });
+
+  it('Agent task fields', () => {
+    // An agent task carries kind:'agent', a prompt, and command:null.
+    const def = t({ id: 'g', kind: 'agent', command: null, prompt: 'fix the bug' });
+    const round = parseTasks(serializeTasks(addTask({}, 'web-app', def)));
+    const stored = tasksForProject(round, 'web-app')[0];
+    expect(stored.kind).toBe('agent');
+    expect(stored.prompt).toBe('fix the bug');
+    expect(stored.command).toBeNull();
+  });
+
+  it('Per-project keying', () => {
+    let map: TasksByProject = {};
+    map = addTask(map, 'web-app', t({ id: 'a' }));
+    map = addTask(map, 'api', t({ id: 'b' }));
+    const round = parseTasks(serializeTasks(map));
+    expect(tasksForProject(round, 'web-app').map((x) => x.id)).toEqual(['a']);
+    expect(tasksForProject(round, 'api').map((x) => x.id)).toEqual(['b']);
+  });
+
+  it('Default name from command', () => {
+    // A terminal task created without a name defaults it from the command.
+    const def = t({ id: 'c', command: 'npm run build', name: defaultTaskName('npm run build') });
+    expect(def.name).toBe('npm run build');
+    // And an agent task can derive a tidy name from its prompt.
+    expect(defaultAgentName('  fix   the   bug  ')).toBe('fix the bug');
+    expect(defaultAgentName('')).toBe('agent');
+  });
+
+  it('Legacy terminals import', () => {
+    // A legacy terminals.json envelope has no `kind` — every imported task is a terminal.
+    const legacy = JSON.stringify({
+      version: 1,
+      projects: {
+        'web-app': [{ id: 'a', name: 'dev', command: 'npm run dev', cwd: '/x' }],
+        api: [{ id: 'b', name: 'sh', command: null, cwd: null }]
+      }
+    });
+    const map = importLegacyTasks(legacy);
+    const a = tasksForProject(map, 'web-app')[0];
+    expect(a).toMatchObject({ id: 'a', name: 'dev', command: 'npm run dev', cwd: '/x' });
+    expect(a.kind).toBe('terminal');
+    const b = tasksForProject(map, 'api')[0];
+    expect(b).toMatchObject({ id: 'b', name: 'sh', command: null, cwd: null });
+    expect(b.kind).toBe('terminal');
+  });
+
+  it('Corrupt file falls back to empty', () => {
+    expect(parseTasks('{ not json')).toEqual({});
+    expect(parseTasks('not json{')).toEqual({});
+    expect(parseTasks('[1,2,3]')).toEqual({});
+    expect(parseTasks('null')).toEqual({});
+    expect(importLegacyTasks('{ not json')).toEqual({});
+  });
+
+  it('Runtime state not persisted', () => {
+    const env = JSON.parse(serializeTasks(addTask({}, 'p', t({ id: 'a' }))));
+    const stored = env.projects.p[0];
+    expect(stored).not.toHaveProperty('paneId');
+    expect(stored).not.toHaveProperty('running');
+    expect(stored).not.toHaveProperty('exitCode');
   });
 });

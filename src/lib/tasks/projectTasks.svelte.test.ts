@@ -67,6 +67,7 @@ describe('project-terminals — restore with running command', () => {
     let map = addTask({}, 'p', {
       id: 'a',
       name: 'zsh',
+      kind: 'terminal',
       command: null,
       cwd: null
     });
@@ -83,7 +84,7 @@ describe('project-terminals — restore with running command', () => {
   });
 
   it('restores a plain shell when nothing was running', async () => {
-    let map = addTask({}, 'p', { id: 'a', name: 'zsh', command: null, cwd: null });
+    let map = addTask({}, 'p', { id: 'a', name: 'zsh', kind: 'terminal', command: null, cwd: null });
     map = captureRunningState(map, { a: { running: false } });
     invokeMock.mockImplementationOnce(async () => serializeTasks(map));
 
