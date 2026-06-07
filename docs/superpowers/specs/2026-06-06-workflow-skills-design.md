@@ -18,12 +18,12 @@ All live as flat directories under `.claude/skills/`, matching the existing
 
 - **`workflow`** — thin index/router. Explains the staged process, points at the
   config, and routes to the right stage skill. Invoking it with an argument
-  (`start` | `implement` | `close` | `quick`) defers to that skill. When a task
+  (`start` | `build` | `close` | `quick`) defers to that skill. When a task
   is small and clear it routes to `workflow-quick`; otherwise the full path.
 - **`workflow-start`** — task intake → status update → discovery
   (`openspec-explore` or `openspec-propose`) → apply-ready OpenSpec change →
   commit.
-- **`workflow-implement`** — resume the active change → status update →
+- **`workflow-build`** — resume the active change → status update →
   `openspec-apply-change` (TDD) → tasks complete.
 - **`workflow-close`** — spec/implementation drift reconciliation →
   `openspec-verify-change` → `openspec-archive-change` → final status update.
@@ -31,7 +31,7 @@ All live as flat directories under `.claude/skills/`, matching the existing
   clarifying questions only if ambiguous) → implement with TDD, capturing the
   behavior delta as a minimal OpenSpec change → `openspec-sync-specs` to fold the
   delta into the durable specs → archive the change → status update. Collapses
-  Start→Implement→Close into one pass.
+  Start→Build→Close into one pass.
 
 ## Config — `.claude/workflow.yaml`
 
@@ -54,7 +54,7 @@ jira:
 statuses:
   started:      "In Progress"   # Start/Quick begins discovery
   planned:      "In Progress"   # plan committed, apply-ready (optional)
-  implementing: "In Progress"   # Implement begins
+  implementing: "In Progress"   # Build begins
   review:       "In Review"     # implementation done (optional)
   done:         "Done"          # Close/Quick complete
 ```
@@ -68,8 +68,8 @@ status via the config:
 |----------------|---------------------------------------------|
 | `started`      | `workflow-start` / `workflow-quick` at intake |
 | `planned`      | `workflow-start` after the change is apply-ready |
-| `implementing` | `workflow-implement` at start               |
-| `review`       | `workflow-implement` after tasks complete   |
+| `implementing` | `workflow-build` at start               |
+| `review`       | `workflow-build` after tasks complete   |
 | `done`         | `workflow-close` / `workflow-quick` after archive |
 
 Omitting an event key in `statuses` makes that transition a no-op (useful for
@@ -115,7 +115,7 @@ available CLIs/MCP tools.
 }
 ```
 
-Co-located with the change, version-controlled. `workflow-implement` and
+Co-located with the change, version-controlled. `workflow-build` and
 `workflow-close` read it to know which task to transition without re-asking.
 
 ## Stage flows
@@ -130,7 +130,7 @@ Co-located with the change, version-controlled. `workflow-implement` and
    change is apply-ready (proposal/design/specs/tasks).
 5. Write `workflow.json`, commit artifacts, `set_status(planned)`.
 
-### Implement (`workflow-implement`)
+### Build (`workflow-build`)
 1. Resolve the active change from `workflow.json` / current branch / ask.
    `set_status(implementing)`.
 2. Invoke `openspec-apply-change` (TDD per superpowers) through all tasks.
@@ -167,7 +167,7 @@ Co-located with the change, version-controlled. `workflow-implement` and
   `gh project item-list`).
 - The `local` provider and config parsing get a small fixture-based check.
 - The skills are validated by walking one task end-to-end against the `local`
-  provider (start → implement → close, and a separate quick pass).
+  provider (start → build → close, and a separate quick pass).
 
 ## Out of scope
 
