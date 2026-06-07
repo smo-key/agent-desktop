@@ -39,6 +39,10 @@ const SETTINGS_FILE: &str = "settings.json";
 /// holding each project's user-created terminal definitions (the Terminals panel).
 const TERMINALS_FILE: &str = "terminals.json";
 
+/// Basename of the persisted project-tasks file (sibling of `layout.json`),
+/// holding each project's user-created task definitions (the Tasks panel).
+const TASKS_FILE: &str = "tasks.json";
+
 /// The statusline wrapper source, version-controlled under `src-tauri/resources`
 /// and baked into the binary. Installed verbatim to `<app_data_dir>/bin/` on
 /// setup so a session can be launched with
@@ -405,6 +409,21 @@ fn terminals_save(app: AppHandle, json: String) -> Result<(), String> {
     write_app_data_json(&app, TERMINALS_FILE, &json)
 }
 
+/// Load the persisted project-tasks JSON (sibling `tasks.json`), or `None` when
+/// no file exists yet. The frontend parses tolerantly. A one-time migration in the
+/// frontend falls back to the legacy `terminals.json` (still read by `terminals_load`)
+/// when this file is absent.
+#[tauri::command]
+fn tasks_load(app: AppHandle) -> Result<Option<String>, String> {
+    read_app_data_json(&app, TASKS_FILE)
+}
+
+/// Atomically persist the project-tasks JSON (see [`write_app_data_json`]).
+#[tauri::command]
+fn tasks_save(app: AppHandle, json: String) -> Result<(), String> {
+    write_app_data_json(&app, TASKS_FILE, &json)
+}
+
 /// Resolve `<app_data_dir>`, creating it if needed.
 fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
@@ -727,6 +746,8 @@ pub fn run() {
             settings_save,
             terminals_load,
             terminals_save,
+            tasks_load,
+            tasks_save,
             usage_paths,
             usage_snapshots,
             subagents_for,
