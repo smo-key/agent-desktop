@@ -8,3 +8,11 @@
 /binaries/*
 !/binaries/.gitkeep
 !/binaries/README.md
+
+# Bundled-resource model weights (the tiny whisper model is provisioned at build
+# time via scripts/fetch-models.sh, never committed — 75 MB). A git-ignored
+# placeholder ggml-tiny.bin lets local `cargo build` resolve the resource; a real
+# `tauri build` needs the real file. Keep the dir + its docs.
+/models/*.bin
+!/models/.gitkeep
+!/models/README.md

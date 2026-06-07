@@ -14,7 +14,22 @@
   import { voiceStore } from './voiceStore.svelte';
   import { MicCapture } from './capture';
   import { classifyMicError, MIC_DENIED_GUIDANCE, micGuidanceFor } from './permission';
+  import { ensureModels } from './models';
+  import { modelDownload } from './modelStore.svelte';
+  import { voice } from '$lib/settings/voice.svelte';
   import Icon from '../icons/Icon.svelte';
+
+  // Model readiness: when the panel opens, ensure the models the current
+  // `modelTier` + `polish` selection needs are present, downloading the missing
+  // ones with progress reflected into `modelDownload`. This runs in PARALLEL with
+  // mic permission/capture below (no need to gate the mic on the download); the UI
+  // shows a "Preparing models… NN%" state from the store while `active`. The
+  // bundled tiny model means transcription can still proceed offline even before
+  // larger models land — readiness is surfaced, not enforced, by this slice.
+  $effect(() => {
+    if (!voiceStore.open) return;
+    void ensureModels(voice.prefs.modelTier, voice.prefs.polish);
+  });
 
   // Mic-capture lifecycle is owned HERE (this feature owns VoicePanel), not in
   // +page.svelte. A single $effect watches `voiceStore.open`: on open it runs the
@@ -122,7 +137,24 @@
       <button class="x" aria-label="Stop voice input" onclick={() => voiceStore.close()}>×</button>
     </div>
 
-    {#if voiceStore.state === 'denied' || voiceStore.state === 'error'}
+    {#if modelDownload.active && voiceStore.state !== 'denied' && voiceStore.state !== 'error'}
+      <!-- Models are downloading on first use: show a determinate "Preparing
+           models…" bar (NN% from the store) over the listening view. The bundled
+           tiny model still lets dictation work, so this is informative, not a hard
+           block. -->
+      <div class="preparing">
+        <div class="prep-row">
+          <span class="prep-label">Preparing models…</span>
+          <span class="prep-pct">{modelDownload.percent}%</span>
+        </div>
+        <div class="prep-track">
+          <div class="prep-fill" style:width={`${modelDownload.percent}%`}></div>
+        </div>
+        {#if modelDownload.error}
+          <p class="prep-err">{modelDownload.error}</p>
+        {/if}
+      </div>
+    {:else if voiceStore.state === 'denied' || voiceStore.state === 'error'}
       <!-- Denied / error state: render the guidance prominently, distinct from the
            normal listening view. Recording does NOT proceed in this state. -->
       <div class="guidance" class:denied={voiceStore.state === 'denied'}>
@@ -292,5 +324,45 @@
     color: var(--fg-3);
     font-style: italic;
     opacity: 0.8;
+  }
+
+  /* "Preparing models…" download progress: a determinate bar fed by the
+     modelDownload store's overall percent. */
+  .preparing {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .prep-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    font-size: 13px;
+  }
+  .prep-label {
+    color: var(--fg-2);
+    font-weight: 500;
+  }
+  .prep-pct {
+    color: var(--fg-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .prep-track {
+    height: 6px;
+    border-radius: var(--r-full);
+    background: var(--space-650);
+    overflow: hidden;
+  }
+  .prep-fill {
+    height: 100%;
+    border-radius: var(--r-full);
+    background: var(--fg-2);
+    transition: width 0.2s ease;
+  }
+  .prep-err {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #ff8a8d;
   }
 </style>

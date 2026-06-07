@@ -1,6 +1,7 @@
 pub mod activity;
 pub mod events;
 pub mod git;
+pub mod models;
 pub mod pty;
 pub mod subagents;
 pub mod task;
@@ -437,6 +438,28 @@ fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// Resolve the absolute path to the BUNDLED tiny whisper model, shipped as a
+/// Tauri resource at `<resource_dir>/models/ggml-tiny.bin` (see
+/// `tauri.conf.json` `bundle.resources`). This is what first-run / OFFLINE
+/// transcription uses — it requires no download. Returns the path only if the
+/// resource actually exists on disk (it may be absent in a non-bundled `cargo
+/// build`/dev run where no resource was provisioned), so callers can fall back to
+/// a downloaded model. The resource filename is the single source of truth in
+/// `models::TINY`.
+#[tauri::command]
+fn voice_bundled_model_path(app: AppHandle) -> Result<Option<String>, String> {
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("resource_dir: {e}"))?;
+    let path = resource_dir
+        .join("models")
+        .join(models::tiny_spec().filename);
+    Ok(path
+        .is_file()
+        .then(|| path.to_string_lossy().into_owned()))
+}
+
 /// Install the baked statusline wrapper to `<app_data_dir>/bin/statusline-wrapper.js`
 /// (mode 0755 on Unix) and ensure `<app_data_dir>/snapshots/` exists. Returns the
 /// absolute wrapper path + snapshot dir. Idempotent: the wrapper is rewritten on
@@ -767,7 +790,10 @@ pub fn run() {
             git_status_for,
             events_for,
             transcribe::voice_transcribe_final,
-            transcribe::voice_transcribe_stream
+            transcribe::voice_transcribe_stream,
+            models::voice_download_models,
+            models::voice_models_status,
+            voice_bundled_model_path
         ])
         .on_window_event(|window, event| {
             // Kill + reap every pane on app quit so no zombie/orphan processes

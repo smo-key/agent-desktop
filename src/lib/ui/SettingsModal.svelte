@@ -13,6 +13,26 @@
     type FileBucket
   } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
+  import { ensureModels, modelsStatus, type ModelsStatus } from '$lib/voice/models';
+  import { modelDownload } from '$lib/voice/modelStore.svelte';
+
+  // Voice-model readiness line: re-query whenever the modal is open and the
+  // tier/polish selection changes, so the user sees "ready" vs "download". The
+  // download is delegated to the shared `ensureModels` so the panel + settings
+  // share one in-flight session (progress reflected in `modelDownload`).
+  let modelStatus = $state<ModelsStatus | null>(null);
+  $effect(() => {
+    if (!settingsModal.open) return;
+    const tier = voice.prefs.modelTier;
+    const polish = voice.prefs.polish;
+    void modelsStatus(tier, polish).then((s) => {
+      modelStatus = s;
+    });
+  });
+  async function downloadModels() {
+    await ensureModels(voice.prefs.modelTier, voice.prefs.polish);
+    modelStatus = await modelsStatus(voice.prefs.modelTier, voice.prefs.polish);
+  }
 
   // Sentinel for the "Custom…" select option (reveals a free-text app-name field).
   const CUSTOM = '__custom__';
@@ -149,6 +169,27 @@
                 <option value="accurate">Accurate (large-v3-turbo)</option>
                 <option value="fast">Fast (small)</option>
               </select>
+            </div>
+          </li>
+          <li class="row">
+            <span class="desc">Models</span>
+            <div class="control">
+              {#if modelDownload.active}
+                <span class="model-status">Downloading… {modelDownload.percent}%</span>
+              {:else if modelStatus?.ready}
+                <span class="model-status ready">Ready</span>
+              {:else if modelStatus}
+                <button
+                  type="button"
+                  class="model-download"
+                  disabled={!voice.prefs.enabled}
+                  onclick={downloadModels}
+                >
+                  Download ({modelStatus.missing.length})
+                </button>
+              {:else}
+                <span class="model-status">Checking…</span>
+              {/if}
             </div>
           </li>
         </ul>
@@ -298,8 +339,30 @@
     cursor: pointer;
   }
   select:disabled,
-  input[type='checkbox']:disabled {
+  input[type='checkbox']:disabled,
+  .model-download:disabled {
     opacity: 0.45;
     cursor: not-allowed;
+  }
+
+  /* Voice model readiness line. */
+  .model-status {
+    font-size: 13px;
+    color: var(--fg-3);
+  }
+  .model-status.ready {
+    color: var(--fg-2);
+  }
+  .model-download {
+    font-size: 13px;
+    padding: 4px 10px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--line-default);
+    background: var(--space-650);
+    color: var(--fg-1);
+    cursor: pointer;
+  }
+  .model-download:not(:disabled):hover {
+    background: var(--space-600);
   }
 </style>

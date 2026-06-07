@@ -264,7 +264,7 @@
 
   // Active project for the Terminals panel — same precedence as the panel itself
   // (an explicit project-filter selection wins, else the focused agent's project).
-  // Used by Cmd-T (new terminal) and Cmd-Tab (focus cycle).
+  // Used by Cmd-T (new-task dialog), Cmd-Y (new terminal) and Cmd-Tab (focus cycle).
   const terminalsActiveProjectId = $derived(
     activeProjectId({
       focusedId: workspace.active ? workspace.focusedId : '',
@@ -379,9 +379,9 @@
       return;
     }
 
-    // While the launcher modal is open it owns the keyboard (its own Esc /
-    // Cmd-Enter); don't let app pane shortcuts fire underneath it.
-    if (launcher.open) return;
+    // While the launcher or the task dialog is open it owns the keyboard (its own
+    // Esc / Cmd-Enter); don't let app pane shortcuts (⌘T/⌘Y/⌘N/…) fire underneath.
+    if (launcher.open || taskDialog.open) return;
 
     // Cmd-N starts a new session: straight into the selected project (no popup), or
     // the launcher when no single project is in focus. Same path as the inbox "+".

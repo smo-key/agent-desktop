@@ -37,6 +37,13 @@ tauri-plugin-dialog = "2.7.1"
 # `whisper-cli-<target-triple>` and runs it; see src/transcribe.rs.
 tauri-plugin-shell = "2"
 
+# Streaming HTTP client for download-on-first-run of voice MODELS (Milestone 4 /
+# tasks.md 5.2). `stream` gives us a chunked `bytes_stream()` so we can sum bytes
+# and emit progress; `rustls-tls` avoids a system-OpenSSL build dependency.
+# default-features off drops the default openssl-tls path.
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
+futures-util = "0.3"
+
 # Native macOS NSEvent monitor for the voice-panel double-tap-right-Command
 # gesture (see src/voice_activation.rs). objc2 0.6 / objc2-app-kit 0.3 are the
 # tauri-2-compatible bindings (objc2 itself is already in the tree via the
