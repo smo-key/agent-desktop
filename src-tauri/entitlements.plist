@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements, referenced from tauri.conf.json > bundle >
+  macOS > entitlements. com.apple.security.device.audio-input is REQUIRED so a
+  hardened-runtime build is permitted to access the microphone.
+
+  BUILD REQUIREMENT (verified MANUALLY — tasks.md 9.3): the mic only works in a
+  DISTRIBUTED build when the app is code-signed with a Developer ID, built with
+  hardened runtime enabled (bundle.macOS.hardenedRuntime), and notarized. An
+  ad-hoc / unsigned build will not reliably get mic access on macOS.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+</dict>
+</plist>

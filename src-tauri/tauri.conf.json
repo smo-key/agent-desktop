@@ -38,6 +38,11 @@
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
+    },
+    "macOS": {
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.plist",
+      "infoPlist": "Info.plist"
     }
   }
 }

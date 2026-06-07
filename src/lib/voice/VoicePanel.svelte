@@ -12,7 +12,51 @@
   // drive the store via setState/setPartial/setFinal/setError.
 
   import { voiceStore } from './voiceStore.svelte';
+  import { MicCapture } from './capture';
+  import { classifyMicError, MIC_DENIED_GUIDANCE, micGuidanceFor } from './permission';
   import Icon from '../icons/Icon.svelte';
+
+  // Mic-capture lifecycle is owned HERE (this feature owns VoicePanel), not in
+  // +page.svelte. A single $effect watches `voiceStore.open`: on open it runs the
+  // permission-gated start sequence; on close (or component teardown) it stops
+  // capture and releases the OS mic. The audio handoff to the STT slice (onChunk
+  // / onStop) is documented in capture.ts; this slice does not consume it yet.
+  $effect(() => {
+    if (!voiceStore.open) return;
+
+    const capture = new MicCapture();
+    let cancelled = false;
+
+    voiceStore.setState('requesting');
+    capture
+      .start()
+      .then(() => {
+        if (cancelled) {
+          // Panel closed mid-request: don't leave the mic on.
+          capture.stop();
+          return;
+        }
+        voiceStore.setState('recording');
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const outcome = classifyMicError(err);
+        if (outcome === 'denied') {
+          voiceStore.setState('denied');
+          voiceStore.setError(MIC_DENIED_GUIDANCE);
+        } else {
+          // setError forces state to 'error'.
+          voiceStore.setError(micGuidanceFor('error'));
+        }
+        // Do NOT proceed to record.
+      });
+
+    // Cleanup on close / teardown: stop the in-flight start and release the mic.
+    return () => {
+      cancelled = true;
+      capture.stop();
+    };
+  });
 
   // The status line for the current phase.
   const status = $derived.by(() => {
@@ -67,14 +111,30 @@
     tabindex="-1"
   >
     <div class="row">
-      <span class="indicator" class:rec={voiceStore.state === 'recording'} class:err={voiceStore.state === 'error'}>
+      <span
+        class="indicator"
+        class:rec={voiceStore.state === 'recording'}
+        class:err={voiceStore.state === 'error' || voiceStore.state === 'denied'}
+      >
         <Icon name="mic" size={15} />
       </span>
-      <span class="status" class:err={voiceStore.state === 'error'}>{status}</span>
+      <span class="status" class:err={voiceStore.state === 'error' || voiceStore.state === 'denied'}>{status}</span>
       <button class="x" aria-label="Stop voice input" onclick={() => voiceStore.close()}>×</button>
     </div>
 
-    {#if voiceStore.finalText || voiceStore.partial}
+    {#if voiceStore.state === 'denied' || voiceStore.state === 'error'}
+      <!-- Denied / error state: render the guidance prominently, distinct from the
+           normal listening view. Recording does NOT proceed in this state. -->
+      <div class="guidance" class:denied={voiceStore.state === 'denied'}>
+        <p class="guidance-msg">{voiceStore.error ?? status}</p>
+        {#if voiceStore.state === 'denied'}
+          <p class="guidance-hint">
+            Open System Settings → Privacy &amp; Security → Microphone, allow
+            agent-desktop, then reopen voice input.
+          </p>
+        {/if}
+      </div>
+    {:else if voiceStore.finalText || voiceStore.partial}
       <div class="transcript">
         {#if voiceStore.finalText}<span class="final">{voiceStore.finalText}</span>{/if}
         {#if voiceStore.partial}<span class="partial">{voiceStore.partial}</span>{/if}
@@ -197,6 +257,36 @@
   }
   .final {
     color: var(--fg-1);
+  }
+
+  /* Denied / error guidance: a distinct, prominent block (not the transcript
+     view). The denied variant gets a subtle warning tint so it reads as
+     actionable, not as in-progress dictation. */
+  .guidance {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    border-radius: var(--r-lg);
+    border: 1px solid var(--line-default);
+    background: var(--space-650);
+  }
+  .guidance.denied {
+    border-color: rgba(229, 72, 77, 0.45);
+    background: rgba(229, 72, 77, 0.08);
+  }
+  .guidance-msg {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--fg-1);
+  }
+  .guidance-hint {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--fg-3);
   }
   .partial {
     color: var(--fg-3);

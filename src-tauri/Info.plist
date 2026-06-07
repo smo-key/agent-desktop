@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Partial Info.plist MERGED into the bundle's generated Info.plist by Tauri
+  (referenced from tauri.conf.json > bundle > macOS > infoPlist). Only the keys
+  here override/add to Tauri's defaults — do not duplicate CFBundle* keys.
+
+  NSMicrophoneUsageDescription is REQUIRED for the macOS mic prompt to appear in
+  a packaged build; without it the OS denies/never-prompts and getUserMedia fails.
+-->
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>agent-desktop uses the microphone for voice dictation into your agent.</string>
+</dict>
+</plist>
