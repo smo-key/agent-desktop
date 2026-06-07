@@ -1,11 +1,22 @@
 <script lang="ts">
-  // The right-docked Terminals panel (terminals-panel + project-terminals specs).
-  // Shows the terminal collection of the FOCUSED agent's project as a vertical,
-  // resizable stack. Every project's stack stays MOUNTED (inactive ones hidden via
-  // CSS) so running processes survive a project switch; the parent hides the whole
-  // panel via CSS when toggled off, so they survive a hide too. Each running
-  // terminal renders a real `TerminalPane` (its own PTY); stopping unmounts it
-  // (TerminalPane.onDestroy kills+reaps), restarting remounts with a fresh paneId.
+  // The right-docked Tasks panel (tasks-panel spec — "Right-docked Tasks panel").
+  // It is the RUNNING SURFACE for the Tasks feature: it shows only the ACTIVE
+  // entries of the focused agent's project — running/failed terminal-task panes and
+  // bare interactive shells — NOT the task catalog (idle defs, create/rename/remove
+  // live in the separate left Tasks launcher). Every project's stack stays MOUNTED
+  // (inactive ones hidden via CSS) so running PTYs survive a project switch; the
+  // parent hides the whole panel via CSS when toggled off, so they survive a hide
+  // too. Each live entry renders a real `TerminalPane` (its own PTY); stopping
+  // unmounts it (TerminalPane.onDestroy kills+reaps), restarting remounts with a
+  // fresh paneId (via the `{#key}` wrapper).
+  //
+  // Two entry kinds are unified into one ordered list per project:
+  //   - terminal-task runs: a `terminal` def with a runtime — live while running;
+  //     a clean exit auto-deletes the runtime in the store (the pane disappears);
+  //     a non-zero exit becomes a "stopped (exit N)" slot with a Dismiss action.
+  //   - bare terminals: transient interactive shells (⌘T / launcher) — live while
+  //     running; a stopped bare shell (any exit, even 0) stays as a slot with a
+  //     close (×) action (a different experience from a task).
   import TerminalPane from '../TerminalPane.svelte';
   import Icon from '../icons/Icon.svelte';
   import { workspace } from '../layout/workspace.svelte';
@@ -36,52 +47,120 @@
     })
   );
   const activeProject = $derived(projectForId(projects.list, activeId));
-  const activeTerminals = $derived(projectTasks.forProject(activeId));
 
-  // Per-terminal flex weights for the resizable stack (id -> weight, default 1).
+  // --- The unified active-entry model ----------------------------------------
+  // One uniform record per live/stopped surface entry, so the template renders
+  // terminal-task runs and bare terminals the same way.
+  type Entry = {
+    key: string;
+    kind: 'task' | 'bare';
+    paneId: string;
+    running: boolean;
+    exitCode: number | null;
+    title: string;
+    name: string;
+    program: string;
+    args: string[];
+    cwd: string | null;
+    initialInput?: string;
+    onExit: (code: number) => void;
+    onTitle: (t: string) => void;
+    onDismiss: () => void;
+    failed: boolean;
+  };
+
+  /** The ACTIVE entries for `pid`: terminal-task runs (running or failed) followed
+   *  by bare terminals. A clean-exit task has no runtime (auto-closed) and so is
+   *  absent; a clean-exit bare shell stays as a stopped slot. */
+  function entriesFor(pid: string): Entry[] {
+    const path = projectForId(projects.list, pid)?.path ?? null;
+    const out: Entry[] = [];
+    for (const def of projectTasks.forProject(pid)) {
+      if (def.kind !== 'terminal') continue;
+      const rt = projectTasks.runtime[def.id];
+      if (!rt) continue; // idle (or auto-closed) tasks live in the left launcher.
+      const spec = taskSpawnSpec(def, path, projectTasks.shell);
+      out.push({
+        key: `task:${def.id}`,
+        kind: 'task',
+        paneId: rt.paneId,
+        running: rt.running,
+        exitCode: rt.exitCode,
+        title: rt.title,
+        name: projectTasks.displayName(def),
+        program: spec.program,
+        args: spec.args,
+        cwd: spec.cwd,
+        initialInput: rt.initialInput,
+        onExit: (code) => projectTasks.noteExit(def.id, code),
+        onTitle: (t) => projectTasks.noteTitle(def.id, t),
+        onDismiss: () => projectTasks.dismiss(def.id),
+        failed: projectTasks.isFailed(def.id)
+      });
+    }
+    for (const bare of projectTasks.bareForProject(pid)) {
+      out.push({
+        key: `bare:${bare.id}`,
+        kind: 'bare',
+        paneId: bare.paneId,
+        running: bare.running,
+        exitCode: bare.exitCode,
+        title: bare.title,
+        name: bare.title || 'shell',
+        program: projectTasks.shell,
+        args: [],
+        cwd: path,
+        onExit: (code) => projectTasks.noteBareExit(bare.id, code),
+        onTitle: (t) => projectTasks.noteBareTitle(bare.id, t),
+        onDismiss: () => projectTasks.removeBareTerminal(bare.id),
+        failed: false
+      });
+    }
+    return out;
+  }
+
+  // The set of projects with ANY active entry (a running/failed task runtime or a
+  // bare terminal) — `projectTasks.projectIds` covers only defs, so union in the
+  // projects that own bare shells too.
+  const activeProjectIds = $derived.by(() => {
+    const ids = new Set<string>();
+    for (const pid of projectTasks.projectIds) {
+      if (entriesFor(pid).length > 0) ids.add(pid);
+    }
+    for (const pid of Object.keys(projectTasks.bareByProject)) {
+      if (projectTasks.bareForProject(pid).length > 0) ids.add(pid);
+    }
+    return [...ids];
+  });
+
+  const activeEntries = $derived(activeId ? entriesFor(activeId) : []);
+
+  // Per-entry flex weights for the resizable stack (key -> weight, default 1).
   let weights = $state<Record<string, number>>({});
-  function weightOf(id: string): number {
-    return weights[id] ?? 1;
-  }
-
-  // --- New terminal: opens an empty shell immediately (no command prompt) ----
-  function addTerminal() {
-    if (!activeId) return;
-    projectTasks.launchBareTerminal(activeId);
-  }
-
-  // --- Rename inline edit ----------------------------------------------------
-  let editingId = $state<string | null>(null);
-  let draftName = $state('');
-  function beginRename(id: string, current: string) {
-    editingId = id;
-    draftName = current;
-  }
-  async function commitRename() {
-    if (editingId) await projectTasks.rename(editingId, draftName);
-    editingId = null;
+  function weightOf(key: string): number {
+    return weights[key] ?? 1;
   }
 
   // --- Vertical resize (drag a gutter to reapportion neighbors) --------------
-  function startResize(e: PointerEvent, aboveId: string, belowId: string) {
+  function startResize(e: PointerEvent, aboveKey: string, belowKey: string) {
     e.preventDefault();
     const target = e.currentTarget as HTMLElement;
     const startY = e.clientY;
-    const wAbove = weightOf(aboveId);
-    const wBelow = weightOf(belowId);
+    const wAbove = weightOf(aboveKey);
+    const wBelow = weightOf(belowKey);
     const total = wAbove + wBelow;
     // The gutter's parent is the `.tp-stack`; size pixels-per-weight off its height
     // and the sum of all current weights in the visible stack.
     const stack = target.parentElement;
     const px = stack?.getBoundingClientRect().height ?? 1;
-    const sumWeights = activeTerminals.reduce((a, t) => a + weightOf(t.id), 0) || 1;
+    const sumWeights = activeEntries.reduce((a, en) => a + weightOf(en.key), 0) || 1;
     const perWeight = px / sumWeights;
     target.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => {
       const dW = (ev.clientY - startY) / Math.max(1, perWeight);
       const nextAbove = Math.max(0.15, wAbove + dW);
       const nextBelow = Math.max(0.15, total - nextAbove);
-      weights = { ...weights, [aboveId]: nextAbove, [belowId]: nextBelow };
+      weights = { ...weights, [aboveKey]: nextAbove, [belowKey]: nextBelow };
     };
     const up = (ev: PointerEvent) => {
       target.releasePointerCapture(ev.pointerId);
@@ -93,103 +172,84 @@
   }
 </script>
 
-<section class="terminals-panel" aria-label="Terminals">
+<section class="terminals-panel" aria-label="Tasks">
   <header class="tp-head">
     <Icon name="terminal" size={14} />
-    <span class="tp-title">Terminals</span>
+    <span class="tp-title">Tasks</span>
     {#if activeProject}
       <span class="tp-project">{projectLabel(activeProject)}</span>
     {/if}
-    <button
-      class="tp-add"
-      title="New terminal (⌘T)"
-      aria-label="New terminal"
-      disabled={!activeId}
-      onclick={addTerminal}
-    >＋</button>
   </header>
 
-  <!-- Body: one stack per project (inactive ones hidden but mounted so their
-       running PTYs survive a project switch). -->
+  <!-- Body: one stack per project with active entries (inactive ones hidden but
+       mounted so their running PTYs survive a project switch). -->
   <div class="tp-body">
-    {#each projectTasks.projectIds as pid (pid)}
-      {@const terminals = projectTasks.forProject(pid)}
-      {@const path = projectForId(projects.list, pid)?.path ?? null}
+    {#each activeProjectIds as pid (pid)}
+      {@const entries = entriesFor(pid)}
       <div class="tp-stack" class:hidden={pid !== activeId}>
-        {#each terminals as term, i (term.id)}
-          {@const rt = projectTasks.runtime[term.id]}
-          {@const running = rt?.running === true}
-          {@const spec = taskSpawnSpec(term, path, projectTasks.shell)}
-          <div class="tp-term" style="flex: {weightOf(term.id)} 1 0">
+        {#each entries as entry, i (entry.key)}
+          <div class="tp-term" style="flex: {weightOf(entry.key)} 1 0">
             <div class="tp-term-head">
               <span
                 class="tp-dot"
-                class:on={running}
-                title={running ? 'running' : 'stopped'}
+                class:on={entry.running}
+                class:fail={entry.failed}
+                title={entry.running ? 'running' : 'stopped'}
               ></span>
-              {#if editingId === term.id}
-                <!-- svelte-ignore a11y_autofocus -->
-                <input
-                  class="tp-name-edit"
-                  bind:value={draftName}
-                  autofocus
-                  onblur={() => void commitRename()}
-                  onkeydown={(e) => {
-                    if (e.key === 'Enter') void commitRename();
-                    else if (e.key === 'Escape') editingId = null;
-                  }}
-                />
-              {:else}
-                <button
-                  class="tp-name"
-                  title="Double-click to rename"
-                  ondblclick={() => beginRename(term.id, projectTasks.displayName(term))}
-                >
-                  {projectTasks.displayName(term)}
-                </button>
-              {/if}
+              <span class="tp-name" title={entry.name}>{entry.name}</span>
               <div class="tp-actions">
-                {#if !running}
-                  <button class="tp-act" title="Start" aria-label="Start" onclick={() => projectTasks.start(term.id)}>
-                    <Icon name="play" size={12} />
-                  </button>
+                {#if !entry.running}
+                  {#if entry.kind === 'task'}
+                    <button
+                      class="tp-act"
+                      title="Dismiss"
+                      aria-label="Dismiss"
+                      onclick={entry.onDismiss}
+                    >
+                      <Icon name="trash-2" size={12} />
+                    </button>
+                  {:else}
+                    <button
+                      class="tp-act"
+                      title="Close"
+                      aria-label="Close"
+                      onclick={entry.onDismiss}
+                    >
+                      <Icon name="x" size={12} />
+                    </button>
+                  {/if}
                 {/if}
-                <button class="tp-act" title="Remove" aria-label="Remove" onclick={() => void projectTasks.remove(term.id)}>
-                  <Icon name="trash-2" size={12} />
-                </button>
               </div>
             </div>
             <div class="tp-term-body">
-              {#if running && rt}
-                {#key rt.paneId}
+              {#if entry.running}
+                {#key entry.paneId}
                   <TerminalPane
-                    paneId={rt.paneId}
-                    program={spec.program}
-                    args={spec.args}
-                    cwd={spec.cwd}
+                    paneId={entry.paneId}
+                    program={entry.program}
+                    args={entry.args}
+                    cwd={entry.cwd}
                     active={false}
                     visible={pid === activeId}
-                    initialInput={rt.initialInput}
-                    onExit={(code) => projectTasks.noteExit(term.id, code)}
-                    onTitle={(t) => projectTasks.noteTitle(term.id, t)}
+                    initialInput={entry.initialInput}
+                    onExit={entry.onExit}
+                    onTitle={entry.onTitle}
                   />
                 {/key}
               {:else}
                 <div class="tp-stopped">
                   <span
-                    >stopped{rt && rt.exitCode != null && rt.exitCode !== 0
-                      ? ` (exit ${rt.exitCode})`
-                      : ''}</span
+                    >stopped{entry.exitCode != null ? ` (exit ${entry.exitCode})` : ''}</span
                   >
                 </div>
               {/if}
             </div>
           </div>
-          {#if i < terminals.length - 1}
+          {#if i < entries.length - 1}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="tp-gutter"
-              onpointerdown={(e) => startResize(e, term.id, terminals[i + 1].id)}
+              onpointerdown={(e) => startResize(e, entry.key, entries[i + 1].key)}
             ></div>
           {/if}
         {/each}
@@ -199,12 +259,12 @@
     {#if !activeId}
       <div class="tp-empty">
         <p>No project selected.</p>
-        <p class="tp-empty-sub">Pick a project or focus an agent to see its terminals.</p>
+        <p class="tp-empty-sub">Pick a project or focus an agent to see its running tasks.</p>
       </div>
-    {:else if activeTerminals.length === 0}
+    {:else if activeEntries.length === 0}
       <div class="tp-empty">
-        <p>No terminals yet.</p>
-        <p class="tp-empty-sub">Add one to run a dev server, watcher, or shell.</p>
+        <p>No running tasks.</p>
+        <p class="tp-empty-sub">Start a task or open a terminal from the Tasks launcher.</p>
       </div>
     {/if}
   </div>
@@ -243,29 +303,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  /* Matches the agents "＋" launch button (Inbox `.lh .launch`): blue square, white
-     glyph, bold — so the two "new" affordances read as the same control. */
-  .tp-add {
-    margin-left: auto;
-    display: grid;
-    place-items: center;
-    width: 26px;
-    height: 26px;
-    padding: 0;
-    font-family: var(--font-sans);
-    font-weight: 700;
-    font-size: 15px;
-    line-height: 1;
-    color: #fff;
-    background: var(--blue-500);
-    border: none;
-    border-radius: var(--r-md);
-    cursor: pointer;
-  }
-  .tp-add:disabled {
-    opacity: 0.4;
-    cursor: default;
   }
 
   .tp-body {
@@ -312,29 +349,18 @@
   .tp-dot.on {
     background: #3ccb7f;
   }
+  .tp-dot.fail {
+    background: #e5484d;
+  }
   .tp-name {
     flex: 1 1 auto;
     min-width: 0;
     text-align: left;
     font-size: 12px;
     color: var(--fg-1);
-    background: transparent;
-    border: none;
-    cursor: text;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .tp-name-edit {
-    flex: 1 1 auto;
-    min-width: 0;
-    height: 20px;
-    font-size: 12px;
-    color: var(--fg-1);
-    background: var(--space-800);
-    border: 1px solid var(--line-subtle);
-    border-radius: 4px;
-    padding: 0 5px;
   }
   .tp-actions {
     display: flex;
