@@ -36,7 +36,7 @@
 ## 6. Left Tasks launcher panel
 
 - [ ] 6.1 Create `src/lib/tasks/TasksLauncher.svelte`: list UI mirroring the Agents rail, scoped to the active project, with idle/running/failed status per task
-- [ ] 6.2 Add a horizontal `Gutter` splitter between the Agents rail and the launcher in the left column (reuse `src/lib/layout/Gutter.svelte` / flex ratios); default ~1/3 height; persist the ratio
+- [ ] 6.2 Add a horizontal splitter between the agent list and the launcher inside the Inbox roster column (`Inbox.svelte` `.col-list`, below `.list-scroll`); default ~1/3 height; persist the ratio
 - [ ] 6.3 Implement footer actions `[+ Task]` (create — choose kind terminal/agent, name, command/prompt) and `[⊳ Terminal]` (launch bare shell)
 - [ ] 6.4 Wire start / stop / rename / remove and dismiss-failed from the list to the store
 - [ ] 6.5 Implement empty-project and no-project states
@@ -46,7 +46,7 @@
 - [ ] 7.1 Update `src/routes/+page.svelte`: mount the renamed right panel, remove `+`, update the running-count badge and ⌘J toggle to the tasks store
 - [ ] 7.2 Ensure ⌘T still launches a bare interactive shell in the right panel
 - [ ] 7.3 Wire agent-task launch to the existing workspace session launcher (`workspace.svelte.ts`) with the prompt as initial input
-- [ ] 7.4 Mount the left `TasksLauncher` + splitter under the Agents rail (`SessionRail.svelte` / left column)
+- [ ] 7.4 Mount the left `TasksLauncher` + splitter at the bottom of the Inbox roster column (`Inbox.svelte` `.col-list`)
 
 ## 8. Cleanup & verify
 

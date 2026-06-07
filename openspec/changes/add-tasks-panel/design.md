@@ -98,10 +98,15 @@ a right-panel pane.
   tasks' status in the left list is derived from the spawned session.
 
 ### D6 — Left launcher placement & resize
-Add the Tasks launcher beneath the Agents rail within the existing left column,
-split by a horizontal `Gutter` (reuse `src/lib/layout/Gutter.svelte` / flex
-ratios), default ~⅓ height for Tasks, persisted ratio.
-- *Why:* reuses the proven resize primitive and keeps the left column cohesive.
+The visible "Agents panel" is the **Inbox roster column** (`Inbox.svelte`
+`.col-list`, header "Agents"), NOT the hidden grid-view `SessionRail`. Add the
+Tasks launcher at the bottom of `.col-list`, beneath the agent `.list-scroll`,
+separated by a draggable horizontal splitter; default ~⅓ of the column height,
+persisted ratio. `.col-list` is already a flex column with `min-height:0`, so the
+splitter reapportions the agent list (top) and Tasks (bottom). Reuse a flex
+weight / pointer-drag gutter as elsewhere in the app.
+- *Why:* attaches Tasks to the surface the user actually sees, keeps the Agents
+  column cohesive, and reuses the proven resize pattern.
 
 ### D7 — Reuse `activeProject` derivation for scoping
 Both panels show the active project's tasks via the existing focused-pane →
