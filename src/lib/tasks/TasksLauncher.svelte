@@ -20,7 +20,6 @@
   import { projectTasks } from './projectTasks.svelte';
   import { tasksPanel } from './panel.svelte';
   import { taskDialog } from './taskDialogStore.svelte';
-  import TaskDialog from './TaskDialog.svelte';
   import type { TaskDef } from './projectTasks';
 
   // A concrete project chosen in the overview's project filter (null on All /
@@ -143,8 +142,6 @@
     {/if}
   </div>
 </section>
-
-<TaskDialog />
 
 <style>
   .launcher {

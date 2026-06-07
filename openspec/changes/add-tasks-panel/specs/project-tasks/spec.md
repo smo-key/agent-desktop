@@ -34,6 +34,17 @@ default name from its command or prompt.
 - **WHEN** a terminal task is created with command "git push" and no name
 - **THEN** the task's name defaults to a label derived from the command (e.g. "git push")
 
+### Requirement: Task editing
+
+The system SHALL allow editing an existing task's definition — its name, kind,
+and command or prompt — and SHALL persist the change. Editing a running task
+updates the stored definition (applied on its next run) without affecting the
+current process.
+
+#### Scenario: Edit a task definition
+- **WHEN** a task's name and command are changed via an update
+- **THEN** the stored definition reflects the new name and command and is persisted
+
 ### Requirement: Task persistence and migration
 
 The system SHALL persist task definitions to `tasks.json` via Tauri

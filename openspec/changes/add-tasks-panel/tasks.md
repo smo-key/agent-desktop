@@ -52,6 +52,18 @@
 
 - [x] 8.1 `terminals_load` is intentionally KEPT (the one-time `terminals.json` → `tasks.json` migration reads it); `terminals_save` is now unreferenced but its removal is deferred to avoid colliding with the concurrent voice-input backend edits to `lib.rs` — harmless dead code, no `terminals`-named symbols remain in `src/`
 - [x] 8.2 Full frontend suite green (432/432 vitest), `cargo check` green (24s), `vite build` green — no regressions
-- [ ] 8.3 Manual smoke (LIVE in-app — cannot run headless): create a terminal task (Git Push) → succeeds & auto-closes; make it fail → stays red & dismissable; Start Dev Server → persists; create an agent task → opens a Claude session; ⌘T + `[⊳ Terminal]` → bare shells; resize the splitter and reload → size persists
+- [ ] 8.3 Manual smoke (LIVE in-app — cannot run headless): create a terminal task (Git Push) → succeeds & auto-closes; make it fail → stays red & dismissable; Start Dev Server → persists; create an agent task → opens a Claude session; ⌘Y + Terminals `＋` → bare shells; ⌘T → task dialog; resize the splitter and reload → size persists
 - [x] 8.4 `openspec validate add-tasks-panel --strict` → valid
 - [x] 8.5 Enforce the `project-tasks` (19 scenarios, all unit-tested) and `tasks-panel` (14 scenarios, all live-DOM/PTY → MANUAL) capabilities in `tools/check-scenario-coverage.mjs`; gate RESULT: PASS
+
+## 9. Follow-up: dialog-based create/edit + UI polish
+
+- [ ] 9.1 Add `projectTasks.update(id, { name, kind, command?, prompt? })` to the store (edit a task definition; persist) with a test titled `Edit a task definition`
+- [ ] 9.2 Add a `taskDialog` store (mirrors `launcherStore`): open state + edit target id + project id; `showCreate(projectId)` / `showEdit(id, projectId)` / `close()`
+- [ ] 9.3 Create `TaskDialog.svelte` modeled on `Launcher.svelte`: backdrop + dialog, kind segmented control, required Name (autofocus), monospace Command (terminal) / Prompt textarea (agent), Cancel + primary Save (disabled until name non-empty), Esc / ⌘-Enter; create or update via the store
+- [ ] 9.4 `TasksLauncher.svelte`: restyle the header to mimic the Agents bar (title + count + blue `＋` launch button); the `＋` opens the create dialog; remove the inline create form and the `[⊳ Terminal]` footer
+- [ ] 9.5 `TasksLauncher.svelte`: add a row Edit action (opens the edit dialog); make Remove require a `confirm()`; drop inline rename
+- [ ] 9.6 `RunningTasksPanel.svelte`: retitle the panel header to **Terminals**; add a blue `＋` button (Agents-bar style) that launches a bare terminal in the active project
+- [ ] 9.7 `+page.svelte`: ⌘T opens the create-task dialog; ⌘Y launches a bare terminal (the old ⌘T behavior); mount `<TaskDialog />` at the app root
+- [ ] 9.8 Update the `tasks-panel` MANUAL scenario set in `tools/check-scenario-coverage.mjs` to the revised scenario titles; gate PASS
+- [ ] 9.9 Verify: `npm run check`, `npm run test`, coverage gate, `openspec validate --strict`

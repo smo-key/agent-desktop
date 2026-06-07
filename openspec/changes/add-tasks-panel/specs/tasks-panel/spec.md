@@ -6,7 +6,9 @@ The system SHALL render a **Tasks** panel at the bottom of the left Agents
 column, beneath the Agents rail, separated by a draggable splitter. The panel
 SHALL default to roughly one third of the column height, SHALL be resizable via
 the splitter, and SHALL persist its size. Its list UI SHALL mirror the Agents
-rail and SHALL show the tasks of the currently active project.
+rail and SHALL show the tasks of the currently active project. The panel header
+SHALL match the Agents bar's style — a title "Tasks", a count, and a blue `＋`
+launch button (the same control treatment as the Agents roster header).
 
 #### Scenario: Panel position and default size
 - **WHEN** the app renders the left column
@@ -24,21 +26,28 @@ rail and SHALL show the tasks of the currently active project.
 - **WHEN** the active project has no tasks, or no project is active
 - **THEN** the panel shows an appropriate empty / no-project state
 
+#### Scenario: Header matches the Agents bar
+- **WHEN** the Tasks panel header renders
+- **THEN** its title and `＋` launch button use the same styling as the Agents roster header
+
 ### Requirement: Task launcher controls
 
-The Tasks panel SHALL let the user create a task (`[+ Task]`), launch a bare
-interactive terminal (`[⊳ Terminal]`), and start, stop, rename, and remove tasks
-from the list. Creating a task SHALL allow choosing its kind (terminal command or
-agent prompt). The list SHALL reflect each task's status (idle / running /
-failed).
+The Tasks panel SHALL let the user create a task (the header `＋`), and edit,
+start, stop, and delete tasks from the list. Creating and editing SHALL happen in
+a dialog (not inline). The list SHALL reflect each task's status (idle / running /
+failed). Deleting a task SHALL require explicit confirmation.
 
-#### Scenario: Create a task
-- **WHEN** the user activates `[+ Task]` and provides a name and a command or prompt
-- **THEN** a new task of the chosen kind is added to the active project's list
+#### Scenario: Create a task via the dialog
+- **WHEN** the user activates the header `＋`
+- **THEN** the create-task dialog opens, and on submit a new task of the chosen kind is added to the active project's list
 
-#### Scenario: Launch a bare terminal from the panel
-- **WHEN** the user activates `[⊳ Terminal]`
-- **THEN** a bare interactive shell is launched (not saved as a task)
+#### Scenario: Edit a task via the dialog
+- **WHEN** the user edits an existing task
+- **THEN** the dialog opens pre-filled with the task's fields and saving updates the task definition
+
+#### Scenario: Delete requires confirmation
+- **WHEN** the user deletes a task
+- **THEN** a confirmation is required, and the task is removed only after the user confirms
 
 #### Scenario: Start and stop from the list
 - **WHEN** the user starts then stops a task from the list
@@ -48,40 +57,64 @@ failed).
 - **WHEN** a terminal task fails
 - **THEN** the task is shown as failed (red) in the list until dismissed
 
-### Requirement: Right-docked Tasks panel
+### Requirement: Create/edit task dialog
 
-The right-docked panel previously titled "Terminals" SHALL be titled **Tasks**
-and SHALL host the running panes of terminal-kind tasks. It SHALL NOT present a
-`+` button for ad-hoc terminal creation. Existing behaviors — show/hide toggle
-(⌘J), running-count badge, per-pane resize, and surviving project switches /
-panel hide without killing processes — SHALL be preserved.
+The system SHALL provide a modal dialog, modeled on the New session dialog, to
+create or edit a task. The dialog SHALL require a non-empty task name before it
+can be submitted. For a terminal task the command input SHALL use a monospace
+font. The dialog SHALL be dismissable (Cancel / Escape / backdrop) without
+changing any task.
 
-#### Scenario: Renamed, no plus button
+#### Scenario: Dialog mimics the New session modal
+- **WHEN** the create/edit dialog opens
+- **THEN** it presents as a centered modal with a backdrop, kind selector, name and command/prompt fields, and Cancel / primary actions, like the New session dialog
+
+#### Scenario: Name is required
+- **WHEN** the task name field is empty
+- **THEN** the dialog's submit action is disabled and no task is created or updated
+
+#### Scenario: Command field is monospace
+- **WHEN** a terminal task's command field is shown in the dialog
+- **THEN** its text is rendered in a monospace font
+
+### Requirement: Right-docked Terminals panel
+
+The right-docked panel SHALL be titled **Terminals** and SHALL host the running
+panes of terminal-kind tasks and bare interactive terminals. It SHALL present a
+blue `＋` button (matching the Agents bar style) that launches a new bare
+interactive terminal. Existing behaviors — show/hide toggle (⌘J), running-count
+badge, per-pane resize, and surviving project switches / panel hide without
+killing processes — SHALL be preserved.
+
+#### Scenario: Titled Terminals with a new-terminal button
 - **WHEN** the right-docked panel is shown
-- **THEN** its title is "Tasks" and it has no `+` add-terminal button
+- **THEN** its title is "Terminals" and it has a `＋` button that opens a bare interactive terminal
 
 #### Scenario: Hosts terminal task runs
 - **WHEN** a terminal task is started
-- **THEN** its running pane appears in the right-docked Tasks panel
+- **THEN** its running pane appears in the right-docked Terminals panel
 
 #### Scenario: Toggle and badge preserved
-- **WHEN** terminal tasks are running and the user presses ⌘J
-- **THEN** the panel toggles visibility and the running-count badge reflects the running tasks
+- **WHEN** terminals are running and the user presses ⌘J
+- **THEN** the panel toggles visibility and the running-count badge reflects the running terminals
 
 #### Scenario: Processes survive hide and project switch
-- **WHEN** the panel is hidden or the active project changes while a task runs
-- **THEN** the task's process keeps running
+- **WHEN** the panel is hidden or the active project changes while a terminal runs
+- **THEN** its process keeps running
 
-### Requirement: Bare-terminal launch entry points
+### Requirement: Task and terminal launch shortcuts
 
-Because the right panel's `+` is removed, the system SHALL still allow launching
-a bare interactive shell via the ⌘T keyboard shortcut and via the Tasks panel's
-`[⊳ Terminal]` action.
+The system SHALL open the create-task dialog via ⌘T, and SHALL launch a new bare
+interactive terminal via ⌘Y and via the Terminals panel's `＋` button.
 
-#### Scenario: Keyboard shortcut
+#### Scenario: Cmd T opens the task dialog
 - **WHEN** the user presses ⌘T
-- **THEN** a bare interactive shell is launched in the right-docked Tasks panel
+- **THEN** the create-task dialog opens for the active project
 
-#### Scenario: Footer action
-- **WHEN** the user activates `[⊳ Terminal]` in the Tasks launcher
-- **THEN** a bare interactive shell is launched
+#### Scenario: Keyboard shortcut opens a bare terminal
+- **WHEN** the user presses ⌘Y
+- **THEN** a bare interactive terminal is launched in the right-docked Terminals panel
+
+#### Scenario: New terminal button
+- **WHEN** the user activates the Terminals panel's `＋` button
+- **THEN** a bare interactive terminal is launched

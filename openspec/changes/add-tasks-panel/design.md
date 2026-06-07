@@ -42,8 +42,9 @@ existing resize/persistence primitives should be reused.
 
 **Non-Goals:**
 - Changing PTY/agent spawn internals.
-- Cross-project task sharing, task scheduling, dependencies between tasks,
-  editing a running task's command, or task run history.
+- Cross-project task sharing, task scheduling, dependencies between tasks, or
+  task run history. (Editing a task's DEFINITION — name/kind/command/prompt — is
+  in scope, via the create/edit dialog; it applies on the next run.)
 - Restyling the Agents rail itself.
 
 ## Decisions
@@ -67,15 +68,30 @@ remain bare terminals.
 - *Why:* preserves any terminals a user already defined without a hard reset.
 - *Trade-off:* a small one-time shim in the store/backend; acceptable.
 
-### D3 — Bare terminal vs task = presence of a command, not a separate type
-A `[⊳ Terminal]` / ⌘T launch creates a transient bare terminal (no `TaskDef`,
-`command: null`), keeping today's persist-on-exit "stopped slot" behavior. A task
-is a saved `TaskDef`. Completion semantics therefore key off "is this a task with
-a command" — tasks auto-close on success; bare terminals do not.
+### D3 — Bare terminal vs task = a transient runtime entry, not a `TaskDef`
+A bare interactive terminal is launched from the right-docked **Terminals**
+panel's `＋` button and via **⌘Y**. It is a transient runtime-only entry (no
+`TaskDef`, never persisted) that keeps today's persist-on-exit "stopped slot"
+behavior. A task is a saved `TaskDef`. Completion semantics therefore key off
+"is this a task with a command" — command tasks auto-close on success; bare
+terminals do not.
 - *Why:* matches the user's "a bare terminal is a different experience from a
-  task" while reusing one runtime/store.
-- *Alternative rejected:* a separate `autoClose` boolean per entry — redundant;
-  the kind/command distinction already encodes it.
+  task" while reusing one runtime/store. The bare-terminal entry lives in the
+  Terminals panel (where the running shells appear), not the task launcher.
+- *Note:* ⌘T no longer launches a bare terminal — it opens the create-task
+  dialog (D8). ⌘Y is the bare-terminal shortcut.
+
+### D8 — Create/edit via a modal dialog (mimics New session)
+Task creation and editing happen in a modal `TaskDialog.svelte` modeled on the
+session `Launcher.svelte` (backdrop, dialog card, kind selector, name + command/
+prompt fields, Cancel + blue primary, Esc / ⌘-Enter). A small `taskDialog` store
+(mirroring `launcherStore`) holds open/edit/project state so the launcher header
+`＋`, a row's edit action, and ⌘T can all open it. The task **name is required**
+(submit disabled while empty); the terminal command field is monospace. The store
+gains an `update(id, fields)` method for edits. Deleting a task goes through a
+`confirm()` (the same pattern the session rail uses before discarding a session).
+- *Why:* the inline form was cramped and offered no edit path; a dialog matches
+  the app's existing create flow and makes name-required + validation clear.
 
 ### D4 — Completion semantics for terminal tasks
 On PTY exit for a terminal-kind task: exit code 0 → remove the running pane from

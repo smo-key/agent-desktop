@@ -31,6 +31,8 @@
   import { projects } from '$lib/projects/projects.svelte';
   import { projectGit } from '$lib/projects/projectGit.svelte';
   import RunningTasksPanel from '$lib/tasks/RunningTasksPanel.svelte';
+  import TaskDialog from '$lib/tasks/TaskDialog.svelte';
+  import { taskDialog } from '$lib/tasks/taskDialogStore.svelte';
   import { tasksPanel } from '$lib/tasks/panel.svelte';
   import { projectTasks } from '$lib/tasks/projectTasks.svelte';
   import { activeProjectId } from '$lib/tasks/activeProject';
@@ -291,8 +293,8 @@
     target.addEventListener('pointerup', up);
   }
 
-  // Cmd-T: open a new empty shell terminal in the active project (no prompt) and
-  // focus it. Opens the panel first so the new terminal is visible.
+  // Cmd-Y: open a new bare interactive shell in the active project (no command)
+  // and focus it. Opens the Terminals panel first so the new terminal is visible.
   function newTerminal() {
     tasksPanel.open = true;
     const pid = terminalsActiveProjectId;
@@ -339,7 +341,8 @@
   //   Cmd-N            open the session LAUNCHER (folder picker + recents +
   //                    optional prompt + placement). The deliberate, full-flow
   //                    "new session" entry point.
-  //   Cmd-T            open a new empty shell terminal in the Terminals panel.
+  //   Cmd-T            open the create-task dialog for the active project.
+  //   Cmd-Y            open a new bare interactive terminal in the Terminals panel.
   //   Cmd-Tab          cycle focus across the active agent + its project's terminals.
   //   Cmd-W            close the focused pane
   //   Cmd-]            focus next (cyclic, DFS +1)
@@ -396,8 +399,15 @@
       return;
     }
 
-    // Cmd-T opens a new empty shell terminal in the Terminals panel (every view).
+    // Cmd-T opens the create-task dialog for the active project (every view).
     if (meta && (key === 't' || key === 'T')) {
+      e.preventDefault();
+      taskDialog.showCreate(terminalsActiveProjectId);
+      return;
+    }
+
+    // Cmd-Y opens a new bare interactive terminal in the Terminals panel.
+    if (meta && (key === 'y' || key === 'Y')) {
       e.preventDefault();
       newTerminal();
       return;
@@ -605,6 +615,10 @@
      pane context-menu "New Session" item, and the Cmd-N shortcut (all via the
      shared `launcher` store). Position:fixed backdrop, so it lives at the root. -->
 <Launcher />
+<!-- The create/edit task dialog. Opened from the Tasks launcher header ＋, a task
+     row's edit action, and the ⌘T shortcut (all via the shared `taskDialog`
+     store). Position:fixed backdrop, so it lives at the root, single-instance. -->
+<TaskDialog />
 <HelpModal />
 <SettingsModal />
 <VoicePanel />
