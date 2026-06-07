@@ -12,7 +12,6 @@
   import { openWith } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
   import VoicePanel from '$lib/voice/VoicePanel.svelte';
-  import { voiceStore } from '$lib/voice/voiceStore.svelte';
   import { initVoiceActivation } from '$lib/voice/activation';
   import Icon from '$lib/icons/Icon.svelte';
   import { startNewSession } from '$lib/launcher/newSession';
@@ -519,11 +518,6 @@
           </span>
         {/if}
       </button>
-      {#if voice.prefs.enabled}
-        <button class="tb-btn" aria-label="Voice input" title="Voice input" onclick={() => voiceStore.show()}>
-          <Icon name="mic" size={14} />
-        </button>
-      {/if}
       <button class="tb-btn" aria-label="Settings" title="Settings" onclick={() => settingsModal.show()}>
         <Icon name="settings" size={14} />
       </button>

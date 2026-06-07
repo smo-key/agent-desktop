@@ -129,6 +129,22 @@
 
 <svelte:window onkeydown={onWindowKeydown} />
 
+{#if !voiceStore.open && voice.prefs.enabled}
+  <!-- Footer launcher: a small overlay panel centered in the footer. It's the
+       on-screen entry point to dictation — clicking it opens the full voice panel,
+       which occupies the same bottom-center spot (so this hides while open). The
+       double-tap right-⌘ gesture opens the same panel. -->
+  <button
+    type="button"
+    class="voice-fab"
+    aria-label="Voice input"
+    title="Voice input (double-tap right ⌘)"
+    onclick={() => voiceStore.show()}
+  >
+    <Icon name="mic" size={15} />
+  </button>
+{/if}
+
 {#if voiceStore.open}
   <!-- Transparent click-outside layer (no dimming) behind the floating panel; a
        <button> so it's natively keyboard/focus accessible. Esc is also handled at
@@ -218,6 +234,38 @@
     border: none;
     background: transparent;
     cursor: default;
+  }
+
+  /* Footer launcher: a small, pill-shaped overlay panel centered in the footer,
+     shown only while the full panel is closed. Sits below the open panel's z-index
+     (it's hidden when the panel is open) but above the app chrome. */
+  .voice-fab {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 36px;
+    padding: 0;
+    border-radius: var(--r-full);
+    border: 1px solid var(--line-default);
+    background: var(--space-800);
+    box-shadow: var(--shadow-lg);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition:
+      color 0.15s ease,
+      background 0.15s ease,
+      transform 0.15s ease;
+  }
+  .voice-fab:hover {
+    color: var(--fg-1);
+    background: var(--space-700);
+    transform: translateX(-50%) translateY(-1px);
   }
 
   .voice-panel {
