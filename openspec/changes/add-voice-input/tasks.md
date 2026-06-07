@@ -6,10 +6,10 @@
 
 ## 2. Voice panel UI & activation (button)
 
-- [ ] 2.1 Add a voice runes store (open/close + recording state) mirroring `src/lib/launcher/launcherStore.svelte.ts`.
-- [ ] 2.2 Build the bottom-center `VoicePanel.svelte` component (fixed bottom-center, z-index above panes) with mic button, recording indicator, live overlay region, and stop control.
-- [ ] 2.3 Wire dismissal: Escape, click-outside, and stop control all close the panel and stop recording; enforce single-instance.
-- [ ] 2.4 Mount the panel from `src/routes/+page.svelte` and add an on-screen mic button entry point that opens it (respecting the `enabled` setting).
+- [x] 2.1 Add a voice runes store (open/close + recording state) mirroring `src/lib/launcher/launcherStore.svelte.ts`. — `src/lib/voice/voiceStore.svelte.ts` (VoiceState + VoiceStore singleton), unit-tested in `voiceStore.test.ts`.
+- [x] 2.2 Build the bottom-center `VoicePanel.svelte` component (fixed bottom-center, z-index above panes) with mic button, recording indicator, live overlay region, and stop control. — `src/lib/voice/VoicePanel.svelte` (fixed bottom:24px, z-index 2000; mic indicator reflects state; partial=dim/italic, final=normal; × stop).
+- [x] 2.3 Wire dismissal: Escape, click-outside, and stop control all close the panel and stop recording; enforce single-instance. — window-level Esc, transparent scrim click-outside, × button; single-instance via store `show()` no-op. (Capture-stop hook lands in a later slice.)
+- [x] 2.4 Mount the panel from `src/routes/+page.svelte` and add an on-screen mic button entry point that opens it (respecting the `enabled` setting). — `<VoicePanel />` mounted by the other root modals; mic button in the title-bar `tb-right` cluster (left of Settings), gated on `voice.prefs.enabled`.
 
 ## 3. Microphone capture & permission
 
