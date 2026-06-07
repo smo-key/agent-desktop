@@ -8,6 +8,7 @@
 // helpers are exported for unit testing.
 
 import { invoke } from '@tauri-apps/api/core';
+import { loadSettings, saveSettingsSlice } from './persist';
 
 /** A bucket a file path is classified into for open-with routing. */
 export type FileBucket = 'code' | 'html' | 'markdown' | 'other';
@@ -107,14 +108,11 @@ export class OpenWithStore {
    *  all-"System Default" `DEFAULT_PREFS` apply. Never throws (bad JSON / non-Tauri
    *  → defaults). Call once on mount. */
   async load(): Promise<void> {
-    let raw: string | null = null;
-    try {
-      raw = await invoke<string | null>('settings_load');
-    } catch (err) {
-      console.error('settings_load failed', err);
-      raw = null;
-    }
-    this.prefs = parsePrefs(raw); // null → DEFAULT_PREFS (all System Default)
+    // Read the shared settings blob and parse only our `openWith` slice. The
+    // merge-aware persist helper never throws, so a fresh install / bad JSON /
+    // non-Tauri env all yield `{}` → DEFAULT_PREFS (all System Default).
+    const settings = await loadSettings();
+    this.prefs = parsePrefs(settings.openWith);
     this.loaded = true;
   }
 
@@ -134,34 +132,44 @@ export class OpenWithStore {
     }
   }
 
-  /** Persist the current prefs via the Rust `settings_save` command (best-effort). */
+  /** Persist the current prefs as the `openWith` slice, merging into the shared
+   *  settings blob so sibling slices (e.g. voice) are preserved (best-effort). */
   private async save(): Promise<void> {
-    try {
-      await invoke('settings_save', { json: JSON.stringify({ openWith: this.prefs }) });
-    } catch (err) {
-      console.error('settings_save failed', err);
-    }
+    await saveSettingsSlice('openWith', this.prefs);
   }
 }
 
-/** PURE: parse persisted settings JSON into prefs, tolerating any shape. Unknown /
- *  missing buckets fall back to `DEFAULT_PREFS` (System Default). */
-export function parsePrefs(raw: string | null): OpenWithPrefs {
-  if (!raw) return { ...DEFAULT_PREFS };
-  try {
-    const obj = JSON.parse(raw);
-    const ow = obj?.openWith ?? obj ?? {};
-    const pick = (b: FileBucket): string =>
-      typeof ow[b] === 'string' && ow[b].trim() ? ow[b] : DEFAULT_PREFS[b];
-    return {
-      code: pick('code'),
-      html: pick('html'),
-      markdown: pick('markdown'),
-      other: pick('other')
-    };
-  } catch {
+/** PURE: parse persisted open-with prefs, tolerating any shape. Accepts either the
+ *  already-parsed `openWith` slice (an object, the modern call from `load()`), a
+ *  raw settings-JSON string (legacy / tests), or `null`. Unknown / missing buckets
+ *  fall back to `DEFAULT_PREFS` (System Default). */
+export function parsePrefs(raw: unknown): OpenWithPrefs {
+  if (raw == null) return { ...DEFAULT_PREFS };
+  let ow: Record<string, unknown> = {};
+  if (typeof raw === 'string') {
+    try {
+      const obj = JSON.parse(raw);
+      ow = (obj?.openWith ?? obj ?? {}) as Record<string, unknown>;
+    } catch {
+      return { ...DEFAULT_PREFS };
+    }
+  } else if (typeof raw === 'object') {
+    const obj = raw as Record<string, unknown>;
+    // Accept either the slice itself or a wrapping `{ openWith: … }` envelope.
+    ow = ((obj.openWith ?? obj) as Record<string, unknown>) ?? {};
+  } else {
     return { ...DEFAULT_PREFS };
   }
+  const pick = (b: FileBucket): string => {
+    const v = ow[b];
+    return typeof v === 'string' && v.trim() ? v : DEFAULT_PREFS[b];
+  };
+  return {
+    code: pick('code'),
+    html: pick('html'),
+    markdown: pick('markdown'),
+    other: pick('other')
+  };
 }
 
 /** The singleton open-with store. */

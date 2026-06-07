@@ -12,6 +12,7 @@
     SYSTEM,
     type FileBucket
   } from '$lib/settings/openWith.svelte';
+  import { voice } from '$lib/settings/voice.svelte';
 
   // Sentinel for the "Custom…" select option (reveals a free-text app-name field).
   const CUSTOM = '__custom__';
@@ -109,6 +110,47 @@
               </div>
             </li>
           {/each}
+        </ul>
+      </section>
+
+      <section class="group">
+        <span class="label">Voice</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Enable voice input</span>
+            <div class="control">
+              <input
+                type="checkbox"
+                checked={voice.prefs.enabled}
+                onchange={(e) => voice.setEnabled(e.currentTarget.checked)}
+              />
+            </div>
+          </li>
+          <li class="row">
+            <span class="desc">Clean up transcript (polish)</span>
+            <div class="control">
+              <input
+                type="checkbox"
+                checked={voice.prefs.polish}
+                disabled={!voice.prefs.enabled}
+                onchange={(e) => voice.setPolish(e.currentTarget.checked)}
+              />
+            </div>
+          </li>
+          <li class="row">
+            <span class="desc">Transcription quality</span>
+            <div class="control">
+              <select
+                value={voice.prefs.modelTier}
+                disabled={!voice.prefs.enabled}
+                onchange={(e) =>
+                  voice.setModelTier(e.currentTarget.value as 'fast' | 'accurate')}
+              >
+                <option value="accurate">Accurate (large-v3-turbo)</option>
+                <option value="fast">Fast (small)</option>
+              </select>
+            </div>
+          </li>
         </ul>
       </section>
     </div>
@@ -246,5 +288,18 @@
   .custom {
     width: 160px;
     cursor: text;
+  }
+
+  /* Voice toggles: native checkbox accented to the app color. */
+  input[type='checkbox'] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  select:disabled,
+  input[type='checkbox']:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
   }
 </style>

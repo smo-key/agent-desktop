@@ -1,8 +1,8 @@
 ## 1. Foundations — settings & feature flag
 
-- [ ] 1.1 Extend the settings schema (Rust `settings_load`/`settings_save` in `src-tauri/src/lib.rs`) with a `voice` section: `enabled`, `polish` (default true), `modelTier`.
-- [ ] 1.2 Add a frontend voice settings store mirroring `src/lib/settings/openWith.svelte.ts` (reactive, persists via `settings_save`).
-- [ ] 1.3 Add a "Voice" section to `src/lib/ui/SettingsModal.svelte` (enable toggle, polish toggle, model-tier select).
+- [x] 1.1 Extend the settings schema with a `voice` section: `enabled`, `polish` (default true), `modelTier`. (Persistence is an opaque JSON blob, so no Rust struct change is needed; the `voice` slice round-trips through the existing `settings_load`/`settings_save`. Added a shared `src/lib/settings/persist.ts` with `loadSettings`/`saveSettingsSlice` so independent slices merge instead of clobbering, and refactored `openWith` onto it.)
+- [x] 1.2 Add a frontend voice settings store mirroring `src/lib/settings/openWith.svelte.ts` (reactive, persists via the merge-on-save helper so it never clobbers other slices).
+- [x] 1.3 Add a "Voice" section to `src/lib/ui/SettingsModal.svelte` (enable toggle, polish toggle, model-tier select); load the store on mount in `+page.svelte`.
 
 ## 2. Voice panel UI & activation (button)
 
