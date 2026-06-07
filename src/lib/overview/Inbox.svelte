@@ -59,6 +59,59 @@
   import StatusBar from '$lib/usage/StatusBar.svelte';
   import { friendlyTime } from './friendlyTime';
   import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
+  import TasksLauncher from '$lib/tasks/TasksLauncher.svelte';
+
+  // --- Tasks launcher split (agent list on top / Tasks launcher on bottom) -----
+  // The `.col-list` column splits into an agent region (top) and the Tasks
+  // launcher (bottom). The launcher's height is a persisted fraction of the column
+  // (clamped), driven via flex-basis with a draggable gutter between them.
+  const TASKS_FRAC_KEY = 'agent-desktop:tasks-launcher-frac';
+  const TASKS_FRAC_MIN = 0.15;
+  const TASKS_FRAC_MAX = 0.6;
+  const TASKS_FRAC_DEFAULT = 0.33;
+  function clampFrac(f: number): number {
+    return Math.max(TASKS_FRAC_MIN, Math.min(TASKS_FRAC_MAX, f));
+  }
+  function loadTasksFrac(): number {
+    if (typeof localStorage === 'undefined') return TASKS_FRAC_DEFAULT;
+    try {
+      const v = Number(localStorage.getItem(TASKS_FRAC_KEY));
+      return Number.isFinite(v) && v > 0 ? clampFrac(v) : TASKS_FRAC_DEFAULT;
+    } catch {
+      return TASKS_FRAC_DEFAULT;
+    }
+  }
+  let tasksFrac = $state(loadTasksFrac());
+  function setTasksFrac(f: number) {
+    tasksFrac = clampFrac(f);
+    if (typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(TASKS_FRAC_KEY, String(tasksFrac));
+    } catch {
+      /* ignore quota / disabled storage */
+    }
+  }
+  /** Drag the gutter: convert pointer Y within the column into a bottom fraction. */
+  function startTasksResize(e: PointerEvent) {
+    e.preventDefault();
+    const gutter = e.currentTarget as HTMLElement;
+    const col = gutter.parentElement;
+    if (!col) return;
+    gutter.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      const rect = col.getBoundingClientRect();
+      if (rect.height <= 0) return;
+      const frac = (rect.bottom - ev.clientY) / rect.height;
+      setTasksFrac(frac);
+    };
+    const up = (ev: PointerEvent) => {
+      gutter.releasePointerCapture(ev.pointerId);
+      gutter.removeEventListener('pointermove', move);
+      gutter.removeEventListener('pointerup', up);
+    };
+    gutter.addEventListener('pointermove', move);
+    gutter.addEventListener('pointerup', up);
+  }
 
   // 1-second clock so working -> waiting flips as the PTY goes quiet (matches the
   // old Overview). Epoch ms to match the runtime registry.
@@ -643,55 +696,68 @@
         <button type="button" class="launch" onclick={newAgent} title="New session (⌘N)">＋</button>
       </div>
 
-      {#if rows.length === 0}
-        <div class="empty-list">
-          <p>No agents yet.</p>
-          <button type="button" class="btn-primary" onclick={newAgent}>＋ New session</button>
-        </div>
-      {:else}
-        <div class="list-scroll">
-          {#each LANE_ORDER as lane (lane)}
-            {@const items = grouped[lane]}
-            {#if items.length > 0}
-              <div class="group-h {lane}">
-                {LANES[lane].title} <span class="gn">· {items.length}</span><span class="rule"></span>
-              </div>
-              {#each items as r (r.paneId)}
-                <button
-                  type="button"
-                  class="row {lane}"
-                  class:sel={focus?.paneId === r.paneId}
-                  onclick={() => onRowClick(r)}
-                  oncontextmenu={(e) => openAgentMenu(e, r, displayName(r.paneId, r.name))}
-                >
-                  <ProjectIcon {...projAvatar(r.projectId)} size={30} />
-                  <span class="nm">
-                    <span class="t">{titles.titleFor(r.paneId) ?? r.name}</span>
-                    <span class="s" class:q={needsAttention(r)} title={rowSub(r)}>{rowSub(r)}</span>
-                    <span class="meta">
-                      {#if showMeta(r)}
-                        <span class="m ctx" title="Context window used">
-                          <span class="ctxbar"><StatusBar pct={r.contextPct} /></span>
-                          {ctxLabel(r.contextPct)}
+      <!-- Middle region: the agent roster (or its empty state). Flexes to fill
+           the space left between the header and the bottom Tasks launcher. -->
+      <div class="agent-region">
+        {#if rows.length === 0}
+          <div class="empty-list">
+            <p>No agents yet.</p>
+            <button type="button" class="btn-primary" onclick={newAgent}>＋ New session</button>
+          </div>
+        {:else}
+          <div class="list-scroll">
+            {#each LANE_ORDER as lane (lane)}
+              {@const items = grouped[lane]}
+              {#if items.length > 0}
+                <div class="group-h {lane}">
+                  {LANES[lane].title} <span class="gn">· {items.length}</span><span class="rule"></span>
+                </div>
+                {#each items as r (r.paneId)}
+                  <button
+                    type="button"
+                    class="row {lane}"
+                    class:sel={focus?.paneId === r.paneId}
+                    onclick={() => onRowClick(r)}
+                    oncontextmenu={(e) => openAgentMenu(e, r, displayName(r.paneId, r.name))}
+                  >
+                    <ProjectIcon {...projAvatar(r.projectId)} size={30} />
+                    <span class="nm">
+                      <span class="t">{titles.titleFor(r.paneId) ?? r.name}</span>
+                      <span class="s" class:q={needsAttention(r)} title={rowSub(r)}>{rowSub(r)}</span>
+                      <span class="meta">
+                        {#if showMeta(r)}
+                          <span class="m ctx" title="Context window used">
+                            <span class="ctxbar"><StatusBar pct={r.contextPct} /></span>
+                            {ctxLabel(r.contextPct)}
+                          </span>
+                        {/if}
+                        <span class="m" title="Total session cost">
+                          <Icon name="dollar-sign" size={11} />{costMeta(r.cost)}
                         </span>
-                      {/if}
-                      <span class="m" title="Total session cost">
-                        <Icon name="dollar-sign" size={11} />{costMeta(r.cost)}
-                      </span>
-                      <span class="m" title="Last activity">
-                        <Icon name="clock" size={11} />{friendlyTime(r.lastTs, nowMs)}
+                        <span class="m" title="Last activity">
+                          <Icon name="clock" size={11} />{friendlyTime(r.lastTs, nowMs)}
+                        </span>
                       </span>
                     </span>
-                  </span>
-                  {#if needsAttention(r)}
-                    <span class="badge {badgeClass(r)} dotonly"><span class="dot"></span></span>
-                  {/if}
-                </button>
-              {/each}
-            {/if}
-          {/each}
-        </div>
-      {/if}
+                    {#if needsAttention(r)}
+                      <span class="badge {badgeClass(r)} dotonly"><span class="dot"></span></span>
+                    {/if}
+                  </button>
+                {/each}
+              {/if}
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+      <!-- Draggable splitter between the agent roster (top) and Tasks (bottom). -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="tasks-gutter" onpointerdown={startTasksResize} title="Drag to resize"></div>
+
+      <!-- Bottom region: the Tasks launcher, sized to a persisted fraction. -->
+      <div class="tasks-region" style="flex: 0 0 {tasksFrac * 100}%">
+        <TasksLauncher />
+      </div>
     </div>
 
     <!-- RIGHT: focus pane (header + teleported live TUI / Archived / All clear) -->
@@ -790,8 +856,15 @@
   .lh h1 { font-family: var(--font-display); font-weight: 600; font-size: 17px; margin: 0; display: flex; align-items: baseline; gap: 8px; }
   .lh .count { font-family: var(--font-mono); font-size: 11px; color: var(--fg-3); background: var(--space-750); border: 1px solid var(--line-subtle); border-radius: var(--r-full); padding: 2px 8px; }
   .lh .launch { margin-left: auto; font-family: var(--font-sans); font-weight: 700; font-size: 15px; color: #fff; background: var(--blue-500); border: none; border-radius: var(--r-md); width: 30px; height: 30px; cursor: pointer; }
+  /* Middle region holds the agent list (or empty state); flexes to fill. */
+  .agent-region { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   .list-scroll { overflow-y: auto; flex: 1; min-height: 0; padding-bottom: 20px; }
   .empty-list { padding: 40px 18px; text-align: center; color: var(--fg-3); display: flex; flex-direction: column; gap: 12px; }
+  /* The horizontal splitter between the agent roster and the Tasks launcher. */
+  .tasks-gutter { flex: 0 0 5px; cursor: row-resize; background: var(--space-900); border-top: 1px solid var(--line-subtle); }
+  .tasks-gutter:hover { background: var(--blue-500); }
+  /* The bottom region: the Tasks launcher, sized to a persisted fraction. */
+  .tasks-region { min-height: 0; overflow: hidden; }
 
   .group-h { display: flex; align-items: center; gap: 8px; padding: 14px 16px 6px; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tracking-label); }
   .group-h.attn { color: var(--orange-300); }
