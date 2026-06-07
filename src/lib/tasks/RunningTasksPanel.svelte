@@ -222,7 +222,13 @@
               </div>
             </div>
             <div class="tp-term-body">
-              {#if entry.running}
+              <!-- Keep the pane MOUNTED while running OR after the process exited on
+                   its own (`exitCode != null`) — a self-exit leaves no live process to
+                   kill, so we keep the dead pane's scrollback visible (the user must be
+                   able to read a FAILED task's error output, design D4). Only a
+                   user-initiated stop (running false, exitCode still null) unmounts the
+                   pane, whose onDestroy kills+reaps the still-live process. -->
+              {#if entry.running || entry.exitCode != null}
                 {#key entry.paneId}
                   <TerminalPane
                     paneId={entry.paneId}
@@ -238,9 +244,7 @@
                 {/key}
               {:else}
                 <div class="tp-stopped">
-                  <span
-                    >stopped{entry.exitCode != null ? ` (exit ${entry.exitCode})` : ''}</span
-                  >
+                  <span>stopped</span>
                 </div>
               {/if}
             </div>

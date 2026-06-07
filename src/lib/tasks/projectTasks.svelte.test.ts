@@ -340,4 +340,33 @@ describe('project-tasks — migration', () => {
     invokeMock.mockReset();
     invokeMock.mockImplementation(async () => null);
   });
+
+  it('present-but-empty tasks.json does not resurrect legacy terminals', async () => {
+    // The user deliberately deleted all their tasks: tasks.json exists but is an
+    // empty envelope. A stale (read-only) terminals.json must NOT bring them back.
+    const legacy = addTask({}, 'p', {
+      id: 'a',
+      name: 'npm run dev',
+      kind: 'terminal',
+      command: 'npm run dev',
+      cwd: null
+    } as TaskDef);
+    const legacyJson = serializeTasks(legacy);
+
+    invokeMock.mockImplementation(async (cmd: unknown) => {
+      if (cmd === 'tasks_load') return serializeTasks({}); // present, empty (not null)
+      if (cmd === 'terminals_load') return legacyJson;
+      return null;
+    });
+
+    const store = new ProjectTasksStore();
+    await store.load();
+
+    // Stays empty — migration is keyed off "tasks.json absent", not "no tasks".
+    expect(store.projectIds).toEqual([]);
+    expect(store.forProject('p')).toEqual([]);
+
+    invokeMock.mockReset();
+    invokeMock.mockImplementation(async () => null);
+  });
 });
