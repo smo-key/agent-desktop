@@ -11,6 +11,8 @@
   import { settingsModal } from '$lib/ui/settingsStore.svelte';
   import { openWith } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
+  import VoicePanel from '$lib/voice/VoicePanel.svelte';
+  import { voiceStore } from '$lib/voice/voiceStore.svelte';
   import Icon from '$lib/icons/Icon.svelte';
   import { startNewSession } from '$lib/launcher/newSession';
   import { workspace } from '$lib/layout/workspace.svelte';
@@ -267,13 +269,12 @@
     tasksPanel.open = true;
     const pid = terminalsActiveProjectId;
     if (!pid) return;
-    void projectTasks.create(pid).then((id) => {
-      const pane = projectTasks.runtime[id]?.paneId;
-      if (pane) {
-        lastCycledPaneId = pane;
-        focusTerminal(pane); // registry parks the request until the pane mounts
-      }
-    });
+    const id = projectTasks.launchBareTerminal(pid);
+    const pane = projectTasks.bareForProject(pid).find((b) => b.id === id)?.paneId;
+    if (pane) {
+      lastCycledPaneId = pane;
+      focusTerminal(pane); // registry parks the request until the pane mounts
+    }
   }
 
   // Cmd-Tab focus cycle: the focused agent, then the active project's running
@@ -480,6 +481,11 @@
           </span>
         {/if}
       </button>
+      {#if voice.prefs.enabled}
+        <button class="tb-btn" aria-label="Voice input" title="Voice input" onclick={() => voiceStore.show()}>
+          <Icon name="mic" size={14} />
+        </button>
+      {/if}
       <button class="tb-btn" aria-label="Settings" title="Settings" onclick={() => settingsModal.show()}>
         <Icon name="settings" size={14} />
       </button>
@@ -573,6 +579,7 @@
 <Launcher />
 <HelpModal />
 <SettingsModal />
+<VoicePanel />
 
 <style>
   .app {

@@ -10,12 +10,19 @@ const invokeMock = vi.fn(async (..._a: unknown[]): Promise<unknown> => null);
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
 import { ProjectTasksStore } from './projectTasks.svelte';
-import { serializeTasks, captureRunningState, addTask } from './projectTasks';
+import {
+  serializeTasks,
+  parseTasks,
+  captureRunningState,
+  addTask,
+  type TaskDef
+} from './projectTasks';
 
 describe('project-terminals — runtime lifecycle', () => {
   it('Start a stopped terminal', async () => {
     const store = new ProjectTasksStore();
-    const id = await store.create('p', { command: 'npm run dev' });
+    const id = await store.create('p', { kind: 'terminal', command: 'npm run dev' });
+    store.startTask(id);
     store.stop(id);
     expect(store.isRunning(id)).toBe(false);
     store.start(id);
@@ -24,7 +31,8 @@ describe('project-terminals — runtime lifecycle', () => {
 
   it('Stop a running terminal', async () => {
     const store = new ProjectTasksStore();
-    const id = await store.create('p', { command: 'npm run dev' });
+    const id = await store.create('p', { kind: 'terminal', command: 'npm run dev' });
+    store.startTask(id);
     expect(store.isRunning(id)).toBe(true);
     store.stop(id);
     expect(store.isRunning(id)).toBe(false);
@@ -34,7 +42,8 @@ describe('project-terminals — runtime lifecycle', () => {
 
   it('Restart a terminal', async () => {
     const store = new ProjectTasksStore();
-    const id = await store.create('p', { command: 'npm run dev' });
+    const id = await store.create('p', { kind: 'terminal', command: 'npm run dev' });
+    store.startTask(id);
     const firstPane = store.runtime[id].paneId;
     store.restart(id);
     expect(store.isRunning(id)).toBe(true);
@@ -44,7 +53,9 @@ describe('project-terminals — runtime lifecycle', () => {
 
   it('Process exiting on its own marks the terminal stopped', async () => {
     const store = new ProjectTasksStore();
-    const id = await store.create('p', { command: 'npm run dev' });
+    // A bare (no-command) terminal stays as a stopped slot on exit (no auto-close).
+    const id = await store.create('p', { kind: 'terminal' });
+    store.startTask(id);
     store.noteExit(id, 137);
     expect(store.isRunning(id)).toBe(false);
     expect(store.runtime[id].exitCode).toBe(137);
@@ -54,7 +65,8 @@ describe('project-terminals — runtime lifecycle', () => {
 
   it('remove drops the slot and stops its process', async () => {
     const store = new ProjectTasksStore();
-    const id = await store.create('p', { command: 'x' });
+    const id = await store.create('p', { kind: 'terminal', command: 'x' });
+    store.startTask(id);
     await store.remove(id);
     expect(store.forProject('p')).toEqual([]);
     expect(store.runtime[id]).toBeUndefined();
@@ -98,23 +110,24 @@ describe('project-terminals — restore with running command', () => {
 describe('terminals-panel — running indicator', () => {
   it('Indicator reflects running processes while hidden', async () => {
     const store = new ProjectTasksStore();
-    await store.create('p', { command: 'a' });
-    await store.create('p', { command: 'b' });
+    store.startTask(await store.create('p', { kind: 'terminal', command: 'a' }));
+    store.startTask(await store.create('p', { kind: 'terminal', command: 'b' }));
     // The count is panel-visibility independent (it is pure store state).
     expect(store.runningCount).toBe(2);
   });
 
   it('Indicator clears when nothing runs', async () => {
     const store = new ProjectTasksStore();
-    const id = await store.create('p', { command: 'a' });
+    const id = await store.create('p', { kind: 'terminal', command: 'a' });
+    store.startTask(id);
     store.stop(id);
     expect(store.runningCount).toBe(0);
   });
 
   it('counts running terminals across projects', async () => {
     const store = new ProjectTasksStore();
-    await store.create('web', { command: 'a' });
-    await store.create('api', { command: 'b' });
+    store.startTask(await store.create('web', { kind: 'terminal', command: 'a' }));
+    store.startTask(await store.create('api', { kind: 'terminal', command: 'b' }));
     expect(store.runningCount).toBe(2);
   });
 });
@@ -122,7 +135,8 @@ describe('terminals-panel — running indicator', () => {
 describe('project-terminals — terminal title', () => {
   it('Terminal title reflects the running command', async () => {
     const store = new ProjectTasksStore();
-    const id = await store.create('p'); // empty shell
+    const id = await store.create('p', { kind: 'terminal' }); // empty shell
+    store.startTask(id);
     const def = store.forProject('p')[0];
     // Before any title escape, the name falls back to the shell basename.
     expect(store.displayName(def)).toBe(store.shell.split('/').pop());
@@ -133,7 +147,8 @@ describe('project-terminals — terminal title', () => {
 
   it('ignores empty titles and keeps the last non-empty one', async () => {
     const store = new ProjectTasksStore();
-    const id = await store.create('p');
+    const id = await store.create('p', { kind: 'terminal' });
+    store.startTask(id);
     store.noteTitle(id, 'npm run dev');
     store.noteTitle(id, '   ');
     expect(store.displayName(store.forProject('p')[0])).toBe('npm run dev');
@@ -141,14 +156,175 @@ describe('project-terminals — terminal title', () => {
 
   it('A created shell terminal is named after the shell', async () => {
     const store = new ProjectTasksStore();
-    await store.create('p');
+    await store.create('p', { kind: 'terminal' });
     expect(store.forProject('p')[0].name).toBe(store.shell.split('/').pop());
   });
 
   it('Falls back to the shell name with no reported title', async () => {
     const store = new ProjectTasksStore();
-    await store.create('p');
+    await store.create('p', { kind: 'terminal' });
     // No noteTitle() called → displayName is the shell basename.
     expect(store.displayName(store.forProject('p')[0])).toBe(store.shell.split('/').pop());
+  });
+});
+
+describe('project-tasks — persistence & lifecycle', () => {
+  it('Round-trip persistence', async () => {
+    const store = new ProjectTasksStore();
+    invokeMock.mockClear();
+    const t1 = await store.create('p', { kind: 'terminal', command: 'npm run dev' });
+    const t2 = await store.create('p', { kind: 'agent', prompt: 'fix the bug' });
+
+    // The last tasks_save call carries a serialized envelope that re-parses to the
+    // exact current defs.
+    const saveCalls = invokeMock.mock.calls.filter((c) => c[0] === 'tasks_save');
+    expect(saveCalls.length).toBeGreaterThan(0);
+    const lastSave = saveCalls[saveCalls.length - 1];
+    const json = (lastSave[1] as { json: string }).json;
+    const reparsed = parseTasks(json);
+    expect(reparsed).toEqual({ p: [store.defForId(t1), store.defForId(t2)] });
+  });
+
+  it('Start a task', async () => {
+    const store = new ProjectTasksStore();
+    const id = await store.create('p', { kind: 'terminal', command: 'npm run dev' });
+    expect(store.runtime[id]).toBeUndefined(); // create does not auto-start
+    store.startTask(id);
+    expect(store.isRunning(id)).toBe(true);
+    expect(store.runtime[id].paneId).toBeTruthy();
+  });
+
+  it('Stop a running task', async () => {
+    const store = new ProjectTasksStore();
+    const id = await store.create('p', { kind: 'terminal', command: 'npm run dev' });
+    store.startTask(id);
+    store.stop(id);
+    expect(store.isRunning(id)).toBe(false);
+  });
+
+  it('Restart allocates a fresh pane', async () => {
+    const store = new ProjectTasksStore();
+    const id = await store.create('p', { kind: 'terminal', command: 'npm run dev' });
+    store.startTask(id);
+    const first = store.runtime[id].paneId;
+    store.restart(id);
+    expect(store.runtime[id].paneId).not.toBe(first);
+  });
+
+  it('Success auto-closes', async () => {
+    const store = new ProjectTasksStore();
+    const id = await store.create('p', { kind: 'terminal', command: 'npm test' });
+    store.startTask(id);
+    store.noteExit(id, 0);
+    // A clean exit of a command task removes its pane (no right-panel slot).
+    expect(store.runtime[id]).toBeUndefined();
+    // The def stays as an idle task.
+    expect(store.forProject('p').some((t) => t.id === id)).toBe(true);
+  });
+
+  it('Error keeps pane open and marks failed', async () => {
+    const store = new ProjectTasksStore();
+    const id = await store.create('p', { kind: 'terminal', command: 'npm test' });
+    store.startTask(id);
+    store.noteExit(id, 1);
+    expect(store.runtime[id]).toBeDefined();
+    expect(store.runtime[id].running).toBe(false);
+    expect(store.runtime[id].exitCode).toBe(1);
+    expect(store.isFailed(id)).toBe(true);
+  });
+
+  it('Dismiss a failed task', async () => {
+    const store = new ProjectTasksStore();
+    const id = await store.create('p', { kind: 'terminal', command: 'npm test' });
+    store.startTask(id);
+    store.noteExit(id, 1);
+    store.dismiss(id);
+    expect(store.runtime[id]).toBeUndefined();
+    // The def remains in the project.
+    expect(store.forProject('p').some((t) => t.id === id)).toBe(true);
+  });
+
+  it('Long-runner persists', async () => {
+    const store = new ProjectTasksStore();
+    const id = await store.create('p', { kind: 'terminal', command: 'npm run dev' });
+    store.startTask(id);
+    // No exit reported → stays running with a live pane.
+    expect(store.runtime[id]).toBeDefined();
+    expect(store.runtime[id].running).toBe(true);
+  });
+});
+
+describe('project-tasks — agent dispatch', () => {
+  it('Agent task opens a workspace session', async () => {
+    const store = new ProjectTasksStore();
+    const spy = vi.fn();
+    store.setAgentLauncher(spy);
+    const id = await store.create('p', { kind: 'agent', prompt: 'do the thing' });
+    store.startTask(id);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [def, projectId] = spy.mock.calls[0] as [TaskDef, string];
+    expect(def.id).toBe(id);
+    expect(def.kind).toBe('agent');
+    expect(projectId).toBe('p');
+  });
+
+  it('Agent task does not use the right panel', async () => {
+    const store = new ProjectTasksStore();
+    store.setAgentLauncher(vi.fn());
+    const id = await store.create('p', { kind: 'agent', prompt: 'do the thing' });
+    store.startTask(id);
+    expect(store.runtime[id]).toBeUndefined();
+  });
+});
+
+describe('project-tasks — bare terminals', () => {
+  it('Bare shell launch', () => {
+    const store = new ProjectTasksStore();
+    const before = JSON.stringify(store.byProject);
+    const id = store.launchBareTerminal('p');
+    const bare = store.bareForProject('p').find((b) => b.id === id);
+    expect(bare).toBeDefined();
+    expect(bare?.running).toBe(true);
+    // No TaskDef was created.
+    expect(JSON.stringify(store.byProject)).toBe(before);
+  });
+
+  it('Bare shell persists on exit', () => {
+    const store = new ProjectTasksStore();
+    const id = store.launchBareTerminal('p');
+    store.noteBareExit(id, 0);
+    const bare = store.bareForProject('p').find((b) => b.id === id);
+    // Even on a clean exit the bare shell stays as a stopped slot (not removed).
+    expect(bare).toBeDefined();
+    expect(bare?.running).toBe(false);
+    expect(bare?.exitCode).toBe(0);
+  });
+});
+
+describe('project-tasks — migration', () => {
+  it('migrates legacy terminals.json on first load', async () => {
+    // No tasks.json yet, but a legacy terminals.json exists.
+    let legacy = addTask({}, 'p', { id: 'a', name: 'zsh', command: null, cwd: null } as TaskDef);
+    legacy = addTask(legacy, 'p', { id: 'b', name: 'npm run dev', command: 'npm run dev', cwd: null } as TaskDef);
+    const legacyJson = serializeTasks(legacy);
+
+    invokeMock.mockImplementation(async (cmd: unknown) => {
+      if (cmd === 'tasks_load') return null; // no tasks.json
+      if (cmd === 'terminals_load') return legacyJson;
+      return null;
+    });
+
+    const store = new ProjectTasksStore();
+    await store.load();
+
+    // Populated as terminal tasks.
+    expect(store.forProject('p').map((t) => t.id)).toEqual(['a', 'b']);
+    expect(store.forProject('p').every((t) => t.kind === 'terminal')).toBe(true);
+    // The migration persisted the result.
+    const saved = invokeMock.mock.calls.some((c) => c[0] === 'tasks_save');
+    expect(saved).toBe(true);
+
+    invokeMock.mockReset();
+    invokeMock.mockImplementation(async () => null);
   });
 });

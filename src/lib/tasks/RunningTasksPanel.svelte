@@ -47,7 +47,7 @@
   // --- New terminal: opens an empty shell immediately (no command prompt) ----
   function addTerminal() {
     if (!activeId) return;
-    void projectTasks.create(activeId);
+    projectTasks.launchBareTerminal(activeId);
   }
 
   // --- Rename inline edit ----------------------------------------------------

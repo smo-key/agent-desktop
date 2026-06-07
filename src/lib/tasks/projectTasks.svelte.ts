@@ -20,12 +20,15 @@ import {
   removeTask,
   renameTask,
   defaultTaskName,
+  defaultAgentName,
+  importLegacyTasks,
   parseTasks,
   serializeTasks,
   tasksForProject,
   captureRunningState,
   autoRestartIds,
   type TaskDef,
+  type TaskKind,
   type TasksByProject
 } from './projectTasks';
 
@@ -42,6 +45,28 @@ export interface TaskRuntime {
   title: string;
   /** One-shot command to type+run after spawn (restore path), or undefined. */
   initialInput?: string;
+}
+
+/**
+ * A TRANSIENT bare interactive shell (⌘T / launcher "Terminal" action) — a live
+ * PTY pane that is NOT a persisted task def. It never touches `byProject` and is
+ * never serialized; it lives only here for the lifetime of the session. Unlike a
+ * terminal task, a bare shell stays in the list as a stopped slot when it exits
+ * (even on a clean exit) — a different experience from a task.
+ */
+export interface BareTerminal {
+  /** Stable unique id (process-local). */
+  id: string;
+  /** The project this bare shell belongs to. */
+  projectId: string;
+  /** The current PTY-bearing pane id; changes only via remove + relaunch. */
+  paneId: string;
+  /** True while the child process is up. */
+  running: boolean;
+  /** Last exit code when the process exited on its own; null otherwise. */
+  exitCode: number | null;
+  /** Live terminal title (OSC 0/2) — the actively running command; empty until one arrives. */
+  title: string;
 }
 
 /** The user's interactive login shell (commands run through it). */
@@ -66,6 +91,11 @@ function nextPaneId(): string {
   paneCounter += 1;
   return `tpane-${Date.now().toString(36)}-${paneCounter.toString(36)}`;
 }
+let bareCounter = 0;
+function nextBareId(): string {
+  bareCounter += 1;
+  return `bare-${Date.now().toString(36)}-${bareCounter.toString(36)}`;
+}
 
 /** The reactive project-terminals store. A single instance is exported below. */
 export class ProjectTasksStore {
@@ -75,8 +105,23 @@ export class ProjectTasksStore {
   /** Runtime state keyed by terminal id (live pane id + running/exit). Not persisted. */
   runtime = $state<Record<string, TaskRuntime>>({});
 
+  /** Transient bare interactive shells, keyed by project id. Not persisted, not task defs. */
+  bareByProject = $state<Record<string, BareTerminal[]>>({});
+
   /** True once `load()` has resolved. */
   loaded = $state(false);
+
+  /**
+   * App-provided launcher for agent-kind tasks: opens a Claude session seeded with
+   * the prompt. Injected so the store stays free of Svelte/workspace imports; null
+   * until the app sets it.
+   */
+  agentLauncher: ((def: TaskDef, projectId: string) => void) | null = null;
+
+  /** Set the injected launcher used to open a Claude session for an agent task. */
+  setAgentLauncher(fn: (def: TaskDef, projectId: string) => void): void {
+    this.agentLauncher = fn;
+  }
 
   /** The user's login shell, resolved once. */
   readonly shell = loginShell();
@@ -104,10 +149,13 @@ export class ProjectTasksStore {
     return s;
   }
 
-  /** Count of running terminals across ALL projects (drives the toggle indicator). */
+  /** Count of running terminals + bare shells across ALL projects (drives the toggle indicator). */
   get runningCount(): number {
     let n = 0;
     for (const rt of Object.values(this.runtime)) if (rt.running) n += 1;
+    for (const list of Object.values(this.bareByProject)) {
+      for (const b of list) if (b.running) n += 1;
+    }
     return n;
   }
 
@@ -126,6 +174,23 @@ export class ProjectTasksStore {
       raw = null;
     }
     this.byProject = parseTasks(raw);
+    // One-time migration: when there is no tasks.json yet, fall back to the legacy
+    // terminals.json — importing each entry as a `terminal` task — and persist the
+    // result so the migration runs exactly once.
+    if (Object.keys(this.byProject).length === 0) {
+      let legacy: string | null = null;
+      try {
+        legacy = await invoke<string | null>('terminals_load');
+      } catch (err) {
+        console.error('terminals_load failed', err);
+        legacy = null;
+      }
+      const migrated = importLegacyTasks(legacy);
+      if (Object.keys(migrated).length > 0) {
+        this.byProject = migrated;
+        await this.save();
+      }
+    }
     // Selective auto-restart: only previously-running terminals come up — and they
     // re-run the command they were running at quit (def.lastCommand), so a restored
     // shell comes back to what it was doing.
@@ -136,27 +201,64 @@ export class ProjectTasksStore {
   }
 
   /**
-   * Create a new terminal in `projectId` and start it (creation implies the user
-   * wants it running now). Returns the new terminal id.
+   * Create (register) a new task in `projectId` WITHOUT starting it — creation just
+   * adds the def. A `terminal` task stores its `command`; an `agent` task stores its
+   * `prompt` (and `command: null`). Returns the new task id; call `startTask` to run it.
    */
   async create(
     projectId: string,
-    opts: { command?: string | null; cwd?: string | null; name?: string } = {}
+    opts: { kind: TaskKind; command?: string | null; cwd?: string | null; prompt?: string; name?: string }
   ): Promise<string> {
-    const command = opts.command && opts.command.trim() !== '' ? opts.command.trim() : null;
-    const def: TaskDef = {
-      id: nextTaskId(),
-      // A shell's default name is the shell basename (e.g. `zsh`); a command's is
-      // the command. The live OSC title (the running command) overrides it at runtime.
-      name: opts.name?.trim() || (command ? defaultTaskName(command) : shellName(this.shell)),
-      kind: 'terminal',
-      command,
-      cwd: opts.cwd ?? null
-    };
+    let def: TaskDef;
+    if (opts.kind === 'agent') {
+      const prompt = typeof opts.prompt === 'string' ? opts.prompt.trim() : '';
+      def = {
+        id: nextTaskId(),
+        name: opts.name?.trim() || defaultAgentName(prompt),
+        kind: 'agent',
+        command: null,
+        cwd: opts.cwd ?? null,
+        prompt
+      };
+    } else {
+      const command = opts.command && opts.command.trim() !== '' ? opts.command.trim() : null;
+      def = {
+        id: nextTaskId(),
+        // A shell's default name is the shell basename (e.g. `zsh`); a command's is
+        // the command. The live OSC title (the running command) overrides it at runtime.
+        name: opts.name?.trim() || (command ? defaultTaskName(command) : shellName(this.shell)),
+        kind: 'terminal',
+        command,
+        cwd: opts.cwd ?? null
+      };
+    }
     this.byProject = addTask(this.byProject, projectId, def);
     await this.save();
-    this.start(def.id);
     return def.id;
+  }
+
+  /** The id of the project that holds task `id`, or null. */
+  projectIdForTask(id: string): string | null {
+    for (const [projectId, list] of Object.entries(this.byProject)) {
+      if (list.some((t) => t.id === id)) return projectId;
+    }
+    return null;
+  }
+
+  /**
+   * Start task `id`, dispatching by kind: a `terminal` allocates a fresh PTY pane in
+   * the right panel (via `start`); an `agent` opens a Claude session via the injected
+   * `agentLauncher` and gets NO right-panel runtime.
+   */
+  startTask(id: string): void {
+    const def = this.defForId(id);
+    if (!def) return;
+    if (def.kind === 'agent') {
+      const projectId = this.projectIdForTask(id);
+      if (projectId) this.agentLauncher?.(def, projectId);
+      return;
+    }
+    this.start(id);
   }
 
   /** Rename a terminal (blank ignored) and persist. */
@@ -187,6 +289,8 @@ export class ProjectTasksStore {
    * An optional `initialInput` command is typed+run once after spawn (restore path).
    */
   start(id: string, initialInput?: string): void {
+    // Agent tasks never get a right-panel pane — they open a Claude session instead.
+    if (this.defForId(id)?.kind === 'agent') return;
     if (this.runtime[id]?.running) return;
     const cmd = initialInput?.trim();
     this.runtime[id] = {
@@ -215,13 +319,111 @@ export class ProjectTasksStore {
   }
 
   /**
-   * Record that the terminal `id`'s process exited on its own (EOF from the PTY).
-   * Flips it to stopped and remembers the exit code; the slot is NOT removed.
+   * Record that terminal task `id`'s process exited on its own (EOF from the PTY).
+   * A COMMAND task that exited cleanly (code 0) AUTO-CLOSES — its running pane is
+   * removed from the right panel (the def stays in `byProject` as idle). Otherwise —
+   * a non-zero exit (failed) OR a bare/no-command shell — it stays as a stopped slot
+   * remembering the exit code.
    */
   noteExit(id: string, code: number): void {
     const rt = this.runtime[id];
     if (!rt) return;
+    const def = this.defForId(id);
+    const hasCommand = def?.kind === 'terminal' && !!def.command && def.command.trim() !== '';
+    if (hasCommand && code === 0) {
+      delete this.runtime[id];
+      return;
+    }
     this.runtime[id] = { ...rt, running: false, exitCode: code };
+  }
+
+  /** True when task `id`'s pane is stopped with a non-zero exit code (a failure). */
+  isFailed(id: string): boolean {
+    const rt = this.runtime[id];
+    return !!rt && !rt.running && rt.exitCode != null && rt.exitCode !== 0;
+  }
+
+  /** Clear task `id`'s pane from the right panel (failed/stopped) WITHOUT removing its def. */
+  dismiss(id: string): void {
+    delete this.runtime[id];
+  }
+
+  // --- Transient bare terminals (runtime-only, never persisted) ---------------
+
+  /**
+   * Launch a transient bare interactive shell in `projectId` (⌘T / launcher
+   * "Terminal"). Adds a running {@link BareTerminal} with a fresh id + pane id and
+   * returns its id. NOT persisted and NOT a task def.
+   */
+  launchBareTerminal(projectId: string): string {
+    const bare: BareTerminal = {
+      id: nextBareId(),
+      projectId,
+      paneId: nextPaneId(),
+      running: true,
+      exitCode: null,
+      title: ''
+    };
+    const current = this.bareByProject[projectId] ?? [];
+    this.bareByProject = { ...this.bareByProject, [projectId]: [...current, bare] };
+    return bare.id;
+  }
+
+  /** The bare shell with id `id` (and its project bucket), or null. */
+  private bareById(id: string): { projectId: string; bare: BareTerminal } | null {
+    for (const [projectId, list] of Object.entries(this.bareByProject)) {
+      const bare = list.find((b) => b.id === id);
+      if (bare) return { projectId, bare };
+    }
+    return null;
+  }
+
+  /**
+   * Record that bare shell `id`'s process exited. Unlike a terminal task, a bare
+   * shell PERSISTS AS A STOPPED slot (it is NOT auto-removed, even on a clean exit)
+   * — a different experience from a task.
+   */
+  noteBareExit(id: string, code: number): void {
+    const found = this.bareById(id);
+    if (!found) return;
+    const { projectId } = found;
+    this.bareByProject = {
+      ...this.bareByProject,
+      [projectId]: (this.bareByProject[projectId] ?? []).map((b) =>
+        b.id === id ? { ...b, running: false, exitCode: code } : b
+      )
+    };
+  }
+
+  /** Record the live terminal title (OSC 0/2) for bare shell `id`. */
+  noteBareTitle(id: string, title: string): void {
+    const found = this.bareById(id);
+    if (!found) return;
+    const clean = title.trim();
+    if (clean === '' || clean === found.bare.title) return;
+    const { projectId } = found;
+    this.bareByProject = {
+      ...this.bareByProject,
+      [projectId]: (this.bareByProject[projectId] ?? []).map((b) =>
+        b.id === id ? { ...b, title: clean } : b
+      )
+    };
+  }
+
+  /** Drop the bare shell `id` from its project bucket. */
+  removeBareTerminal(id: string): void {
+    const found = this.bareById(id);
+    if (!found) return;
+    const { projectId } = found;
+    this.bareByProject = {
+      ...this.bareByProject,
+      [projectId]: (this.bareByProject[projectId] ?? []).filter((b) => b.id !== id)
+    };
+  }
+
+  /** The bare shells belonging to `projectId` (empty when none). */
+  bareForProject(projectId: string): BareTerminal[] {
+    return this.bareByProject[projectId] ?? [];
   }
 
   /** Record the live terminal title (OSC 0/2) for `id` — the running command. */
