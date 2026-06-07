@@ -19,7 +19,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { voice } from '$lib/settings/voice.svelte';
-import { insertDictation } from './insert';
+import { insertDictation, type InsertResult } from './insert';
 import { voiceStore } from './voiceStore.svelte';
 
 /**
@@ -139,12 +139,15 @@ export async function runPolish(raw: string): Promise<string> {
  * final text into the store, and insert it verbatim into the focused agent
  * terminal (no auto-submit). Kept thin: all decision logic is in the pure
  * functions above; this only reads the live store + invokes side effects.
+ *
+ * Returns the [`InsertResult`] so the caller can decide whether to close the panel
+ * (success) or keep it open showing the "no target" / dead-pane state.
  */
-export async function finishDictation(rawFinal: string): Promise<void> {
+export async function finishDictation(rawFinal: string): Promise<InsertResult> {
   const text = await finalizeTranscript(rawFinal, {
     polish: voice.prefs.polish,
     run: runPolish
   });
   voiceStore.setFinal(text);
-  insertDictation(text);
+  return insertDictation(text);
 }

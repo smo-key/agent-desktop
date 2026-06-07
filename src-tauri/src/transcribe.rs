@@ -294,9 +294,32 @@ async fn run_whisper(app: &AppHandle, args: &[String], json_path: &str) -> Resul
         ));
     }
 
-    let json = std::fs::read_to_string(json_path)
-        .map_err(|e| format!("read whisper json {json_path}: {e}"))?;
-    parse_whisper_json(&json)
+    // Prefer the deterministic JSON file. Fall back to whisper-cli's stdout text
+    // (with `-nt` it prints the plain transcript) when the JSON is absent or
+    // unreadable — some builds/flag versions of whisper-cli write it differently.
+    // Only if BOTH are empty do we surface an error, with provisioning guidance
+    // (the most common cause is the placeholder sidecar / missing real binary).
+    match std::fs::read_to_string(json_path) {
+        Ok(json) => parse_whisper_json(&json),
+        Err(_) => {
+            let text = clean_transcript_text(&String::from_utf8_lossy(&output.stdout));
+            if !text.is_empty() {
+                return Ok(text);
+            }
+            Err(format!(
+                "whisper-cli produced no JSON ({json_path}) and no stdout text — \
+                 ensure the real whisper-cli sidecar and a model are provisioned \
+                 (run scripts/fetch-whisper.sh and scripts/fetch-models.sh). stderr: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))
+        }
+    }
+}
+
+/// Collapse a raw text blob (e.g. whisper-cli's plain stdout) into a single-spaced
+/// trimmed transcript. Used as the stdout fallback when the JSON output is absent.
+pub fn clean_transcript_text(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Live partial transcription over a sliding window (scaffolding + typed channel
@@ -335,6 +358,15 @@ mod tests {
     }
     fn u16_le(buf: &[u8], at: usize) -> u16 {
         u16::from_le_bytes([buf[at], buf[at + 1]])
+    }
+
+    #[test]
+    fn clean_transcript_text_collapses_whitespace_and_trims() {
+        assert_eq!(
+            clean_transcript_text("  Hello   world,\n this is\ta test.  "),
+            "Hello world, this is a test."
+        );
+        assert_eq!(clean_transcript_text("   \n\t  "), "");
     }
 
     #[test]

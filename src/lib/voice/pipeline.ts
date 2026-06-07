@@ -235,10 +235,15 @@ export class DictationPipeline {
         return;
       }
 
-      // Polish (per settings) + verbatim insert into the focused terminal. Any
-      // no-target case is surfaced by insertDictation via voiceStore.setError.
-      await finishDictation(rawFinal);
-      voiceStore.close();
+      // Polish (per settings) + verbatim insert into the focused terminal. Close
+      // only on a successful insert; on `no-target` (no focused agent) or a dead
+      // pane, leave the panel OPEN showing the error state so the user sees it and
+      // their dictation isn't silently lost.
+      const result = await finishDictation(rawFinal);
+      if (result.ok) {
+        voiceStore.close();
+      }
+      // else: insertDictation already set the error state on the store; keep open.
     } catch (e) {
       voiceStore.setError(e instanceof Error ? e.message : String(e));
       // Do NOT throw and do NOT close — leave the error visible for the user.

@@ -1,8 +1,9 @@
-// Native double-tap-right-Command activation bridge. The Rust backend
+// Native right-Command tap activation bridge. The Rust backend
 // (`src-tauri/src/voice_activation.rs`) installs an NSEvent monitor that emits a
-// `voice://activate` Tauri event on a completed double-tap of the RIGHT Command
-// key. Here we listen for it and open the voice panel — but only when voice input
-// is enabled in settings (mirroring the on-screen mic button's gate).
+// `voice://activate` Tauri event on a solo tap of the RIGHT Command key (pressed
+// and released with no other key — so it never fires on right-⌘ shortcuts). Here
+// we listen for it and open the voice panel — but only when voice input is enabled
+// in settings (mirroring the on-screen mic button's gate).
 //
 // If the native monitor fails to install (e.g. no Accessibility permission), this
 // listener simply never fires; the on-screen mic button remains the always-works

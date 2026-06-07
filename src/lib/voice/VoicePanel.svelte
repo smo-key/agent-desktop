@@ -18,6 +18,7 @@
   import { modelDownload } from './modelStore.svelte';
   import { voice } from '$lib/settings/voice.svelte';
   import Icon from '../icons/Icon.svelte';
+  import { tooltip } from '../ui/tooltip';
 
   // Model readiness: when the panel opens, ensure the models the current
   // `modelTier` + `polish` selection needs are present, downloading the missing
@@ -133,12 +134,12 @@
   <!-- Footer launcher: a small overlay panel centered in the footer. It's the
        on-screen entry point to dictation — clicking it opens the full voice panel,
        which occupies the same bottom-center spot (so this hides while open). The
-       double-tap right-⌘ gesture opens the same panel. -->
+       right-⌘ tap gesture opens the same panel. -->
   <button
     type="button"
     class="voice-fab"
     aria-label="Voice input"
-    title="Voice input (double-tap right ⌘)"
+    use:tooltip={'Voice input (tap right ⌘)'}
     onclick={() => voiceStore.show()}
   >
     <Icon name="mic" size={15} />
@@ -181,7 +182,7 @@
         <button class="stop-insert" onclick={stopAndInsert}>Stop &amp; insert</button>
       {/if}
       <!-- CANCEL: discard the utterance (stop mic, no transcription, no insert). -->
-      <button class="x" aria-label="Cancel voice input" onclick={() => discard()}>×</button>
+      <button class="x" aria-label="Cancel voice input" use:tooltip={'Cancel (Esc)'} onclick={() => discard()}>×</button>
     </div>
 
     {#if modelDownload.active && voiceStore.state !== 'denied' && voiceStore.state !== 'error'}

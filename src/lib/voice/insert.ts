@@ -100,6 +100,9 @@ export function focusedAgentPaneId(): string | null {
 /** Clear, user-facing message when there is no agent terminal to receive dictation. */
 export const NO_TARGET_MESSAGE = 'No focused agent to receive dictation';
 
+/** Message when the focused agent's process has exited (its PTY is dead). */
+export const DEAD_PANE_MESSAGE = 'The focused agent has exited — nothing to insert into';
+
 /**
  * The entry point the voice pipeline calls when dictation finishes: resolve the
  * currently focused agent pane, look up its terminal, and insert `text` verbatim
@@ -116,8 +119,10 @@ export function insertDictation(
 ): InsertResult {
   const handle = resolveFocusedAgentHandle(getFocusedPaneId(), lookup);
   const result = insertVoiceText(handle, text);
-  if (!result.ok && result.reason === 'no-target') {
-    voiceStore.setError(NO_TARGET_MESSAGE);
+  if (!result.ok) {
+    voiceStore.setError(
+      result.reason === 'no-target' ? NO_TARGET_MESSAGE : DEAD_PANE_MESSAGE
+    );
   }
   return result;
 }

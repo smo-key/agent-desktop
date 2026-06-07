@@ -3,8 +3,10 @@ import {
   POLISH_SYSTEM_PROMPT,
   buildPolishRequest,
   parsePolishResponse,
-  finalizeTranscript
+  finalizeTranscript,
+  finishDictation
 } from './polish';
+import { voice } from '$lib/settings/voice.svelte';
 
 // Tests for the PURE transcript-polish core (tasks.md 6.2–6.4; spec capability
 // `transcript-polish`). The `it(...)` titles align with the spec
@@ -102,5 +104,24 @@ describe('polish — finalizeTranscript (gating + graceful degradation)', () => 
     expect(await finalizeTranscript('raw', { polish: true, run: async () => '   \n\t ' })).toBe(
       'raw'
     );
+  });
+});
+
+describe('finishDictation — propagates the insert result', () => {
+  // P0 regression: when there is no focused agent terminal, finishDictation must
+  // return a `no-target` result so the pipeline keeps the panel OPEN (showing the
+  // error) instead of closing and silently dropping the dictation. Polish is
+  // disabled here so no Tauri `invoke` is needed; with no workspace focused in the
+  // test env, the focused-agent lookup resolves to none → no-target.
+  it('No focused agent — returns no-target (so the caller does not close)', async () => {
+    const prev = voice.prefs.polish;
+    voice.prefs.polish = false;
+    try {
+      const result = await finishDictation('hello world');
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('no-target');
+    } finally {
+      voice.prefs.polish = prev;
+    }
   });
 });

@@ -26,7 +26,7 @@ window; the clean final comes from one pass over the whole utterance.
 **Goals:**
 - Fast, accurate, fully on-device dictation: live overlay latency on the order of
   a few hundred ms; final clean text within ~1s of the user stopping.
-- Activation by mic button and double-tap of the **right** Command key.
+- Activation by mic button and a solo tap of the **right** Command key.
 - Clean, agent-ready output via an optional (default-on) local LLM polish pass.
 - Verbatim insertion into the focused agent's terminal with **no** auto-submit.
 - No transcripts or audio ever leave the device.
@@ -83,16 +83,23 @@ settings toggle (default on) bypasses this stage and inserts the raw transcript.
 a fast/reliable shippable local option in 2026. *Why separate model:* each stage
 does what it's best at; matches Wispr Flow's STT→LLM architecture.
 
-### D5 — Activation: native macOS NSEvent monitor for double-tap right-Cmd
+### D5 — Activation: native macOS NSEvent monitor for a solo right-Cmd tap
 The webview does not see the left/right distinction of modifier keys or
-standalone modifier taps reliably, and Tauri/`globalShortcut` cannot express
-"double-tap right Command". A small Rust native module installs an `NSEvent`
-global monitor for `flagsChanged`, detects two right-Command presses within a
-short window (e.g. ~400ms), and emits a Tauri event the frontend listens for to
-open the panel. The on-screen mic button opens the panel directly. The **Fn**
-gesture is deferred.
-*Alternative:* a normal Cmd-key chord via the existing keydown handler — kept as
-nothing precludes adding one, but the double-tap gesture is the requested UX.
+standalone modifier taps reliably, and Tauri/`globalShortcut` cannot express a
+bare right-Command tap. A small Rust native module (`voice_activation.rs`)
+installs GLOBAL + LOCAL `NSEvent` monitors over `flagsChanged | keyDown`, isolates
+the RIGHT-Command key (keyCode 54), and detects a **solo tap** — right-Command
+pressed and released with no other key/modifier in between — via a pure,
+unit-tested `SoloTapDetector`. On a solo tap it emits a `voice://activate` Tauri
+event the frontend listens for to open the panel. A right-Command *shortcut*
+(e.g. right-⌘+C) disarms the tap (the other key marks "not solo"), so it never
+triggers voice. The on-screen footer mic button opens the panel directly. The
+**Fn** gesture is deferred.
+*Decision history:* originally a double-tap of right-Command; changed to a single
+solo tap per user request (a bare tap is faster, and solo-tap detection keeps it
+from clobbering right-Command shortcuts).
+*Alternative:* "any right-Command press" — rejected because it would hijack every
+right-Command shortcut; the solo-tap discipline is what makes a single tap safe.
 
 ### D6 — Mic capture in the webview
 Audio is captured with `getUserMedia` in the webview and streamed to the Rust STT

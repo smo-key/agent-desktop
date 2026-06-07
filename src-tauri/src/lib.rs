@@ -456,7 +456,24 @@ fn voice_bundled_model_path(app: AppHandle) -> Result<Option<String>, String> {
     let path = resource_dir
         .join("models")
         .join(models::tiny_spec().filename);
-    Ok(path.is_file().then(|| path.to_string_lossy().into_owned()))
+    if path.is_file() {
+        return Ok(Some(path.to_string_lossy().into_owned()));
+    }
+    // Dev fallback: in `tauri dev`/`cargo run` the bundle.resources are NOT staged
+    // into resource_dir, so the bundled model isn't there. Fall back to the
+    // provisioned source-tree copy (`src-tauri/models/<file>`, written by
+    // scripts/fetch-models.sh) so dictation works while developing. Debug only —
+    // a release bundle always ships the real resource.
+    #[cfg(debug_assertions)]
+    {
+        let dev_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("models")
+            .join(models::tiny_spec().filename);
+        if dev_path.is_file() {
+            return Ok(Some(dev_path.to_string_lossy().into_owned()));
+        }
+    }
+    Ok(None)
 }
 
 /// Resolve the absolute on-disk path of the FINAL-pass whisper model for the given

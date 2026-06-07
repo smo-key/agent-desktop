@@ -104,18 +104,17 @@ pub const LARGE_V3_TURBO: ModelSpec = ModelSpec {
     approx_bytes: 574_000_000,
 };
 
-/// Transcript-polish LLM (GGUF). A plausible small instruct model (Qwen3 1.7B
-/// Q4_K_M, ~1.1 GB). NOTE: the polish runtime + the exact model are FINALIZED by
-/// the polish slice (tasks.md 6.x / capability `transcript-polish`); this URL may
-/// be adjusted there. It is kept in the registry NOW so download PLANNING (and the
-/// settings "Models: ready/download" readiness) already accounts for it when
-/// `polish` is enabled.
+/// Transcript-polish LLM (GGUF): Qwen3 1.7B, the `Q8_0` quant — the only GGUF
+/// published in the official `Qwen/Qwen3-1.7B-GGUF` repo (verified to resolve;
+/// ~1.83 GB). A smaller Q4_K_M is not in the official repo, so we use Q8_0 to
+/// keep the URL authoritative. Used by `llama-server` for the optional polish
+/// pass when `polish` is enabled.
 pub const POLISH: ModelSpec = ModelSpec {
     id: "polish-qwen3-1.7b",
     kind: ModelKind::Polish,
-    filename: "Qwen3-1.7B-Q4_K_M.gguf",
-    url: "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf",
-    approx_bytes: 1_120_000_000,
+    filename: "Qwen3-1.7B-Q8_0.gguf",
+    url: "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf",
+    approx_bytes: 1_834_426_016,
 };
 
 /// The bundled tiny model spec (its filename is the source of truth for the
@@ -425,7 +424,7 @@ mod tests {
         let none = models_needed(
             Tier::Accurate,
             true,
-            &present(&["ggml-large-v3-turbo-q5_0.bin", "Qwen3-1.7B-Q4_K_M.gguf"]),
+            &present(&["ggml-large-v3-turbo-q5_0.bin", "Qwen3-1.7B-Q8_0.gguf"]),
         );
         assert!(none.is_empty());
     }

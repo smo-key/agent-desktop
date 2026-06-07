@@ -74,8 +74,12 @@ echo "→ Building whisper-cli (Release) ..."
 cmake -S "$WORK_DIR/whisper.cpp" -B "$WORK_DIR/build" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DBUILD_SHARED_LIBS=OFF \
   -DWHISPER_BUILD_TESTS=OFF \
   -DWHISPER_BUILD_EXAMPLES=ON
+# BUILD_SHARED_LIBS=OFF links libwhisper/libggml STATICALLY into whisper-cli so the
+# copied binary is self-contained. A shared build leaves the CLI depending on
+# @rpath dylibs in the (deleted) temp build tree, which fails to load as a sidecar.
 cmake --build "$WORK_DIR/build" --config Release --target whisper-cli -j
 
 # Locate the produced binary (path varies slightly across whisper.cpp versions).

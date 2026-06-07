@@ -14,6 +14,7 @@
   import VoicePanel from '$lib/voice/VoicePanel.svelte';
   import { initVoiceActivation } from '$lib/voice/activation';
   import Icon from '$lib/icons/Icon.svelte';
+  import { tooltip } from '$lib/ui/tooltip';
   import { startNewSession } from '$lib/launcher/newSession';
   import { workspace } from '$lib/layout/workspace.svelte';
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
@@ -147,9 +148,9 @@
       unlistenEvents = unlisten;
     });
 
-    // Listen for the native double-tap-right-Command gesture (`voice://activate`
-    // from the Rust NSEvent monitor) and open the voice panel. The mic button is
-    // the fallback if the monitor never installs/fires.
+    // Listen for the native right-Command tap gesture (`voice://activate`
+    // from the Rust NSEvent monitor) and open the voice panel. The footer mic
+    // button is the fallback if the monitor never installs/fires.
     let unlistenVoice: (() => void) | undefined;
     void initVoiceActivation().then((unlisten) => {
       unlistenVoice = unlisten;
@@ -541,7 +542,7 @@
         class:active={tasksPanel.open}
         aria-label="Toggle terminals panel"
         aria-pressed={tasksPanel.open}
-        title="Terminals (⌘J)"
+        use:tooltip={{ text: 'Terminals (⌘J)', placement: 'bottom' }}
         onclick={() => tasksPanel.toggle()}
       >
         <Icon name="panel-right" size={14} />
@@ -551,10 +552,10 @@
           </span>
         {/if}
       </button>
-      <button class="tb-btn" aria-label="Settings" title="Settings" onclick={() => settingsModal.show()}>
+      <button class="tb-btn" aria-label="Settings" use:tooltip={{ text: 'Settings', placement: 'bottom' }} onclick={() => settingsModal.show()}>
         <Icon name="settings" size={14} />
       </button>
-      <button class="help-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (⌘/)" onclick={() => help.show()}>?</button>
+      <button class="help-btn" aria-label="Keyboard shortcuts" use:tooltip={{ text: 'Keyboard shortcuts (⌘/)', placement: 'bottom' }} onclick={() => help.show()}>?</button>
     </div>
   </header>
 
@@ -615,7 +616,7 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       class="terminals-grip"
-      title="Drag to resize"
+      use:tooltip={'Drag to resize'}
       onpointerdown={startPanelResize}
     ></div>
     <RunningTasksPanel />

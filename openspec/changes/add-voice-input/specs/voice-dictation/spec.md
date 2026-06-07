@@ -3,20 +3,27 @@
 ### Requirement: Open and close the voice panel
 
 The system SHALL provide a bottom-center voice panel that the user can open to
-dictate. The panel SHALL be openable via an on-screen mic button and via a
-double-tap of the right Command key. At most one voice panel SHALL be open at a
-time. The panel SHALL be dismissable via the Escape key, a click outside the
-panel, and an explicit stop/close control.
+dictate. The panel SHALL be openable via an on-screen mic button (a small
+footer-centered launcher) and via a solo tap of the right Command key (pressed
+and released with no other key in between, so it never fires on a right-Command
+shortcut). At most one voice panel SHALL be open at a time. The panel SHALL be
+dismissable via the Escape key, a click outside the panel, and an explicit
+stop/close control.
 
 #### Scenario: Open via mic button
 
-- **WHEN** the user clicks the voice mic button
+- **WHEN** the user clicks the footer voice mic button
 - **THEN** the voice panel opens at bottom-center and recording begins
 
-#### Scenario: Open via double-tap right Command
+#### Scenario: Open via right Command tap
 
-- **WHEN** the user double-taps the right Command key within the double-tap window
+- **WHEN** the user taps the right Command key alone (press then release, no other key)
 - **THEN** the voice panel opens at bottom-center and recording begins
+
+#### Scenario: Right Command in a shortcut does not open the panel
+
+- **WHEN** the user presses the right Command key together with another key (a shortcut)
+- **THEN** the voice panel does not open
 
 #### Scenario: Single panel instance
 
@@ -99,4 +106,4 @@ tier. Settings SHALL persist across restarts using the existing settings storage
 #### Scenario: Disable the feature
 
 - **WHEN** the user disables the voice feature in settings
-- **THEN** the mic button and double-tap activation no longer open the panel
+- **THEN** the mic button and right-Command tap activation no longer open the panel

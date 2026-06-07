@@ -12,8 +12,9 @@ into the focused agent's terminal — fast enough that it feels instant.
 ## What Changes
 
 - Add a **bottom-center voice panel** that opens via (a) an on-screen mic button
-  and (b) a **double-tap of the right Command key**. While recording it shows a
-  **live overlay of the in-progress transcript** ("what I'm currently saying").
+  and (b) a **solo tap of the right Command key** (pressed and released alone).
+  While recording it shows a **live overlay of the in-progress transcript**
+  ("what I'm currently saying").
 - Capture microphone audio in the webview (`getUserMedia`) with proper macOS
   **microphone-permission** handling (request, denied-state guidance).
 - Transcribe **locally** with a `whisper.cpp` sidecar (Metal-accelerated):
@@ -39,7 +40,7 @@ into the focused agent's terminal — fast enough that it feels instant.
 
 ### New Capabilities
 - `voice-dictation`: The user-facing voice input flow — activation (mic button +
-  double-tap right Command), the bottom-center panel, the live transcript
+  right Command tap), the bottom-center panel, the live transcript
   overlay, microphone permission handling, settings, and verbatim insertion of
   the finished text into the focused agent's terminal (no auto-submit).
 - `local-transcription`: On-device speech-to-text — the `whisper.cpp` sidecar,
@@ -62,7 +63,7 @@ into the focused agent's terminal — fast enough that it feels instant.
   `src/lib/launcher/initialInput.ts`).
 - **Rust backend (Tauri):** new commands + streaming channels/events for STT and
   polish (cf. `pty_spawn` `Channel<T>` pattern in `src-tauri/src/lib.rs`); a
-  native **macOS `NSEvent` global monitor** for double-tap right-Command emitting
+  native **macOS `NSEvent` monitor** for a solo right-Command tap emitting
   a Tauri event; model download/management; extended settings schema in
   `settings_load`/`settings_save`.
 - **Native binaries / packaging:** ship a `whisper.cpp` sidecar (arm64) and a
