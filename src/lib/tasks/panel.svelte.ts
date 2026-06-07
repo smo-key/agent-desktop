@@ -25,7 +25,7 @@ function loadWidth(): number {
   }
 }
 
-export class TerminalsPanelUI {
+export class TasksPanelUI {
   /** Whether the right-docked panel is currently shown. */
   open = $state(false);
 
@@ -51,4 +51,4 @@ export class TerminalsPanelUI {
 }
 
 /** The singleton Terminals-panel UI store. */
-export const terminalsPanel = new TerminalsPanelUI();
+export const tasksPanel = new TasksPanelUI();

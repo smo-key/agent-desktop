@@ -1,7 +1,7 @@
 // Reactive runes store for PROJECT TERMINALS (the right-docked Terminals panel).
-// A thin wrapper over the PURE `projectTerminals.ts` model: it holds the per-
+// A thin wrapper over the PURE `projectTasks.ts` model: it holds the per-
 // project definitions in `$state`, runs the model helpers over them, and persists
-// via the Rust `terminals_load`/`terminals_save` commands (SAME atomic tmp+rename
+// via the Rust `tasks_load`/`tasks_save` commands (SAME atomic tmp+rename
 // as projects, against a sibling `terminals.json`).
 //
 // LIFECYCLE MODEL: a terminal is a durable slot. Its RUNTIME state (the live
@@ -16,21 +16,21 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import {
-  addTerminal,
-  removeTerminal,
-  renameTerminal,
-  defaultTerminalName,
-  parseTerminals,
-  serializeTerminals,
-  terminalsForProject,
+  addTask,
+  removeTask,
+  renameTask,
+  defaultTaskName,
+  parseTasks,
+  serializeTasks,
+  tasksForProject,
   captureRunningState,
   autoRestartIds,
-  type TerminalDef,
-  type TerminalsByProject
-} from './projectTerminals';
+  type TaskDef,
+  type TasksByProject
+} from './projectTasks';
 
 /** Runtime (never-persisted) state for one terminal slot. */
-export interface TerminalRuntime {
+export interface TaskRuntime {
   /** The current PTY-bearing pane id; changes on each (re)start so `{#key}` remounts. */
   paneId: string;
   /** True while the child process is up. */
@@ -57,7 +57,7 @@ function shellName(shell: string): string {
 
 /** Monotonic id factories (process-local). */
 let termCounter = 0;
-function nextTerminalId(): string {
+function nextTaskId(): string {
   termCounter += 1;
   return `term-${Date.now().toString(36)}-${termCounter.toString(36)}`;
 }
@@ -68,12 +68,12 @@ function nextPaneId(): string {
 }
 
 /** The reactive project-terminals store. A single instance is exported below. */
-export class ProjectTerminalsStore {
+export class ProjectTasksStore {
   /** Per-project terminal definitions. Deep-reactive via the runes proxy. */
-  byProject = $state<TerminalsByProject>({});
+  byProject = $state<TasksByProject>({});
 
   /** Runtime state keyed by terminal id (live pane id + running/exit). Not persisted. */
-  runtime = $state<Record<string, TerminalRuntime>>({});
+  runtime = $state<Record<string, TaskRuntime>>({});
 
   /** True once `load()` has resolved. */
   loaded = $state(false);
@@ -82,9 +82,9 @@ export class ProjectTerminalsStore {
   readonly shell = loginShell();
 
   /** Terminals belonging to `projectId` (empty when none / null). */
-  forProject(projectId: string | null): TerminalDef[] {
+  forProject(projectId: string | null): TaskDef[] {
     if (!projectId) return [];
-    return terminalsForProject(this.byProject, projectId);
+    return tasksForProject(this.byProject, projectId);
   }
 
   /** Project ids that currently have at least one terminal (any state). */
@@ -120,12 +120,12 @@ export class ProjectTerminalsStore {
   async load(): Promise<void> {
     let raw: string | null = null;
     try {
-      raw = await invoke<string | null>('terminals_load');
+      raw = await invoke<string | null>('tasks_load');
     } catch (err) {
-      console.error('terminals_load failed', err);
+      console.error('tasks_load failed', err);
       raw = null;
     }
-    this.byProject = parseTerminals(raw);
+    this.byProject = parseTasks(raw);
     // Selective auto-restart: only previously-running terminals come up — and they
     // re-run the command they were running at quit (def.lastCommand), so a restored
     // shell comes back to what it was doing.
@@ -144,15 +144,15 @@ export class ProjectTerminalsStore {
     opts: { command?: string | null; cwd?: string | null; name?: string } = {}
   ): Promise<string> {
     const command = opts.command && opts.command.trim() !== '' ? opts.command.trim() : null;
-    const def: TerminalDef = {
-      id: nextTerminalId(),
+    const def: TaskDef = {
+      id: nextTaskId(),
       // A shell's default name is the shell basename (e.g. `zsh`); a command's is
       // the command. The live OSC title (the running command) overrides it at runtime.
-      name: opts.name?.trim() || (command ? defaultTerminalName(command) : shellName(this.shell)),
+      name: opts.name?.trim() || (command ? defaultTaskName(command) : shellName(this.shell)),
       command,
       cwd: opts.cwd ?? null
     };
-    this.byProject = addTerminal(this.byProject, projectId, def);
+    this.byProject = addTask(this.byProject, projectId, def);
     await this.save();
     this.start(def.id);
     return def.id;
@@ -160,7 +160,7 @@ export class ProjectTerminalsStore {
 
   /** Rename a terminal (blank ignored) and persist. */
   async rename(id: string, name: string): Promise<void> {
-    this.byProject = renameTerminal(this.byProject, id, name);
+    this.byProject = renameTask(this.byProject, id, name);
     await this.save();
   }
 
@@ -168,12 +168,12 @@ export class ProjectTerminalsStore {
   async remove(id: string): Promise<void> {
     this.stop(id);
     delete this.runtime[id];
-    this.byProject = removeTerminal(this.byProject, id);
+    this.byProject = removeTask(this.byProject, id);
     await this.save();
   }
 
   /** The def with id `id` across all projects, or undefined. */
-  defForId(id: string): TerminalDef | undefined {
+  defForId(id: string): TaskDef | undefined {
     for (const list of Object.values(this.byProject)) {
       const found = list.find((t) => t.id === id);
       if (found) return found;
@@ -236,7 +236,7 @@ export class ProjectTerminalsStore {
    * The name to display for terminal `id`: its live OSC title (the running command)
    * when present, else the persisted name (shell basename / command / user rename).
    */
-  displayName(def: TerminalDef): string {
+  displayName(def: TaskDef): string {
     return this.runtime[def.id]?.title || def.name;
   }
 
@@ -254,15 +254,15 @@ export class ProjectTerminalsStore {
     await this.save();
   }
 
-  /** Persist the current definitions via the Rust `terminals_save` command. */
+  /** Persist the current definitions via the Rust `tasks_save` command. */
   private async save(): Promise<void> {
     try {
-      await invoke('terminals_save', { json: serializeTerminals(this.byProject) });
+      await invoke('tasks_save', { json: serializeTasks(this.byProject) });
     } catch (err) {
-      console.error('terminals_save failed', err);
+      console.error('tasks_save failed', err);
     }
   }
 }
 
 /** The singleton project-terminals store, imported by the panel + page chrome. */
-export const projectTerminals = new ProjectTerminalsStore();
+export const projectTasks = new ProjectTasksStore();

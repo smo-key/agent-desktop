@@ -11,9 +11,9 @@
   import { workspace } from '../layout/workspace.svelte';
   import { projects } from '../projects/projects.svelte';
   import { projectForId, projectLabel } from '../projects/projects';
-  import { projectTerminals } from './projectTerminals.svelte';
+  import { projectTasks } from './projectTasks.svelte';
   import { activeProjectId } from './activeProject';
-  import { terminalSpawnSpec } from './projectTerminals';
+  import { taskSpawnSpec } from './projectTasks';
   import { projectFilter } from '../projects/projectFilter.svelte';
   import { ALL, UNASSIGNED } from '../projects/projectRollup';
 
@@ -36,7 +36,7 @@
     })
   );
   const activeProject = $derived(projectForId(projects.list, activeId));
-  const activeTerminals = $derived(projectTerminals.forProject(activeId));
+  const activeTerminals = $derived(projectTasks.forProject(activeId));
 
   // Per-terminal flex weights for the resizable stack (id -> weight, default 1).
   let weights = $state<Record<string, number>>({});
@@ -47,7 +47,7 @@
   // --- New terminal: opens an empty shell immediately (no command prompt) ----
   function addTerminal() {
     if (!activeId) return;
-    void projectTerminals.create(activeId);
+    void projectTasks.create(activeId);
   }
 
   // --- Rename inline edit ----------------------------------------------------
@@ -58,7 +58,7 @@
     draftName = current;
   }
   async function commitRename() {
-    if (editingId) await projectTerminals.rename(editingId, draftName);
+    if (editingId) await projectTasks.rename(editingId, draftName);
     editingId = null;
   }
 
@@ -112,14 +112,14 @@
   <!-- Body: one stack per project (inactive ones hidden but mounted so their
        running PTYs survive a project switch). -->
   <div class="tp-body">
-    {#each projectTerminals.projectIds as pid (pid)}
-      {@const terminals = projectTerminals.forProject(pid)}
+    {#each projectTasks.projectIds as pid (pid)}
+      {@const terminals = projectTasks.forProject(pid)}
       {@const path = projectForId(projects.list, pid)?.path ?? null}
       <div class="tp-stack" class:hidden={pid !== activeId}>
         {#each terminals as term, i (term.id)}
-          {@const rt = projectTerminals.runtime[term.id]}
+          {@const rt = projectTasks.runtime[term.id]}
           {@const running = rt?.running === true}
-          {@const spec = terminalSpawnSpec(term, path, projectTerminals.shell)}
+          {@const spec = taskSpawnSpec(term, path, projectTasks.shell)}
           <div class="tp-term" style="flex: {weightOf(term.id)} 1 0">
             <div class="tp-term-head">
               <span
@@ -143,18 +143,18 @@
                 <button
                   class="tp-name"
                   title="Double-click to rename"
-                  ondblclick={() => beginRename(term.id, projectTerminals.displayName(term))}
+                  ondblclick={() => beginRename(term.id, projectTasks.displayName(term))}
                 >
-                  {projectTerminals.displayName(term)}
+                  {projectTasks.displayName(term)}
                 </button>
               {/if}
               <div class="tp-actions">
                 {#if !running}
-                  <button class="tp-act" title="Start" aria-label="Start" onclick={() => projectTerminals.start(term.id)}>
+                  <button class="tp-act" title="Start" aria-label="Start" onclick={() => projectTasks.start(term.id)}>
                     <Icon name="play" size={12} />
                   </button>
                 {/if}
-                <button class="tp-act" title="Remove" aria-label="Remove" onclick={() => void projectTerminals.remove(term.id)}>
+                <button class="tp-act" title="Remove" aria-label="Remove" onclick={() => void projectTasks.remove(term.id)}>
                   <Icon name="trash-2" size={12} />
                 </button>
               </div>
@@ -170,8 +170,8 @@
                     active={false}
                     visible={pid === activeId}
                     initialInput={rt.initialInput}
-                    onExit={(code) => projectTerminals.noteExit(term.id, code)}
-                    onTitle={(t) => projectTerminals.noteTitle(term.id, t)}
+                    onExit={(code) => projectTasks.noteExit(term.id, code)}
+                    onTitle={(t) => projectTasks.noteTitle(term.id, t)}
                   />
                 {/key}
               {:else}

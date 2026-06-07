@@ -10,6 +10,7 @@
   import SettingsModal from '$lib/ui/SettingsModal.svelte';
   import { settingsModal } from '$lib/ui/settingsStore.svelte';
   import { openWith } from '$lib/settings/openWith.svelte';
+  import { voice } from '$lib/settings/voice.svelte';
   import Icon from '$lib/icons/Icon.svelte';
   import { startNewSession } from '$lib/launcher/newSession';
   import { workspace } from '$lib/layout/workspace.svelte';
@@ -26,10 +27,10 @@
   import { activity, type PaneRef } from '$lib/overview/activity.svelte';
   import { projects } from '$lib/projects/projects.svelte';
   import { projectGit } from '$lib/projects/projectGit.svelte';
-  import TerminalsPanel from '$lib/terminals/TerminalsPanel.svelte';
-  import { terminalsPanel } from '$lib/terminals/panel.svelte';
-  import { projectTerminals } from '$lib/terminals/projectTerminals.svelte';
-  import { activeProjectId } from '$lib/terminals/activeProject';
+  import RunningTasksPanel from '$lib/tasks/RunningTasksPanel.svelte';
+  import { tasksPanel } from '$lib/tasks/panel.svelte';
+  import { projectTasks } from '$lib/tasks/projectTasks.svelte';
+  import { activeProjectId } from '$lib/tasks/activeProject';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import { ALL, UNASSIGNED } from '$lib/projects/projectRollup';
   import { focusTerminal, scrollTerminalToBottom } from '$lib/layout/terminals';
@@ -52,16 +53,18 @@
   onMount(() => {
     // Load the user's open-with preferences (seeds defaults on first run).
     void openWith.load();
+    // Load voice-input preferences from the shared settings blob (seeds defaults).
+    void voice.load();
     // Load each project's terminal definitions and selectively auto-restart the
     // terminals that were running at the previous quit (project-terminals spec).
-    void projectTerminals.load();
+    void projectTasks.load();
     // Capture each terminal's running state on quit so the next launch can
     // selectively auto-restart. Awaited by Tauri before the native close (and
     // before Rust kills the PTYs), so `wasRunning` is persisted in time.
     let unlistenTermClose: (() => void) | undefined;
     void getCurrentWindow()
       .onCloseRequested(async () => {
-        await projectTerminals.captureRunningAndSave();
+        await projectTasks.captureRunningAndSave();
       })
       .then((un) => {
         unlistenTermClose = un;
@@ -245,10 +248,10 @@
   function startPanelResize(e: PointerEvent) {
     e.preventDefault();
     const startX = e.clientX;
-    const startW = terminalsPanel.width;
+    const startW = tasksPanel.width;
     const target = e.currentTarget as HTMLElement;
     target.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => terminalsPanel.setWidth(startW + (startX - ev.clientX));
+    const move = (ev: PointerEvent) => tasksPanel.setWidth(startW + (startX - ev.clientX));
     const up = (ev: PointerEvent) => {
       target.releasePointerCapture(ev.pointerId);
       target.removeEventListener('pointermove', move);
@@ -261,11 +264,11 @@
   // Cmd-T: open a new empty shell terminal in the active project (no prompt) and
   // focus it. Opens the panel first so the new terminal is visible.
   function newTerminal() {
-    terminalsPanel.open = true;
+    tasksPanel.open = true;
     const pid = terminalsActiveProjectId;
     if (!pid) return;
-    void projectTerminals.create(pid).then((id) => {
-      const pane = projectTerminals.runtime[id]?.paneId;
+    void projectTasks.create(pid).then((id) => {
+      const pane = projectTasks.runtime[id]?.paneId;
       if (pane) {
         lastCycledPaneId = pane;
         focusTerminal(pane); // registry parks the request until the pane mounts
@@ -282,8 +285,8 @@
     if (workspace.active && workspace.focusedId) list.push(workspace.focusedId);
     const pid = terminalsActiveProjectId;
     if (pid) {
-      for (const t of projectTerminals.forProject(pid)) {
-        const rt = projectTerminals.runtime[t.id];
+      for (const t of projectTasks.forProject(pid)) {
+        const rt = projectTasks.runtime[t.id];
         if (rt?.running) list.push(rt.paneId);
       }
     }
@@ -292,7 +295,7 @@
   function cycleFocus() {
     const list = focusCycleList();
     if (list.length <= 1) return;
-    terminalsPanel.open = true; // terminals must be mounted/visible to take focus
+    tasksPanel.open = true; // terminals must be mounted/visible to take focus
     const anchor = lastCycledPaneId && list.includes(lastCycledPaneId)
       ? lastCycledPaneId
       : workspace.focusedId;
@@ -360,7 +363,7 @@
     // never kills a running terminal). Works in every view, like Cmd-N.
     if (meta && (key === 'j' || key === 'J')) {
       e.preventDefault();
-      terminalsPanel.toggle();
+      tasksPanel.toggle();
       return;
     }
 
@@ -464,16 +467,16 @@
            clickable. Gear opens Settings; "?" opens the shortcuts modal (⌘/ and ?). -->
       <button
         class="tb-btn"
-        class:active={terminalsPanel.open}
+        class:active={tasksPanel.open}
         aria-label="Toggle terminals panel"
-        aria-pressed={terminalsPanel.open}
+        aria-pressed={tasksPanel.open}
         title="Terminals (⌘J)"
-        onclick={() => terminalsPanel.toggle()}
+        onclick={() => tasksPanel.toggle()}
       >
         <Icon name="panel-right" size={14} />
-        {#if projectTerminals.runningCount > 0}
-          <span class="tb-badge" aria-label={`${projectTerminals.runningCount} running`}>
-            {projectTerminals.runningCount}
+        {#if projectTasks.runningCount > 0}
+          <span class="tb-badge" aria-label={`${projectTasks.runningCount} running`}>
+            {projectTasks.runningCount}
           </span>
         {/if}
       </button>
@@ -534,8 +537,8 @@
        (terminals-panel spec). Takes zero width when closed. -->
   <aside
     class="terminals-dock"
-    class:hidden={!terminalsPanel.open}
-    style="flex-basis: {terminalsPanel.width}px;"
+    class:hidden={!tasksPanel.open}
+    style="flex-basis: {tasksPanel.width}px;"
   >
     <!-- Drag the left edge to resize the panel width (persisted). -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -544,7 +547,7 @@
       title="Drag to resize"
       onpointerdown={startPanelResize}
     ></div>
-    <TerminalsPanel />
+    <RunningTasksPanel />
   </aside>
   </div><!-- /.content-row -->
 
@@ -805,7 +808,7 @@
      surface; zero space (display:none) when toggled off. Stays mounted so its
      PTYs survive a hide. */
   .terminals-dock {
-    flex: 0 0 auto; /* basis set inline from terminalsPanel.width (drag-resizable) */
+    flex: 0 0 auto; /* basis set inline from tasksPanel.width (drag-resizable) */
     min-width: 0;
     height: 100%;
     position: relative;
