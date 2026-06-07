@@ -130,24 +130,31 @@
   // requesting the mic, denied, errored, or already transcribing.
   const canStopAndInsert = $derived(voiceStore.state === 'recording');
 
-  // Live waveform: a symmetric 5-bar display mirrored from 3 sampled magnitudes —
-  // the center bar is the first sample, and each subsequent sample is replicated to
-  // the left and right: [b2, b1, b0, b1, b2]. While recording, poll the pipeline's
-  // analyser each animation frame. The effect re-runs on state change and only
-  // loops while recording (cleaned up otherwise).
-  const BAR_COUNT = 3;
-  let bars = $state<number[]>(new Array(BAR_COUNT).fill(0));
-  const waveBars = $derived([bars[2] ?? 0, bars[1] ?? 0, bars[0] ?? 0, bars[1] ?? 0, bars[2] ?? 0]);
+  // Live waveform: a symmetric, centered 5-bar display. Each bar's height is the
+  // overall mic LEVEL shaped by a centered profile (tallest in the middle) and an
+  // independent per-bar oscillation, so all five bars dance while you speak (rather
+  // than only the center reacting). While recording, sample the level each
+  // animation frame; the effect only loops while recording.
+  const BAR_SHAPE = [0.55, 0.8, 1, 0.8, 0.55]; // centered profile (5 bars)
+  let bars = $state<number[]>(new Array(5).fill(0));
 
   $effect(() => {
     if (voiceStore.state !== 'recording') {
-      bars = new Array(BAR_COUNT).fill(0);
+      bars = new Array(5).fill(0);
       return;
     }
     let raf = 0;
-    const tick = () => {
-      const p = pipeline;
-      if (p) bars = p.getBars(BAR_COUNT);
+    let t0 = 0;
+    const tick = (ts: number) => {
+      if (!t0) t0 = ts;
+      const t = (ts - t0) / 1000;
+      const level = pipeline?.getLevel() ?? 0;
+      bars = BAR_SHAPE.map((shape, i) => {
+        // Independent oscillation per bar (different phase) so they don't move in
+        // lockstep; amplitude scales with the live mic level.
+        const osc = 0.5 + 0.5 * Math.sin(t * 7 + i * 1.25);
+        return level * shape * (0.4 + 0.6 * osc);
+      });
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -238,7 +245,7 @@
       <!-- RECORDING (or requesting mic): live waveform + transcript + confirm (✓). -->
       <div class="rec">
         <div class="wave" aria-hidden="true">
-          {#each waveBars as b, i (i)}
+          {#each bars as b, i (i)}
             <span class="bar" style:height={`${barHeight(b)}px`}></span>
           {/each}
         </div>

@@ -193,9 +193,9 @@ export class DictationPipeline {
     this.#partialTimer = setInterval(() => void this.#tickPartial(), PARTIAL_INTERVAL_MS);
   }
 
-  /** Current mic level as `count` normalized bars (0–1) for the live waveform. */
-  getBars(count: number): number[] {
-    return this.#capture.getBars(count);
+  /** Current normalized mic level (0–1) for the live waveform amplitude. */
+  getLevel(): number {
+    return this.#capture.getLevel();
   }
 
   /** One partial pass: transcribe the buffer-so-far → update the overlay. */

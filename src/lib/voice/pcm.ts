@@ -23,29 +23,3 @@ export function concatFloat32(chunks: Float32Array[]): Float32Array {
   }
   return out;
 }
-
-/**
- * Bucket a magnitude spectrum (e.g. an AnalyserNode's byte frequency data, 0–255)
- * into `count` contiguous bars, averaging each bucket and normalizing to [0, 1].
- * Used to drive the recording waveform (7 rounded bars). An empty input yields
- * `count` zeros. Pure so the bar math is unit-tested without a browser AudioContext.
- */
-export function bucketBars(mags: ArrayLike<number>, count: number): number[] {
-  if (count <= 0) return [];
-  const n = mags.length;
-  if (n === 0) return new Array(count).fill(0);
-  const per = Math.max(1, Math.floor(n / count));
-  const out: number[] = [];
-  for (let i = 0; i < count; i++) {
-    const start = i * per;
-    const end = i === count - 1 ? n : Math.min(n, start + per);
-    let sum = 0;
-    let c = 0;
-    for (let j = start; j < end; j++) {
-      sum += mags[j];
-      c++;
-    }
-    out.push(c > 0 ? sum / c / 255 : 0);
-  }
-  return out;
-}

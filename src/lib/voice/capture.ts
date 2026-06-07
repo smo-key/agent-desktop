@@ -22,7 +22,7 @@
 //   raw-PCM transport proves lower-latency). MANUAL: live capture is verified in
 //   a real window (task 9.1), not headlessly.
 
-import { concatFloat32, bucketBars } from './pcm';
+import { concatFloat32 } from './pcm';
 
 // RAW-PCM PATH (STT slice, task 4.3): whisper.cpp needs raw 16 kHz mono PCM, so
 // alongside the `MediaRecorder` Blob path we tap the `AudioContext` for
@@ -122,8 +122,12 @@ export class MicCapture {
       this.#source = source;
       // Analyser tap for the live waveform (does not need to reach destination).
       const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256; // 128 frequency bins — plenty for 7 bars.
-      analyser.smoothingTimeConstant = 0.7;
+      analyser.fftSize = 256; // 128 frequency bins.
+      // Snappy response + a tighter dB window so ordinary speech spans the range
+      // (drives a lively waveform rather than a barely-moving one).
+      analyser.smoothingTimeConstant = 0.6;
+      analyser.minDecibels = -85;
+      analyser.maxDecibels = -25;
       this.#analyser = analyser;
       this.#freqBuf = new Uint8Array(analyser.frequencyBinCount);
       source.connect(analyser);
@@ -160,16 +164,22 @@ export class MicCapture {
   }
 
   /**
-   * Sample the current mic level as `count` normalized bars (0–1) for the live
-   * waveform. Reads the analyser's instantaneous frequency magnitudes and buckets
-   * them (pure `bucketBars`). Returns `count` zeros when the analyser isn't running
-   * (no AudioContext / not started), so the UI renders a flat idle waveform.
+   * Current normalized mic LEVEL (0–1), averaged over the low/voice band of the
+   * spectrum (where speech energy lives) with a perceptual gain so ordinary speech
+   * spans the range. Drives the live waveform amplitude. Returns 0 when the
+   * analyser isn't running (no AudioContext / not started).
    */
-  getBars(count: number): number[] {
+  getLevel(): number {
     const analyser = this.#analyser;
-    if (!analyser) return new Array(count).fill(0);
+    if (!analyser) return 0;
     analyser.getByteFrequencyData(this.#freqBuf);
-    return bucketBars(this.#freqBuf, count);
+    // Voice band ≈ the low quarter of the spectrum (~0–6 kHz at 48 kHz / fft 256).
+    const n = Math.max(1, Math.floor(this.#freqBuf.length / 4));
+    let sum = 0;
+    for (let i = 0; i < n; i++) sum += this.#freqBuf[i];
+    const avg = sum / n / 255; // 0–1
+    // Perceptual curve + gain so quiet speech still moves the bars; clamp to 1.
+    return Math.min(1, Math.pow(avg, 0.6) * 1.7);
   }
 
   /**
