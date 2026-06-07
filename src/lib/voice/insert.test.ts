@@ -3,7 +3,8 @@ import {
   NO_TARGET_MESSAGE,
   insertDictation,
   insertVoiceText,
-  resolveFocusedAgentHandle
+  resolveFocusedAgentHandle,
+  pickAgentPaneId
 } from './insert';
 import type { TerminalHandle } from '../layout/terminals';
 import { voiceStore } from './voiceStore.svelte';
@@ -141,5 +142,25 @@ describe('insert — insertDictation (wired entry point)', () => {
     expect(result).toEqual({ ok: false, reason: 'no-target' });
     expect(voiceStore.state).toBe('error');
     expect(voiceStore.error).toBe(NO_TARGET_MESSAGE);
+  });
+});
+
+describe('pickAgentPaneId — which agent receives dictation', () => {
+  it('prefers the focused pane when it is itself an agent', () => {
+    expect(pickAgentPaneId('p2', ['p1', 'p2', 'p3'])).toBe('p2');
+  });
+
+  it('falls back to the first agent when the focused pane is not an agent', () => {
+    // focused pane is a project terminal (not in the agent list) → first agent.
+    expect(pickAgentPaneId('term-9', ['p1', 'p2'])).toBe('p1');
+  });
+
+  it('falls back to the first agent when nothing is focused', () => {
+    expect(pickAgentPaneId(null, ['p1', 'p2'])).toBe('p1');
+  });
+
+  it('returns null when there are no agents (caller spawns one)', () => {
+    expect(pickAgentPaneId('p1', [])).toBeNull();
+    expect(pickAgentPaneId(null, [])).toBeNull();
   });
 });

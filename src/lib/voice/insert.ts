@@ -27,6 +27,7 @@
 
 import { getTerminal, type TerminalHandle } from '../layout/terminals';
 import { workspace } from '../layout/workspace.svelte';
+import { findLeaf, leavesInOrder } from '../layout/tree';
 import { voiceStore } from './voiceStore.svelte';
 
 /** The outcome of attempting to insert dictated text into a terminal. */
@@ -76,25 +77,58 @@ export function resolveFocusedAgentHandle(
 }
 
 /**
- * The currently focused AGENT pane id, or `null` when none is focused.
- *
- * Source of truth: `workspace.focusedId` (the active workspace's focused leaf).
- * The inbox/overview makes the selected agent the active workspace's focused leaf
- * (`setFocusIn`), and in the grid the focused leaf is the agent you are driving —
- * so this single value is "which agent pane is focused right now". Project
- * terminals live in a separate panel, not in the workspace tree, so they are
- * never returned here.
- *
- * Thin, untested wrapper (it reads the live store); all logic stays in the pure
- * functions above. Guarded so it is `null` before `init` (no active workspace).
+ * PURE: pick which agent pane should receive dictation. Prefer the currently
+ * focused pane when it is itself an agent; otherwise fall back to the first agent
+ * pane (the active workspace's agents, in tree order). Returns `null` only when
+ * there are no agent panes at all (the caller then spawns a new agent).
  */
-export function focusedAgentPaneId(): string | null {
+export function pickAgentPaneId(
+  focusedPaneId: string | null,
+  agentPaneIds: readonly string[]
+): string | null {
+  if (focusedPaneId && agentPaneIds.includes(focusedPaneId)) return focusedPaneId;
+  return agentPaneIds[0] ?? null;
+}
+
+/**
+ * The active workspace's focused PANE id. `workspace.focusedId` is a structural
+ * LEAF id (NOT a paneId), so we map it through the tree (`findLeaf → leaf.paneId`)
+ * — passing the leaf id straight to `getTerminal` was the "no focused agent" bug.
+ * Thin, untested wrapper; guarded so it is `null` before init.
+ */
+function focusedPaneIdInActive(): string | null {
   try {
-    return workspace.focusedId || null;
+    const leafId = workspace.focusedId;
+    if (!leafId) return null;
+    return findLeaf(workspace.root, leafId)?.paneId ?? null;
   } catch {
-    // No active workspace yet (pre-init): treat as "nothing focused".
     return null;
   }
+}
+
+/**
+ * AGENT (program === 'claude') pane ids in the active workspace, in tree order.
+ * Project terminals (other programs) are excluded. Thin, untested wrapper.
+ */
+function activeAgentPaneIds(): string[] {
+  try {
+    const entry = workspace.active;
+    if (!entry) return [];
+    return leavesInOrder(entry.ws.root)
+      .map((l) => l.paneId)
+      .filter((pid) => entry.registry[pid]?.program === 'claude');
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The agent pane id that should receive dictation: the focused pane when it is an
+ * agent, else the first agent in the active workspace, else `null` (no agents —
+ * the caller spawns one). Thin wrapper over the pure [`pickAgentPaneId`].
+ */
+export function focusedAgentPaneId(): string | null {
+  return pickAgentPaneId(focusedPaneIdInActive(), activeAgentPaneIds());
 }
 
 /** Clear, user-facing message when there is no agent terminal to receive dictation. */

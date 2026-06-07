@@ -20,6 +20,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { voice } from '$lib/settings/voice.svelte';
 import { insertDictation, type InsertResult } from './insert';
+import { spawnAgentWithDictation } from './spawn';
 import { voiceStore } from './voiceStore.svelte';
 
 /**
@@ -140,8 +141,10 @@ export async function runPolish(raw: string): Promise<string> {
  * terminal (no auto-submit). Kept thin: all decision logic is in the pure
  * functions above; this only reads the live store + invokes side effects.
  *
- * Returns the [`InsertResult`] so the caller can decide whether to close the panel
- * (success) or keep it open showing the "no target" / dead-pane state.
+ * Insertion target: the focused/selected agent terminal (verbatim, no auto-submit).
+ * If there is NO existing agent, spin up a NEW agent seeded with the text instead
+ * of failing — so dictation always lands somewhere. Returns the [`InsertResult`]
+ * so the caller closes the panel on success or keeps it open on a real failure.
  */
 export async function finishDictation(rawFinal: string): Promise<InsertResult> {
   const text = await finalizeTranscript(rawFinal, {
@@ -149,5 +152,14 @@ export async function finishDictation(rawFinal: string): Promise<InsertResult> {
     run: runPolish
   });
   voiceStore.setFinal(text);
-  return insertDictation(text);
+
+  const result = insertDictation(text);
+  if (result.ok) return result;
+  // No existing agent to receive it → spawn a new agent seeded with the dictation
+  // (insertDictation already set a 'no-target' error; the panel closes on the ok
+  // we return here, so that transient error is never shown).
+  if (result.reason === 'no-target' && spawnAgentWithDictation(text)) {
+    return { ok: true };
+  }
+  return result;
 }

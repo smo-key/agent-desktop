@@ -82,9 +82,13 @@ echo "→ Building llama-server (Release, Metal) ..."
 cmake -S "$WORK_DIR/llama.cpp" -B "$WORK_DIR/build" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DBUILD_SHARED_LIBS=OFF \
   -DLLAMA_BUILD_TESTS=OFF \
   -DLLAMA_BUILD_EXAMPLES=OFF \
   -DLLAMA_BUILD_SERVER=ON
+# BUILD_SHARED_LIBS=OFF links libllama/libggml STATICALLY into llama-server so the
+# copied binary is self-contained (a shared build leaves it depending on @rpath
+# dylibs in the deleted build tree, which fails to load as a sidecar).
 cmake --build "$WORK_DIR/build" --config Release --target llama-server -j
 
 # Locate the produced binary (path varies slightly across llama.cpp versions).

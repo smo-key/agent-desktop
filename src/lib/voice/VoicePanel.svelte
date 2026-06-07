@@ -12,7 +12,7 @@
   // drive the store via setState/setPartial/setFinal/setError.
 
   import { voiceStore } from './voiceStore.svelte';
-  import { DictationPipeline } from './pipeline';
+  import { DictationPipeline, setActivePipeline } from './pipeline';
   import { classifyMicError, MIC_DENIED_GUIDANCE, micGuidanceFor } from './permission';
   import { ensureModels } from './models';
   import { modelDownload } from './modelStore.svelte';
@@ -46,6 +46,9 @@
     const p = new DictationPipeline();
     let cancelled = false;
     pipeline = p;
+    // Register as the live pipeline so the global activation handler can finalize
+    // it on a second right-⌘ tap (tap-to-stop).
+    setActivePipeline(p);
 
     voiceStore.setState('requesting');
     p.start()
@@ -76,6 +79,7 @@
       cancelled = true;
       p.cancel();
       pipeline = null;
+      setActivePipeline(null);
     };
   });
 

@@ -268,3 +268,20 @@ export class DictationPipeline {
     this.#channel = null;
   }
 }
+
+// --- Active-pipeline registry (for the activation toggle) -------------------
+// VoicePanel owns the live pipeline instance; the global activation handler
+// (`voice://activate`) needs to reach it to finalize on a second right-⌘ tap.
+// VoicePanel registers/clears the active pipeline as it opens/closes.
+
+let activePipeline: DictationPipeline | null = null;
+
+/** VoicePanel registers (on open) / clears (on close) the live pipeline. */
+export function setActivePipeline(p: DictationPipeline | null): void {
+  activePipeline = p;
+}
+
+/** The live pipeline, or null when the panel is closed. */
+export function getActivePipeline(): DictationPipeline | null {
+  return activePipeline;
+}

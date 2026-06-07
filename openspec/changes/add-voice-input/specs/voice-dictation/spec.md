@@ -35,7 +35,19 @@ stop/close control.
 
 - **WHEN** the voice panel is open
 - **AND** the user presses Escape, clicks outside the panel, or activates the stop control
-- **THEN** the panel closes and recording stops
+- **THEN** the panel closes and recording stops without inserting (discard)
+
+#### Scenario: Right Command tap while recording finalizes
+
+- **WHEN** the voice panel is open and recording
+- **AND** the user taps the right Command key again
+- **THEN** the system finalizes the dictation (final pass → polish per settings → insert) and closes the panel
+
+#### Scenario: Escape cancels without inserting
+
+- **WHEN** the voice panel is open and recording
+- **AND** the user presses Escape
+- **THEN** recording stops and nothing is inserted
 
 ### Requirement: Live transcript overlay
 
@@ -71,25 +83,34 @@ SHALL NOT proceed until permission is granted.
 - **THEN** the panel shows guidance to enable microphone access in System Settings
 - **AND** no audio is captured
 
-### Requirement: Verbatim insertion into the focused agent terminal
+### Requirement: Verbatim insertion into the focused or selected agent terminal
 
 When dictation completes, the system SHALL insert the finished text verbatim into
-the currently focused agent's terminal using the existing terminal send path. The
-system SHALL NOT append a trailing carriage return (no auto-submit), and SHALL NOT
-wrap, synthesize, or otherwise alter the text into a command. If no agent terminal
-is focused, the system SHALL surface a clear "no target" state and SHALL NOT send
-the text anywhere.
+the target agent's terminal using the existing terminal send path. The target is
+the focused agent pane when one is focused, otherwise the selected/first agent in
+the active workspace. The system SHALL NOT append a trailing carriage return (no
+auto-submit), and SHALL NOT wrap, synthesize, or otherwise alter the text into a
+command. If there is NO existing agent, the system SHALL spin up a new agent
+seeded with the dictated text rather than discarding it. Only when there is no
+agent AND no project to start one in SHALL the system surface a clear "no target"
+state.
 
-#### Scenario: Insert into focused terminal
+#### Scenario: Insert into the focused/selected agent
 
-- **WHEN** dictation finishes and an agent terminal is focused
-- **THEN** the finished text is written verbatim into that terminal without a trailing carriage return
+- **WHEN** dictation finishes and an agent pane is focused or selected
+- **THEN** the finished text is written verbatim into that agent's terminal without a trailing carriage return
 - **AND** the user can review and press enter to submit
 
-#### Scenario: No focused agent terminal
+#### Scenario: No existing agent — spawn a new one
 
-- **WHEN** dictation finishes and no agent terminal is focused
-- **THEN** the panel shows a "no target" state and does not send the text
+- **WHEN** dictation finishes and there is no existing agent terminal
+- **AND** a project is available to launch into
+- **THEN** the system spawns a new agent seeded with the dictated text
+
+#### Scenario: No agent and no project
+
+- **WHEN** dictation finishes, there is no agent, and no project to start one in
+- **THEN** the panel shows a "no target" state and does not lose the text silently
 
 ### Requirement: Voice settings
 
