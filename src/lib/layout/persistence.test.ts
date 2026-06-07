@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   Debouncer,
   PERSIST_VERSION,
+  pruneEmptySessions,
   respawnLeaves,
   restoreState,
   serializeState,
+  type PersistedSession,
   type PersistedState,
+  type RestoredState,
   type RestoredWorkspace
 } from './persistence';
 import { freshWorkspace, type Leaf, type Node, type Split, type Workspace } from './tree';
@@ -415,6 +418,160 @@ describe('Graceful Fallback On Corrupt State', () => {
     expectFreshClaudeWorkspace(restoreState(JSON.stringify({ foo: 'bar' }), ids('fresh')));
     expectFreshClaudeWorkspace(restoreState(JSON.stringify(42), ids('fresh')));
     expectFreshClaudeWorkspace(restoreState(JSON.stringify(null), ids('fresh')));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prune Unused (created-but-never-messaged) Sessions On Restore
+// ---------------------------------------------------------------------------
+
+describe('Prune Unused Sessions On Restore', () => {
+  // A single-leaf workspace L -> pane.
+  function leafWorkspace(leafId: string, paneId: string): Workspace {
+    return { version: 1, root: leaf(leafId, paneId), focusedId: leafId };
+  }
+  // A restored workspace with an explicit (rich) registry.
+  function ws(
+    id: string,
+    tree: Workspace,
+    registry: Record<string, PersistedSession>
+  ): RestoredWorkspace {
+    return { id, name: id, ws: tree, registry };
+  }
+  // A previously-created claude session (carries a saved id, hence resume:true).
+  const resumed = (sid: string): PersistedSession => ({
+    program: 'claude',
+    cwd: '/a',
+    sessionId: sid,
+    resume: true
+  });
+  const state = (workspaces: RestoredWorkspace[], active: string): RestoredState => ({
+    workspaces,
+    activeWorkspaceId: active
+  });
+
+  it('A created-but-never-used session window is dropped', () => {
+    const s = state([ws('ws-1', leafWorkspace('L1', 'p1'), { p1: resumed('s1') })], 'ws-1');
+    const pruned = pruneEmptySessions(s, () => false); // no history anywhere
+    expect(pruned.workspaces).toHaveLength(0);
+    expect(pruned.activeWorkspaceId).toBe('');
+  });
+
+  it('A session WITH history is always restored', () => {
+    const s = state([ws('ws-1', leafWorkspace('L1', 'p1'), { p1: resumed('s1') })], 'ws-1');
+    const pruned = pruneEmptySessions(s, (id) => id === 'p1');
+    expect(pruned.workspaces).toHaveLength(1);
+    expect(pruned.activeWorkspaceId).toBe('ws-1');
+  });
+
+  it('A fresh (non-resume) claude pane is kept even with no history', () => {
+    const s = state(
+      [ws('ws-1', leafWorkspace('L1', 'p1'), { p1: { program: 'claude', cwd: null, sessionId: 's1' } })],
+      'ws-1'
+    );
+    expect(pruneEmptySessions(s, () => false).workspaces).toHaveLength(1);
+  });
+
+  it('A shell pane is never pruned', () => {
+    const s = state(
+      [ws('ws-1', leafWorkspace('L1', 'p1'), { p1: { program: '/bin/zsh', cwd: null } })],
+      'ws-1'
+    );
+    expect(pruneEmptySessions(s, () => false).workspaces).toHaveLength(1);
+  });
+
+  it('In a split, only the empty-session leaf is pruned; the window survives', () => {
+    const s = state(
+      [ws('ws-1', rowWorkspace(), { p1: resumed('s1'), p2: resumed('s2') })],
+      'ws-1'
+    );
+    const pruned = pruneEmptySessions(s, (id) => id === 'p1'); // p2 never messaged
+    expect(pruned.workspaces).toHaveLength(1);
+    const w = pruned.workspaces[0];
+    expect(w.ws.root.type).toBe('leaf');
+    expect((w.ws.root as Leaf).paneId).toBe('p1');
+    expect(Object.keys(w.registry)).toEqual(['p1']);
+  });
+
+  it('Active id re-resolves to a survivor when the active window is dropped', () => {
+    const s = state(
+      [
+        ws('ws-1', leafWorkspace('L1', 'p1'), { p1: resumed('s1') }), // empty -> dropped
+        ws('ws-2', leafWorkspace('L2', 'p2'), { p2: resumed('s2') }) // has history -> kept
+      ],
+      'ws-1'
+    );
+    const pruned = pruneEmptySessions(s, (id) => id === 'p2');
+    expect(pruned.workspaces.map((w) => w.id)).toEqual(['ws-2']);
+    expect(pruned.activeWorkspaceId).toBe('ws-2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Closed (Completed) Sessions Round-Trip
+// ---------------------------------------------------------------------------
+
+describe('Closed Sessions Persist As Closed', () => {
+  it('A closed claude pane serializes + restores as closed (no resume until restored)', () => {
+    const ws: Workspace = { version: 1, root: leaf('L1', 'p1'), focusedId: 'L1' };
+    const reg: Record<string, PersistedSession> = {
+      p1: { program: 'claude', cwd: '/a', sessionId: 's1', closed: true }
+    };
+    const state = serializeState([{ id: 'ws-1', name: 'S', ws, registry: reg }], 'ws-1');
+    expect(state.workspaces[0].registry.p1.closed).toBe(true);
+
+    const restored = restoreState(JSON.stringify(state), ids('n'));
+    const back = restored.workspaces[0].registry.p1;
+    expect(back.closed).toBe(true);
+    expect(back.sessionId).toBe('s1'); // keep the id so a later restore can --resume
+    expect(back.resume).toBeFalsy(); // closed panes do NOT auto-resume on restart
+  });
+
+  it('A paused claude pane serializes + restores as paused, keeping its baseline hash', () => {
+    const ws: Workspace = { version: 1, root: leaf('L1', 'p1'), focusedId: 'L1' };
+    const reg: Record<string, PersistedSession> = {
+      p1: { program: 'claude', cwd: '/a', sessionId: 's1', paused: true, pausedHash: 'h1' }
+    };
+    const state = serializeState([{ id: 'ws-1', name: 'S', ws, registry: reg }], 'ws-1');
+    expect(state.workspaces[0].registry.p1.paused).toBe(true);
+    expect(state.workspaces[0].registry.p1.pausedHash).toBe('h1');
+
+    const restored = restoreState(JSON.stringify(state), ids('n'));
+    const back = restored.workspaces[0].registry.p1;
+    expect(back.paused).toBe(true);
+    expect(back.pausedHash).toBe('h1'); // baseline survives so it doesn't auto-resume on restart
+    // A paused pane is LIVE (unlike closed): it resumes its transcript so you can
+    // keep messaging it.
+    expect(back.resume).toBe(true);
+    expect(back.closed).toBeFalsy();
+  });
+
+  it('A previewing session persists as archived', () => {
+    // Preview is RUNTIME-ONLY: a session resumed for viewing (closed:false, resume:true,
+    // preview:true) must be written as ARCHIVED so an app restart never restores it live.
+    const ws: Workspace = { version: 1, root: leaf('L1', 'p1'), focusedId: 'L1' };
+    const reg: Record<string, PersistedSession> = {
+      p1: {
+        program: 'claude',
+        cwd: '/a',
+        sessionId: 's1',
+        closed: false,
+        resume: true,
+        preview: true,
+        previewHash: 'h1'
+      }
+    };
+    const state = serializeState([{ id: 'ws-1', name: 'S', ws, registry: reg }], 'ws-1');
+    expect(state.workspaces[0].registry.p1.closed).toBe(true);
+    expect(state.workspaces[0].registry.p1.preview).toBeUndefined();
+    expect(state.workspaces[0].registry.p1.resume).toBeFalsy();
+
+    const restored = restoreState(JSON.stringify(state), ids('n'));
+    const back = restored.workspaces[0].registry.p1;
+    expect(back.closed).toBe(true);
+    expect(back.resume).toBeFalsy();
+    expect(back.preview).toBeFalsy();
+    expect(back.sessionId).toBe('s1'); // keep the id so re-selecting can --resume
   });
 });
 

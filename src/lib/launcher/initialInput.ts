@@ -51,11 +51,26 @@ export const SUBMIT_BYTES: number[] = [0x0d];
 
 /**
  * Default delay (ms) between writing the prompt text and writing the submitting
- * Enter. The app additionally gates the whole delivery on claude's first output
- * (the TUI is up); this short settle then lets the typed line register before the
- * Enter submits it.
+ * Enter, so the typed line registers in claude's input box before the Enter
+ * submits it.
  */
-export const SUBMIT_DELAY_MS = 250;
+export const SUBMIT_DELAY_MS = 400;
+
+/**
+ * How long claude's terminal output must be QUIET (ms) before we deliver the
+ * initial prompt. claude emits a burst of setup/render output on startup, then
+ * falls quiet at the ready input box; delivering only after this quiet window
+ * ensures the TUI is actually accepting input (writing during the startup burst
+ * is the root cause of "text not entered / Enter not registered"). Must exceed
+ * the gaps WITHIN claude's startup render but be shorter than a human notices.
+ */
+export const READY_QUIET_MS = 700;
+
+/**
+ * Hard cap (ms) after the PTY is wired: if claude never goes quiet (continuous
+ * output), deliver anyway so the prompt still lands rather than hanging forever.
+ */
+export const READY_MAX_MS = 8000;
 
 /** Sink that forwards encoded bytes to the PTY (TerminalPane passes `pty_write`). */
 export type WriteFn = (data: number[]) => void;

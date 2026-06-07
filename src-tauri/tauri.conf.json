@@ -15,6 +15,7 @@
         "title": "agent-desktop",
         "width": 1100,
         "height": 720,
+        "maximized": true,
         "resizable": true,
         "fullscreen": false,
         "titleBarStyle": "Overlay",

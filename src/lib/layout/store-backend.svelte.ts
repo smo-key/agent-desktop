@@ -22,8 +22,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   Debouncer,
+  pruneEmptySessions,
   restoreState,
   serializeState,
+  type RestoredState,
   type RestoredWorkspace
 } from './persistence';
 import { workspace, type WorkspaceEntry } from './workspace.svelte';
@@ -62,23 +64,64 @@ async function flushSave(): Promise<void> {
 }
 
 /**
- * Load + restore the persisted layout, returning the active workspace id the
- * caller should consider current. On ANY failure this resolves to a fresh
- * single-pane `claude` workspace (restoreState never throws).
+ * Load + restore the persisted layout. FIRST LAUNCH (no persisted layout) starts
+ * with ZERO workspaces — we never fabricate an agent the user didn't ask for; the
+ * overview shows its empty state until they launch their first mission. A saved
+ * layout restores normally (and an explicitly-empty saved layout stays empty,
+ * rather than re-creating an agent). `restoreState` never throws.
  */
 export async function restorePersistedLayout(): Promise<void> {
   let raw: string | null = null;
   try {
     raw = await invoke<string | null>('layout_load');
   } catch (err) {
-    // Couldn't even read the file -> fall through to a fresh workspace.
+    // Couldn't even read the file -> start empty (do NOT fabricate an agent).
     console.error('layout_load failed', err);
     raw = null;
   }
 
+  // No persisted layout at all -> empty workspace list, no auto-spawned agent.
+  if (raw == null || raw.trim() === '') return;
+
   const restored = restoreState(raw, workspace.nodeIdFactory);
+  // Drop agent windows that were created but never used (a saved session with no
+  // transcript history) — but keep every session that has any history.
+  const pruned = await pruneUnusedSessions(restored);
   // `RestoredWorkspace` is structurally a `WorkspaceEntry` ({id,name,ws,registry}).
-  workspace.restoreFrom(restored.workspaces as WorkspaceEntry[], restored.activeWorkspaceId);
+  workspace.restoreFrom(pruned.workspaces as WorkspaceEntry[], pruned.activeWorkspaceId);
+}
+
+/**
+ * Resolve which restored `claude` panes have real transcript history (the user
+ * sent at least one message — Rust reports `userHash` non-null for those) and
+ * prune the rest via `pruneEmptySessions`. On any failure we keep EVERYTHING:
+ * losing an unused window is acceptable, silently dropping a real session is not.
+ */
+async function pruneUnusedSessions(state: RestoredState): Promise<RestoredState> {
+  const panes: { paneId: string; sessionId: string; cwd: string | null }[] = [];
+  for (const w of state.workspaces) {
+    for (const [paneId, s] of Object.entries(w.registry)) {
+      if (s.program === 'claude' && s.sessionId) {
+        panes.push({ paneId, sessionId: s.sessionId, cwd: s.cwd });
+      }
+    }
+  }
+  if (panes.length === 0) return state;
+
+  const withHistory = new Set<string>();
+  try {
+    const map = await invoke<Record<string, { userHash?: string | null }>>('activity_for', {
+      panes
+    });
+    for (const [paneId, act] of Object.entries(map)) {
+      if (act && act.userHash) withHistory.add(paneId);
+    }
+  } catch (err) {
+    console.error('activity_for (restore prune) failed; restoring all sessions', err);
+    return state;
+  }
+
+  return pruneEmptySessions(state, (paneId) => withHistory.has(paneId));
 }
 
 /**

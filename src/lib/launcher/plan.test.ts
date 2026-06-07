@@ -129,4 +129,14 @@ describe('buildLaunchPlan — normalization', () => {
     expect(plan.program).toBe('claude');
     expect(plan.cwd).toBe('/proj/with-spaces');
   });
+
+  it('Project assigned at launch', () => {
+    expect(buildLaunchPlan({ folder: '/p', placement: 'tab', projectId: 'pay' }).projectId).toBe(
+      'pay'
+    );
+    expect(buildLaunchPlan({ folder: '/p', placement: 'tab' }).projectId).toBeUndefined();
+    expect(
+      buildLaunchPlan({ folder: '/p', placement: 'tab', projectId: '  ' }).projectId
+    ).toBeUndefined();
+  });
 });

@@ -116,6 +116,7 @@
       <section class="field">
         <span class="label">Project</span>
         <ProjectSelect
+          autofocus
           value={selectedProjectId}
           onChange={(id) => (selectedProjectId = id)}
         />
@@ -146,8 +147,9 @@
 
   .dialog {
     width: min(580px, calc(100vw - 32px));
-    max-height: 80vh;
-    overflow-y: auto;
+    /* `visible` so the project dropdown can extend past the (short) dialog without
+       being clipped. The dialog content is small — there's nothing to scroll. */
+    overflow: visible;
     display: flex;
     flex-direction: column;
     gap: 16px;

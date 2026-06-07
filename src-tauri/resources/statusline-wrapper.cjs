@@ -201,7 +201,7 @@ function detectTask(sessionId) {
  * `behind` is vs origin/main; `ahead` is vs the upstream branch. Fully guarded.
  */
 function gitStatus(workspaceDir) {
-  const out = { branch: null, dirty: null, ahead: null, behind: null };
+  const out = { branch: null, dirty: null, modified: null, ahead: null, behind: null };
   try {
     const dir = str(workspaceDir);
     if (!dir) return out;
@@ -216,9 +216,14 @@ function gitStatus(workspaceDir) {
     };
     const branch = runGit(['rev-parse', '--abbrev-ref', 'HEAD']);
     if (branch !== null) out.branch = branch.length ? branch : null;
-    // `--porcelain` prints one line per change; empty stdout => clean tree.
+    // `--porcelain` prints one line per change; empty stdout => clean tree. The
+    // line count is the number of modified paths (`dirty` is just `count > 0`).
     const porcelain = runGit(['status', '--porcelain']);
-    if (porcelain !== null) out.dirty = porcelain.length > 0;
+    if (porcelain !== null) {
+      const count = porcelain.length ? porcelain.split('\n').filter((l) => l.length).length : 0;
+      out.dirty = count > 0;
+      out.modified = count;
+    }
     // Commits BEHIND origin/main (matches the user's Claude statusline). Null
     // when origin/main is unavailable (no remote / not fetched).
     const behind = runGit(['rev-list', 'HEAD..origin/main', '--count', '--no-merges']);

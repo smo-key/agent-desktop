@@ -1,0 +1,36 @@
+# OpenSpec project configuration.
+#
+# This file customizes OpenSpec's behavior WITHOUT editing any generated source
+# files (the `.claude/skills/openspec-*` SKILL.md files or the package schema).
+# `openspec update` regenerates those skills but leaves this file untouched, and
+# `rules` below are ADDITIVE to the built-in schema's instructions — so upstream
+# improvements to the schema still flow through.
+#
+# How it works: every OpenSpec step skill (propose, new-change, continue, ff)
+# runs `openspec instructions <artifact> --json` and obeys the `rules` it gets
+# back. Rules keyed by artifact id are injected for that artifact only.
+#
+# See docs/openspec-interview-addon/README.md for how to reuse this elsewhere.
+
+schema: spec-driven
+
+rules:
+  # Interview-style requirements gathering, applied when the `proposal`
+  # artifact is created (the entry point — it shapes specs, design, and tasks).
+  proposal:
+    - "MANDATORY INTERVIEW GATE: Before drafting proposal.md, conduct a requirements interview with the user and wait for their answers. Do NOT write the proposal first. This gate intentionally overrides any 'prefer reasonable assumptions to keep momentum' guidance — for proposals, interviewing the user takes priority over speed."
+    - "Use the AskUserQuestion tool for the interview. Group related questions into focused batches (you do NOT need to ask strictly one at a time); keep each batch small and easy to answer, and prefer concrete multiple-choice options with a recommended default where you have one."
+    - "Cover, at minimum: (a) the underlying problem and why it matters now; (b) who the users / stakeholders are; (c) scope boundaries — what is explicitly in and out; (d) hard constraints (tech, compatibility, dependencies, timeline); (e) success criteria — how we will know it worked; (f) alternatives already considered or rejected."
+    - "Start from what the user has already told you. Only ask about genuine unknowns — never re-ask something already stated. You may skip a topic that is already unambiguous, but when in doubt, ask."
+    - "After the interview, reflect the requirements back to the user in 2–4 sentences and get explicit confirmation before writing proposal.md."
+    - "The interview shapes the proposal's content — do NOT paste the questions, answers, or these rules into proposal.md itself."
+
+  # Scope-review gate, applied when the `specs` artifact is created. Because
+  # specs depend on the proposal, this fires after proposal.md exists and BEFORE
+  # any spec files are written, so the user reviews and approves the scope before
+  # any spec work begins.
+  specs:
+    - "SCOPE REVIEW GATE: Before creating or editing ANY file under specs/, present a detailed summary of the proposal's scope to the user and get explicit approval. Do NOT write spec files until the user approves."
+    - "The summary must cover: each capability that will be specified and the key requirements / behaviors it will contain (call out notable scenarios and edge cases); what is explicitly IN scope versus OUT of scope; and the expected impact (affected code, APIs, dependencies). Scale the detail to the change's complexity."
+    - "Present it readably, grouped by capability, then ask whether it looks right. If the user requests changes, update proposal.md / the scope accordingly and re-present before proceeding. Only after approval, write the spec files."
+    - "This summary gates the work — do NOT paste it or these rules into the spec files themselves."

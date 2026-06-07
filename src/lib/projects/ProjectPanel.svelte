@@ -11,6 +11,7 @@
   // parent passes in. Creating a project persists it and selects it.
 
   import type { AgentRow } from '../overview/roster';
+  import type { Project } from './projects';
   import { projects } from './projects.svelte';
   import { projectFilter } from './projectFilter.svelte';
   import {
@@ -19,11 +20,12 @@
     ALL,
     UNASSIGNED
   } from './projectRollup';
-  import { PROJECT_ICON_CHOICES, hexA } from './projects';
-  import { pickFolder } from '../launcher/pick';
   import Icon from '../icons/Icon.svelte';
   import ProjectIcon from '../icons/ProjectIcon.svelte';
+  import ProjectDialog from './ProjectDialog.svelte';
   import ContextMenu, { type MenuItem } from '../ui/ContextMenu.svelte';
+  import GitInfo from '../usage/GitInfo.svelte';
+  import { projectGit } from './projectGit.svelte';
 
   let {
     rows,
@@ -47,7 +49,16 @@
       y: e.clientY,
       items: [
         {
+          label: 'Edit project…',
+          icon: 'pencil',
+          onClick: () => {
+            creating = false;
+            editingId = projectId;
+          }
+        },
+        {
           label: 'Delete project',
+          icon: 'trash-2',
           danger: true,
           onClick: () => {
             const ok =
@@ -56,6 +67,7 @@
                 : true;
             if (!ok) return;
             void projects.remove(projectId);
+            if (editingId === projectId) editingId = null;
             if (projectFilter.selected === projectId) projectFilter.select(ALL);
           }
         }
@@ -67,69 +79,44 @@
   const counts = $derived(projectCounts(rows, projects.list));
   const unassigned = $derived(unassignedCount(rows));
 
-  // --- Create-project form state -------------------------------------------
+  // --- Create / edit dialog state (the shared ProjectForm drives both) ------
   let creating = $state(false);
-  let name = $state('');
-  let folder = $state('');
-  let pick = $state(PROJECT_ICON_CHOICES[0]);
-  let browsing = $state(false);
+  /** The id of the project being edited, or null. Mutually exclusive with `creating`. */
+  let editingId = $state<string | null>(null);
+  /** The resolved project being edited (or null) — feeds the edit dialog. */
+  const editProject = $derived(
+    editingId ? (projects.list.find((p) => p.id === editingId) ?? null) : null
+  );
 
-  const canCreate = $derived(name.trim() !== '' && folder.trim() !== '');
-
-  async function browse() {
-    if (browsing) return;
-    browsing = true;
-    try {
-      const picked = await pickFolder(folder.trim() || undefined);
-      if (picked) folder = picked;
-    } finally {
-      browsing = false;
-    }
-  }
-
-  function resetCreate() {
-    creating = false;
-    name = '';
-    folder = '';
-    pick = PROJECT_ICON_CHOICES[0];
-  }
-
-  async function create() {
-    if (!canCreate) return;
-    const stored = await projects.add({
-      id: crypto.randomUUID(),
-      name: name.trim(),
-      path: folder.trim(),
-      icon: pick.icon,
-      color: pick.color
-    });
+  async function saveCreate(draft: Omit<Project, 'id'>) {
+    const stored = await projects.add({ id: crypto.randomUUID(), ...draft });
     projectFilter.select(stored.id);
-    resetCreate();
+    creating = false;
   }
 
-  function onCreateKey(e: KeyboardEvent) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      void create();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      resetCreate();
-    }
+  async function saveEdit(id: string, draft: Omit<Project, 'id'>) {
+    await projects.update(id, draft);
+    editingId = null;
   }
 </script>
 
 {#if collapsed}
-  <!-- Collapsed: a thin icon rail. Expand button + a clickable icon per filter. -->
+  <!-- Collapsed: a thin icon rail. Expand button + a clickable icon per filter.
+       Each filter icon carries an instant, styled flyout tooltip (.pp-tip) with
+       its name — no native `title` (those are slow + unstyled). -->
   <aside class="ppanel rail" aria-label="Projects">
-    <button class="pp-rail-btn" onclick={() => onToggle?.()} title="Expand projects" aria-label="Expand projects">»</button>
+    <button class="pp-rail-btn" onclick={() => onToggle?.()} aria-label="Expand projects">
+      »<span class="pp-tip">Expand projects</span>
+    </button>
     <button
       type="button"
       class="pp-rail-ic"
       class:active={projectFilter.selected === ALL}
       onclick={() => projectFilter.select(ALL)}
-      title="All agents"
+      aria-label="All agents"
     >
       <Icon name="layers" size={16} color="var(--fg-4)" />
+      <span class="pp-tip">All agents</span>
     </button>
     {#each counts as c (c.project.id)}
       <button
@@ -137,10 +124,11 @@
         class="pp-rail-ic"
         class:active={projectFilter.selected === c.project.id}
         onclick={() => projectFilter.select(c.project.id)}
-        title={c.project.name}
+        aria-label={c.project.name}
       >
-        <ProjectIcon icon={c.project.icon} color={c.project.color} size={18} />
+        <ProjectIcon icon={c.project.icon} color={c.project.color} logo={c.project.logo} size={18} />
         {#if c.attn}<span class="pp-rail-attn" aria-hidden="true"></span>{/if}
+        <span class="pp-tip">{c.project.name}</span>
       </button>
     {/each}
     {#if unassigned > 0}
@@ -149,9 +137,10 @@
         class="pp-rail-ic"
         class:active={projectFilter.selected === UNASSIGNED}
         onclick={() => projectFilter.select(UNASSIGNED)}
-        title="No project"
+        aria-label="No project"
       >
         <Icon name="folder" size={16} color="var(--fg-4)" />
+        <span class="pp-tip">No project</span>
       </button>
     {/if}
   </aside>
@@ -183,16 +172,25 @@
   {#each counts as c (c.project.id)}
     <button
       type="button"
-      class="pp-item"
+      class="pp-item pp-project"
       class:active={projectFilter.selected === c.project.id}
       onclick={() => projectFilter.select(c.project.id)}
       oncontextmenu={(e) => openMenu(e, c.project.id, c.project.name)}
       title={c.project.path}
     >
-      <Icon name={c.project.icon} size={16} color={c.project.color} />
-      <span class="pp-name">{c.project.name}</span>
-      {#if c.attn}<span class="pp-attn" title="Needs attention"></span>{/if}
-      <span class="pp-ct">{c.count}</span>
+      <span class="pp-row-main">
+        {#if c.project.logo}
+          <img class="pp-logo" src={c.project.logo} alt="" />
+        {:else}
+          <Icon name={c.project.icon} size={16} color={c.project.color} />
+        {/if}
+        <span class="pp-name">{c.project.name}</span>
+        {#if c.attn}<span class="pp-attn" title="Needs attention"></span>{/if}
+        <span class="pp-ct">{c.count}</span>
+      </span>
+      <span class="pp-git">
+        <GitInfo git={projectGit.forPath(c.project.path)} always stack />
+      </span>
     </button>
   {/each}
 
@@ -209,52 +207,24 @@
     </button>
   {/if}
 
-  {#if creating}
-    <div class="pp-createbox">
-      <div class="icon-picker">
-        {#each PROJECT_ICON_CHOICES as choice (choice.icon)}
-          <button
-            type="button"
-            class="ipick"
-            class:on={pick.icon === choice.icon}
-            style:border-color={pick.icon === choice.icon ? hexA(choice.color, 0.55) : undefined}
-            style:background={pick.icon === choice.icon ? hexA(choice.color, 0.16) : undefined}
-            aria-label={choice.icon}
-            onclick={() => (pick = choice)}
-          >
-            <Icon name={choice.icon} size={16} color={choice.color} />
-          </button>
-        {/each}
-      </div>
-
-      <button class="pp-browse" onclick={browse} disabled={browsing}>
-        <Icon name="folder" size={14} color="var(--fg-3)" />
-        <span class="pp-folder" class:empty={!folder.trim()} title={folder}>
-          {folder.trim() || (browsing ? 'Opening…' : 'Choose folder…')}
-        </span>
-      </button>
-
-      <div class="pp-create">
-        <Icon name={pick.icon} size={16} color={pick.color} />
-        <!-- svelte-ignore a11y_autofocus -->
-        <input
-          autofocus
-          bind:value={name}
-          placeholder="Project name…"
-          onkeydown={onCreateKey}
-        />
-        <button class="icon-send" disabled={!canCreate} onclick={create} aria-label="Create project">
-          <Icon name="check" size={15} color="#fff" />
-        </button>
-      </div>
-    </div>
-  {:else}
-    <button type="button" class="pp-item pp-new" onclick={() => (creating = true)}>
-      <Icon name="plus" size={16} color="var(--fg-4)" />
-      <span class="pp-name">New project</span>
-    </button>
-  {/if}
+  <button type="button" class="pp-item pp-new" onclick={() => { editingId = null; creating = true; }}>
+    <Icon name="plus" size={16} color="var(--fg-4)" />
+    <span class="pp-name">New project</span>
+  </button>
 </aside>
+{/if}
+
+<!-- Create / edit happens in a modal dialog (shared ProjectForm body). Rendered
+     once, driven by `creating` / `editingId`; create takes precedence if both. -->
+{#if creating}
+  <ProjectDialog mode="create" onSave={saveCreate} onCancel={() => (creating = false)} />
+{:else if editProject}
+  <ProjectDialog
+    mode="edit"
+    initial={editProject}
+    onSave={(draft) => saveEdit(editProject.id, draft)}
+    onCancel={() => (editingId = null)}
+  />
 {/if}
 
 <ContextMenu
@@ -293,21 +263,26 @@
   }
   .pp-collapse {
     flex: none;
-    width: 22px;
-    height: 22px;
+    width: 26px;
+    height: 24px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     border-radius: var(--r-sm);
-    background: transparent;
-    border: none;
-    color: var(--fg-4);
+    background: var(--space-750);
+    border: 1px solid var(--line-subtle);
+    color: var(--fg-3);
     cursor: pointer;
     font-size: 13px;
     line-height: 1;
+    transition:
+      background var(--dur-fast),
+      border-color var(--dur-fast),
+      color var(--dur-fast);
   }
   .pp-collapse:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--space-700);
+    border-color: var(--line-default);
     color: var(--fg-1);
   }
 
@@ -394,6 +369,36 @@
     background: var(--blue-tint);
     color: var(--blue-200);
   }
+  /* A project row stacks its main line (icon · name · count) above a compact git
+     status line, so it reads its current branch at a glance. */
+  .pp-project {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 5px;
+  }
+  .pp-row-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  /* The git line, indented to sit under the project NAME (icon width + gap). */
+  .pp-git {
+    padding-left: 26px;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .pp-git :global(.git) {
+    gap: 4px;
+  }
+  .pp-git :global(.pill) {
+    height: 18px;
+    padding: 0 6px;
+    font-size: 10px;
+  }
+  .pp-git :global(.branch) {
+    max-width: 150px;
+  }
   .pp-name {
     flex: 1;
     min-width: 0;
@@ -429,102 +434,43 @@
     color: var(--fg-3);
   }
 
-  /* ---- create-project box ---- */
-  .pp-createbox {
-    padding: 4px 6px 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .icon-picker {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .ipick {
-    width: 30px;
-    height: 30px;
+  /* A project's logo in an expanded row (replaces the glyph). */
+  .pp-logo {
+    width: 16px;
+    height: 16px;
     flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--space-800);
-    border: 1px solid var(--line-default);
-    border-radius: var(--r-sm);
-    cursor: pointer;
-    transition:
-      border-color var(--dur-fast),
-      background var(--dur-fast);
+    border-radius: 3px;
+    object-fit: cover;
   }
-  .ipick:hover {
-    border-color: var(--line-strong);
+
+  /* ---- instant collapsed-rail tooltip ---- */
+  .pp-rail-btn {
+    position: relative;
   }
-  .pp-browse {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    text-align: left;
-    background: var(--space-800);
-    border: 1px solid var(--line-default);
-    border-radius: var(--r-sm);
-    padding: 7px 9px;
-    cursor: pointer;
-    color: var(--fg-2);
-  }
-  .pp-browse:hover {
-    border-color: var(--line-strong);
-  }
-  .pp-folder {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .pp-tip {
+    position: absolute;
+    left: calc(100% + 8px);
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 70;
+    padding: 4px 9px;
     white-space: nowrap;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-2);
-  }
-  .pp-folder.empty {
-    color: var(--fg-4);
-    font-style: italic;
-  }
-  .pp-create {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 0 2px;
-  }
-  .pp-create input {
-    flex: 1;
-    min-width: 0;
-    background: var(--space-800);
-    border: 1px solid var(--blue-500);
-    box-shadow: var(--focus-ring);
+    background: var(--space-700);
+    border: 1px solid var(--line-default);
     border-radius: var(--r-sm);
-    padding: 6px 9px;
+    box-shadow: var(--shadow-pop);
     color: var(--fg-1);
     font-family: var(--font-sans);
-    font-size: 12.5px;
-    outline: none;
+    font-size: 12px;
+    font-weight: 500;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-fast);
   }
-  .icon-send {
-    width: 30px;
-    height: 30px;
-    flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: var(--r-sm);
-    background: var(--blue-500);
-    border: none;
-    cursor: pointer;
-  }
-  .icon-send:hover:not(:disabled) {
-    background: var(--blue-600);
-  }
-  .icon-send:disabled {
-    background: var(--space-600);
-    cursor: not-allowed;
+  .pp-rail-btn:hover .pp-tip,
+  .pp-rail-ic:hover .pp-tip,
+  .pp-rail-btn:focus-visible .pp-tip,
+  .pp-rail-ic:focus-visible .pp-tip {
+    opacity: 1;
   }
 </style>

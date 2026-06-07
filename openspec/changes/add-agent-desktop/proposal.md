@@ -32,9 +32,11 @@ empirical research appendix this proposal relies on).
   watches; the UI renders a two-row dashboard (per-session cards + account-wide rate
   limits/cost/git).
 - **Task detection:** each session's current activity (newest `in_progress` →
-  `activeForm`) surfaced per pane, sourced from the snapshot (and a direct watch of
-  `~/.claude/tasks/` for foreign sessions).
-- **Session launcher:** start Claude in a chosen project folder (picker + recents),
+  `activeForm`) surfaced per pane, sourced from the snapshot. (Foreign — out-of-app
+  — sessions are NOT surfaced in the UI: the foreign-session watcher is not started
+  and no external sessions are shown; the pure derivation core remains for tests.)
+- **Session launcher:** start Claude in a chosen project's folder (the project picker
+  supplies the folder; pick an existing project or create one with a name/icon/color),
   optional initial prompt, as a new tab or a split of the focused pane. Never auto-runs
   slash commands.
 - **Layout persistence:** serialize workspaces/pane trees + a session registry and
@@ -44,7 +46,10 @@ empirical research appendix this proposal relies on).
   straight from the overview (writes to its PTY), click to jump to its pane, kick off a
   new agent via the launcher, and surfaces the subagents an agent spawns (Task-tool /
   workflow agents read from `~/.claude/projects/<project>/<session>/`), with a usage
-  rollup across agents and subagents.
+  rollup across agents and subagents. Selecting an archived session re-opens it with
+  `claude --resume` for immediate viewing and continuation; it stays presented as
+  archived until you send a message (then it unarchives), and a peeked-but-unanswered
+  session re-archives itself after you leave it idle.
 
 Net-new project — no existing functionality to migrate or break.
 
@@ -72,7 +77,15 @@ Net-new project — no existing functionality to migrate or break.
 - `agent-overview`: a primary "mission control" view listing every agent (pane) with
   status/task/context/cost, message-or-answer any agent without navigating, click-to-
   navigate to its pane, kick off a new agent via the launcher, and surfacing of the
-  subagents an agent spawns (with a usage rollup across agents + subagents).
+  subagents an agent spawns (with a usage rollup across agents + subagents). Provided
+  in two switchable forms — a card overview and a terminal-windows overview (each
+  agent as a terminal-style window showing a deliberately limited live tail that
+  abstracts the full Claude Code TUI, plus message + dig-in).
+- `projects`: a project = a working folder with a name/color/icon, bound to an agent
+  EXPLICITLY at launch (recorded on the pane registry, persisted to a sibling
+  `projects.json`). Drives a project panel that filters the fleet (with per-project
+  counts + attention), project-icon avatars on agents, and a project picker/create in
+  the launcher.
 
 ### Modified Capabilities
 (none — net-new project)

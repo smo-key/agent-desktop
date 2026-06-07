@@ -27,6 +27,7 @@ describe('footerView', () => {
       a: snap({
         pane_id: 'a',
         context_pct: 78,
+        cost: 1.24,
         git: { branch: 'feature-x', dirty: true, ahead: 2, behind: 0 },
         rate_limits: {
           five_hour: { used_percentage: 33, resets_at: 1 },
@@ -39,6 +40,8 @@ describe('footerView', () => {
     expect(view.project?.name).toBe('Mission Control');
     expect(view.git).toEqual({ branch: 'feature-x', dirty: true, ahead: 2, behind: 0 });
     expect(view.context).toBe(78);
+    expect(view.cost).toBe(1.24);
+    expect(view.lastTs).toBe(100);
     expect(view.fiveHour.usedPct).toBe(33);
     expect(view.sevenDay.usedPct).toBe(21);
   });
@@ -60,6 +63,8 @@ describe('footerView', () => {
     const view = footerView(map, 'missing', null, PROJECTS);
     expect(view.git).toBeNull();
     expect(view.context).toBeNull();
+    expect(view.cost).toBeNull();
+    expect(view.lastTs).toBeNull();
     expect(view.fiveHour.usedPct).toBe(5);
   });
 

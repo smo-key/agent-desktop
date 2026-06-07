@@ -47,21 +47,41 @@ export interface TerminalHandle {
 
 const handles = new Map<string, TerminalHandle>();
 
+// Panes asked to focus before their terminal had registered (a NEW session: the
+// inbox selects it and calls focusTerminal before TerminalPane mounts + spawns).
+// The request is parked here and fulfilled the moment the handle registers, so a
+// just-created agent reliably grabs keyboard focus instead of silently missing.
+const pendingFocus = new Set<string>();
+
 export function registerTerminal(paneId: string, handle: TerminalHandle): void {
   handles.set(paneId, handle);
+  if (pendingFocus.delete(paneId)) {
+    // Defer to the next frame so xterm has fitted before we scroll/focus it.
+    requestAnimationFrame(() => {
+      handle.scrollToBottom();
+      handle.focus();
+    });
+  }
 }
 
 export function unregisterTerminal(paneId: string): void {
   handles.delete(paneId);
+  pendingFocus.delete(paneId);
 }
 
 export function getTerminal(paneId: string): TerminalHandle | undefined {
   return handles.get(paneId);
 }
 
-/** Focus a pane's terminal if it is registered (no-op otherwise). */
+/**
+ * Focus a pane's terminal. If it isn't registered yet (a freshly launched
+ * session whose TerminalPane hasn't mounted), the request is remembered and
+ * applied as soon as the terminal registers.
+ */
 export function focusTerminal(paneId: string): void {
-  handles.get(paneId)?.focus();
+  const handle = handles.get(paneId);
+  if (handle) handle.focus();
+  else pendingFocus.add(paneId);
 }
 
 /** Scroll a pane's terminal to the bottom if it is registered (no-op otherwise). */

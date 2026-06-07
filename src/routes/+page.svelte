@@ -7,6 +7,10 @@
   import { launcher } from '$lib/launcher/launcherStore.svelte';
   import HelpModal from '$lib/ui/HelpModal.svelte';
   import { help } from '$lib/ui/helpStore.svelte';
+  import SettingsModal from '$lib/ui/SettingsModal.svelte';
+  import { settingsModal } from '$lib/ui/settingsStore.svelte';
+  import { openWith } from '$lib/settings/openWith.svelte';
+  import Icon from '$lib/icons/Icon.svelte';
   import { startNewSession } from '$lib/launcher/newSession';
   import { workspace } from '$lib/layout/workspace.svelte';
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
@@ -20,6 +24,16 @@
   import { view } from '$lib/overview/view.svelte';
   import { subagents, type SessionRef } from '$lib/overview/subagents.svelte';
   import { activity, type PaneRef } from '$lib/overview/activity.svelte';
+  import { projects } from '$lib/projects/projects.svelte';
+  import { projectGit } from '$lib/projects/projectGit.svelte';
+  import TerminalsPanel from '$lib/terminals/TerminalsPanel.svelte';
+  import { terminalsPanel } from '$lib/terminals/panel.svelte';
+  import { projectTerminals } from '$lib/terminals/projectTerminals.svelte';
+  import { activeProjectId } from '$lib/terminals/activeProject';
+  import { projectFilter } from '$lib/projects/projectFilter.svelte';
+  import { ALL, UNASSIGNED } from '$lib/projects/projectRollup';
+  import { focusTerminal, scrollTerminalToBottom } from '$lib/layout/terminals';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { events } from '$lib/overview/events.svelte';
   import { titles } from '$lib/overview/titles.svelte';
   import { triggersTranscriptRead, SAFETY_POLL_MS } from '$lib/overview/poll';
@@ -36,9 +50,30 @@
   // on-quit persistence. Rendering the restored PaneNodes re-spawns one PTY per
   // leaf (saved shell + cwd only) via each TerminalPane's mount.
   onMount(() => {
+    // Load the user's open-with preferences (seeds defaults on first run).
+    void openWith.load();
+    // Load each project's terminal definitions and selectively auto-restart the
+    // terminals that were running at the previous quit (project-terminals spec).
+    void projectTerminals.load();
+    // Capture each terminal's running state on quit so the next launch can
+    // selectively auto-restart. Awaited by Tauri before the native close (and
+    // before Rust kills the PTYs), so `wasRunning` is persisted in time.
+    let unlistenTermClose: (() => void) | undefined;
+    void getCurrentWindow()
+      .onCloseRequested(async () => {
+        await projectTerminals.captureRunningAndSave();
+      })
+      .then((un) => {
+        unlistenTermClose = un;
+      })
+      .catch(() => {});
     let stopWatching: (() => void) | undefined;
     void restorePersistedLayout().then(() => {
       restored = true;
+      // Seed restored agents' titles from the durable cache synchronously, so the
+      // cards render their real titles immediately rather than flashing their
+      // "Session N" fallback until the first (async) activity poll lands.
+      titles.hydrate(currentPaneRefs());
       stopWatching = watchAndPersist();
     });
 
@@ -82,6 +117,7 @@
       unlistenSnapshots?.();
       unlistenSubagents?.();
       unlistenEvents?.();
+      unlistenTermClose?.();
       events.onEvent = undefined;
     };
   });
@@ -143,6 +179,21 @@
     return () => clearInterval(id);
   });
 
+  // PROJECT GIT poll. Each project's folder is probed for its branch + ahead/
+  // behind/dirty (the `git_status_for` command) so the project pane shows its
+  // current branch even with no agent running. Reading `projects.list` here both
+  // refreshes immediately AND re-runs this effect when a project is added/removed,
+  // so a new project is probed at once; a slow interval keeps it fresh thereafter.
+  const GIT_POLL_MS = 4000;
+  $effect(() => {
+    const paths = projects.list.map((p) => p.path);
+    void projectGit.refresh(paths);
+    const id = setInterval(() => {
+      void projectGit.refresh(projects.list.map((p) => p.path));
+    }, GIT_POLL_MS);
+    return () => clearInterval(id);
+  });
+
   // Keep the EVENT store's seeded set current: whenever the app's session set
   // changes (a pane launched/ended, a cwd resolved), re-seed `events_for` so a
   // newly-launched agent's timeline (and any backfill) is available immediately.
@@ -176,15 +227,88 @@
   // explicitly from the inbox (the ✕ in the focus header or the row's right-click
   // menu). This also satisfies "don't auto-advance away to nothing".
 
+  // Active project for the Terminals panel — same precedence as the panel itself
+  // (an explicit project-filter selection wins, else the focused agent's project).
+  // Used by Cmd-T (new terminal) and Cmd-Tab (focus cycle).
+  const terminalsActiveProjectId = $derived(
+    activeProjectId({
+      focusedId: workspace.active ? workspace.focusedId : '',
+      projectIdOf: (id) => workspace.session(id).projectId,
+      selectedProjectId:
+        projectFilter.selected === ALL || projectFilter.selected === UNASSIGNED
+          ? null
+          : projectFilter.selected
+    })
+  );
+
+  // Panel width drag-resize: dragging the left grip leftwards widens the panel.
+  function startPanelResize(e: PointerEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = terminalsPanel.width;
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => terminalsPanel.setWidth(startW + (startX - ev.clientX));
+    const up = (ev: PointerEvent) => {
+      target.releasePointerCapture(ev.pointerId);
+      target.removeEventListener('pointermove', move);
+      target.removeEventListener('pointerup', up);
+    };
+    target.addEventListener('pointermove', move);
+    target.addEventListener('pointerup', up);
+  }
+
+  // Cmd-T: open a new empty shell terminal in the active project (no prompt) and
+  // focus it. Opens the panel first so the new terminal is visible.
+  function newTerminal() {
+    terminalsPanel.open = true;
+    const pid = terminalsActiveProjectId;
+    if (!pid) return;
+    void projectTerminals.create(pid).then((id) => {
+      const pane = projectTerminals.runtime[id]?.paneId;
+      if (pane) {
+        lastCycledPaneId = pane;
+        focusTerminal(pane); // registry parks the request until the pane mounts
+      }
+    });
+  }
+
+  // Cmd-Tab focus cycle: the focused agent, then the active project's running
+  // terminals in order. `lastCycledPaneId` tracks our position so repeated presses
+  // walk the ring (falling back to the focused agent when the ring shifts).
+  let lastCycledPaneId: string | null = null;
+  function focusCycleList(): string[] {
+    const list: string[] = [];
+    if (workspace.active && workspace.focusedId) list.push(workspace.focusedId);
+    const pid = terminalsActiveProjectId;
+    if (pid) {
+      for (const t of projectTerminals.forProject(pid)) {
+        const rt = projectTerminals.runtime[t.id];
+        if (rt?.running) list.push(rt.paneId);
+      }
+    }
+    return list;
+  }
+  function cycleFocus() {
+    const list = focusCycleList();
+    if (list.length <= 1) return;
+    terminalsPanel.open = true; // terminals must be mounted/visible to take focus
+    const anchor = lastCycledPaneId && list.includes(lastCycledPaneId)
+      ? lastCycledPaneId
+      : workspace.focusedId;
+    const cur = list.indexOf(anchor);
+    const next = list[(cur + 1 + list.length) % list.length];
+    lastCycledPaneId = next;
+    focusTerminal(next);
+    scrollTerminalToBottom(next);
+  }
+
   // Keyboard shortcuts (macOS):
   //   Cmd-N            open the session LAUNCHER (folder picker + recents +
   //                    optional prompt + placement). The deliberate, full-flow
   //                    "new session" entry point.
-  //   Cmd-T            quick-new-workspace in the rail — KEPT AS-IS: an instant,
-  //                    no-dialog `claude` tab inheriting the focused pane's cwd
-  //                    (the launcher is the considered path; Cmd-T is the fast path).
-  //   Cmd-D            split row, new pane to the right
-  //   Cmd-Shift-D      split col, new pane below
+  //   Cmd-T            open a new empty shell terminal in the Terminals panel.
+  //   Cmd-Tab          cycle focus across the active agent + its project's terminals.
   //   Cmd-W            close the focused pane
   //   Cmd-]            focus next (cyclic, DFS +1)
   //   Cmd-[            focus prev (cyclic, DFS -1)
@@ -232,6 +356,30 @@
       return;
     }
 
+    // Cmd-J toggles the right-docked Terminals panel (process-independent: hiding
+    // never kills a running terminal). Works in every view, like Cmd-N.
+    if (meta && (key === 'j' || key === 'J')) {
+      e.preventDefault();
+      terminalsPanel.toggle();
+      return;
+    }
+
+    // Cmd-T opens a new empty shell terminal in the Terminals panel (every view).
+    if (meta && (key === 't' || key === 'T')) {
+      e.preventDefault();
+      newTerminal();
+      return;
+    }
+
+    // Cmd-Tab cycles focus across the active agent and its project's terminals.
+    // NOTE: macOS reserves Cmd-Tab for the app switcher at the system level, so this
+    // may not reach the webview on macOS; it works where the OS lets the key through.
+    if (meta && key === 'Tab') {
+      e.preventDefault();
+      cycleFocus();
+      return;
+    }
+
     // The remaining shortcuts MUTATE the active workspace's pane layout/focus, so
     // they are GRID-ONLY. The grid is no longer a navigable top-level view (the
     // inbox shows each agent's live terminal in its focus pane), so `view.isGrid`
@@ -243,17 +391,6 @@
     // Ignore the remaining (pane) shortcuts before the store is seeded.
     if (!workspace.active) return;
 
-    if (meta && (key === 't' || key === 'T')) {
-      e.preventDefault();
-      workspace.newWorkspace();
-      return;
-    }
-    if (meta && (key === 'd' || key === 'D')) {
-      e.preventDefault();
-      // Shift => vertical (col, new pane below); plain => horizontal (row, right).
-      workspace.split(e.shiftKey ? 'col' : 'row', 'after');
-      return;
-    }
     if (meta && (key === 'w' || key === 'W')) {
       e.preventDefault();
       workspace.closeFocused();
@@ -323,8 +460,26 @@
       <span class="title">Agent Mission Control</span>
     </div>
     <div class="tb-right" data-tauri-drag-region>
-      <!-- Opt back into pointer events (the bar is a drag region) so the button is
-           clickable. Opens the same shortcuts modal as Cmd-/ and bare ?. -->
+      <!-- Opt back into pointer events (the bar is a drag region) so the buttons are
+           clickable. Gear opens Settings; "?" opens the shortcuts modal (⌘/ and ?). -->
+      <button
+        class="tb-btn"
+        class:active={terminalsPanel.open}
+        aria-label="Toggle terminals panel"
+        aria-pressed={terminalsPanel.open}
+        title="Terminals (⌘J)"
+        onclick={() => terminalsPanel.toggle()}
+      >
+        <Icon name="panel-right" size={14} />
+        {#if projectTerminals.runningCount > 0}
+          <span class="tb-badge" aria-label={`${projectTerminals.runningCount} running`}>
+            {projectTerminals.runningCount}
+          </span>
+        {/if}
+      </button>
+      <button class="tb-btn" aria-label="Settings" title="Settings" onclick={() => settingsModal.show()}>
+        <Icon name="settings" size={14} />
+      </button>
       <button class="help-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (⌘/)" onclick={() => help.show()}>?</button>
     </div>
   </header>
@@ -334,6 +489,12 @@
        throwaway workspace whose PTYs we'd immediately tear down. The title bar
        above stays visible throughout; this only gates the body/views. -->
   {#if restored}
+  <!-- Content row: the active view (grid or overview) on the left, the right-docked
+       Terminals panel on the right. Laid out as a row so the panel sits BESIDE
+       whatever view is active (the overview is the normal top-level view; the grid
+       stays mounted-but-hidden). The footer stays full-width below this row. -->
+  <div class="content-row">
+  <div class="views">
   <!-- The terminal-grid surface (rail + panes + usage bar). Kept MOUNTED at all
        times so every workspace's xterm/PTY survives a view switch; hidden (not
        unmounted) while the Overview is the active top-level view. -->
@@ -356,10 +517,6 @@
     </main>
   </div>
 
-    <!-- Persistent footer, pinned full-width below the body: project chip + 5h/7d
-         limit bars (left) | git + context bar (right). All math is in the pure
-         `footerView`. -->
-    <AppFooter />
   </div>
 
   <!-- The INBOX overview surface. Rendered only while overview is the active
@@ -370,6 +527,32 @@
   {#if view.isOverview}
     <Inbox />
   {/if}
+  </div><!-- /.views -->
+
+  <!-- The right-docked Terminals panel. Kept MOUNTED at all times and hidden via
+       CSS when toggled off, so running terminal PTYs survive a hide untouched
+       (terminals-panel spec). Takes zero width when closed. -->
+  <aside
+    class="terminals-dock"
+    class:hidden={!terminalsPanel.open}
+    style="flex-basis: {terminalsPanel.width}px;"
+  >
+    <!-- Drag the left edge to resize the panel width (persisted). -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="terminals-grip"
+      title="Drag to resize"
+      onpointerdown={startPanelResize}
+    ></div>
+    <TerminalsPanel />
+  </aside>
+  </div><!-- /.content-row -->
+
+  <!-- The persistent footer, OUTSIDE grid-view so it shows on EVERY surface
+       (overview + grid), pinned full-width at the bottom of the app column:
+       project chip + 5h/7d limit bars (left) | git + context bar (right). All
+       math is in the pure `footerView`. -->
+  <AppFooter />
   {:else}
     <!-- Minimal splash while the persisted layout is restoring; replaced by the
          workspace area as soon as `restored` flips true. -->
@@ -386,6 +569,7 @@
      shared `launcher` store). Position:fixed backdrop, so it lives at the root. -->
 <Launcher />
 <HelpModal />
+<SettingsModal />
 
 <style>
   .app {
@@ -471,6 +655,58 @@
     background: rgba(255, 255, 255, 0.05);
   }
 
+  /* Title-bar icon button (settings gear). Matches the help button's footprint and
+     hover, but square-ish with a rounded icon fit. */
+  .tb-btn {
+    position: relative;
+    flex: none;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--line-subtle);
+    border-radius: var(--r-full);
+    background: transparent;
+    color: var(--fg-3);
+    cursor: pointer;
+    pointer-events: auto;
+    transition:
+      color var(--dur-fast),
+      border-color var(--dur-fast),
+      background var(--dur-fast);
+  }
+  .tb-btn:hover {
+    color: var(--fg-1);
+    border-color: var(--line-strong);
+    background: rgba(255, 255, 255, 0.05);
+  }
+  /* Active (panel open) state for the terminals toggle. */
+  .tb-btn.active {
+    color: var(--fg-1);
+    border-color: var(--line-strong);
+    background: rgba(255, 255, 255, 0.08);
+  }
+  /* Running-terminal count badge on the toggle (visible even when panel hidden). */
+  .tb-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    display: grid;
+    place-items: center;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1;
+    color: #06080c;
+    background: #3ccb7f;
+    border-radius: 7px;
+    pointer-events: none;
+  }
+
   .logo {
     width: 18px;
     height: 18px;
@@ -491,6 +727,24 @@
      as a flex column. It is no longer a navigable view — it stays mounted but
      hidden (display:none) as the home the inbox teleports each agent's live
      terminal out of, so every workspace's xterm/PTY survives untouched. */
+  /* The horizontal content row: active view (fills) + right-docked panel. */
+  .content-row {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: row;
+  }
+  /* The view column holds the (mounted) grid + the overview; one is visible. It
+     fills the remaining width to the left of the Terminals dock. */
+  .views {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
   .grid-view {
     flex: 1 1 auto;
     min-height: 0;
@@ -545,5 +799,32 @@
   }
   .workspace.hidden {
     display: none;
+  }
+
+  /* The right-docked Terminals panel. Fixed-width column to the right of the
+     surface; zero space (display:none) when toggled off. Stays mounted so its
+     PTYs survive a hide. */
+  .terminals-dock {
+    flex: 0 0 auto; /* basis set inline from terminalsPanel.width (drag-resizable) */
+    min-width: 0;
+    height: 100%;
+    position: relative;
+  }
+  .terminals-dock.hidden {
+    display: none;
+  }
+  /* Left-edge resize grip straddling the panel's border. */
+  .terminals-grip {
+    position: absolute;
+    left: -3px;
+    top: 0;
+    bottom: 0;
+    width: 7px;
+    cursor: col-resize;
+    z-index: 5;
+  }
+  .terminals-grip:hover {
+    background: var(--blue-500);
+    opacity: 0.5;
   }
 </style>

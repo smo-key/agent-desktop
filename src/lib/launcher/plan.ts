@@ -25,6 +25,8 @@ export interface LaunchRequest {
   prompt?: string | null;
   /** The chosen placement. */
   placement: Placement;
+  /** OPTIONAL id of the project this session is launched under. */
+  projectId?: string | null;
 }
 
 /**
@@ -46,6 +48,12 @@ export interface LaunchPlan {
    * byte-for-byte; the launcher never expands or fabricates a slash command.
    */
   initialInput: string | undefined;
+  /**
+   * The project this session is launched under (its identity becomes the agent's
+   * avatar). `undefined` when launched without a project. Recorded verbatim on
+   * the pane's registry entry; never inferred.
+   */
+  projectId: string | undefined;
 }
 
 /** Whether a placement splits the focused pane (vs. opening a fresh tab). */
@@ -91,5 +99,11 @@ export function buildLaunchPlan(
   const initialInput =
     typeof prompt === 'string' && prompt.trim() !== '' ? prompt : undefined;
 
-  return { program: 'claude', cwd, placement, initialInput };
+  // Carry the project binding verbatim (a blank/missing id collapses to undefined).
+  const projectId =
+    typeof req.projectId === 'string' && req.projectId.trim() !== ''
+      ? req.projectId
+      : undefined;
+
+  return { program: 'claude', cwd, placement, initialInput, projectId };
 }

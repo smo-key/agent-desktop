@@ -3,6 +3,8 @@ import {
   buildRoster,
   deriveStatus,
   laneOf,
+  laneForRow,
+  needsAttention,
   groupByLane,
   LANE_ORDER,
   WORKING_WINDOW_MS,
@@ -76,7 +78,8 @@ describe('roster — Agent Roster Overview', () => {
         model: 'claude-opus',
         task: 'Refactoring the parser',
         context_pct: 42,
-        cost: 1.25
+        cost: 1.25,
+        ts: 1_717_200_000
       }),
       snap('pane-b', {
         model: 'claude-sonnet',
@@ -107,6 +110,7 @@ describe('roster — Agent Roster Overview', () => {
     expect(a.task).toBe('Refactoring the parser');
     expect(a.contextPct).toBe(42);
     expect(a.cost).toBe(1.25);
+    expect(a.lastTs).toBe(1_717_200_000);
     expect(a.status).toBe('working');
 
     const b = rows.find((r) => r.paneId === 'pane-b')!;
@@ -157,6 +161,36 @@ describe('roster — Agent Roster Overview', () => {
     expect(noAct[0].question).toBeNull();
   });
 
+  // Context-window % comes from the statusline snapshot (Claude Code computes it
+  // against the REAL window — incl. the 1M variants — and the auto-compact
+  // threshold), which is the same authoritative source the footer uses. The
+  // transcript-derived contextPct is window-BLIND (the transcript records the bare
+  // `claude-opus-4-8` model with no 1M marker, so it always divides by 200k and
+  // pins a 1M session at 100%), so it is only a fallback when there is no snapshot
+  // value. This keeps the card and footer in agreement.
+  it('Context % prefers the statusline snapshot over the window-blind transcript', () => {
+    const now = 1_000_000;
+    const map = mapOf(snap('pane-a', { context_pct: 20 }));
+    const workspaces = [ws('ws-1', 'P', [{ paneId: 'pane-a', cwd: '/x' }])];
+
+    // Transcript claims 100 (a 1M session it mis-scaled to a 200k window); the
+    // snapshot's authoritative 20 must win.
+    const rows = buildRoster(map, workspaces, {}, now, {
+      'pane-a': { contextPct: 100 }
+    });
+    expect(rows[0].contextPct).toBe(20);
+
+    // With no snapshot value, the transcript number is the fallback.
+    const noSnap = buildRoster(
+      mapOf(snap('pane-b', { context_pct: null })),
+      [ws('ws-2', 'Q', [{ paneId: 'pane-b', cwd: '/y' }])],
+      {},
+      now,
+      { 'pane-b': { contextPct: 37 } }
+    );
+    expect(noSnap[0].contextPct).toBe(37);
+  });
+
   // The agent's project binding (registry projectId) is carried onto its row so
   // the overview can render the project avatar + filter by project.
   it('Agent carries its project identity', () => {
@@ -181,6 +215,28 @@ describe('roster — Agent Roster Overview', () => {
       now
     );
     expect(noProj[0].projectId).toBeNull();
+  });
+
+  // A CLOSED (Completed) agent is always `finished` (Completed lane) and carries
+  // `closed`, even when its PTY exited non-zero (a normal kill) — so a user-closed
+  // session never lands in Needs-you as an error.
+  it('Closed agent is finished regardless of exit code', () => {
+    const now = 1_000_000;
+    const map = mapOf(snap('pane-a'));
+    const workspaces: RosterWorkspace[] = [
+      {
+        id: 'ws-1',
+        name: 'W',
+        panes: [{ paneId: 'pane-a', cwd: '/x', isApp: true, closed: true }]
+      }
+    ];
+    // Runtime says it exited non-zero (would be `error`) — closed overrides it.
+    const runtime = runtimeOf(rt('pane-a', { exited: true, exitCode: 137 }));
+
+    const rows = buildRoster(map, workspaces, runtime, now);
+
+    expect(rows[0].closed).toBe(true);
+    expect(rows[0].status).toBe('finished');
   });
 
   // Name falls back to a short cwd basename when the workspace name is empty.
@@ -253,33 +309,36 @@ describe('roster — control-room lanes', () => {
     expect(laneOf('idle')).toBe('flight');
   });
 
-  it('orders lanes attention -> in-flight -> completed', () => {
-    expect(LANE_ORDER).toEqual(['attn', 'flight', 'done']);
+  it('orders lanes attention -> in-flight -> paused -> archived', () => {
+    expect(LANE_ORDER).toEqual(['attn', 'flight', 'paused', 'done']);
+  });
+
+  const laneRow = (paneId: string, over: Partial<AgentRow> = {}): AgentRow => ({
+    paneId,
+    workspaceId: 'ws',
+    name: paneId,
+    cwd: null,
+    model: null,
+    task: null,
+    summary: null,
+    question: null,
+    questions: null,
+    currentAction: null,
+    contextPct: null,
+    cost: null,
+    lastTs: null,
+    status: 'working',
+    projectId: null,
+    ...over
   });
 
   it('groups rows by lane, preserving roster order within each lane', () => {
-    const row = (paneId: string, status: AgentRow['status']): AgentRow => ({
-      paneId,
-      workspaceId: 'ws',
-      name: paneId,
-      cwd: null,
-      model: null,
-      task: null,
-      summary: null,
-      question: null,
-      questions: null,
-      currentAction: null,
-      contextPct: null,
-      cost: null,
-      status,
-      projectId: null
-    });
     const rows = [
-      row('a', 'working'),
-      row('b', 'waiting'),
-      row('c', 'finished'),
-      row('d', 'error'),
-      row('e', 'idle')
+      laneRow('a', { status: 'working' }),
+      laneRow('b', { status: 'waiting' }),
+      laneRow('c', { status: 'finished' }),
+      laneRow('d', { status: 'error' }),
+      laneRow('e', { status: 'idle' })
     ];
 
     const grouped = groupByLane(rows);
@@ -287,6 +346,58 @@ describe('roster — control-room lanes', () => {
     expect(grouped.attn.map((r) => r.paneId)).toEqual(['b', 'd']);
     expect(grouped.done.map((r) => r.paneId)).toEqual(['c']);
     expect(grouped.flight.map((r) => r.paneId)).toEqual(['a', 'e']);
+    expect(grouped.paused.map((r) => r.paneId)).toEqual([]);
+  });
+
+  it('laneForRow: archived -> done, paused -> paused (paused outranks status), else by status', () => {
+    // Archived (closed) always lands in the Archived lane.
+    expect(laneForRow(laneRow('a', { status: 'finished', closed: true }))).toBe('done');
+    // Paused outranks the underlying status: a waiting agent that is paused leaves
+    // attention and sits in the Paused lane.
+    expect(laneForRow(laneRow('b', { status: 'waiting', paused: true }))).toBe('paused');
+    expect(laneForRow(laneRow('c', { status: 'working', paused: true }))).toBe('paused');
+    // Archived wins over paused if both somehow set.
+    expect(laneForRow(laneRow('d', { status: 'waiting', paused: true, closed: true }))).toBe('done');
+    // Otherwise the status decides.
+    expect(laneForRow(laneRow('e', { status: 'waiting' }))).toBe('attn');
+    expect(laneForRow(laneRow('f', { status: 'working' }))).toBe('flight');
+  });
+
+  it('a paused row groups under paused, not its status lane', () => {
+    const rows = [
+      laneRow('a', { status: 'waiting' }),
+      laneRow('b', { status: 'waiting', paused: true }),
+      laneRow('c', { status: 'finished', closed: true })
+    ];
+    const grouped = groupByLane(rows);
+    expect(grouped.attn.map((r) => r.paneId)).toEqual(['a']);
+    expect(grouped.paused.map((r) => r.paneId)).toEqual(['b']);
+    expect(grouped.done.map((r) => r.paneId)).toEqual(['c']);
+  });
+
+  it('needsAttention: waiting/error need you, but not when paused or archived', () => {
+    expect(needsAttention(laneRow('a', { status: 'waiting' }))).toBe(true);
+    expect(needsAttention(laneRow('b', { status: 'error' }))).toBe(true);
+    expect(needsAttention(laneRow('c', { status: 'working' }))).toBe(false);
+    expect(needsAttention(laneRow('d', { status: 'waiting', paused: true }))).toBe(false);
+    expect(needsAttention(laneRow('e', { status: 'waiting', closed: true }))).toBe(false);
+  });
+
+  it('A previewing session stays archived and out of attention', () => {
+    // A session resumed for preview is LIVE (closed:false) but still presented as
+    // Archived until the user sends a message — so it pins to `done` and never nags,
+    // exactly like a closed row, regardless of its live status.
+    expect(laneForRow(laneRow('a', { status: 'working', preview: true }))).toBe('done');
+    expect(laneForRow(laneRow('b', { status: 'waiting', preview: true }))).toBe('done');
+    expect(needsAttention(laneRow('c', { status: 'waiting', preview: true }))).toBe(false);
+    expect(needsAttention(laneRow('d', { status: 'error', preview: true }))).toBe(false);
+    // It groups under done, not its live status lane.
+    const grouped = groupByLane([
+      laneRow('w', { status: 'waiting' }),
+      laneRow('p', { status: 'waiting', preview: true })
+    ]);
+    expect(grouped.attn.map((r) => r.paneId)).toEqual(['w']);
+    expect(grouped.done.map((r) => r.paneId)).toEqual(['p']);
   });
 });
 

@@ -3,12 +3,8 @@
 // pure so the action wiring (which op each item triggers) is unit-testable
 // without a DOM, a real terminal, or the Tauri bridge.
 
-import type { Direction, SplitWhere } from './tree';
-
 /** Side-effecting operations a menu item can trigger. Injected by the caller. */
 export interface PaneMenuDeps {
-  /** Split the (already-focused) pane in `direction`, new pane placed `where`. */
-  split(direction: Direction, where: SplitWhere): void;
   /** Close the focused pane. */
   close(): void;
   /** Open a brand-new workspace ("session") in the rail. */
@@ -40,9 +36,9 @@ export interface PaneMenuItem {
 export type PaneMenuSection = PaneMenuItem[];
 
 /**
- * Build the pane context menu: Copy/Paste, the four split directions, then
- * Close / New Session. Disabled state for Copy (no selection) and Close (only
- * pane) comes from `deps`.
+ * Build the pane context menu: Copy/Paste, then Close / New Session. Disabled
+ * state for Copy (no selection) and Close (only pane) comes from `deps`. (Pane
+ * splitting was removed from the context menu.)
  */
 export function buildPaneMenu(deps: PaneMenuDeps): PaneMenuSection[] {
   return [
@@ -55,30 +51,6 @@ export function buildPaneMenu(deps: PaneMenuDeps): PaneMenuSection[] {
         run: () => deps.copy()
       },
       { id: 'paste', label: 'Paste', shortcut: '⌘V', run: () => deps.paste() }
-    ],
-    [
-      {
-        id: 'split-right',
-        label: 'Split Right',
-        shortcut: '⌘D',
-        run: () => deps.split('row', 'after')
-      },
-      {
-        id: 'split-down',
-        label: 'Split Down',
-        shortcut: '⌘⇧D',
-        run: () => deps.split('col', 'after')
-      },
-      {
-        id: 'split-left',
-        label: 'Split Left',
-        run: () => deps.split('row', 'before')
-      },
-      {
-        id: 'split-up',
-        label: 'Split Up',
-        run: () => deps.split('col', 'before')
-      }
     ],
     [
       {

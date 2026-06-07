@@ -89,7 +89,6 @@
     const handle = getTerminal(node.paneId);
     const canClose = leavesInOrder(workspace.root).length > 1;
     const sections = buildPaneMenu({
-      split: (dir, where) => workspace.split(dir, where),
       close: () => workspace.closeFocused(),
       newSession: () => launcher.show(),
       copy: () => {
@@ -121,17 +120,27 @@
     oncontextmenu={openMenu}
   >
     {#key node.paneId}
-      <TerminalPane
-        paneId={node.paneId}
-        program={session?.program ?? '/bin/zsh'}
-        cwd={session?.cwd ?? null}
-        initialInput={session?.initialInput}
-        sessionId={session?.sessionId}
-        resume={session?.resume}
-        active={webglActive}
-        deferFit={activeWorkspace && workspace.dragging}
-        visible={activeWorkspace}
-      />
+      {#if session?.closed}
+        <!-- CLOSED (Completed) session: no TerminalPane, so the PTY is terminated /
+             never spawned. Restoring it (closed=false) re-mounts TerminalPane,
+             spawning `claude --resume`. The inbox shows its own closed panel; this
+             placeholder is the surface home / grid fallback. -->
+        <div class="pane-closed">
+          <span class="pc-label">Session closed</span>
+        </div>
+      {:else}
+        <TerminalPane
+          paneId={node.paneId}
+          program={session?.program ?? '/bin/zsh'}
+          cwd={session?.cwd ?? null}
+          initialInput={session?.initialInput}
+          sessionId={session?.sessionId}
+          resume={session?.resume}
+          active={webglActive}
+          deferFit={activeWorkspace && workspace.dragging}
+          visible={activeWorkspace}
+        />
+      {/if}
     {/key}
     <!-- Subtle top-right task badge for this pane (pointer-events:none; hides when
          there's no task). Reads the same per-pane snapshot the dashboard uses. -->
@@ -164,6 +173,19 @@
 {/if}
 
 <style>
+  .pane-closed {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--space-900, #0d1017);
+    color: var(--fg-4, #6b7280);
+    font-family: var(--font-mono, monospace);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
   .leaf {
     position: relative;
     width: 100%;

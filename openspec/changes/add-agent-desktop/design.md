@@ -76,6 +76,23 @@ workspaces + `paneId → {cwd, shell}` to app-support (debounced + on-quit). Res
 live process state is not restored (tmux-resurrect semantics). Corrupt/unmigratable
 layout falls back to a fresh single-pane workspace rather than crashing.
 
+**D10 — Resume archived sessions on select (provisional preview).** Selecting an
+archived session respawns `claude --resume <sessionId>` so its transcript is shown and
+interactive immediately — no intermediate "Restore" panel. The row stays in the Archived
+lane until the user *commits* by sending a message, mirroring the existing paused→auto-
+resume machinery: a transient `preview` flag (+ `previewHash`, the user-message hash at
+preview start) pins the row to the `done` lane and out of attention (alongside the
+`closed`/`paused` overrides in `laneForRow`/`needsAttention`), while `closed:false`+
+`resume:true` let the TerminalPane spawn the live resumed PTY. The same `shouldAutoResume`
+hash-diff that un-pauses a paused agent unarchives a previewing one (drops `preview`, keeps
+it live). To avoid leaking idle resumed processes, a per-pane timer started when a
+previewing session stops being the shown agent re-archives it (terminate PTY) after a grace
+period (60s), cancelled if the user returns or sends a message. `preview` is runtime-only:
+persistence serializes a previewing pane as archived (`closed:true`, `resume:false`), so a
+restart never restores it live. Rejected: full restore-on-click (loses the "completed until
+I reply" framing the user wants) and reusing the `paused` lane (a resumed completed session
+belongs under Archived, not Paused).
+
 **D9 — Phasing (walking skeleton first).** M1 terminal-core → M2 tiling-layout (+
 persistence) → M3 usage-dashboard → M4 task-detection → M5 session-launcher → M6
 agent-overview. Each milestone is independently demoable.

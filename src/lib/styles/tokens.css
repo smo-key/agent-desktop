@@ -1,0 +1,193 @@
+/* ============================================================================
+   MISSION CONTROL — design foundations (ported from design/colors_and_type.css)
+   Colors, type, spacing, radii, elevation/glows, motion. Imported once globally
+   from +layout.svelte so every component can reference the CSS custom properties
+   in its scoped <style>. Fonts are served from static/fonts (root-absolute urls).
+   ============================================================================ */
+
+@font-face {
+  font-family: 'Space Grotesk';
+  src: url('/fonts/SpaceGrotesk-Variable.ttf') format('truetype');
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Hanken Grotesk';
+  src: url('/fonts/HankenGrotesk-Variable.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Hanken Grotesk';
+  src: url('/fonts/HankenGrotesk-Italic-Variable.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/JetBrainsMono-Variable.ttf') format('truetype');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* ---- Deep space — backgrounds & surfaces (near-black, faint cool tint) --- */
+  --space-950: #06080c;
+  --space-900: #090c12;
+  --space-850: #0d1017;
+  --space-800: #11151e;
+  --space-750: #161b26;
+  --space-700: #1c222f;
+  --space-650: #232a39;
+  --space-600: #2c3445;
+  --space-550: #38415560;
+
+  /* ---- Hairlines ---------------------------------------------------------- */
+  --line-faint: rgba(255, 255, 255, 0.05);
+  --line-subtle: rgba(255, 255, 255, 0.08);
+  --line-default: rgba(255, 255, 255, 0.12);
+  --line-strong: rgba(255, 255, 255, 0.18);
+
+  /* ---- Foreground / text -------------------------------------------------- */
+  --fg-1: #eef1f6;
+  --fg-2: #b2baca;
+  --fg-3: #7b8499;
+  --fg-4: #515b71;
+  --fg-on-accent: #0a0d13;
+
+  /* ---- Blue — NASA / structure / primary interactive ---------------------- */
+  --blue-200: #bbd2ff;
+  --blue-300: #8fb4ff;
+  --blue-400: #5e92ff;
+  --blue-500: #3d7bff;
+  --blue-600: #2c63e6;
+  --blue-700: #1e49b4;
+  --blue-900: #0b3d91;
+  --blue-tint: rgba(61, 123, 255, 0.12);
+  --blue-tint-strong: rgba(61, 123, 255, 0.2);
+
+  /* ---- Orange — Claude warmth / energy accent (sparingly) ----------------- */
+  --orange-200: #ffd2b3;
+  --orange-300: #ffb78c;
+  --orange-400: #ff9a63;
+  --orange-500: #ee7e4d;
+  --orange-600: #d9663a;
+  --orange-700: #b44e2b;
+  --clay: #d97757;
+  --orange-tint: rgba(238, 126, 77, 0.13);
+  --orange-tint-strong: rgba(238, 126, 77, 0.22);
+
+  /* ---- Semantic status — aerospace ops language --------------------------- */
+  --nominal-500: #3ccb7f;
+  --nominal-tint: rgba(60, 203, 127, 0.13);
+  --caution-500: #f0b341;
+  --caution-tint: rgba(240, 179, 65, 0.13);
+  --abort-500: #f2564b;
+  --abort-tint: rgba(242, 86, 75, 0.13);
+  --info-500: var(--blue-500);
+
+  /* ---- Semantic aliases --------------------------------------------------- */
+  --bg-app: var(--space-850);
+  --bg-sunken: var(--space-800);
+  --bg-surface: var(--space-750);
+  --bg-raised: var(--space-700);
+  --bg-hover: var(--space-650);
+  --bg-active: var(--space-600);
+  --bg-input: var(--space-550);
+
+  --text-primary: var(--fg-1);
+  --text-secondary: var(--fg-2);
+  --text-muted: var(--fg-3);
+  --text-faint: var(--fg-4);
+
+  --accent: var(--blue-500);
+  --accent-hover: var(--blue-600);
+  --accent-press: var(--blue-700);
+  --energy: var(--orange-500);
+
+  /* ---- Typography --------------------------------------------------------- */
+  --font-display: 'Space Grotesk', 'Hanken Grotesk', system-ui, sans-serif;
+  --font-sans: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --t-display-xl: 56px;
+  --t-display-l: 44px;
+  --t-display-m: 34px;
+  --t-h1: 28px;
+  --t-h2: 22px;
+  --t-h3: 18px;
+  --t-body-l: 16px;
+  --t-body: 14px;
+  --t-body-s: 13px;
+  --t-label: 12px;
+  --t-caption: 11px;
+
+  --lh-tight: 1.08;
+  --lh-snug: 1.25;
+  --lh-normal: 1.5;
+  --tracking-display: -0.02em;
+  --tracking-tight: -0.01em;
+  --tracking-label: 0.08em;
+
+  /* ---- Spacing — 4px base grid -------------------------------------------- */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+  --s-16: 64px;
+  --s-20: 80px;
+  --s-24: 96px;
+
+  /* ---- Radii -------------------------------------------------------------- */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-2xl: 22px;
+  --r-full: 999px;
+
+  /* ---- Elevation — shadows + glows ---------------------------------------- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 14px 38px rgba(0, 0, 0, 0.55);
+  --shadow-pop: 0 10px 34px rgba(0, 0, 0, 0.62);
+
+  --glow-blue: 0 0 0 1px rgba(61, 123, 255, 0.45), 0 0 22px rgba(61, 123, 255, 0.28);
+  --glow-orange: 0 0 0 1px rgba(238, 126, 77, 0.42), 0 0 22px rgba(238, 126, 77, 0.24);
+  --glow-nominal: 0 0 0 1px rgba(60, 203, 127, 0.4), 0 0 18px rgba(60, 203, 127, 0.22);
+  --focus-ring: 0 0 0 3px rgba(61, 123, 255, 0.38);
+
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 360ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+/* ---- App scrollbars (deep-space) ----------------------------------------- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--space-600);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--space-550);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

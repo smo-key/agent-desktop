@@ -1,0 +1,8 @@
+provider: local
+branchPerTask: true
+statuses:
+  started:      "In Progress"
+  planned:      "In Progress"
+  implementing: "In Progress"
+  review:       "In Review"
+  done:         "Done"

@@ -127,3 +127,47 @@ Because the assistant turn carrying an `AskUserQuestion` is NOT written to the t
 #### Scenario: Answer a pending question from the overview
 - **WHEN** an agent's card shows a pending question's options and the user clicks an option, or types their own answer
 - **THEN** the app drives the agent's live menu over the PTY — selecting the chosen option (cursor-down to it, Enter), or navigating to the "type something" entry and sending the user's verbatim text — and never synthesizes an answer the user did not give (a blank free-text answer sends nothing)
+
+### Requirement: Resume An Archived Session By Selecting It
+
+Selecting an archived (closed) agent in the roster SHALL re-open it for viewing by
+respawning `claude --resume <sessionId>`, so its prior transcript is shown in the
+focus pane and is immediately interactive. The session SHALL remain presented as
+archived — in the Archived lane and out of the attention queue — until the user
+commits to it by sending a new message, at which point it is unarchived and rejoins
+its live status lane. This replaces the previous behavior, where selecting an
+archived session showed a static panel that required an explicit "Restore" click;
+the system SHALL NOT show that intermediate restore panel.
+
+A session that is being previewed but to which no message has yet been sent SHALL be
+returned to its archived state — its resumed PTY terminated — once the user has not
+been on its window for a grace period, so previewing does not leak idle resumed
+processes. A previewing session's preview state is runtime-only: it SHALL persist as
+archived, so an app restart never restores it as live.
+
+An archived session that cannot be resumed (not a `claude` session, or it has no
+app-owned session id) SHALL simply be selected as before, with no resume attempt.
+
+#### Scenario: Selecting an archived resumable session resumes it for preview
+- **WHEN** the user selects an archived `claude` agent that has an app-owned session id
+- **THEN** the system respawns it with `claude --resume <sessionId>`, shows its transcript in the focus pane, focuses its terminal, and no static "Session archived" restore panel is shown
+
+#### Scenario: A previewing session stays archived and out of attention
+- **WHEN** an archived session has been resumed for preview but no new message has been sent
+- **THEN** its roster row remains in the Archived lane and is excluded from the attention queue, even while its resumed terminal is live
+
+#### Scenario: Sending a message unarchives a previewing session
+- **WHEN** the user sends a new message to a previewing session (its user-message hash changes from the hash captured when preview began)
+- **THEN** the session is unarchived and rejoins its live status lane (In flight / Needs you), and is no longer treated as archived
+
+#### Scenario: Leaving a previewing session re-archives it after the grace period
+- **WHEN** the user stops being on a previewing session's window and does not return within the grace period, without having sent a message
+- **THEN** the resumed PTY is terminated and the session returns to its archived state, restorable again by re-selecting it
+
+#### Scenario: A previewing session persists as archived
+- **WHEN** the persisted layout is serialized while a session is being previewed
+- **THEN** that session is written as archived (closed, not resuming), so an app restart restores it as an archived session rather than a live one
+
+#### Scenario: A non-resumable archived session is just selected
+- **WHEN** the user selects an archived agent that is not a resumable `claude` session
+- **THEN** the row is selected without any resume attempt and without a restore panel

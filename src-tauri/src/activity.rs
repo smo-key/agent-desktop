@@ -213,7 +213,10 @@ fn user_text(entry: &Value) -> Option<String> {
     let content = entry.get("message").and_then(|m| m.get("content"))?;
     if let Some(s) = content.as_str() {
         let t = s.trim();
-        return (!t.is_empty()).then(|| t.to_string());
+        if t.is_empty() || is_meta_command(t) {
+            return None;
+        }
+        return Some(t.to_string());
     }
     if let Some(arr) = content.as_array() {
         let mut parts = Vec::new();
@@ -221,7 +224,7 @@ fn user_text(entry: &Value) -> Option<String> {
             if b.get("type").and_then(Value::as_str) == Some("text") {
                 if let Some(t) = b.get("text").and_then(Value::as_str) {
                     let t = t.trim();
-                    if !t.is_empty() {
+                    if !t.is_empty() && !is_meta_command(t) {
                         parts.push(t.to_string());
                     }
                 }
@@ -232,6 +235,24 @@ fn user_text(entry: &Value) -> Option<String> {
         }
     }
     None
+}
+
+/// Whether `t` is a session-control command rather than the user saying something:
+/// the bare words `exit`/`quit`, or a `/exit`, `/quit`, `/clear`, `/compact` slash
+/// command (which `claude` records as `<command-name>/NAME</command-name>…`). These
+/// don't count as user messages — a session whose only user entries are these is
+/// EMPTY (deleted on archive, no Haiku title). `t` is already trimmed.
+fn is_meta_command(t: &str) -> bool {
+    if t.eq_ignore_ascii_case("exit") || t.eq_ignore_ascii_case("quit") {
+        return true;
+    }
+    let Some(rest) = t.strip_prefix("<command-name>/") else {
+        return false;
+    };
+    let Some(name) = rest.split_once("</command-name>").map(|(name, _)| name) else {
+        return false;
+    };
+    matches!(name, "exit" | "quit" | "clear" | "compact")
 }
 
 /// A stable hex hash of a list of strings (order + content sensitive).
@@ -824,5 +845,53 @@ mod tests {
         let act = summarize_transcript(&path);
         assert!(act.user_hash.is_some());
         assert_eq!(act.user_hash, summarize_transcript(&path).user_hash);
+    }
+
+    /// Exit/quit/clear/compact entries are NOT the user "saying something" — a
+    /// session whose only user entries are these is EMPTY (deleted on archive, no
+    /// title). They are dropped from `user_messages` so `user_hash` stays None.
+    #[test]
+    fn exit_and_meta_commands_do_not_count_as_user_messages() {
+        let tmp = TempDir::new("exitcmds");
+        // The exact shape `claude` writes when the user runs /exit (and friends):
+        // a plain-string user entry with the <command-name> markup + leading indent.
+        let cmd = |name: &str| {
+            serde_json::json!({"type":"user","message":{"role":"user","content":
+                format!("<command-name>/{name}</command-name>\n            <command-message>{name}</command-message>\n            <command-args></command-args>")}})
+        };
+        let bare = |t: &str| {
+            serde_json::json!({"type":"user","message":{"role":"user","content": t}})
+        };
+
+        // A session whose ONLY user entries are exit/quit/clear/compact (slash and
+        // bare forms) has no real user message -> empty.
+        let empty = write_transcript(
+            tmp.path(),
+            "proj",
+            "sess-empty",
+            &[
+                bare("exit"),
+                bare("quit"),
+                cmd("exit"),
+                cmd("quit"),
+                cmd("clear"),
+                cmd("compact"),
+            ],
+        );
+        assert!(user_messages(&empty).is_empty(), "no real user prose");
+        assert!(
+            summarize_transcript(&empty).user_hash.is_none(),
+            "empty session -> no user_hash -> deleted on archive"
+        );
+
+        // A real prose message followed by /exit keeps ONLY the prose.
+        let real = write_transcript(
+            tmp.path(),
+            "proj",
+            "sess-real",
+            &[bare("Fix the parser bug"), cmd("exit")],
+        );
+        assert_eq!(user_messages(&real), vec!["Fix the parser bug".to_string()]);
+        assert!(summarize_transcript(&real).user_hash.is_some());
     }
 }

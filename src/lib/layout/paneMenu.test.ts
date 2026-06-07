@@ -3,7 +3,6 @@ import { buildPaneMenu, type PaneMenuDeps, type PaneMenuItem } from './paneMenu'
 
 function makeDeps(over: Partial<PaneMenuDeps> = {}): PaneMenuDeps {
   return {
-    split: vi.fn(),
     close: vi.fn(),
     newSession: vi.fn(),
     copy: vi.fn(),
@@ -25,15 +24,6 @@ describe('Pane Context Menu', () => {
     const d = makeDeps();
     const m = buildPaneMenu(d);
 
-    item(m, 'split-right').run();
-    expect(d.split).toHaveBeenCalledWith('row', 'after');
-    item(m, 'split-down').run();
-    expect(d.split).toHaveBeenCalledWith('col', 'after');
-    item(m, 'split-left').run();
-    expect(d.split).toHaveBeenCalledWith('row', 'before');
-    item(m, 'split-up').run();
-    expect(d.split).toHaveBeenCalledWith('col', 'before');
-
     item(m, 'close').run();
     expect(d.close).toHaveBeenCalledOnce();
     item(m, 'new-session').run();
@@ -48,9 +38,8 @@ describe('Pane Context Menu', () => {
     const m = buildPaneMenu(makeDeps({ hasSelection: false, canClose: false }));
     expect(item(m, 'copy').disabled).toBe(true);
     expect(item(m, 'close').disabled).toBe(true);
-    // Paste and splits remain available regardless.
+    // Paste remains available regardless.
     expect(item(m, 'paste').disabled).toBeFalsy();
-    expect(item(m, 'split-right').disabled).toBeFalsy();
 
     const enabled = buildPaneMenu(makeDeps({ hasSelection: true, canClose: true }));
     expect(item(enabled, 'copy').disabled).toBeFalsy();

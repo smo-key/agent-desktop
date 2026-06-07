@@ -1,5 +1,6 @@
 pub mod activity;
 pub mod events;
+pub mod git;
 pub mod pty;
 pub mod subagents;
 pub mod task;
@@ -29,6 +30,14 @@ const RECENTS_FILE: &str = "recents.json";
 
 /// Basename of the persisted projects file (sibling of `layout.json`).
 const PROJECTS_FILE: &str = "projects.json";
+
+/// Basename of the persisted user-settings file (sibling of `layout.json`),
+/// holding the open-with preferences (which app opens code/html/other files).
+const SETTINGS_FILE: &str = "settings.json";
+
+/// Basename of the persisted project-terminals file (sibling of `layout.json`),
+/// holding each project's user-created terminal definitions (the Terminals panel).
+const TERMINALS_FILE: &str = "terminals.json";
 
 /// The statusline wrapper source, version-controlled under `src-tauri/resources`
 /// and baked into the binary. Installed verbatim to `<app_data_dir>/bin/` on
@@ -132,6 +141,69 @@ fn open_in_editor(path: String) -> Result<(), String> {
         .map_err(|e| format!("open -a Cursor {path}: {e}"))
 }
 
+/// Resolve a terminal `token` to an existing absolute path, cwd-aware. `~`/`~/...`
+/// expand against `$HOME`; absolute tokens pass through; everything else is joined
+/// against the pane's `cwd`. `fs::canonicalize` both validates existence (it errors
+/// if the path is missing) and yields the absolute, symlink-resolved path. Returns
+/// `Ok(None)` for anything that doesn't map to an existing path (no `cwd` for a
+/// relative token, `~user` form, missing `$HOME`, or non-existent path) so the
+/// frontend simply declines to linkify — only real paths get an affordance.
+#[tauri::command]
+fn resolve_path(cwd: Option<String>, token: String) -> Result<Option<String>, String> {
+    let token = token.trim();
+    if token.is_empty() {
+        return Ok(None);
+    }
+    let candidate: PathBuf = if let Some(rest) = token.strip_prefix('~') {
+        let Ok(home) = std::env::var("HOME") else {
+            return Ok(None);
+        };
+        if rest.is_empty() {
+            PathBuf::from(home)
+        } else if let Some(rest) = rest.strip_prefix('/') {
+            PathBuf::from(home).join(rest)
+        } else {
+            // `~user` form is not supported.
+            return Ok(None);
+        }
+    } else {
+        let p = PathBuf::from(token);
+        if p.is_absolute() {
+            p
+        } else {
+            match cwd {
+                Some(c) => PathBuf::from(c).join(p),
+                None => return Ok(None),
+            }
+        }
+    };
+    Ok(fs::canonicalize(&candidate)
+        .ok()
+        .map(|abs| abs.to_string_lossy().into_owned()))
+}
+
+/// Open `path` in an application. With `app` set, launches that specific app
+/// (macOS `open -a <app> <path>`, e.g. "Brave Browser", "Cursor"); with `app`
+/// `None`/empty, opens in the OS default handler (`open <path>` — registered app
+/// for files, Finder for directories). The frontend picks `app` from the user's
+/// open-with preferences. Mirrors `open_in_editor` — best-effort spawn-and-return;
+/// a launch failure is surfaced as a string the frontend logs/ignores.
+#[tauri::command]
+fn open_path(path: String, app: Option<String>) -> Result<(), String> {
+    let mut cmd = std::process::Command::new("open");
+    match app.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+        Some(app) => {
+            cmd.args(["-a", app, &path]);
+        }
+        None => {
+            cmd.arg(&path);
+        }
+    }
+    cmd.spawn()
+        .map(|_| ())
+        .map_err(|e| format!("open {path} (app {app:?}): {e}"))
+}
+
 /// Generate a short session FOCUS title from the user's messages, using Claude
 /// Haiku. Locates the session transcript, extracts the user's prose messages, and
 /// asks `claude -p --model haiku` for a <=6-word title (e.g. "SKIPA-45: Fix
@@ -139,7 +211,11 @@ fn open_in_editor(path: String) -> Result<(), String> {
 /// command worker thread (the blocking model call never blocks the UI); the
 /// frontend gates calls on the `user_hash` so a title is regenerated only when the
 /// user's messages actually change.
-#[tauri::command]
+// `(async)` runs this on a worker thread, NOT the main/UI thread: it shells out to
+// a blocking `claude -p` that can take seconds, and on the main thread that freezes
+// the whole webview (the app hangs until the title resolves). Off-thread, titles
+// resolve in the background while the UI stays responsive.
+#[tauri::command(async)]
 fn session_focus(session_id: String, cwd: Option<String>) -> Result<Option<String>, String> {
     let projects_base =
         activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
@@ -299,6 +375,34 @@ fn projects_load(app: AppHandle) -> Result<Option<String>, String> {
 #[tauri::command]
 fn projects_save(app: AppHandle, json: String) -> Result<(), String> {
     write_app_data_json(&app, PROJECTS_FILE, &json)
+}
+
+/// Load the persisted user-settings JSON (sibling `settings.json`), or `None` when
+/// no file exists yet. The frontend parses tolerantly (falls back to defaults on
+/// malformed input), so only a read error other than not-found surfaces here.
+#[tauri::command]
+fn settings_load(app: AppHandle) -> Result<Option<String>, String> {
+    read_app_data_json(&app, SETTINGS_FILE)
+}
+
+/// Atomically persist the user-settings JSON (see [`write_app_data_json`]).
+#[tauri::command]
+fn settings_save(app: AppHandle, json: String) -> Result<(), String> {
+    write_app_data_json(&app, SETTINGS_FILE, &json)
+}
+
+/// Load the persisted project-terminals JSON (sibling `terminals.json`), or `None`
+/// when no file exists yet. The frontend parses tolerantly (empty collections on any
+/// malformed input), so a read error other than not-found is the only failure here.
+#[tauri::command]
+fn terminals_load(app: AppHandle) -> Result<Option<String>, String> {
+    read_app_data_json(&app, TERMINALS_FILE)
+}
+
+/// Atomically persist the project-terminals JSON (see [`write_app_data_json`]).
+#[tauri::command]
+fn terminals_save(app: AppHandle, json: String) -> Result<(), String> {
+    write_app_data_json(&app, TERMINALS_FILE, &json)
 }
 
 /// Resolve `<app_data_dir>`, creating it if needed.
@@ -484,6 +588,17 @@ fn activity_for(panes: Vec<PaneRef>) -> Result<HashMap<String, Activity>, String
     Ok(activity::activity_for_panes(&projects_base, &panes))
 }
 
+/// Return the `path -> GitStatus` map for the given project FOLDERS (branch +
+/// dirty + ahead/behind), computed by shelling out to git per folder (in
+/// parallel). Unlike the footer's git (which rides a running agent's statusline
+/// snapshot), this works for any project folder even with no agent running, so the
+/// project pane shows each project's branch directly. Off-repo / no-remote folders
+/// map to an all-null status; the call never fails. The frontend polls it slowly.
+#[tauri::command(async)]
+fn git_status_for(paths: Vec<String>) -> Result<HashMap<String, git::GitStatus>, String> {
+    Ok(git::status_for_paths(&paths))
+}
+
 /// Return the `pane_id -> [AgentEvent]` timeline for the caller's app panes, used
 /// to SEED the overview's event store on mount/resume. For each pane the events
 /// come from the in-memory ring (hot cache) first, then the durable per-session
@@ -599,6 +714,8 @@ pub fn run() {
             pty_resize,
             pty_kill,
             open_in_editor,
+            resolve_path,
+            open_path,
             session_focus,
             layout_load,
             layout_save,
@@ -606,10 +723,15 @@ pub fn run() {
             recents_save,
             projects_load,
             projects_save,
+            settings_load,
+            settings_save,
+            terminals_load,
+            terminals_save,
             usage_paths,
             usage_snapshots,
             subagents_for,
             activity_for,
+            git_status_for,
             events_for
         ])
         .on_window_event(|window, event| {

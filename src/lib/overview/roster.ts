@@ -34,18 +34,22 @@ export type AgentStatus = 'working' | 'waiting' | 'finished' | 'error' | 'idle';
 
 /**
  * The control-room LANE an agent belongs to — the Overview groups the roster into
- * three lanes, ordered top->bottom by how much they need you:
+ * lanes, ordered top->bottom by how much they need you:
  *  - `attn`   — needs attention: waiting on YOU, or errored (the prominent lane).
- *  - `done`   — completed: the process finished cleanly.
  *  - `flight` — in flight: working on its own, or idle (these need you least).
+ *  - `paused` — deferred by you for later (kept live; a new message resumes it).
+ *  - `done`   — archived: the session is closed (restorable), or finished cleanly.
  */
-export type AgentLane = 'attn' | 'done' | 'flight';
+export type AgentLane = 'attn' | 'flight' | 'paused' | 'done';
 
-/** The lane render order (top -> bottom): needs-attention, in-flight, completed.
- *  Completed sits at the BOTTOM (it needs you least and is collapsed by default). */
-export const LANE_ORDER: readonly AgentLane[] = ['attn', 'flight', 'done'];
+/** The lane render order (top -> bottom): needs-attention, in-flight, paused,
+ *  archived. Archived sits at the BOTTOM (it needs you least); paused sits just
+ *  above it (set aside, but not closed). */
+export const LANE_ORDER: readonly AgentLane[] = ['attn', 'flight', 'paused', 'done'];
 
-/** PURE: the lane for a status. waiting/error -> attn, finished -> done, else flight. */
+/** PURE: the lane for a status alone. waiting/error -> attn, finished -> done, else
+ *  flight. Does NOT consider the paused/archived row overrides — use `laneForRow`
+ *  for a full row. */
 export function laneOf(status: AgentStatus): AgentLane {
   if (status === 'waiting' || status === 'error') return 'attn';
   if (status === 'finished') return 'done';
@@ -53,13 +57,39 @@ export function laneOf(status: AgentStatus): AgentLane {
 }
 
 /**
- * PURE: partition the roster into its three lanes, preserving the original roster
- * order within each lane. Always returns all three keys (empty arrays when a lane
- * has no agents) so the Overview can decide whether to render each lane.
+ * PURE: the lane for a full row, applying the row-level overrides in priority order:
+ * ARCHIVED (closed) always sits in `done`; otherwise a PAUSED row sits in `paused`
+ * (outranking its underlying status, so a paused waiting agent leaves attention);
+ * otherwise the status decides (`laneOf`).
+ */
+export function laneForRow(row: AgentRow): AgentLane {
+  if (row.closed === true || row.preview === true) return 'done';
+  if (row.paused === true) return 'paused';
+  return laneOf(row.status);
+}
+
+/**
+ * PURE: whether a row is actively waiting on YOU — waiting/errored AND neither
+ * paused (deferred) nor archived (closed). The inbox's attention queue + focus
+ * advance use this so a paused/archived agent never nags or steals focus.
+ */
+export function needsAttention(row: AgentRow): boolean {
+  return (
+    (row.status === 'waiting' || row.status === 'error') &&
+    !row.paused &&
+    !row.closed &&
+    !row.preview
+  );
+}
+
+/**
+ * PURE: partition the roster into its lanes, preserving the original roster order
+ * within each lane. Always returns all keys (empty arrays when a lane has no
+ * agents) so the Overview can decide whether to render each lane.
  */
 export function groupByLane(rows: AgentRow[]): Record<AgentLane, AgentRow[]> {
-  const grouped: Record<AgentLane, AgentRow[]> = { attn: [], done: [], flight: [] };
-  for (const row of rows) grouped[laneOf(row.status)].push(row);
+  const grouped: Record<AgentLane, AgentRow[]> = { attn: [], flight: [], paused: [], done: [] };
+  for (const row of rows) grouped[laneForRow(row)].push(row);
   return grouped;
 }
 
@@ -132,6 +162,23 @@ export interface RosterPane {
   isApp: boolean;
   /** The project this agent was launched under, or null/undefined if none. */
   projectId?: string | null;
+  /** Whether this agent's session is CLOSED (Archived) — its PTY is terminated
+   *  and it is retained only for restore/delete. */
+  closed?: boolean;
+  /** Whether this agent is PAUSED (deferred): kept live, but moved to the Paused
+   *  lane and out of attention until a new user message resumes it. */
+  paused?: boolean;
+  /** The user-message hash captured when the agent was paused. The inbox resumes
+   *  the agent when the live hash differs from this (a new message was sent). */
+  pausedHash?: string | null;
+  /** Whether this agent is being PREVIEWED: an archived session re-opened with
+   *  `claude --resume` so its transcript is live + interactive, yet still presented
+   *  as Archived (pinned to `done`, out of attention) until the user sends a
+   *  message. Runtime-only — never persisted (serialized as `closed`). */
+  preview?: boolean;
+  /** The user-message hash captured when the preview began; the inbox UNARCHIVES the
+   *  session when the live hash differs (a new message was sent). */
+  previewHash?: string | null;
 }
 
 /** One workspace, projected to exactly what the roster reads. */
@@ -170,10 +217,33 @@ export interface AgentRow {
   contextPct: number | null;
   /** Total session cost in USD, or null when unknown. */
   cost: number | null;
+  /** The agent's last-activity timestamp (snapshot `ts`, unix SECONDS) — when it
+   *  last updated its statusline — or null when unknown. Drives the card's friendly
+   *  "last interaction" label. */
+  lastTs: number | null;
   /** Derived live/idle/needs-attention status. */
   status: AgentStatus;
   /** The project this agent belongs to (registry `projectId`), or null if none. */
   projectId: string | null;
+  /** Whether the agent's session is CLOSED (Completed): PTY terminated, retained
+   *  only for restore (`claude --resume`) or delete. Forces the `finished` status
+   *  so a closed agent always sits in the Completed lane. Optional: `rowFor` always
+   *  sets it, but roster fixtures may omit it (treated as not-closed). */
+  closed?: boolean;
+  /** Whether the agent is PAUSED (deferred): kept live but moved to the Paused lane
+   *  and out of attention. Optional; roster fixtures may omit it (not-paused). */
+  paused?: boolean;
+  /** The user-message hash captured at pause time; the inbox resumes the agent when
+   *  the live hash differs (a new message arrived). Null when paused with no
+   *  messages yet; undefined when not paused. */
+  pausedHash?: string | null;
+  /** Whether the agent is being PREVIEWED: an archived session resumed for viewing
+   *  (live terminal), still pinned to the Archived lane and out of attention until a
+   *  new message UNARCHIVES it. Optional; roster fixtures may omit it (not-preview). */
+  preview?: boolean;
+  /** The user-message hash captured when the preview began; the inbox unarchives the
+   *  session when the live hash differs. Undefined when not previewing. */
+  previewHash?: string | null;
 }
 
 /** Coerce to a finite number, else null (guards NaN/Infinity/strings). */
@@ -244,7 +314,10 @@ function rowFor(
   // "working"); otherwise the event-sourced status wins; the PTY-byte heuristic is
   // the fallback only when events haven't determined a status (or none arrived).
   const ptyStatus = deriveStatus(runtime, nowMs, workingWindowMs);
-  const status = runtime?.exited ? ptyStatus : event?.status ?? ptyStatus;
+  // A CLOSED (Completed) agent is always `finished` (Completed lane), regardless of
+  // how its PTY exited — overrides the exit-code/event-derived status.
+  const closed = pane.closed === true;
+  const status = closed ? 'finished' : runtime?.exited ? ptyStatus : event?.status ?? ptyStatus;
   return {
     paneId: pane.paneId,
     workspaceId,
@@ -258,12 +331,23 @@ function rowFor(
     question: event?.question ?? activity?.question ?? null,
     questions: event?.questions ?? activity?.questions ?? null,
     currentAction: event?.currentAction ?? null,
-    // Prefer the transcript-derived context % (decoupled from the statusline
-    // snapshot); fall back to the snapshot's when the transcript has no usage yet.
-    contextPct: finiteOrNull(activity?.contextPct) ?? finiteOrNull(snapshot?.context_pct),
+    // Context % comes from the statusline snapshot — Claude Code computes it
+    // against the REAL context window (incl. the 1M variants) and the auto-compact
+    // threshold, the same authoritative source the footer uses, so the card and
+    // footer always agree. The transcript-derived value is window-BLIND (the
+    // transcript records the bare model id with no 1M marker, so it always divides
+    // by 200k and pins a 1M session at 100%), hence only a fallback when the
+    // snapshot has no value yet.
+    contextPct: finiteOrNull(snapshot?.context_pct) ?? finiteOrNull(activity?.contextPct),
     cost: finiteOrNull(snapshot?.cost),
+    lastTs: finiteOrNull(snapshot?.ts),
     status,
-    projectId: pane.projectId ?? null
+    projectId: pane.projectId ?? null,
+    closed,
+    paused: pane.paused === true,
+    pausedHash: pane.pausedHash ?? null,
+    preview: pane.preview === true,
+    previewHash: pane.previewHash ?? null
   };
 }
 

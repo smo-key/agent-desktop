@@ -5,6 +5,8 @@
   import type { WebglAddon } from '@xterm/addon-webgl';
   import { Channel, invoke } from '@tauri-apps/api/core';
   import { registerTerminal, unregisterTerminal } from './layout/terminals';
+  import { fileLinkAt } from './terminalLinks';
+  import { openWith } from './settings/openWith.svelte';
   import { getUsagePaths } from './usage/paths';
   import { buildSpawnOverride } from './usage/spawn';
   import {
@@ -75,7 +77,20 @@
      * `--resume <sessionId>` so claude continues from its prior transcript.
      * Absent (false/undefined) for fresh launches and splits.
      */
-    resume = undefined as boolean | undefined
+    resume = undefined as boolean | undefined,
+    /**
+     * OPTIONAL callback fired when the child process exits on its own (PTY EOF),
+     * with its exit code. Used by the Terminals panel to flip a terminal slot to
+     * stopped (and record the exit code) without removing it. Not used by agent
+     * panes (the overview reads exits from the activity pipeline instead).
+     */
+    onExit = undefined as ((code: number) => void) | undefined,
+    /**
+     * OPTIONAL callback fired when the terminal's title changes (xterm
+     * `onTitleChange`, i.e. an OSC 0/2 sequence). Used by the Terminals panel to
+     * label a terminal with the actively running command. Agent panes pass none.
+     */
+    onTitle = undefined as ((title: string) => void) | undefined
   }: {
     paneId: string;
     program?: string;
@@ -87,6 +102,8 @@
     initialInput?: string;
     sessionId?: string;
     resume?: boolean;
+    onExit?: (code: number) => void;
+    onTitle?: (title: string) => void;
   } = $props();
 
   // Single-shot sender for the optional initial prompt. Constructed in onMount
@@ -112,7 +129,40 @@
   let ro: ResizeObserver | undefined;
   let onDataSub: IDisposable | undefined;
   let onResizeSub: IDisposable | undefined;
+  let onTitleSub: IDisposable | undefined;
   let contextLossSub: IDisposable | undefined;
+
+  // ── File links (terminal-file-links spec) ───────────────────────────────
+  // ⌘-hover over a token that resolves to an existing path → dotted underline +
+  // pointer; ⌘-click → open it (per the user's open-with preferences). We manage
+  // the affordance OURSELVES (own overlay + cursor class + capture-phase click)
+  // rather than via xterm's link provider: the provider's hover/cursor fights the
+  // PTY mouse-reporting that claude's TUI enables (`.xterm.enable-mouse-events`
+  // forces the default cursor) and its async hit-testing made the underline/cursor
+  // flicker. Self-managing gives a stable underline + pointer that persist at rest.
+  // The DOM overlay drawing the dotted underline (child of `host`).
+  let underlineEl: HTMLDivElement | undefined;
+  // Whether ⌘ (Meta) is currently held; gates the whole affordance.
+  let metaDown = false;
+  // Last pointer position over the host (client coords), so ⌘ press/release can
+  // re-evaluate the hover without waiting for a mouse move.
+  let lastPointer: { clientX: number; clientY: number } | undefined;
+  // The resolved absolute path currently armed under the pointer (⌘ held), or null.
+  let armedPath: string | null = null;
+  // Identity of the armed token (`absLine:start:text`) to skip redundant re-resolves
+  // while the pointer moves within the same token.
+  let armedKey: string | null = null;
+  // Monotonic counter so a slow `resolve_path` reply that arrives after the pointer
+  // moved on is ignored (only the latest hover wins).
+  let resolveSeq = 0;
+  // Window/host listeners owned by this instance (removed in onDestroy).
+  let onKeyDown: ((e: KeyboardEvent) => void) | undefined;
+  let onKeyUp: ((e: KeyboardEvent) => void) | undefined;
+  let onWinBlur: (() => void) | undefined;
+  let onHostMove: ((e: MouseEvent) => void) | undefined;
+  let onHostLeave: (() => void) | undefined;
+  let onHostDownCapture: ((e: MouseEvent) => void) | undefined;
+  let onTermScroll: IDisposable | undefined;
 
   // The backend pane id (u64) for this terminal, resolved by pty_spawn. Distinct
   // from the frontend `paneId` identity prop.
@@ -199,6 +249,144 @@
     // PTY are untouched (we only swap the renderer, never the Terminal).
   }
 
+  // Drop the armed state: hide the underline overlay and revert the cursor.
+  function clearArmed() {
+    armedPath = null;
+    armedKey = null;
+    if (underlineEl) underlineEl.style.display = 'none';
+    host?.querySelector('.xterm-screen')?.classList.remove('file-link-armed');
+  }
+
+  // Cell geometry from the live screen element. xterm fills `.xterm-screen` with an
+  // exact cols×rows grid, so cell size = screenRect / (cols|rows) — accurate enough
+  // for hit-testing tokens and positioning the underline.
+  function screenMetrics() {
+    if (!term || !host) return undefined;
+    const screen = host.querySelector('.xterm-screen') as HTMLElement | null;
+    if (!screen) return undefined;
+    const rect = screen.getBoundingClientRect();
+    const { cols, rows } = term;
+    if (!cols || !rows || rect.width === 0 || rect.height === 0) return undefined;
+    return { screen, rect, cellW: rect.width / cols, cellH: rect.height / rows };
+  }
+
+  // Re-evaluate the hover at `lastPointer`: when ⌘ is held and the pointer sits on a
+  // token that `resolve_path` confirms exists, arm it (underline + pointer cursor +
+  // store the absolute path for ⌘-click). Otherwise clear. Async-safe via resolveSeq.
+  async function updateHover() {
+    if (!metaDown || !lastPointer || !term) {
+      clearArmed();
+      return;
+    }
+    const mx = screenMetrics();
+    if (!mx) {
+      clearArmed();
+      return;
+    }
+    const { rect, cellW, cellH } = mx;
+    const relX = lastPointer.clientX - rect.left;
+    const relY = lastPointer.clientY - rect.top;
+    if (relX < 0 || relY < 0 || relX >= rect.width || relY >= rect.height) {
+      clearArmed();
+      return;
+    }
+    const col = Math.floor(relX / cellW);
+    const viewportRow = Math.floor(relY / cellH);
+    const absLine = term.buffer.active.viewportY + viewportRow;
+    const lineText = term.buffer.active.getLine(absLine)?.translateToString(true);
+    if (!lineText) {
+      clearArmed();
+      return;
+    }
+    const link = fileLinkAt(lineText, col);
+    if (!link) {
+      clearArmed();
+      return;
+    }
+    const key = `${absLine}:${link.start}:${link.text}`;
+    // Same token we already armed — nothing to re-resolve (position is stable).
+    if (key === armedKey && armedPath) return;
+    const seq = ++resolveSeq;
+    const abs = await invoke<string | null>('resolve_path', { cwd, token: link.text }).catch(
+      () => null
+    );
+    // Superseded by a newer hover, or ⌘ released, or not a real path → bail/clear.
+    if (seq !== resolveSeq) return;
+    if (!metaDown || !abs) {
+      clearArmed();
+      return;
+    }
+    armedPath = abs;
+    armedKey = key;
+    positionUnderline(mx, viewportRow, link.start, link.end);
+    mx.screen.classList.add('file-link-armed');
+  }
+
+  // Place the dotted-underline overlay over the token's cells. The overlay is a
+  // child of `host`, so we position it in host-local coords (screen offset + cell).
+  function positionUnderline(
+    mx: NonNullable<ReturnType<typeof screenMetrics>>,
+    viewportRow: number,
+    startCol: number,
+    endCol: number
+  ) {
+    if (!underlineEl || !host) return;
+    const hostRect = host.getBoundingClientRect();
+    const offX = mx.rect.left - hostRect.left;
+    const offY = mx.rect.top - hostRect.top;
+    underlineEl.style.left = `${offX + startCol * mx.cellW}px`;
+    underlineEl.style.top = `${offY + (viewportRow + 1) * mx.cellH - 2}px`;
+    underlineEl.style.width = `${(endCol - startCol) * mx.cellW}px`;
+    underlineEl.style.display = 'block';
+  }
+
+  // Wire the ⌘-gated file-link affordance: ⌘/pointer tracking, hover evaluation,
+  // and capture-phase ⌘-click to open. Everything is torn down in onDestroy.
+  function setupFileLinks(t: Terminal) {
+    const setMeta = (down: boolean) => {
+      if (down === metaDown) return;
+      metaDown = down;
+      if (down) void updateHover();
+      else clearArmed();
+    };
+    onKeyDown = (e) => {
+      if (e.key === 'Meta') setMeta(true);
+    };
+    onKeyUp = (e) => {
+      if (e.key === 'Meta') setMeta(false);
+    };
+    onWinBlur = () => setMeta(false);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onWinBlur);
+
+    onHostMove = (e) => {
+      lastPointer = { clientX: e.clientX, clientY: e.clientY };
+      if (metaDown) void updateHover();
+    };
+    onHostLeave = () => {
+      lastPointer = undefined;
+      clearArmed();
+    };
+    host.addEventListener('mousemove', onHostMove);
+    host.addEventListener('mouseleave', onHostLeave);
+
+    // ⌘-click → open the armed path. Capture phase on `host` runs before xterm's
+    // own mouse handlers (bound on descendants), and stopImmediatePropagation keeps
+    // the click from starting a selection or being reported to the PTY.
+    onHostDownCapture = (e) => {
+      if (e.button !== 0 || !metaDown || !armedPath) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      void openWith.openFile(armedPath);
+    };
+    host.addEventListener('mousedown', onHostDownCapture, true);
+
+    // Scrolling moves the buffer under a stationary pointer; drop the (now stale)
+    // affordance — it re-arms on the next move.
+    onTermScroll = t.onScroll(() => clearArmed());
+  }
+
   onMount(() => {
     let disposed = false;
 
@@ -276,6 +464,10 @@
       opened = true;
       safeFit();
 
+      // Wire ⌘-hover/click file links now the terminal is in the DOM (the link
+      // provider reads `host`'s xterm children and the pane's `cwd`).
+      setupFileLinks(term);
+
       // WebGL renderer — loaded ONLY when this pane is active (context cap
       // ~16/page). The reactive `active` effect below keeps this in sync as
       // focus moves; here we just kick off the initial load if we start active.
@@ -306,6 +498,9 @@
           // false success.
           ptyId = undefined;
           note(`[process exited${msg.code !== 0 ? ` (code ${msg.code})` : ''}]`);
+          // Surface the exit to an interested parent (Terminals panel) so the slot
+          // flips to stopped + records the code. Agent panes pass no callback.
+          onExit?.(msg.code);
         }
       };
 
@@ -404,6 +599,14 @@
         }).catch(() => {});
       });
 
+      // Title: surface xterm title changes (OSC 0/2) to an interested parent (the
+      // Terminals panel labels a terminal with the running command). Only wired when
+      // a callback is supplied (agent panes pass none).
+      if (onTitle) {
+        const emit = onTitle;
+        onTitleSub = term.onTitleChange((t) => emit(t));
+      }
+
       // Resize round-trip: xterm computes new cols/rows on fit(); onResize then
       // propagates them to the PTY (SIGWINCH → TUIs reflow).
       onResizeSub = term.onResize(({ cols, rows }) => {
@@ -453,7 +656,18 @@
 
     onResizeSub?.dispose();
     onDataSub?.dispose();
+    onTitleSub?.dispose();
     contextLossSub?.dispose();
+
+    // File-link teardown: drop the ⌘/pointer/click listeners and scroll sub.
+    onTermScroll?.dispose();
+    onTermScroll = undefined;
+    if (onKeyDown) window.removeEventListener('keydown', onKeyDown);
+    if (onKeyUp) window.removeEventListener('keyup', onKeyUp);
+    if (onWinBlur) window.removeEventListener('blur', onWinBlur);
+    if (onHostMove) host.removeEventListener('mousemove', onHostMove);
+    if (onHostLeave) host.removeEventListener('mouseleave', onHostLeave);
+    if (onHostDownCapture) host.removeEventListener('mousedown', onHostDownCapture, true);
 
     webgl?.dispose();
     webgl = undefined;
@@ -512,7 +726,10 @@
 </script>
 
 <div class="pane" data-pane-id={paneId} data-exited={exited}>
-  <div class="host" bind:this={host}></div>
+  <div class="host" bind:this={host}>
+    <!-- ⌘-hover file-link underline overlay; positioned + shown imperatively. -->
+    <div class="file-link-underline" bind:this={underlineEl}></div>
+  </div>
 </div>
 
 <style>
@@ -534,6 +751,26 @@
   /* xterm draws its own viewport; keep its internal scrollbar subtle */
   .host :global(.xterm) {
     height: 100%;
+  }
+
+  /* ⌘-hover file-link affordance: a dotted underline overlay positioned over the
+     hovered path's cells (see terminal-file-links spec). Hidden until armed, and
+     pointer-events disabled so it never intercepts hover/click on the terminal. */
+  .file-link-underline {
+    position: absolute;
+    display: none;
+    height: 0;
+    border-bottom: 1px dotted #58a6ff;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  /* While a path is armed under the ⌘-cursor, force the pointer cursor. `!important`
+     beats xterm's `.xterm.enable-mouse-events { cursor: default }` (claude's TUI
+     turns mouse reporting on), and being a static class it persists at rest — no
+     flicker. */
+  .host :global(.xterm-screen.file-link-armed) {
+    cursor: pointer !important;
   }
   .host :global(.xterm-viewport)::-webkit-scrollbar {
     width: 10px;

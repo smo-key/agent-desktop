@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addProject,
   removeProject,
+  updateProject,
   hexA,
   parseProjects,
   projectForId,
@@ -89,6 +90,49 @@ describe('projects — model helpers', () => {
     expect(hexA('not-a-hex', 0.2)).toBe('rgba(125, 132, 153, 0.2)');
     expect(projectLabel(p({ name: '  ', path: '/home/u/web-app' }))).toBe('web-app');
     expect(projectLabel(p({ name: 'Named' }))).toBe('Named');
+  });
+});
+
+describe('updateProject — Edit a project', () => {
+  it('patches fields of the matching project and keeps its id', () => {
+    const list = [p({ id: 'a', name: 'A' }), p({ id: 'b', path: '/b', name: 'B' })];
+    const next = updateProject(list, 'b', { name: 'B2', color: '#111111' });
+    expect(next.map((x) => x.id)).toEqual(['a', 'b']); // order + id preserved
+    expect(next[1]).toMatchObject({ id: 'b', name: 'B2', color: '#111111', path: '/b' });
+  });
+
+  it('sets a logo and clears it again via logo: undefined', () => {
+    const list = [p({ id: 'a' })];
+    const withLogo = updateProject(list, 'a', { logo: 'data:image/png;base64,XYZ' });
+    expect(withLogo[0].logo).toBe('data:image/png;base64,XYZ');
+    const cleared = updateProject(withLogo, 'a', { logo: undefined });
+    expect('logo' in cleared[0] && cleared[0].logo !== undefined).toBe(false);
+  });
+
+  it('is a no-op when the id is absent and never mutates the input', () => {
+    const list = [p({ id: 'a' })];
+    const frozen = JSON.stringify(list);
+    const next = updateProject(list, 'missing', { name: 'X' });
+    expect(next).toEqual(list);
+    expect(JSON.stringify(list)).toBe(frozen); // input untouched
+  });
+});
+
+describe('logo field — persistence', () => {
+  it('round-trips a project with a logo and accepts one without', () => {
+    const withLogo = p({ id: 'a', logo: 'data:image/png;base64,AAA' });
+    const without = p({ id: 'b', path: '/b' });
+    const json = serializeProjects([withLogo, without]);
+    const back = parseProjects(json);
+    expect(back[0].logo).toBe('data:image/png;base64,AAA');
+    expect(back[1].logo).toBeUndefined();
+  });
+
+  it('drops a non-string logo while keeping the rest of the record', () => {
+    const raw = JSON.stringify([{ ...p({ id: 'a' }), logo: 123 }]);
+    const back = parseProjects(raw);
+    expect(back).toHaveLength(1);
+    expect(back[0].logo).toBeUndefined();
   });
 });
 

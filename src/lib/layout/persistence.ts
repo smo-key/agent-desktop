@@ -21,6 +21,7 @@
 // (which imports this module) — kept separate so this stays pure + testable.
 
 import {
+  closeLeaf,
   freshWorkspace,
   leavesInOrder,
   migrate,
@@ -60,6 +61,35 @@ export interface PersistedSession {
    * spawned and the transcript is already resumed).
    */
   resume?: boolean;
+  /**
+   * Set when the agent's session is CLOSED (Archived). Persisted, so a closed
+   * agent restores AS closed (its TerminalPane is not rendered — no re-spawn) and
+   * stays listed under Archived, restorable via `claude --resume`.
+   */
+  closed?: boolean;
+  /**
+   * Set when the agent is PAUSED (deferred). Persisted, so a paused agent restores
+   * AS paused. Unlike `closed`, a paused pane stays LIVE (it re-spawns / resumes so
+   * you can keep messaging it); it is only moved to the Paused lane and out of
+   * attention until a new message resumes it.
+   */
+  paused?: boolean;
+  /**
+   * The user-message hash captured when the agent was paused. Persisted alongside
+   * `paused` so the resume-on-new-message baseline survives a restart (without it a
+   * restored paused agent would immediately look "changed" and un-pause).
+   */
+  pausedHash?: string | null;
+  /**
+   * Set while an archived session is being PREVIEWED (resumed for viewing, but still
+   * presented as Archived until a message is sent). RUNTIME-ONLY — NOT serialized:
+   * the serializer writes a previewing pane as `closed` instead, so an app restart
+   * restores it as archived rather than as a live resumed session.
+   */
+  preview?: boolean;
+  /** The user-message hash captured when the preview began (runtime-only, not
+   *  serialized). The inbox unarchives the session when the live hash differs. */
+  previewHash?: string | null;
 }
 
 /** One serialized workspace: identity + name + its pane tree + its registry. */
@@ -152,7 +182,17 @@ function projectRegistry(
       // Persist the claude session id so the pane can resume the prior transcript
       // on restart (via `--resume <sessionId>`). Omit when absent so the JSON
       // stays clean for shell panes and older saved states that had no id.
-      ...(src?.sessionId ? { sessionId: src.sessionId } : {})
+      ...(src?.sessionId ? { sessionId: src.sessionId } : {}),
+      // Persist the closed (Archived) state so it restores as closed. A PREVIEWING
+      // pane (resumed for viewing, but still presented as Archived) is runtime-only:
+      // serialize it AS closed so a restart restores it archived, never live.
+      ...(src?.closed || src?.preview ? { closed: true } : {}),
+      // Persist the paused state + its baseline hash so a deferred agent restores as
+      // paused and doesn't immediately auto-resume on restart. A previewing pane is
+      // never paused, so this branch is skipped for it.
+      ...(src?.paused && !src?.preview
+        ? { paused: true, pausedHash: src.pausedHash ?? null }
+        : {})
     };
   }
   return out;
@@ -249,7 +289,15 @@ function sanitizeRegistry(
         typeof raw.sessionId === 'string' && raw.sessionId ? raw.sessionId : undefined;
       const sessionId =
         program === 'claude' ? (persistedSessionId ?? crypto.randomUUID()) : undefined;
-      const resume = program === 'claude' && !!persistedSessionId;
+      // A closed (Archived) pane restores as closed: no spawn, no resume until the
+      // user restores it (which sets resume:true then).
+      const closed = raw.closed === true && program === 'claude';
+      // A paused pane stays LIVE (it resumes), unlike closed — so the user can keep
+      // messaging it. It keeps its baseline hash so it doesn't auto-resume at once.
+      const paused = raw.paused === true && program === 'claude' && !closed;
+      const pausedHash =
+        paused && typeof raw.pausedHash === 'string' ? raw.pausedHash : paused ? null : undefined;
+      const resume = program === 'claude' && !closed && !!persistedSessionId;
       out[leafNode.paneId] = {
         program,
         cwd: typeof raw.cwd === 'string' ? raw.cwd : null,
@@ -257,7 +305,9 @@ function sanitizeRegistry(
           ? { projectId: raw.projectId }
           : {}),
         ...(sessionId ? { sessionId } : {}),
-        ...(resume ? { resume: true } : {})
+        ...(resume ? { resume: true } : {}),
+        ...(closed ? { closed: true } : {}),
+        ...(paused ? { paused: true, pausedHash } : {})
       };
     } else {
       out[leafNode.paneId] = { program: '/bin/zsh', cwd: null };
@@ -282,6 +332,63 @@ function fallback(newId: IdFactory): RestoredState {
     ],
     activeWorkspaceId: id
   };
+}
+
+/**
+ * Drop "empty" agent sessions from a restored state: `claude` panes that were
+ * previously created (they carry a saved sessionId, hence `resume:true`) but that
+ * never had a user message — `hasHistory(paneId)` returns false. The user asked
+ * that an agent window opened but never used should NOT reopen, while any session
+ * with real history is always restored.
+ *
+ * Pruning is per-leaf: an empty session leaf is removed via `closeLeaf`; a
+ * workspace whose leaves are ALL empty sessions is dropped entirely. Shell panes,
+ * claude panes WITH history, and fresh (non-resume) panes are always kept. The
+ * active-workspace id is re-resolved if it pointed at a dropped workspace. PURE —
+ * `hasHistory` is the only outside knowledge, injected by the caller.
+ */
+export function pruneEmptySessions(
+  state: RestoredState,
+  hasHistory: (paneId: string) => boolean
+): RestoredState {
+  const workspaces: RestoredWorkspace[] = [];
+
+  for (const w of state.workspaces) {
+    const leaves = leavesInOrder(w.ws.root);
+    const dropIds = new Set(
+      leaves
+        .filter((leaf) => {
+          const s = w.registry[leaf.paneId];
+          return !!s && s.program === 'claude' && s.resume === true && !hasHistory(leaf.paneId);
+        })
+        .map((leaf) => leaf.id)
+    );
+
+    if (dropIds.size === 0) {
+      workspaces.push(w); // nothing empty here — keep as-is
+      continue;
+    }
+    if (dropIds.size >= leaves.length) {
+      continue; // every pane was an unused session — drop the whole window
+    }
+
+    // Partial: remove just the empty-session leaves (closeLeaf never touches the
+    // last surviving leaf, and we only drop a strict subset, so ≥1 always remains).
+    let ws = w.ws;
+    for (const leaf of leaves) {
+      if (dropIds.has(leaf.id)) ws = closeLeaf(ws, leaf.id);
+    }
+    const kept = new Set(leavesInOrder(ws.root).map((l) => l.paneId));
+    const registry: Record<string, PersistedSession> = {};
+    for (const id of kept) registry[id] = w.registry[id];
+    workspaces.push({ id: w.id, name: w.name, ws, registry });
+  }
+
+  const activeWorkspaceId = workspaces.some((w) => w.id === state.activeWorkspaceId)
+    ? state.activeWorkspaceId
+    : (workspaces[0]?.id ?? '');
+
+  return { workspaces, activeWorkspaceId };
 }
 
 // ---------------------------------------------------------------------------

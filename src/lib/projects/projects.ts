@@ -24,8 +24,11 @@ export interface Project {
   path: string;
   /** Icon name (a key of the vendored project-icon set). */
   icon: string;
-  /** Accent color (hex, e.g. `#4C8DFF`). */
+  /** Accent color (hex, e.g. `#4C8DFF`). Auto-extracted from `logo` when set. */
   color: string;
+  /** Optional logo image as a downscaled PNG data URL; renders instead of the
+   *  icon glyph. Additive + optional — absent for projects created before logos. */
+  logo?: string;
 }
 
 /** The top-level persisted envelope written to `projects.json`. */
@@ -48,6 +51,12 @@ export const PROJECT_ICON_CHOICES: ReadonlyArray<{ icon: string; color: string }
   { icon: 'compass', color: '#4CC2A8' },
   { icon: 'smartphone', color: '#E8B84B' },
   { icon: 'bot', color: '#6FA0F0' }
+];
+
+/** Accent color choices offered in the project COLOR picker (chosen independently
+ *  of the icon). The palette accents, deduped, in the icon-choice order. */
+export const PROJECT_COLOR_CHOICES: ReadonlyArray<string> = [
+  ...new Set(PROJECT_ICON_CHOICES.map((c) => c.color))
 ];
 
 /** Fallback icon/color cycled through when a project is created without a pick. */
@@ -124,6 +133,25 @@ export function removeProject(list: ReadonlyArray<Project>, id: string): Project
   return list.filter((p) => p.id !== id);
 }
 
+/**
+ * Patch the project with id `id` in place (same position, same id). Used by the
+ * edit flow. A `logo: undefined` patch REMOVES the logo. Unlike `addProject`,
+ * identity is keyed by `id` (no path dedupe), so editing a project's `path`
+ * never re-buckets it. Pure: never mutates inputs; no-op if `id` is absent.
+ */
+export function updateProject(
+  list: ReadonlyArray<Project>,
+  id: string,
+  patch: Partial<Omit<Project, 'id'>>
+): Project[] {
+  return list.map((p) => {
+    if (p.id !== id) return p;
+    const next: Project = { ...p, ...patch, id: p.id };
+    if ('logo' in patch && patch.logo === undefined) delete next.logo;
+    return next;
+  });
+}
+
 /** The project with id `id`, or null. */
 export function projectForId(
   list: ReadonlyArray<Project>,
@@ -167,7 +195,9 @@ function normalize(arr: ReadonlyArray<unknown>): Project[] {
     const path = item.path.trim();
     if (seen.has(path)) continue;
     seen.add(path);
-    out.push({ ...item, path });
+    const clean: Project = { ...item, path };
+    if (typeof clean.logo !== 'string') delete clean.logo; // drop a malformed logo
+    out.push(clean);
   }
   return out;
 }

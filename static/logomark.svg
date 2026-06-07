@@ -1,0 +1,11 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Mission Control">
+  
+  <ellipse cx="24" cy="24" rx="17" ry="8.5" transform="rotate(-30 24 24)" stroke="#3D7BFF" stroke-width="2.25"></ellipse>
+  
+  <ellipse cx="24" cy="24" rx="17" ry="8.5" transform="rotate(40 24 24)" stroke="#3D7BFF" stroke-width="2.25" stroke-opacity="0.30"></ellipse>
+  
+  <circle cx="24" cy="24" r="5.25" fill="#EEF1F6"></circle>
+  <circle cx="24" cy="24" r="2.25" fill="#0D1017"></circle>
+  
+  <circle cx="27.9" cy="12.75" r="3.6" fill="#EE7E4D"></circle>
+</svg>

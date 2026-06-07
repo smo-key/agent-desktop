@@ -47,6 +47,9 @@ pub struct GitStatus {
     /// Whether the worktree is dirty, or `null` when git couldn't answer.
     #[serde(default)]
     pub dirty: Option<bool>,
+    /// Number of changed paths in the worktree, or `null` when git couldn't answer.
+    #[serde(default)]
+    pub modified: Option<i64>,
     /// Commits ahead of the upstream branch (not yet pushed), or `null`.
     #[serde(default)]
     pub ahead: Option<i64>,
@@ -305,6 +308,7 @@ mod tests {
             Some(GitStatus {
                 branch: Some("main".into()),
                 dirty: Some(true),
+                modified: None,
                 ahead: Some(2),
                 behind: Some(0)
             })
@@ -338,6 +342,7 @@ mod tests {
             Some(GitStatus {
                 branch: None,
                 dirty: None,
+                modified: None,
                 ahead: None,
                 behind: None
             })

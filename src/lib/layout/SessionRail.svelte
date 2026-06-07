@@ -138,8 +138,8 @@
     flex-direction: column;
     height: 100%;
     width: 100%;
-    background: #0b0f14;
-    border-right: 1px solid #21262d;
+    background: var(--space-900);
+    border-right: 1px solid var(--line-subtle);
     user-select: none;
     -webkit-user-select: none;
     overflow: hidden;
@@ -147,12 +147,13 @@
 
   .rail-head {
     flex: 0 0 auto;
-    padding: 8px 10px 4px;
+    padding: 14px 14px 8px;
+    font-family: var(--font-mono);
     font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
+    font-weight: 500;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: #6e7681;
+    color: var(--fg-4);
   }
 
   .list {
@@ -161,7 +162,7 @@
     overflow-y: auto;
     list-style: none;
     margin: 0;
-    padding: 2px 6px;
+    padding: 2px 8px;
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -170,23 +171,24 @@
   .row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    height: 30px;
-    padding: 0 6px;
-    border-radius: 6px;
+    gap: 10px;
+    height: 34px;
+    padding: 0 10px;
+    border-radius: var(--r-md);
     cursor: pointer;
-    color: #adbac7;
+    color: var(--fg-2);
+    font-weight: 500;
     transition:
-      background 0.1s ease,
-      color 0.1s ease;
+      background var(--dur-fast),
+      color var(--dur-fast);
   }
   .row:hover {
-    background: #161b22;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--fg-1);
   }
   .row.active {
-    background: #1c2128;
-    color: #e6edf3;
-    box-shadow: inset 0 0 0 1px #30363d;
+    background: var(--blue-tint);
+    color: var(--blue-200);
   }
 
   .dot {
@@ -194,17 +196,17 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: #30363d;
-    transition: background 0.1s ease;
+    background: var(--fg-4);
+    transition: background var(--dur-fast);
   }
   .dot.on {
-    background: #3fb950;
-    box-shadow: 0 0 0 2px rgba(63, 185, 80, 0.18);
+    background: var(--nominal-500);
+    box-shadow: 0 0 0 2px rgba(60, 203, 127, 0.18);
   }
 
   .name {
     flex: 1 1 auto;
-    font-size: 12px;
+    font-size: 13px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -213,71 +215,74 @@
   .rename {
     flex: 1 1 auto;
     min-width: 0;
-    font-size: 12px;
-    font-family: inherit;
-    color: #e6edf3;
-    background: #0d1117;
-    border: 1px solid #58a6ff;
-    border-radius: 4px;
-    padding: 1px 4px;
+    font-size: 13px;
+    font-family: var(--font-sans);
+    color: var(--fg-1);
+    background: var(--space-800);
+    border: 1px solid var(--blue-500);
+    box-shadow: var(--focus-ring);
+    border-radius: var(--r-sm);
+    padding: 2px 6px;
     outline: none;
   }
 
   .close {
     flex: 0 0 auto;
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
     display: flex;
     align-items: center;
     justify-content: center;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--r-xs);
     background: transparent;
-    color: #6e7681;
+    color: var(--fg-4);
     font-size: 15px;
     line-height: 1;
     cursor: pointer;
     opacity: 0;
     transition:
-      opacity 0.1s ease,
-      background 0.1s ease,
-      color 0.1s ease;
+      opacity var(--dur-fast),
+      background var(--dur-fast),
+      color var(--dur-fast);
   }
   .row:hover .close,
   .row.active .close {
     opacity: 1;
   }
   .close:hover {
-    background: #30363d;
-    color: #f0f6fc;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--fg-1);
   }
 
   .new {
     flex: 0 0 auto;
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin: 4px 6px 8px;
-    padding: 0 8px;
-    height: 30px;
-    border: 1px dashed #30363d;
-    border-radius: 6px;
+    gap: 9px;
+    margin: 6px 8px 10px;
+    padding: 0 10px;
+    height: 34px;
+    border: 1px dashed var(--line-default);
+    border-radius: var(--r-md);
     background: transparent;
-    color: #8b949e;
-    font-size: 12px;
+    color: var(--fg-3);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
     transition:
-      border-color 0.1s ease,
-      color 0.1s ease,
-      background 0.1s ease;
+      border-color var(--dur-fast),
+      color var(--dur-fast),
+      background var(--dur-fast);
   }
   .new:hover {
-    border-color: #58a6ff;
-    color: #e6edf3;
-    background: #161b22;
+    border-color: var(--blue-500);
+    color: var(--fg-1);
+    background: rgba(255, 255, 255, 0.04);
   }
   .plus {
-    font-size: 14px;
+    font-size: 15px;
     line-height: 1;
   }
 </style>

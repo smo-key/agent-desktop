@@ -6,11 +6,14 @@ import {
   attentionQueue,
   resolveFocus,
   nextInQueue,
-  shouldClearPin
+  shouldClearPin,
+  archiveDecision,
+  autoArchiveAction,
+  shouldAutoResume
 } from './inbox';
 
 // Minimal AgentRow factory — only the fields the inbox cores read.
-function row(paneId: string, status: AgentStatus): AgentRow {
+function row(paneId: string, status: AgentStatus, over: Partial<AgentRow> = {}): AgentRow {
   return {
     paneId,
     workspaceId: 'w-' + paneId,
@@ -24,10 +27,35 @@ function row(paneId: string, status: AgentStatus): AgentRow {
     currentAction: null,
     contextPct: null,
     cost: null,
+    lastTs: null,
     status,
-    projectId: null
+    projectId: null,
+    ...over
   };
 }
+
+describe('autoArchiveAction', () => {
+  it('only acts on a freshly finished, live session', () => {
+    // Not finished yet -> leave it alone.
+    expect(autoArchiveAction(row('a', 'working'), 'h')).toBe('none');
+    expect(autoArchiveAction(row('a', 'waiting'), 'h')).toBe('none');
+    // Already closed / paused / previewing -> the effect must not fire again.
+    expect(autoArchiveAction(row('a', 'finished', { closed: true }), 'h')).toBe('none');
+    expect(autoArchiveAction(row('a', 'finished', { paused: true }), 'h')).toBe('none');
+    expect(autoArchiveAction(row('a', 'finished', { preview: true }), 'h')).toBe('none');
+  });
+
+  it('deletes a finished session with no user messages (e.g. the user only typed /exit)', () => {
+    // userHash is empty because /exit no longer counts as a user message.
+    expect(autoArchiveAction(row('a', 'finished'), null)).toBe('delete');
+    expect(autoArchiveAction(row('a', 'finished'), undefined)).toBe('delete');
+    expect(autoArchiveAction(row('a', 'finished'), '')).toBe('delete');
+  });
+
+  it('archives a finished session that has real user messages', () => {
+    expect(autoArchiveAction(row('a', 'finished'), 'abc123')).toBe('archive');
+  });
+});
 
 describe('isAttention', () => {
   it('treats waiting and error as needing attention', () => {
@@ -48,6 +76,23 @@ describe('Attention queue surfaces waiting and errored agents', () => {
       row('d', 'error')
     ];
     expect(attentionQueue(rows).map((r) => r.paneId)).toEqual(['b', 'd']);
+  });
+
+  it('excludes paused and archived agents even when waiting/errored', () => {
+    const rows = [
+      row('a', 'waiting'),
+      row('b', 'waiting', { paused: true }),
+      row('c', 'error', { closed: true }),
+      row('d', 'error')
+    ];
+    expect(attentionQueue(rows).map((r) => r.paneId)).toEqual(['a', 'd']);
+  });
+
+  it('a paused agent is not the auto-focus target, nor in queue nav', () => {
+    const rows = [row('a', 'waiting', { paused: true }), row('b', 'working')];
+    // No un-paused attention agent => focus falls through to null (All clear).
+    expect(resolveFocus(rows, null)).toBeNull();
+    expect(nextInQueue(rows, null, 1)).toBeNull();
   });
 });
 
@@ -103,5 +148,53 @@ describe('Addressed attention agent advances the focus to the next', () => {
 
   it('does nothing when the agent was not pinned', () => {
     expect(shouldClearPin('waiting', 'working', false)).toBe(false);
+  });
+});
+
+describe('Archiving an empty session deletes it instead', () => {
+  it('deletes when the session has no user messages (no hash)', () => {
+    expect(archiveDecision(null)).toBe('delete');
+    expect(archiveDecision(undefined)).toBe('delete');
+    expect(archiveDecision('')).toBe('delete');
+  });
+
+  it('archives when the session has user messages', () => {
+    expect(archiveDecision('abc123')).toBe('archive');
+  });
+});
+
+describe('A new message resumes a paused session', () => {
+  it('resumes when the live hash differs from the paused-at hash', () => {
+    expect(shouldAutoResume('h1', 'h2')).toBe(true);
+    // Paused with no messages, then a message arrives: null -> a hash.
+    expect(shouldAutoResume(null, 'h1')).toBe(true);
+  });
+
+  it('stays paused while no new message has arrived', () => {
+    expect(shouldAutoResume('h1', 'h1')).toBe(false);
+    expect(shouldAutoResume(null, null)).toBe(false);
+    // A transient missing live hash must NOT resume (avoids a poll gap un-pausing).
+    expect(shouldAutoResume('h1', null)).toBe(false);
+    expect(shouldAutoResume('h1', undefined)).toBe(false);
+  });
+});
+
+// A previewing (resumed-from-Archived) session unarchives on the SAME hash-diff
+// signal a paused session resumes on: the inbox captures the user-message hash when
+// preview begins (`previewHash`) and unarchives (commitPreview) once the live hash
+// differs — i.e. the user sent a new message. Until then it stays previewing.
+describe('Sending a message unarchives a previewing session', () => {
+  it('unarchives once the live hash differs from the preview baseline', () => {
+    // Baseline captured at preview start; a new message changes the live hash.
+    expect(shouldAutoResume('preview-h1', 'preview-h2')).toBe(true);
+    // Previewed an archived session that had no messages, then one arrives.
+    expect(shouldAutoResume(null, 'preview-h1')).toBe(true);
+  });
+
+  it('stays previewing while no new message has arrived', () => {
+    expect(shouldAutoResume('preview-h1', 'preview-h1')).toBe(false);
+    // A transient missing live hash must NOT unarchive (poll-gap safe).
+    expect(shouldAutoResume('preview-h1', null)).toBe(false);
+    expect(shouldAutoResume('preview-h1', undefined)).toBe(false);
   });
 });

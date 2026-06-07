@@ -17,6 +17,10 @@ export interface FooterView {
   git: GitStatus | null;
   /** The focused pane's context window usage 0..100, or null when unknown. */
   context: number | null;
+  /** The focused pane's total session cost in USD, or null when unknown. */
+  cost: number | null;
+  /** The focused pane's last-snapshot time (unix SECONDS), or null when none. */
+  lastTs: number | null;
   /** Account-wide 5-hour rate-limit window. */
   fiveHour: RateWindow;
   /** Account-wide 7-day rate-limit window. */
@@ -43,11 +47,15 @@ export function footerView(
   const focused = focusedPaneId ? map[focusedPaneId] : undefined;
   const git = focused ? (focused.git ?? null) : null;
   const context = focused ? finiteOrNull(focused.context_pct) : null;
+  const cost = focused ? finiteOrNull(focused.cost) : null;
+  const lastTs = focused ? finiteOrNull(focused.ts) : null;
   const account = accountSummary(map, git);
   return {
     project: projectForId(projects, projectId),
     git,
     context,
+    cost,
+    lastTs,
     fiveHour: account.fiveHour,
     sevenDay: account.sevenDay,
   };

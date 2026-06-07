@@ -6,19 +6,22 @@
 // the queue. Framework-free so it is trivially unit-tested; Inbox.svelte is the
 // thin reactive shell that feeds it the live roster and renders the result.
 
-import type { AgentRow, AgentStatus } from './roster';
+import { needsAttention, type AgentRow, type AgentStatus } from './roster';
 
-/** Whether a status means the agent is waiting on YOU (waiting or errored). */
+/** Whether a status means the agent is waiting on YOU (waiting or errored). This is
+ *  the STATUS-only check (used for badge/label styling); the attention QUEUE uses
+ *  the row-level `needsAttention` so paused/archived agents are excluded. */
 export function isAttention(status: AgentStatus): boolean {
   return status === 'waiting' || status === 'error';
 }
 
 /**
- * The attention queue: every agent that needs you, in roster order. These are the
- * rows the focus pane auto-fills from (top first) and drains as each is addressed.
+ * The attention queue: every agent that needs you, in roster order — waiting/errored
+ * AND not paused/archived (`needsAttention`). These are the rows the focus pane
+ * auto-fills from (top first) and drains as each is addressed.
  */
 export function attentionQueue(rows: AgentRow[]): AgentRow[] {
-  return rows.filter((r) => isAttention(r.status));
+  return rows.filter((r) => needsAttention(r));
 }
 
 /**
@@ -65,4 +68,44 @@ export function shouldClearPin(
   isPinned: boolean
 ): boolean {
   return isPinned && isAttention(prev) && !isAttention(next);
+}
+
+/**
+ * PURE: archiving a session with NO user messages is pointless (there's nothing to
+ * resume), so it is deleted outright; a session with messages is archived (kept,
+ * restorable). `userHash` is the transcript's user-message hash — falsy (null /
+ * undefined / empty) means zero user messages.
+ */
+export function archiveDecision(userHash: string | null | undefined): 'delete' | 'archive' {
+  return userHash ? 'archive' : 'delete';
+}
+
+/**
+ * PURE: what the auto-archive effect should do for a row that just settled. Only a
+ * LIVE session that finished cleanly is acted on — already closed/paused/previewing
+ * rows are left alone (`'none'`) so the effect fires once. A finished session with
+ * NO user messages (e.g. the user only typed `/exit`, which doesn't count) has
+ * nothing to resume, so it is DELETED rather than archived; otherwise it is archived
+ * (kept, restorable). Mirrors the manual `archiveAgent` decision via `archiveDecision`.
+ */
+export function autoArchiveAction(
+  row: Pick<AgentRow, 'closed' | 'paused' | 'preview' | 'status'>,
+  userHash: string | null | undefined
+): 'delete' | 'archive' | 'none' {
+  if (row.closed || row.paused || row.preview || row.status !== 'finished') return 'none';
+  return archiveDecision(userHash);
+}
+
+/**
+ * PURE: whether a paused agent should auto-resume — true once the LIVE user-message
+ * hash is present and differs from the hash captured when it was paused (the user
+ * sent a new message). A missing/empty live hash never resumes, so a transient poll
+ * gap can't un-pause an agent.
+ */
+export function shouldAutoResume(
+  pausedHash: string | null | undefined,
+  liveHash: string | null | undefined
+): boolean {
+  if (!liveHash) return false;
+  return liveHash !== (pausedHash ?? null);
 }

@@ -72,6 +72,37 @@ export interface PaneSession {
    * saved sessionId (older saved state falls back to a fresh session).
    */
   resume?: boolean;
+  /**
+   * Set when the agent's session is CLOSED (Archived): its TerminalPane is not
+   * rendered (so the PTY is terminated / never spawned) but the leaf + registry
+   * entry are RETAINED so it stays listed under Archived and can be restored with
+   * `claude --resume`. Persisted, so a closed agent survives a restart as closed.
+   */
+  closed?: boolean;
+  /**
+   * Set when the agent is PAUSED (deferred for later): it is moved to the Paused
+   * lane and out of attention, but stays LIVE (PTY keeps running) so you can resume
+   * it by sending a new message. Persisted, so a paused agent survives a restart.
+   */
+  paused?: boolean;
+  /**
+   * The user-message hash (`activity.userHash`) captured when the agent was paused.
+   * The inbox auto-resumes the agent once the live hash differs from this (a new
+   * message was sent). Persisted alongside `paused` so the baseline survives restart.
+   */
+  pausedHash?: string | null;
+  /**
+   * Set while an archived session is being PREVIEWED: it has been respawned with
+   * `claude --resume` (so `closed:false`, `resume:true`) to show its transcript, but
+   * it stays presented as Archived (pinned to `done`, out of attention) until the
+   * user sends a message. RUNTIME-ONLY (persistence serializes it AS closed). The
+   * inbox UNARCHIVES it (clears `preview`) once the live user-message hash differs
+   * from `previewHash`, and RE-ARCHIVES it if the user leaves its window too long.
+   */
+  preview?: boolean;
+  /** The user-message hash captured when the preview began; the inbox unarchives the
+   *  session once the live hash differs (a new message was sent). */
+  previewHash?: string | null;
 }
 
 /** A fresh Claude session id for a `claude` pane (so the app owns it and can find
@@ -170,6 +201,14 @@ export class WorkspaceStore {
 
   /** True while a gutter drag is in progress; panes defer xterm `fit()`. */
   dragging = $state(false);
+
+  /**
+   * The paneId of the most recently USER-LAUNCHED session (set by `launch`, the
+   * single entry point for both the in-inbox "+" and the launcher dialog). The
+   * inbox watches this to focus a freshly created agent at once. Never set by
+   * restore/split, so it only ever signals an intentional new session.
+   */
+  lastLaunchedId = $state<string | null>(null);
 
   // ---- Active-workspace convenience accessors ------------------------------
 
@@ -429,7 +468,9 @@ export class WorkspaceStore {
 
     if (placement === 'tab') {
       this.newWorkspace(program, cwd, initialInput, projectId);
-      return this.focusedPaneId ?? '';
+      const id = this.focusedPaneId ?? '';
+      this.lastLaunchedId = id || null;
+      return id;
     }
 
     const direction: Direction = placement === 'split-right' ? 'row' : 'col';
@@ -441,6 +482,7 @@ export class WorkspaceStore {
       'after',
       projectId
     );
+    this.lastLaunchedId = newPaneId ?? null;
     return newPaneId ?? '';
   }
 
@@ -581,13 +623,125 @@ export class WorkspaceStore {
   }
 
   /**
-   * Close the agent in pane `paneId` wherever it lives (used by the overview's
-   * agent context menu). If its workspace has OTHER panes, close just that leaf
-   * (its TerminalPane unmounts, killing the PTY); if it is the ONLY pane, close
-   * the whole workspace (subject to the last-workspace guard in `closeWorkspace`).
-   * No-op when the pane no longer exists. Never throws.
+   * CLOSE (complete) the agent in pane `paneId`: mark its session `closed` so its
+   * TerminalPane unmounts (terminating the PTY) while the leaf + registry entry are
+   * RETAINED. The agent moves to Completed and can be restored later. Closing does
+   * NOT delete — use `deleteAgent` for that. No-op when the pane is gone.
    */
   closeAgent(paneId: string): void {
+    for (const entry of this.workspaces) {
+      if (!leafByPaneId(entry.ws.root, paneId)) continue;
+      const cur = entry.registry[paneId];
+      if (!cur) return;
+      // resume:false so the closed pane never tries to (re)spawn while completed;
+      // previewArchived flips it back on with resume:true. Also clear any preview
+      // state so re-archiving a previewing session always terminates its PTY.
+      const { preview: _pv, previewHash: _ph, ...rest } = cur;
+      entry.registry = { ...entry.registry, [paneId]: { ...rest, closed: true, resume: false } };
+      return;
+    }
+  }
+
+  /**
+   * PAUSE (defer) the agent in pane `paneId`: mark it `paused` and record the
+   * current user-message hash as the baseline. Unlike `closeAgent` this does NOT
+   * touch `resume`/`closed` — the pane stays LIVE (its PTY keeps running) so you can
+   * resume it by sending a new message; it is only moved to the Paused lane and out
+   * of attention. No-op when the pane is gone.
+   */
+  pauseAgent(paneId: string, userHash: string | null): void {
+    for (const entry of this.workspaces) {
+      if (!leafByPaneId(entry.ws.root, paneId)) continue;
+      const cur = entry.registry[paneId];
+      if (!cur) return;
+      entry.registry = {
+        ...entry.registry,
+        [paneId]: { ...cur, paused: true, pausedHash: userHash }
+      };
+      return;
+    }
+  }
+
+  /**
+   * RESUME a paused agent: clear `paused` + its baseline hash so it returns to its
+   * live status lane. No-op when the pane is gone. Used by the manual "Resume"
+   * button and the auto-resume-on-new-message path.
+   */
+  resumeAgent(paneId: string): void {
+    for (const entry of this.workspaces) {
+      if (!leafByPaneId(entry.ws.root, paneId)) continue;
+      const cur = entry.registry[paneId];
+      if (!cur) return;
+      const { paused: _p, pausedHash: _h, ...rest } = cur;
+      entry.registry = { ...entry.registry, [paneId]: rest };
+      return;
+    }
+  }
+
+  /**
+   * RESTORE a closed (Archived) agent: clear `closed` and set `resume` so its
+   * TerminalPane re-mounts and spawns `claude --resume <sessionId>`, continuing the
+   * prior transcript. No-op when the pane is gone or has no session id to resume.
+   */
+  restoreAgent(paneId: string): void {
+    for (const entry of this.workspaces) {
+      if (!leafByPaneId(entry.ws.root, paneId)) continue;
+      const cur = entry.registry[paneId];
+      if (!cur) return;
+      const resume = cur.program === 'claude' && !!cur.sessionId;
+      entry.registry = { ...entry.registry, [paneId]: { ...cur, closed: false, resume } };
+      return;
+    }
+  }
+
+  /**
+   * PREVIEW an archived (closed) agent: respawn it with `claude --resume <sessionId>`
+   * (clear `closed`, set `resume`) so its transcript is shown live, while marking it
+   * `preview` with the current user-message hash as the baseline. Unlike
+   * `restoreAgent`, the agent STAYS presented as Archived (the `preview` flag pins it
+   * to the `done` lane and out of attention) until a new message commits it via
+   * `commitPreview`. No-op when the pane is gone or has no session id to resume.
+   */
+  previewArchived(paneId: string, userHash: string | null): void {
+    for (const entry of this.workspaces) {
+      if (!leafByPaneId(entry.ws.root, paneId)) continue;
+      const cur = entry.registry[paneId];
+      if (!cur) return;
+      // Only a claude pane with a session id can resume a transcript; otherwise leave
+      // it archived (the caller falls back to a plain select).
+      if (cur.program !== 'claude' || !cur.sessionId) return;
+      entry.registry = {
+        ...entry.registry,
+        [paneId]: { ...cur, closed: false, resume: true, preview: true, previewHash: userHash }
+      };
+      return;
+    }
+  }
+
+  /**
+   * COMMIT a previewed agent (UNARCHIVE): clear `preview` + its baseline hash so the
+   * resumed session becomes a normal live agent and rejoins its status lane. Leaves
+   * `closed:false` (it is already live). No-op when the pane is gone. Used by the
+   * auto-unarchive-on-new-message path.
+   */
+  commitPreview(paneId: string): void {
+    for (const entry of this.workspaces) {
+      if (!leafByPaneId(entry.ws.root, paneId)) continue;
+      const cur = entry.registry[paneId];
+      if (!cur) return;
+      const { preview: _p, previewHash: _h, ...rest } = cur;
+      entry.registry = { ...entry.registry, [paneId]: rest };
+      return;
+    }
+  }
+
+  /**
+   * DELETE the agent in pane `paneId` entirely (used by the Completed context
+   * menu's "Delete"). If its workspace has OTHER panes, remove just that leaf (its
+   * TerminalPane unmounts, killing any PTY) and prune its registry entry; if it is
+   * the ONLY pane, close the whole workspace. No-op when the pane is gone.
+   */
+  deleteAgent(paneId: string): void {
     for (const entry of this.workspaces) {
       const leaf = leafByPaneId(entry.ws.root, paneId);
       if (!leaf) continue;

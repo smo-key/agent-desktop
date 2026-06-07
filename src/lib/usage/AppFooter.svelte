@@ -12,10 +12,15 @@
   import { workspace } from '$lib/layout/workspace.svelte';
   import { projects } from '$lib/projects/projects.svelte';
   import { view as topView } from '$lib/overview/view.svelte';
-  import ProjectChip from '$lib/projects/ProjectChip.svelte';
   import LimitBars from './LimitBars.svelte';
   import GitInfo from './GitInfo.svelte';
   import ContextBar from './ContextBar.svelte';
+  import { friendlyTime } from '$lib/overview/friendlyTime';
+
+  /** Total session cost as "$1.24", or an em dash when unknown. */
+  function costLabel(value: number | null): string {
+    return value === null ? '—' : `$${value.toFixed(2)}`;
+  }
 
   // The fixed width of the session rail (matches `.body nav.rail` in +page.svelte).
   const RAIL_PX = 200;
@@ -66,14 +71,16 @@
   aria-label="Status footer"
 >
   <div class="zone left">
-    <ProjectChip project={view.project} />
     <LimitBars fiveHour={view.fiveHour} sevenDay={view.sevenDay} {now} />
   </div>
 
   <div class="zone right">
+    <ContextBar pct={view.context} />
+    <span class="sep" aria-hidden="true"></span>
     <GitInfo git={view.git} />
     <span class="sep" aria-hidden="true"></span>
-    <ContextBar pct={view.context} />
+    <span class="metric" title="Total session cost">{costLabel(view.cost)}</span>
+    <span class="metric dim" title="Time since last message">{friendlyTime(view.lastTs, now * 1000)}</span>
   </div>
 </footer>
 
@@ -132,5 +139,19 @@
     width: 1px;
     height: 14px;
     background: var(--line-subtle);
+  }
+  /* Cost + time-since-last-message metrics on the right zone. */
+  .metric {
+    flex: none;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg-1);
+    white-space: nowrap;
+  }
+  .metric.dim {
+    color: var(--fg-4);
+    font-weight: 500;
   }
 </style>

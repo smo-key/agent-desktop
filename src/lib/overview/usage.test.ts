@@ -38,6 +38,7 @@ function row(over: Partial<AgentRow> = {}): AgentRow {
     currentAction: null,
     contextPct: null,
     cost: null,
+    lastTs: null,
     status: 'idle',
     projectId: null,
     ...over

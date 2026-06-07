@@ -1,4 +1,8 @@
 <script lang="ts">
+  // Global design tokens (mission-control deep-space theme): color/type/spacing
+  // custom properties + @font-face. Imported once here so every component's
+  // scoped styles can reference the CSS variables.
+  import '$lib/styles/tokens.css';
   // xterm's base stylesheet is imported once for the whole app; individual
   // terminal panes only need to construct the addon/renderer.
   import '@xterm/xterm/css/xterm.css';
@@ -14,9 +18,10 @@
     margin: 0;
     padding: 0;
     height: 100%;
-    background: #0a0a0a;
-    color: #e6e6e6;
-    font-family:
-      ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    background: var(--space-950);
+    color: var(--fg-1);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
 </style>

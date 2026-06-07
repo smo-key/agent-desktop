@@ -91,6 +91,21 @@ const ENFORCED_CAPABILITIES = new Set([
   // snapshot / cost-model-from-snapshot), poll.test.ts (content-refreshed-on-stop).
   // The two MANUAL scenarios are the route's setInterval wiring (see below).
   'activity-timeline',
+  // project-terminals: the per-project terminal model (create/rename/remove,
+  // default-name derivation, per-project keying), the persisted-vs-runtime split,
+  // selective auto-restart (only wasRunning terminals), and the runtime lifecycle
+  // (start/stop/restart, process-exit → stopped) are all unit-tested —
+  // projectTerminals.test.ts (pure model) + projectTerminals.svelte.test.ts (store
+  // lifecycle, invoke mocked). The single MANUAL scenario is the OS-level reap on
+  // app quit (same kill_all path terminal-core already tests; see MANUAL below).
+  'project-terminals',
+  // terminals-panel: the project-scoping resolver (follow-focus → activeProjectId,
+  // swap-on-focus, no-project empty state), the toggle store, and the running-count
+  // indicator math are unit-tested — activeProject.test.ts + panel.svelte.test.ts +
+  // projectTerminals.svelte.test.ts. The genuinely live-DOM/live-PTY scenarios (CSS
+  // reflow, drag-resize, interactive terminal, process-survives-hide/switch,
+  // re-attach) are MANUAL below.
+  'terminals-panel',
 ]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by
@@ -209,10 +224,16 @@ const MANUAL_SCENARIOS = {
   //     xterm instance; pure selection logic is unit-tested in inbox.test.ts.
   //   - the live surface teleported into the focus pane without respawning: the
   //     surfaceSlot portal wiring requires a real DOM + mounted PTY to confirm.
+  //   - leaving a previewing (resumed-from-Archived) session re-archives it after a
+  //     60s grace: a $effect-driven setTimeout keyed on the shown agent + live PTY
+  //     teardown, with no pure surface to assert (the registry transitions it drives —
+  //     previewArchived/commitPreview/closeAgent — are unit-tested in
+  //     workspace.svelte.test.ts; the grace-timer wiring is confirmed in-app).
   'agent-overview': new Set([
     'new_agent_action_launches_and_rosters',
     'entering_an_agent_focuses_its_terminal_and_scrolls_to_the_bottom',
     'the_live_surface_is_teleported_into_the_focus_pane_without_respawning',
+    'leaving_a_previewing_session_re_archives_it_after_the_grace_period',
   ]),
   // activity-events: the live socket end-to-end is covered headlessly by the Rust
   // accept test, so nothing is MANUAL here.
@@ -223,6 +244,32 @@ const MANUAL_SCENARIOS = {
   // pure surface to assert against (the read POLICY itself is unit-tested as
   // "Content refreshed on stop"); they are confirmed live in-app.
   'activity-timeline': new Set(['safety_poll_backstops_missed_events', 'fixed_fast_poll_removed']),
+  // project-terminals: every model + store-lifecycle scenario is unit-tested. The
+  // one MANUAL is the OS-level reap of all terminal processes on app quit — it runs
+  // through the SAME `manager.kill_all()` on CloseRequested that terminal-core
+  // already exercises, but is confirmed live for this panel's PTYs.
+  'project-terminals': new Set(['all_terminal_processes_reaped_on_quit']),
+  // terminals-panel: the project-scoping resolver, toggle store, and running-count
+  // math are unit-tested. What remains is genuinely live-DOM / live-PTY: the CSS
+  // reflow on toggle, the no-mutation-of-the-workspace-tree guarantee, the drag
+  // resize, an interactive terminal, and the process-survives-hide / -switch /
+  // re-attach guarantees (all require a real window + live xterm/PTY).
+  'terminals-panel': new Set([
+    'toggle_the_panel_off_reclaims_space',
+    'panel_state_is_independent_of_the_workspace_tree',
+    'swapping_the_collection_does_not_change_any_process_state',
+    'multiple_terminals_visible_at_once',
+    'resizing_a_terminals_share',
+    'terminal_is_interactive',
+    'hiding_the_panel_keeps_a_server_running',
+    're_showing_the_panel_re_attaches_to_live_processes',
+    'switching_projects_keeps_the_other_projects_processes_alive',
+    // Keyboard shortcuts: the ⌘T create path and ⌘Tab focus ring are wired in
+    // +page.svelte's keydown handler against the live registry/PTYs — confirmed live
+    // (and ⌘Tab is additionally subject to the macOS app-switcher reservation).
+    'new_terminal_shortcut_opens_an_empty_shell',
+    'focus_cycle_shortcut_moves_between_agent_and_terminals',
+  ]),
 };
 
 // --- helpers -----------------------------------------------------------------

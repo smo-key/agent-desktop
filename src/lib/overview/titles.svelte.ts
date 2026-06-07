@@ -13,12 +13,28 @@ import { invoke } from '@tauri-apps/api/core';
 import type { PaneRef } from './activity.svelte';
 
 /** Min interval between title requests for one pane (ms). */
-export const TITLE_THROTTLE_MS = 15_000;
+export const TITLE_THROTTLE_MS = 120_000;
+
+/** localStorage key for the persisted, sessionId-keyed title cache. */
+const STORAGE_KEY = 'agent-desktop:session-titles';
 
 /** A pane's cached title + the user-hash it was generated for. */
 export interface TitleEntry {
   title: string | null;
   hash: string | null;
+}
+
+/** Load the persisted sessionId -> entry cache (survives restart / resume). */
+function loadPersisted(): Record<string, TitleEntry> {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, TitleEntry>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 /**
@@ -44,6 +60,10 @@ export function shouldRequest(
 /** Reactive title store: paneId -> {title, hash}. */
 export class TitleStore {
   byPane = $state<Record<string, TitleEntry>>({});
+  // The DURABLE cache, keyed by sessionId (stable across restart/resume). The
+  // paneId-keyed `byPane` is hydrated from here on `refresh` so a restored agent
+  // shows its last title immediately, with no model call.
+  #bySession: Record<string, TitleEntry> = loadPersisted();
   #pending = new Map<string, string>();
   #lastAttempt = new Map<string, number>();
 
@@ -53,11 +73,31 @@ export class TitleStore {
   }
 
   /**
+   * Seed runtime titles from the durable, sessionId-keyed cache for any pane that
+   * isn't titled yet. PURE cache read — no model call, no userHash needed — so a
+   * restored agent renders its previous title IMMEDIATELY on mount, before the
+   * first (async) activity poll runs. Without this, `titleFor` returns null until
+   * the poll completes and the card falls back to its "Session N" name for a beat.
+   * Idempotent and called both on mount and at the top of every `refresh`.
+   */
+  hydrate(panes: PaneRef[]): void {
+    for (const p of panes) {
+      if (!this.byPane[p.paneId] && p.sessionId) {
+        const saved = this.#bySession[p.sessionId];
+        if (saved) this.byPane[p.paneId] = saved;
+      }
+    }
+  }
+
+  /**
    * For each pane, request a fresh Haiku title when the user's messages changed
    * (per `hashOf(paneId)`), subject to the per-pane throttle. Fire-and-forget; the
    * store updates reactively when each title resolves.
    */
   refresh(panes: PaneRef[], hashOf: (paneId: string) => string | null | undefined, nowMs: number): void {
+    // Seed from the durable cache first so a restored agent shows its previous
+    // title at once (and we skip the model call when its messages are unchanged).
+    this.hydrate(panes);
     for (const p of panes) {
       const userHash = hashOf(p.paneId) ?? null;
       const entry = this.byPane[p.paneId];
@@ -76,11 +116,27 @@ export class TitleStore {
         sessionId: pane.sessionId,
         cwd: pane.cwd
       });
-      this.byPane[pane.paneId] = { title: title ?? null, hash };
+      const next: TitleEntry = { title: title ?? null, hash };
+      this.byPane[pane.paneId] = next;
+      // Persist a resolved title under its sessionId so it survives a restart.
+      if (pane.sessionId && next.title) {
+        this.#bySession[pane.sessionId] = next;
+        this.#persist();
+      }
     } catch (err) {
       console.warn('session_focus failed; keeping previous title:', err);
     } finally {
       if (this.#pending.get(pane.paneId) === hash) this.#pending.delete(pane.paneId);
+    }
+  }
+
+  /** Write the durable sessionId-keyed cache to localStorage (best-effort). */
+  #persist(): void {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.#bySession));
+    } catch {
+      /* ignore quota / disabled storage */
     }
   }
 }
