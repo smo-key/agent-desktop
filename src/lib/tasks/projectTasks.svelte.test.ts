@@ -314,6 +314,32 @@ describe('project-tasks — bare terminals', () => {
   });
 });
 
+describe('project-tasks — editing', () => {
+  it('Edit a task definition', async () => {
+    const store = new ProjectTasksStore();
+    const id = await store.create('p', { kind: 'terminal', command: 'npm test', name: 'Test' });
+    await store.update(id, { name: 'Run tests', command: 'npm run test:ci' });
+    const def = store.forProject('p').find((t) => t.id === id)!;
+    expect(def.name).toBe('Run tests');
+    expect(def.command).toBe('npm run test:ci');
+    // The edit was persisted (a tasks_save call carrying the new command).
+    const saved = invokeMock.mock.calls.some(
+      (c) => c[0] === 'tasks_save' && String((c[1] as { json?: string })?.json ?? '').includes('npm run test:ci')
+    );
+    expect(saved).toBe(true);
+  });
+
+  it('switches a task from terminal to agent on edit', async () => {
+    const store = new ProjectTasksStore();
+    const id = await store.create('p', { kind: 'terminal', command: 'npm test' });
+    await store.update(id, { kind: 'agent', prompt: 'fix the failing test' });
+    const def = store.forProject('p').find((t) => t.id === id)!;
+    expect(def.kind).toBe('agent');
+    expect(def.prompt).toBe('fix the failing test');
+    expect(def.command).toBeNull();
+  });
+});
+
 describe('project-tasks — migration', () => {
   it('migrates legacy terminals.json on first load', async () => {
     // No tasks.json yet, but a legacy terminals.json exists.

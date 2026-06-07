@@ -240,6 +240,45 @@ export class ProjectTasksStore {
     return def.id;
   }
 
+  /**
+   * Edit task `id`'s definition (name / kind / command / prompt) and persist. A kind
+   * switch normalizes the payload: a `terminal` keeps `command` (prompt cleared); an
+   * `agent` keeps `prompt` (command nulled). The running process, if any, is left
+   * untouched — the change applies on the next run.
+   */
+  async update(
+    id: string,
+    fields: { name?: string; kind?: TaskKind; command?: string | null; prompt?: string }
+  ): Promise<void> {
+    let changed = false;
+    const next: TasksByProject = {};
+    for (const [projectId, list] of Object.entries(this.byProject)) {
+      next[projectId] = list.map((t) => {
+        if (t.id !== id) return t;
+        changed = true;
+        const kind: TaskKind = fields.kind ?? t.kind;
+        const name = fields.name?.trim() || t.name;
+        if (kind === 'agent') {
+          const prompt = (fields.prompt ?? t.prompt ?? '').trim();
+          return { ...t, kind: 'agent', name, command: null, prompt };
+        }
+        const command =
+          fields.command !== undefined
+            ? fields.command && fields.command.trim() !== ''
+              ? fields.command.trim()
+              : null
+            : t.command;
+        const upd: TaskDef = { ...t, kind: 'terminal', name, command };
+        delete upd.prompt;
+        return upd;
+      });
+    }
+    if (changed) {
+      this.byProject = next;
+      await this.save();
+    }
+  }
+
   /** The id of the project that holds task `id`, or null. */
   projectIdForTask(id: string): string | null {
     for (const [projectId, list] of Object.entries(this.byProject)) {
