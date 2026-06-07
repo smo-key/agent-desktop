@@ -172,13 +172,23 @@
   }
 </script>
 
-<section class="terminals-panel" aria-label="Tasks">
+<section class="terminals-panel" aria-label="Terminals">
   <header class="tp-head">
     <Icon name="terminal" size={14} />
-    <span class="tp-title">Tasks</span>
+    <span class="tp-title">Terminals</span>
     {#if activeProject}
       <span class="tp-project">{projectLabel(activeProject)}</span>
     {/if}
+    <button
+      type="button"
+      class="tp-add"
+      onclick={() => {
+        if (activeId) projectTasks.launchBareTerminal(activeId);
+      }}
+      disabled={!activeId}
+      title="New terminal (⌘Y)"
+      aria-label="New terminal"
+    >＋</button>
   </header>
 
   <!-- Body: one stack per project with active entries (inactive ones hidden but
@@ -307,6 +317,30 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* Blue `＋` (Agents-bar style) — launches a bare interactive terminal. */
+  .tp-add {
+    margin-left: auto;
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    font-family: var(--font-sans);
+    font-weight: 700;
+    font-size: 14px;
+    color: #fff;
+    background: var(--blue-500);
+    border: none;
+    border-radius: var(--r-md);
+    cursor: pointer;
+  }
+  .tp-add:hover:not(:disabled) {
+    background: var(--blue-600);
+  }
+  .tp-add:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .tp-body {

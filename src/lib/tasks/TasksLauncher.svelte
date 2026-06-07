@@ -14,14 +14,14 @@
   // right-panel panes — design D5), so agent rows show a best-effort idle dot.
   import Icon from '../icons/Icon.svelte';
   import { workspace } from '../layout/workspace.svelte';
-  import { projects } from '../projects/projects.svelte';
-  import { projectForId, projectLabel } from '../projects/projects';
   import { projectFilter } from '../projects/projectFilter.svelte';
   import { ALL, UNASSIGNED } from '../projects/projectRollup';
   import { activeProjectId } from './activeProject';
   import { projectTasks } from './projectTasks.svelte';
   import { tasksPanel } from './panel.svelte';
-  import type { TaskDef, TaskKind } from './projectTasks';
+  import { taskDialog } from './taskDialogStore.svelte';
+  import TaskDialog from './TaskDialog.svelte';
+  import type { TaskDef } from './projectTasks';
 
   // A concrete project chosen in the overview's project filter (null on All /
   // Unassigned) pins the launcher; otherwise it follows the focused agent's project.
@@ -37,7 +37,6 @@
       selectedProjectId
     })
   );
-  const activeProject = $derived(projectForId(projects.list, activeId));
   const tasks = $derived(activeId ? projectTasks.forProject(activeId) : []);
 
   /** Status of a row → which dot to show. Agent runtime is untracked (best-effort
@@ -59,68 +58,23 @@
     return c || 'interactive shell';
   }
 
-  // --- Inline rename ----------------------------------------------------------
-  let renamingId = $state<string | null>(null);
-  let renameText = $state('');
-  function beginRename(def: TaskDef) {
-    renamingId = def.id;
-    renameText = def.name;
-  }
-  async function commitRename() {
-    const id = renamingId;
-    if (id) await projectTasks.rename(id, renameText);
-    renamingId = null;
-  }
-
   // --- Row actions ------------------------------------------------------------
   function start(id: string) {
     projectTasks.startTask(id);
-    tasksPanel.open = true;
-  }
-
-  // --- Inline create form -----------------------------------------------------
-  let creating = $state(false);
-  let newKind = $state<TaskKind>('terminal');
-  let newName = $state('');
-  let newCommand = $state('');
-  let newPrompt = $state('');
-
-  function resetForm() {
-    creating = false;
-    newKind = 'terminal';
-    newName = '';
-    newCommand = '';
-    newPrompt = '';
-  }
-
-  async function submitCreate() {
-    if (!activeId) return;
-    const name = newName.trim();
-    if (newKind === 'agent') {
-      const prompt = newPrompt.trim();
-      if (prompt === '') return;
-      await projectTasks.create(activeId, { kind: 'agent', prompt, name });
-    } else {
-      const command = newCommand.trim();
-      if (command === '') return;
-      await projectTasks.create(activeId, { kind: 'terminal', command, name });
-    }
-    resetForm();
-  }
-
-  function launchTerminal() {
-    if (!activeId) return;
-    projectTasks.launchBareTerminal(activeId);
     tasksPanel.open = true;
   }
 </script>
 
 <section class="launcher" aria-label="Tasks launcher">
   <header class="lh">
-    <span class="title">Tasks</span>
-    {#if activeProject}
-      <span class="proj" title={projectLabel(activeProject)}>{projectLabel(activeProject)}</span>
-    {/if}
+    <h1>Tasks <span class="count">{tasks.length}</span></h1>
+    <button
+      type="button"
+      class="launch"
+      onclick={() => taskDialog.showCreate(activeId)}
+      disabled={!activeId}
+      title="New task"
+    >＋</button>
   </header>
 
   <div class="body">
@@ -143,27 +97,9 @@
           <li class="row">
             <span class="dot" class:on={running} class:fail={failed} title={dot}></span>
             <Icon name={def.kind === 'agent' ? 'bot' : 'terminal'} size={13} />
-            <span class="nm">
-              {#if renamingId === def.id}
-                <!-- svelte-ignore a11y_autofocus -->
-                <input
-                  class="rename"
-                  bind:value={renameText}
-                  autofocus
-                  onblur={commitRename}
-                  onkeydown={(e) => {
-                    if (e.key === 'Enter') commitRename();
-                    else if (e.key === 'Escape') (renamingId = null);
-                  }}
-                />
-              {:else}
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <span
-                  class="t"
-                  title="Double-click to rename"
-                  ondblclick={() => beginRename(def)}
-                >{def.name}</span>
-              {/if}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <span class="nm" ondblclick={() => taskDialog.showEdit(def.id, activeId)}>
+              <span class="t" title="Double-click to edit">{def.name}</span>
               <span class="s" title={subLabel(def)}>{subLabel(def)}</span>
             </span>
             <div class="acts">
@@ -187,7 +123,17 @@
                   <Icon name="play" size={12} />
                 </button>
               {/if}
-              <button class="act" title="Remove" aria-label="Remove task" onclick={() => projectTasks.remove(def.id)}>
+              <button class="act" title="Edit" aria-label="Edit task" onclick={() => taskDialog.showEdit(def.id, activeId)}>
+                <Icon name="pencil" size={12} />
+              </button>
+              <button
+                class="act"
+                title="Remove"
+                aria-label="Remove task"
+                onclick={() => {
+                  if (confirm(`Delete task "${def.name}"?`)) projectTasks.remove(def.id);
+                }}
+              >
                 <Icon name="trash-2" size={12} />
               </button>
             </div>
@@ -195,63 +141,10 @@
         {/each}
       </ul>
     {/if}
-
-    {#if creating}
-      <form
-        class="create"
-        onsubmit={(e) => {
-          e.preventDefault();
-          submitCreate();
-        }}
-      >
-        <div class="seg" role="group" aria-label="Task kind">
-          <button
-            type="button"
-            class:active={newKind === 'terminal'}
-            onclick={() => (newKind = 'terminal')}
-          >Terminal</button>
-          <button
-            type="button"
-            class:active={newKind === 'agent'}
-            onclick={() => (newKind = 'agent')}
-          >Agent</button>
-        </div>
-        <input class="fld" placeholder="Name (optional)" bind:value={newName} />
-        {#if newKind === 'agent'}
-          <textarea class="fld ta" placeholder="Claude prompt…" rows="3" bind:value={newPrompt}></textarea>
-        {:else}
-          <input class="fld" placeholder="Command (e.g. npm run dev)" bind:value={newCommand} />
-        {/if}
-        <div class="frow">
-          <button type="submit" class="btn primary" disabled={!activeId}>Add</button>
-          <button type="button" class="btn" onclick={resetForm}>Cancel</button>
-        </div>
-      </form>
-    {/if}
   </div>
-
-  <footer class="ft">
-    <button
-      type="button"
-      class="ftbtn"
-      class:active={creating}
-      onclick={() => (creating ? resetForm() : (creating = true))}
-      disabled={!activeId}
-      title="Add a task"
-    >
-      <Icon name="plus" size={13} /> Task
-    </button>
-    <button
-      type="button"
-      class="ftbtn"
-      onclick={launchTerminal}
-      disabled={!activeId}
-      title="Open a bare terminal"
-    >
-      <Icon name="terminal" size={13} /> Terminal
-    </button>
-  </footer>
 </section>
+
+<TaskDialog />
 
 <style>
   .launcher {
@@ -263,29 +156,48 @@
     overflow: hidden;
   }
 
+  /* Agents-bar-style header (mirrors Inbox.svelte's `.lh`). */
   .lh {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
+    padding: 15px 16px 11px;
     flex: none;
-    padding: 8px 16px 6px;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: var(--tracking-label);
-    color: var(--fg-3);
   }
-  .lh .title {
+  .lh h1 {
+    font-family: var(--font-display);
     font-weight: 600;
+    font-size: 17px;
+    margin: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
   }
-  .lh .proj {
-    color: var(--fg-4);
-    text-transform: none;
-    letter-spacing: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
+  .lh .count {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-3);
+    background: var(--space-750);
+    border: 1px solid var(--line-subtle);
+    border-radius: var(--r-full);
+    padding: 2px 8px;
+  }
+  .lh .launch {
+    margin-left: auto;
+    font-family: var(--font-sans);
+    font-weight: 700;
+    font-size: 15px;
+    color: #fff;
+    background: var(--blue-500);
+    border: none;
+    border-radius: var(--r-md);
+    width: 30px;
+    height: 30px;
+    cursor: pointer;
+  }
+  .lh .launch:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .body {
@@ -360,18 +272,6 @@
     white-space: nowrap;
     margin-top: 1px;
   }
-  .rename {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--fg-1);
-    background: var(--space-800);
-    border: 1px solid var(--blue-500);
-    border-radius: var(--r-sm);
-    padding: 1px 5px;
-    width: 100%;
-    outline: none;
-  }
-
   .acts {
     display: flex;
     align-items: center;
@@ -397,121 +297,5 @@
   .act:hover {
     background: var(--space-800);
     color: var(--fg-1);
-  }
-
-  .create {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-    margin: 6px 12px 10px;
-    padding: 10px;
-    background: var(--space-850);
-    border: 1px solid var(--line-subtle);
-    border-radius: var(--r-md);
-  }
-  .seg {
-    display: flex;
-    gap: 0;
-    border: 1px solid var(--line-subtle);
-    border-radius: var(--r-sm);
-    overflow: hidden;
-  }
-  .seg button {
-    flex: 1;
-    padding: 5px 8px;
-    font-family: var(--font-sans);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--fg-3);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-  }
-  .seg button.active {
-    color: #fff;
-    background: var(--blue-500);
-  }
-  .fld {
-    font-family: var(--font-sans);
-    font-size: 12px;
-    color: var(--fg-1);
-    background: var(--space-900);
-    border: 1px solid var(--line-subtle);
-    border-radius: var(--r-sm);
-    padding: 6px 8px;
-    outline: none;
-  }
-  .fld:focus {
-    border-color: var(--blue-500);
-  }
-  .fld.ta {
-    resize: vertical;
-    min-height: 48px;
-    font-family: var(--font-mono);
-  }
-  .frow {
-    display: flex;
-    gap: 7px;
-  }
-  .btn {
-    flex: 1;
-    padding: 6px 10px;
-    font-family: var(--font-sans);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--fg-2);
-    background: var(--space-750);
-    border: 1px solid var(--line-subtle);
-    border-radius: var(--r-sm);
-    cursor: pointer;
-  }
-  .btn:hover {
-    color: var(--fg-1);
-  }
-  .btn.primary {
-    color: #fff;
-    background: var(--blue-500);
-    border-color: var(--blue-500);
-  }
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .ft {
-    flex: none;
-    display: flex;
-    gap: 7px;
-    padding: 8px 12px;
-    border-top: 1px solid var(--line-subtle);
-  }
-  .ftbtn {
-    flex: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-    padding: 7px 10px;
-    font-family: var(--font-sans);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--fg-2);
-    background: var(--space-750);
-    border: 1px solid var(--line-subtle);
-    border-radius: var(--r-sm);
-    cursor: pointer;
-  }
-  .ftbtn:hover {
-    color: var(--fg-1);
-    border-color: var(--line-default);
-  }
-  .ftbtn.active {
-    color: #fff;
-    background: var(--blue-500);
-    border-color: var(--blue-500);
-  }
-  .ftbtn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
 </style>
