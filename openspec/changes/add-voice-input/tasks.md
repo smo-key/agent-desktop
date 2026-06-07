@@ -40,8 +40,8 @@
 
 ## 7. Native activation — double-tap right Command
 
-- [ ] 7.1 Add a Rust native `NSEvent` global monitor for `flagsChanged` detecting two right-Command presses within the double-tap window (~400ms), isolated in its own module.
-- [ ] 7.2 Emit a Tauri event on detection; have the frontend listen and open the panel (respecting the `enabled` setting); ensure failure of the monitor still leaves the mic button working.
+- [x] 7.1 Add a Rust native `NSEvent` global monitor for `flagsChanged` detecting two right-Command presses within the double-tap window (~400ms), isolated in its own module. — `src-tauri/src/voice_activation.rs`. Pure, headless-testable `DoubleTapDetector` (window=400ms; `tap(now_ms)→bool`, resets on a completed pair so a triple-tap doesn't double-fire; handles out-of-order clocks) with 6 unit tests (within/outside window, single tap, triple-tap, exact-boundary, out-of-order). Native monitor uses `objc2`/`objc2-app-kit`/`block2` (already in the tree via the dialog plugin) for keyCode 54 = RIGHT Command on the PRESS edge (command flag set). CAVEAT: a GLOBAL `NSEvent` monitor needs **Accessibility / Input-Monitoring** permission or it silently never fires in the background; the LOCAL monitor (installed too) needs no permission and fires while focused. The live gesture is MANUAL-verify only (NSEvent can't be unit-tested headless) — see task 9.1.
+- [x] 7.2 Emit a Tauri event on detection; have the frontend listen and open the panel (respecting the `enabled` setting); ensure failure of the monitor still leaves the mic button working. — On a completed double-tap the monitor emits `voice://activate`; `src/lib/voice/activation.ts` (`initVoiceActivation`) listens and calls `voiceStore.show()` gated on `voice.prefs.enabled`, wired in `+page.svelte` onMount (unlisten captured + cleaned up). `start` is best-effort: any install/lock failure is logged and swallowed (no panic) so the app + the on-screen mic button keep working; on non-macOS `start` is a no-op.
 
 ## 8. Insertion into focused agent terminal
 

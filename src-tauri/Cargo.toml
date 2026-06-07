@@ -31,3 +31,13 @@ portable-pty = "0.9"
 # Filesystem watcher for the snapshot/task directories (Milestone 3+).
 notify = "8"
 tauri-plugin-dialog = "2.7.1"
+
+# Native macOS NSEvent monitor for the voice-panel double-tap-right-Command
+# gesture (see src/voice_activation.rs). objc2 0.6 / objc2-app-kit 0.3 are the
+# tauri-2-compatible bindings (objc2 itself is already in the tree via the
+# dialog plugin). block2 supplies the Objective-C block used as the event handler.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSEvent"] }
+objc2-foundation = "0.3"
+block2 = "0.6"

@@ -5,6 +5,7 @@ pub mod pty;
 pub mod subagents;
 pub mod task;
 pub mod usage;
+pub mod voice_activation;
 
 use std::fs;
 use std::path::PathBuf;
@@ -723,6 +724,10 @@ pub fn run() {
                     Err(e) => log::warn!("start_event_server failed: {e}"),
                 }
             }
+            // Install the native double-tap-right-Command monitor that emits
+            // `voice://activate` for the voice panel. Best-effort and macOS-only;
+            // a failure is logged inside `start` (the mic button is the fallback).
+            voice_activation::start(app.handle().clone());
             Ok(())
         })
         .manage(Arc::new(PtyManager::new()))

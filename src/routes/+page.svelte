@@ -13,6 +13,7 @@
   import { voice } from '$lib/settings/voice.svelte';
   import VoicePanel from '$lib/voice/VoicePanel.svelte';
   import { voiceStore } from '$lib/voice/voiceStore.svelte';
+  import { initVoiceActivation } from '$lib/voice/activation';
   import Icon from '$lib/icons/Icon.svelte';
   import { startNewSession } from '$lib/launcher/newSession';
   import { workspace } from '$lib/layout/workspace.svelte';
@@ -135,12 +136,21 @@
       unlistenEvents = unlisten;
     });
 
+    // Listen for the native double-tap-right-Command gesture (`voice://activate`
+    // from the Rust NSEvent monitor) and open the voice panel. The mic button is
+    // the fallback if the monitor never installs/fires.
+    let unlistenVoice: (() => void) | undefined;
+    void initVoiceActivation().then((unlisten) => {
+      unlistenVoice = unlisten;
+    });
+
     return () => {
       stopWatching?.();
       unlistenSnapshots?.();
       unlistenSubagents?.();
       unlistenEvents?.();
       unlistenTermClose?.();
+      unlistenVoice?.();
       events.onEvent = undefined;
     };
   });
