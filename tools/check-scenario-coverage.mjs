@@ -106,6 +106,23 @@ const ENFORCED_CAPABILITIES = new Set([
   // reflow, drag-resize, interactive terminal, process-survives-hide/switch,
   // re-attach) are MANUAL below.
   'terminals-panel',
+  // project-tasks: evolved from project-terminals — the task model (kind
+  // terminal|agent, command/prompt, per-project keying, default-name derivation,
+  // runtime-vs-persisted split), persistence + one-time legacy terminals.json
+  // migration, lifecycle (start/stop/restart), completion semantics (success
+  // auto-close / error keep+failed / dismiss / long-runner persists), agent
+  // dispatch (opens a workspace session, no right-panel pane), and transient bare
+  // terminals are ALL pure/headless and unit-tested (projectTasks.test.ts +
+  // projectTasks.svelte.test.ts). No MANUAL scenarios.
+  'project-tasks',
+  // tasks-panel: the two panel SURFACES — the left Tasks launcher under the Agents
+  // roster (list, splitter, create form, footer actions) and the renamed right-
+  // docked Tasks dock (running task + bare-terminal panes, no `+`) — are genuinely
+  // live-DOM / live-PTY bound (rendered components, drag-resize, interactive xterm,
+  // process-survives-hide/switch, ⌘T/⌘J shortcuts against the live registry). Every
+  // scenario is headless-exempt (MANUAL below), like terminals-panel's rendered
+  // behaviors; the pure scoping resolver they reuse is covered under activeProject.
+  'tasks-panel',
 ]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by
@@ -269,6 +286,27 @@ const MANUAL_SCENARIOS = {
     // (and ⌘Tab is additionally subject to the macOS app-switcher reservation).
     'new_terminal_shortcut_opens_an_empty_shell',
     'focus_cycle_shortcut_moves_between_agent_and_terminals',
+  ]),
+  // project-tasks: every scenario has a REAL headless test (model + store), so the
+  // MANUAL set is intentionally empty.
+  'project-tasks': new Set(),
+  // tasks-panel: every scenario is a rendered-component / live-PTY behavior with no
+  // pure surface to assert headless — confirmed live in-app.
+  'tasks-panel': new Set([
+    'panel_position_and_default_size',
+    'resizable_splitter',
+    'active_project_scoping',
+    'empty_and_no_project_states',
+    'create_a_task',
+    'launch_a_bare_terminal_from_the_panel',
+    'start_and_stop_from_the_list',
+    'status_reflects_failure',
+    'renamed_no_plus_button',
+    'hosts_terminal_task_runs',
+    'toggle_and_badge_preserved',
+    'processes_survive_hide_and_project_switch',
+    'keyboard_shortcut',
+    'footer_action',
   ]),
 };
 
