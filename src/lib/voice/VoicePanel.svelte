@@ -130,12 +130,14 @@
   // requesting the mic, denied, errored, or already transcribing.
   const canStopAndInsert = $derived(voiceStore.state === 'recording');
 
-  // Live waveform: 7 rounded bars driven by the mic level. While recording, poll
-  // the pipeline's analyser each animation frame and map the normalized magnitudes
-  // to bar heights. The effect re-runs on state change and only loops while
-  // recording (cleaned up otherwise).
-  const BAR_COUNT = 7;
+  // Live waveform: a symmetric 5-bar display mirrored from 3 sampled magnitudes —
+  // the center bar is the first sample, and each subsequent sample is replicated to
+  // the left and right: [b2, b1, b0, b1, b2]. While recording, poll the pipeline's
+  // analyser each animation frame. The effect re-runs on state change and only
+  // loops while recording (cleaned up otherwise).
+  const BAR_COUNT = 3;
   let bars = $state<number[]>(new Array(BAR_COUNT).fill(0));
+  const waveBars = $derived([bars[2] ?? 0, bars[1] ?? 0, bars[0] ?? 0, bars[1] ?? 0, bars[2] ?? 0]);
 
   $effect(() => {
     if (voiceStore.state !== 'recording') {
@@ -236,7 +238,7 @@
       <!-- RECORDING (or requesting mic): live waveform + transcript + confirm (✓). -->
       <div class="rec">
         <div class="wave" aria-hidden="true">
-          {#each bars as b, i (i)}
+          {#each waveBars as b, i (i)}
             <span class="bar" style:height={`${barHeight(b)}px`}></span>
           {/each}
         </div>
@@ -341,7 +343,7 @@
     width: 3px;
     min-height: 4px;
     border-radius: var(--r-full);
-    background: #e5484d;
+    background: #fff;
     transition: height 0.08s linear;
   }
 
