@@ -252,6 +252,19 @@ describe('project-tasks — persistence & lifecycle', () => {
     expect(store.runtime[id]).toBeDefined();
     expect(store.runtime[id].running).toBe(true);
   });
+
+  it('No-command terminal exit zero stays stopped', async () => {
+    // A terminal task with NO command (a saved bare shell) is the "different
+    // experience": even a clean exit (code 0) must NOT auto-close — it stays as a
+    // stopped slot, unlike a command task whose success removes its pane.
+    const store = new ProjectTasksStore();
+    const id = await store.create('p', { kind: 'terminal', command: null });
+    store.startTask(id);
+    store.noteExit(id, 0);
+    expect(store.runtime[id]).toBeDefined();
+    expect(store.runtime[id].running).toBe(false);
+    expect(store.runtime[id].exitCode).toBe(0);
+  });
 });
 
 describe('project-tasks — agent dispatch', () => {

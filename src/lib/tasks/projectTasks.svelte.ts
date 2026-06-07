@@ -174,10 +174,13 @@ export class ProjectTasksStore {
       raw = null;
     }
     this.byProject = parseTasks(raw);
-    // One-time migration: when there is no tasks.json yet, fall back to the legacy
-    // terminals.json — importing each entry as a `terminal` task — and persist the
-    // result so the migration runs exactly once.
-    if (Object.keys(this.byProject).length === 0) {
+    // One-time migration: ONLY when there is no tasks.json file at all (`raw == null`)
+    // do we fall back to the legacy terminals.json — importing each entry as a
+    // `terminal` task — and persist the result, so the migration runs exactly once.
+    // We deliberately key off "file absent" rather than "no tasks": a user who
+    // legitimately deleted all their tasks has a present (possibly empty) tasks.json,
+    // and must NOT have the stale, read-only terminals.json resurrect them.
+    if (raw == null) {
       let legacy: string | null = null;
       try {
         legacy = await invoke<string | null>('terminals_load');
