@@ -41,9 +41,11 @@ const WHISPER_SAMPLE_RATE: u32 = 16_000;
 const VAD_FRAME_LEN: usize = 512;
 
 /// Default VAD energy threshold for normalized mic input. Above this RMS a frame
-/// is considered speech. Conservative (low) so quiet speech still passes; its job
-/// is only to discard true silence/empty buffers (anti-hallucination).
-const VAD_THRESHOLD: f32 = 0.01;
+/// is considered speech. Kept LOW (≈ -48 dBFS) so quiet speech / soft laptop mics
+/// still pass — its only job is to discard true silence/empty buffers (just above
+/// a typical noise floor). whisper's own silence annotations are stripped
+/// downstream, so a slightly permissive gate is safe.
+const VAD_THRESHOLD: f32 = 0.004;
 
 // --- Pure helper: argument builder ------------------------------------------
 

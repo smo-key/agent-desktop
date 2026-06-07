@@ -221,9 +221,10 @@ export class DictationPipeline {
    *
    * Flow: `transcribing` state → stop capture (releases the mic) → getPcm() →
    * `voice_transcribe_final` → `finishDictation` (polish per settings + verbatim
-   * insert). An empty result (VAD silence → "") inserts nothing and returns the
-   * panel to `idle` ("didn't catch that"), never an error. Any failure sets an
-   * error on the store and does NOT throw. The panel is closed at the end.
+   * insert). An empty result (no audio / VAD silence / whisper returned nothing)
+   * shows a "didn't catch that" notice and keeps the panel OPEN so the user gets
+   * feedback (rather than the panel silently closing with no result). Any failure
+   * sets an error and does NOT throw; the panel closes only on a successful insert.
    */
   async stopAndInsert(): Promise<void> {
     if (this.#finished) return;
@@ -241,20 +242,20 @@ export class DictationPipeline {
         bundledModelPath()
       ]);
       const modelPath = resolveFinalModelPath(tierPath, tinyPath);
-      if (!modelPath || samples.length === 0) {
-        // No model on disk, or no audio captured: nothing to transcribe. Treat as
-        // "didn't catch that" rather than an error.
-        voiceStore.setState('idle');
-        voiceStore.close();
+      if (!modelPath) {
+        voiceStore.setError('Voice models aren’t ready yet — try again in a moment.');
+        return;
+      }
+      if (samples.length === 0) {
+        voiceStore.setError('Didn’t catch that — try again.');
         return;
       }
 
       const rawFinal = await transcribeFinal(samples, sampleRate, modelPath);
       if (!rawFinal.trim()) {
-        // VAD silence / no speech → no insertion, no error (spec: silence produces
-        // no text). Show idle "didn't catch that", then close.
-        voiceStore.setState('idle');
-        voiceStore.close();
+        // No speech recognized (silence / too quiet / too short): show a notice and
+        // keep the panel open so the user knows, rather than closing with nothing.
+        voiceStore.setError('Didn’t catch that — try again.');
         return;
       }
 
