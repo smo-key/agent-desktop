@@ -1,0 +1,6 @@
+{
+  "provider": "local",
+  "taskRef": "add-tasks-panel",
+  "url": "",
+  "lastEvent": "planned"
+}
