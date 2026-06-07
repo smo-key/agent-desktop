@@ -18,13 +18,16 @@
 // partial-event reducer); `invoke`, `Channel`, `MicCapture`, and the DOM stay in
 // thin, untested wrappers below.
 //
-// MANUAL (tasks 9.1/9.2): this assembly COMPILES and is logically wired, but it
-// only RUNS end-to-end with the provisioned whisper/llama sidecars + models on
-// disk + a real microphone. The live STT stream loop is itself a Rust stub today
-// (task 4.3), so live partials receive nothing until that lands — the wiring is
-// correct and compiles regardless.
+// Live partials are driven from the frontend: a ~600ms interval re-transcribes the
+// audio-so-far with the fast tiny model and shows it as the provisional overlay
+// (Whisper isn't natively streaming, so a rolling re-transcribe is the practical
+// approach). The final pass uses the tier model. Both reuse the one Tauri
+// `voice_transcribe_final` command, so there is no separate Rust streaming loop.
+//
+// Runs end-to-end once the whisper sidecar + a model are provisioned (the bundled
+// tiny model is used for partials); polish additionally needs the llama-server.
 
-import { Channel, invoke } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { voice } from '$lib/settings/voice.svelte';
 import { MicCapture } from './capture';
 import { finishDictation } from './polish';
@@ -135,6 +138,9 @@ async function transcribeFinal(
 
 // --- The controller ---------------------------------------------------------
 
+/** How often the live-partials loop re-transcribes the audio-so-far (ms). */
+const PARTIAL_INTERVAL_MS = 600;
+
 /**
  * Drives one dictation session: capture → live partials → stop&insert / cancel.
  * Construct on panel open (after `ensureModels`), call `start()`, then exactly one
@@ -144,51 +150,58 @@ async function transcribeFinal(
  */
 export class DictationPipeline {
   #capture = new MicCapture();
-  #channel: Channel<TranscribeEvent> | null = null;
   #finished = false;
+  // Live-partials loop state (frontend-driven; see #startPartials).
+  #partialTimer: ReturnType<typeof setInterval> | null = null;
+  #partialBusy = false;
+  #partialModel: string | null = null;
 
   /**
-   * Begin capture and wire the live-partials stream. Sets `recording` on success;
-   * on a mic-permission/start failure surfaces the error on the store and does NOT
-   * proceed (mirrors the panel's prior capture handling). The live stream loop is
-   * a Rust stub today, so partials simply won't arrive until task 4.3/9.1 — the
-   * wiring is correct and compiles.
+   * Begin capture and start the live-partials loop. Sets `recording` on success;
+   * a mic-permission/start failure is surfaced by the caller (VoicePanel) which
+   * awaits this and maps the rejection to the denied/error state.
    */
   async start(): Promise<void> {
     await this.#capture.start();
     voiceStore.setState('recording');
-
-    // Subscribe to live partials. The Rust `voice_transcribe_stream` is a stub
-    // (sends nothing yet), so this receives no events live — but the contract is
-    // fully wired and type-checked.
-    const channel = new Channel<TranscribeEvent>();
-    channel.onmessage = (ev) => {
-      const effect = reduceTranscribeEvent(ev);
-      if (effect.kind === 'partial') voiceStore.setPartial(effect.text);
-      else if (effect.kind === 'error') voiceStore.setError(effect.message);
-    };
-    this.#channel = channel;
-
-    // Resolve the live/streaming model path (prefer tier model, else bundled tiny)
-    // and open the stream. Best-effort: a stub/absent stream must not break record.
-    void this.#startStream(channel);
+    // Drive live partials from the frontend: periodically re-transcribe the
+    // audio-so-far with the FAST tiny model and show it as the provisional overlay.
+    void this.#startPartials();
   }
 
-  /** Open the live-partials stream with a resolved model path. Best-effort. */
-  async #startStream(channel: Channel<TranscribeEvent>): Promise<void> {
+  /**
+   * Live partials: every ~600ms re-transcribe the audio captured so far with the
+   * fast tiny model (Whisper isn't natively streaming, so a rolling re-transcribe
+   * of the growing buffer is the practical "what I'm saying" overlay). Each pass
+   * supersedes the previous partial. Best-effort: a missing model / busy tick /
+   * transcription error never disrupts recording; the final pass is authoritative.
+   */
+  async #startPartials(): Promise<void> {
+    // Prefer the bundled tiny model for partials (fastest); fall back to the tier
+    // model if tiny isn't present.
+    const [tinyPath, tierPath] = await Promise.all([
+      bundledModelPath(),
+      tierModelPath(voice.prefs.modelTier)
+    ]);
+    this.#partialModel = tinyPath ?? tierPath;
+    if (!this.#partialModel || this.#finished) return;
+    this.#partialTimer = setInterval(() => void this.#tickPartial(), PARTIAL_INTERVAL_MS);
+  }
+
+  /** One partial pass: transcribe the buffer-so-far → update the overlay. */
+  async #tickPartial(): Promise<void> {
+    if (this.#partialBusy || this.#finished || !this.#partialModel) return;
+    const { samples, sampleRate } = this.#capture.getPcm();
+    if (samples.length === 0) return;
+    this.#partialBusy = true;
     try {
-      const [tierPath, tinyPath] = await Promise.all([
-        tierModelPath(voice.prefs.modelTier),
-        bundledModelPath()
-      ]);
-      const modelPath = resolveFinalModelPath(tierPath, tinyPath);
-      if (!modelPath) return; // no model on disk — final pass also degrades.
-      await invoke('voice_transcribe_stream', { onEvent: channel, modelPath });
-      // MANUAL: real-time loop (task 4.3/9.1) — the Rust command is a stub that
-      // returns immediately and streams nothing; PCM is not yet fed to it.
+      const text = await transcribeFinal(samples, sampleRate, this.#partialModel);
+      // Ignore late results once we've started finalizing/cancelling.
+      if (!this.#finished && text.trim()) voiceStore.setPartial(text);
     } catch {
-      // A missing binary / stub returning early must not surface as a hard error
-      // during recording; the final pass is the authoritative transcription.
+      // Partials are non-authoritative; swallow transient errors.
+    } finally {
+      this.#partialBusy = false;
     }
   }
 
@@ -260,12 +273,13 @@ export class DictationPipeline {
     this.#stopCapture();
   }
 
-  /** Stop capture, release the mic, and drop the live stream channel. Idempotent. */
+  /** Stop capture + the partials loop and release the mic. Idempotent. */
   #stopCapture(): void {
+    if (this.#partialTimer) {
+      clearInterval(this.#partialTimer);
+      this.#partialTimer = null;
+    }
     this.#capture.stop();
-    // Dropping the reference lets the channel be GC'd; the Rust stub stream has
-    // already returned, so there is no long-lived task to cancel.
-    this.#channel = null;
   }
 }
 
