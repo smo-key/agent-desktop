@@ -126,10 +126,40 @@
     }
   }
 
-  // Show the primary "Stop & insert" control only while there is an utterance to
-  // finalize (recording) — not while requesting the mic, denied, errored, or
-  // already transcribing.
+  // Show the primary confirm (✓) control only while recording — not while
+  // requesting the mic, denied, errored, or already transcribing.
   const canStopAndInsert = $derived(voiceStore.state === 'recording');
+
+  // Live waveform: 7 rounded bars driven by the mic level. While recording, poll
+  // the pipeline's analyser each animation frame and map the normalized magnitudes
+  // to bar heights. The effect re-runs on state change and only loops while
+  // recording (cleaned up otherwise).
+  const BAR_COUNT = 7;
+  let bars = $state<number[]>(new Array(BAR_COUNT).fill(0));
+
+  $effect(() => {
+    if (voiceStore.state !== 'recording') {
+      bars = new Array(BAR_COUNT).fill(0);
+      return;
+    }
+    let raf = 0;
+    const tick = () => {
+      const p = pipeline;
+      if (p) bars = p.getBars(BAR_COUNT);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  });
+
+  // Map a normalized level (0–1) to a bar height in px (small idle floor → lively).
+  function barHeight(level: number): number {
+    return Math.round(4 + Math.min(1, level) * 22);
+  }
+
+  // The text shown in the recording / processing rows: the live partial, falling
+  // back to the committed final (e.g. while finalizing) or a gentle placeholder.
+  const overlayText = $derived(voiceStore.partial || voiceStore.finalText);
 </script>
 
 <svelte:window onkeydown={onWindowKeydown} />
@@ -170,30 +200,10 @@
     aria-live="polite"
     tabindex="-1"
   >
-    <div class="row">
-      <span
-        class="indicator"
-        class:rec={voiceStore.state === 'recording'}
-        class:err={voiceStore.state === 'error' || voiceStore.state === 'denied'}
-      >
-        <Icon name="mic" size={15} />
-      </span>
-      <span class="status" class:err={voiceStore.state === 'error' || voiceStore.state === 'denied'}>{status}</span>
-      {#if canStopAndInsert}
-        <!-- PRIMARY action: finalize the utterance (final pass → polish → verbatim
-             insert into the focused terminal) then close. The user reviews the text
-             in the TERMINAL, not here. -->
-        <button class="stop-insert" onclick={stopAndInsert}>Stop &amp; insert</button>
-      {/if}
-      <!-- CANCEL: discard the utterance (stop mic, no transcription, no insert). -->
-      <button class="x" aria-label="Cancel voice input" use:tooltip={'Cancel (Esc)'} onclick={() => discard()}>×</button>
-    </div>
-
     {#if modelDownload.active && voiceStore.state !== 'denied' && voiceStore.state !== 'error'}
-      <!-- Models are downloading on first use: show a determinate "Preparing
-           models…" bar (NN% from the store) over the listening view. The bundled
-           tiny model still lets dictation work, so this is informative, not a hard
-           block. -->
+      <!-- Models are downloading on first use: a determinate "Preparing models…"
+           bar. The bundled tiny model still lets dictation work, so this is
+           informative, not a hard block. -->
       <div class="preparing">
         <div class="prep-row">
           <span class="prep-label">Preparing models…</span>
@@ -207,8 +217,7 @@
         {/if}
       </div>
     {:else if voiceStore.state === 'denied' || voiceStore.state === 'error'}
-      <!-- Denied / error state: render the guidance prominently, distinct from the
-           normal listening view. Recording does NOT proceed in this state. -->
+      <!-- Denied / error state: prominent guidance; recording does NOT proceed. -->
       <div class="guidance" class:denied={voiceStore.state === 'denied'}>
         <p class="guidance-msg">{voiceStore.error ?? status}</p>
         {#if voiceStore.state === 'denied'}
@@ -218,10 +227,30 @@
           </p>
         {/if}
       </div>
-    {:else if voiceStore.finalText || voiceStore.partial}
-      <div class="transcript">
-        {#if voiceStore.finalText}<span class="final">{voiceStore.finalText}</span>{/if}
-        {#if voiceStore.partial}<span class="partial">{voiceStore.partial}</span>{/if}
+    {:else if voiceStore.state === 'transcribing'}
+      <!-- PROCESSING: the same captured text, shimmering blue until finalized. -->
+      <div class="proc">
+        <span class="proc-text">{overlayText || 'Transcribing…'}</span>
+      </div>
+    {:else}
+      <!-- RECORDING (or requesting mic): live waveform + transcript + confirm (✓). -->
+      <div class="rec">
+        <div class="wave" aria-hidden="true">
+          {#each bars as b, i (i)}
+            <span class="bar" style:height={`${barHeight(b)}px`}></span>
+          {/each}
+        </div>
+        <span class="rec-text" class:dim={!overlayText}>{overlayText || status}</span>
+        <button
+          class="confirm"
+          aria-label="Insert dictation"
+          use:tooltip={'Insert (tap right ⌘)'}
+          onclick={stopAndInsert}
+          disabled={!canStopAndInsert}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
+        </button>
+        <button class="x" aria-label="Cancel voice input" use:tooltip={'Cancel (Esc)'} onclick={() => discard()}>×</button>
       </div>
     {/if}
   </div>
@@ -293,55 +322,64 @@
     outline: none;
   }
 
-  .row {
+  /* RECORDING row: live waveform · transcript · confirm (✓) · cancel (×). */
+  .rec {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
   }
 
-  .indicator {
+  /* 7 rounded bars driven by the mic level. */
+  .wave {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 28px;
+    flex: none;
+  }
+  .bar {
+    width: 3px;
+    min-height: 4px;
+    border-radius: var(--r-full);
+    background: #e5484d;
+    transition: height 0.08s linear;
+  }
+
+  .rec-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--fg-1);
+    max-height: 30vh;
+    overflow-y: auto;
+    word-break: break-word;
+  }
+  .rec-text.dim {
+    color: var(--fg-3);
+  }
+
+  /* Primary confirm (✓): a round accent button distinct from the × cancel. */
+  .confirm {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: 30px;
+    height: 30px;
     flex: none;
+    border: none;
     border-radius: var(--r-full);
-    border: 1px solid var(--line-default);
-    color: var(--fg-3);
-    background: var(--space-650);
-  }
-  .indicator.rec {
+    background: var(--accent, #3b82f6);
     color: #fff;
-    border-color: transparent;
-    background: #e5484d;
-    animation: voice-pulse 1.4s ease-in-out infinite;
+    cursor: pointer;
+    transition: filter 0.15s ease;
   }
-  .indicator.err {
-    color: #fff;
-    border-color: transparent;
-    background: #e5484d;
+  .confirm:hover {
+    filter: brightness(1.1);
   }
-
-  @keyframes voice-pulse {
-    0%,
-    100% {
-      box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.45);
-    }
-    50% {
-      box-shadow: 0 0 0 6px rgba(229, 72, 77, 0);
-    }
-  }
-
-  .status {
-    flex: 1 1 auto;
-    min-width: 0;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--fg-2);
-  }
-  .status.err {
-    color: #ff8a8d;
+  .confirm:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 
   .x {
@@ -361,37 +399,37 @@
     color: var(--fg-1);
   }
 
-  /* PRIMARY "Stop & insert" action: visually distinct from the × cancel so the
-     finalize-vs-discard distinction is clear. */
-  .stop-insert {
-    flex: none;
-    padding: 5px 11px;
-    border: none;
-    border-radius: var(--r-md);
-    background: var(--accent, #3b82f6);
-    color: #fff;
-    font-family: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .stop-insert:hover {
-    filter: brightness(1.08);
-  }
-
-  /* The live overlay region: committed (final) text reads normal; the in-progress
-     (provisional) partial is dimmed + italic to signal it isn't final yet. */
-  .transcript {
+  /* PROCESSING: the captured text shimmering blue until the final result lands. */
+  .proc {
     font-size: 14px;
     line-height: 1.5;
-    color: var(--fg-1);
     max-height: 30vh;
     overflow-y: auto;
     word-break: break-word;
   }
-  .final {
-    color: var(--fg-1);
+  .proc-text {
+    background: linear-gradient(
+      90deg,
+      var(--fg-3) 0%,
+      #3b82f6 25%,
+      #60a5fa 50%,
+      #3b82f6 75%,
+      var(--fg-3) 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: voice-shimmer 1.4s linear infinite;
+  }
+
+  @keyframes voice-shimmer {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
   }
 
   /* Denied / error guidance: a distinct, prominent block (not the transcript
@@ -422,11 +460,6 @@
     font-size: 12px;
     line-height: 1.5;
     color: var(--fg-3);
-  }
-  .partial {
-    color: var(--fg-3);
-    font-style: italic;
-    opacity: 0.8;
   }
 
   /* "Preparing models…" download progress: a determinate bar fed by the

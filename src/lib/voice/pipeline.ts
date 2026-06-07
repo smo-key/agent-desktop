@@ -139,11 +139,12 @@ async function transcribeFinal(
 // --- The controller ---------------------------------------------------------
 
 /**
- * How often the live-partials loop re-transcribes the audio-so-far (ms). Each tick
- * spawns a whisper pass over the growing buffer, so a longer interval is calmer
- * (less text churn) and lighter on CPU; the final pass on stop is authoritative.
+ * How often the live-partials loop polls to re-transcribe the audio-so-far (ms).
+ * An in-flight guard means we never overlap passes, so the effective rate is
+ * min(this, one whisper pass) — with the per-call model reload of the one-shot
+ * CLI this is the practical floor. The final pass on stop is authoritative.
  */
-const PARTIAL_INTERVAL_MS = 1500;
+const PARTIAL_INTERVAL_MS = 200;
 
 /**
  * Drives one dictation session: capture → live partials → stop&insert / cancel.
@@ -190,6 +191,11 @@ export class DictationPipeline {
     this.#partialModel = tinyPath ?? tierPath;
     if (!this.#partialModel || this.#finished) return;
     this.#partialTimer = setInterval(() => void this.#tickPartial(), PARTIAL_INTERVAL_MS);
+  }
+
+  /** Current mic level as `count` normalized bars (0–1) for the live waveform. */
+  getBars(count: number): number[] {
+    return this.#capture.getBars(count);
   }
 
   /** One partial pass: transcribe the buffer-so-far → update the overlay. */

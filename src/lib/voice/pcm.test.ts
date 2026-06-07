@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { concatFloat32 } from './pcm';
+import { concatFloat32, bucketBars } from './pcm';
 
 describe('concatFloat32', () => {
   it('concatenates chunks in order into one contiguous buffer', () => {
@@ -23,5 +23,24 @@ describe('concatFloat32', () => {
     const out = concatFloat32([a]);
     a[0] = 99;
     expect(out[0]).toBe(1); // unchanged — result owns its buffer
+  });
+});
+
+describe('bucketBars', () => {
+  it('returns `count` zeros for an empty spectrum', () => {
+    expect(bucketBars([], 7)).toEqual([0, 0, 0, 0, 0, 0, 0]);
+  });
+
+  it('averages each bucket and normalizes to 0–1 (÷255)', () => {
+    // 4 bins → 2 buckets: [255,255] → 1.0, [0,0] → 0.0
+    expect(bucketBars([255, 255, 0, 0], 2)).toEqual([1, 0]);
+  });
+
+  it('a full-scale spectrum maps every bar to 1', () => {
+    expect(bucketBars([255, 255, 255, 255, 255, 255, 255], 7)).toEqual([1, 1, 1, 1, 1, 1, 1]);
+  });
+
+  it('returns [] for a non-positive count', () => {
+    expect(bucketBars([1, 2, 3], 0)).toEqual([]);
   });
 });

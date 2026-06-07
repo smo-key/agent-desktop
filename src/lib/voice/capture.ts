@@ -22,7 +22,7 @@
 //   raw-PCM transport proves lower-latency). MANUAL: live capture is verified in
 //   a real window (task 9.1), not headlessly.
 
-import { concatFloat32 } from './pcm';
+import { concatFloat32, bucketBars } from './pcm';
 
 // RAW-PCM PATH (STT slice, task 4.3): whisper.cpp needs raw 16 kHz mono PCM, so
 // alongside the `MediaRecorder` Blob path we tap the `AudioContext` for
@@ -67,6 +67,9 @@ export class MicCapture {
   #processor: ScriptProcessorNode | null = null;
   #pcmChunks: Float32Array[] = [];
   #sampleRate = 0;
+  // Live-level analyser for the recording waveform.
+  #analyser: AnalyserNode | null = null;
+  #freqBuf: Uint8Array<ArrayBuffer> = new Uint8Array(0);
   readonly #opts: MicCaptureOptions;
 
   constructor(opts: MicCaptureOptions = {}) {
@@ -117,6 +120,13 @@ export class MicCapture {
       this.#pcmChunks = [];
       const source = ctx.createMediaStreamSource(stream);
       this.#source = source;
+      // Analyser tap for the live waveform (does not need to reach destination).
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256; // 128 frequency bins — plenty for 7 bars.
+      analyser.smoothingTimeConstant = 0.7;
+      this.#analyser = analyser;
+      this.#freqBuf = new Uint8Array(analyser.frequencyBinCount);
+      source.connect(analyser);
       const processor = ctx.createScriptProcessor(PCM_BUFFER_SIZE, 1, 1);
       this.#processor = processor;
       processor.onaudioprocess = (e: AudioProcessingEvent) => {
@@ -150,6 +160,19 @@ export class MicCapture {
   }
 
   /**
+   * Sample the current mic level as `count` normalized bars (0–1) for the live
+   * waveform. Reads the analyser's instantaneous frequency magnitudes and buckets
+   * them (pure `bucketBars`). Returns `count` zeros when the analyser isn't running
+   * (no AudioContext / not started), so the UI renders a flat idle waveform.
+   */
+  getBars(count: number): number[] {
+    const analyser = this.#analyser;
+    if (!analyser) return new Array(count).fill(0);
+    analyser.getByteFrequencyData(this.#freqBuf);
+    return bucketBars(this.#freqBuf, count);
+  }
+
+  /**
    * Stop recording and release the microphone (all tracks stopped + stream
    * dropped), so the OS mic indicator turns off. Safe to call when not started
    * or already stopped.
@@ -175,6 +198,14 @@ export class MicCapture {
       }
     }
     this.#processor = null;
+    if (this.#analyser) {
+      try {
+        this.#analyser.disconnect();
+      } catch {
+        // Already disconnected — ignore.
+      }
+    }
+    this.#analyser = null;
     if (this.#source) {
       try {
         this.#source.disconnect();
