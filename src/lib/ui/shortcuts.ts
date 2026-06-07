@@ -46,5 +46,12 @@ export const SHORTCUTS: ShortcutGroup[] = [
       { keys: ['⌘', 'Enter'], label: 'Confirm and launch' },
       { keys: ['Esc'], label: 'Cancel' }
     ]
+  },
+  {
+    title: 'Voice',
+    items: [
+      { keys: ['⌘', '⌘'], label: 'Voice input (double-tap right Command)' },
+      { keys: ['Mic'], label: 'Voice input (click the mic button)' }
+    ]
   }
 ];

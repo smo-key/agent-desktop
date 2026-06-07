@@ -45,9 +45,9 @@
 
 ## 8. Insertion into focused agent terminal
 
-- [ ] 8.1 Insert the finished text verbatim via `TerminalHandle.send(text)` (`src/lib/layout/terminals.ts`) to the focused agent terminal with NO trailing carriage return (study `src/lib/launcher/initialInput.ts` for verbatim guarantees).
-- [ ] 8.2 Handle the no-focused-agent-terminal case with a clear "no target" state; never send text to an unexpected target.
-- [ ] 8.3 Register the activation gesture/button in `src/lib/ui/shortcuts.ts` so the help modal documents it.
+- [x] 8.1 Insert the finished text verbatim via `TerminalHandle.sendKeys(text)` (`src/lib/layout/terminals.ts`) to the focused agent terminal with NO trailing carriage return (study `src/lib/launcher/initialInput.ts` for verbatim guarantees). Implemented in `src/lib/voice/insert.ts` (`insertVoiceText`); fully tested in `src/lib/voice/insert.test.ts` (exact-bytes assertion proves no `\r`, multi-line passes through unchanged). NOTE: chose `sendKeys` over `send` — `send` appends a single `\r` (= auto-submit), which the requirement (no auto-submit) forbids; `paste` returns `void` (no dead-pane signal) and is a plain `pty_write` with no bracketed-paste advantage, whereas `sendKeys` writes raw verbatim bytes and reports `false` on a dead PTY.
+- [x] 8.2 Handle the no-focused-agent-terminal case with a clear "no target" state; never send text to an unexpected target. `insertVoiceText(undefined, …)` returns `{ ok:false, reason:'no-target' }`; the wired `insertDictation` sets `voiceStore.setError('No focused agent to receive dictation')`. Focused-agent source of truth: `workspace.focusedId` (the active workspace's focused leaf), wrapped in the thin `focusedAgentPaneId()` (project terminals live in a separate panel, never returned). Resolution is injectable/tested via `resolveFocusedAgentHandle`.
+- [x] 8.3 Register the activation gesture/button in `src/lib/ui/shortcuts.ts` so the help modal documents it. Added a "Voice" group documenting double-tap right Command (`⌘⌘`) and the mic button.
 
 ## 9. Verification
 
