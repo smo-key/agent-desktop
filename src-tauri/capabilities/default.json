@@ -17,6 +17,11 @@
           "name": "binaries/whisper-cli",
           "sidecar": true,
           "args": true
+        },
+        {
+          "name": "binaries/llama-server",
+          "sidecar": true,
+          "args": true
         }
       ]
     }

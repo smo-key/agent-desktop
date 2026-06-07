@@ -2,6 +2,7 @@ pub mod activity;
 pub mod events;
 pub mod git;
 pub mod models;
+pub mod polish;
 pub mod pty;
 pub mod subagents;
 pub mod task;
@@ -455,9 +456,7 @@ fn voice_bundled_model_path(app: AppHandle) -> Result<Option<String>, String> {
     let path = resource_dir
         .join("models")
         .join(models::tiny_spec().filename);
-    Ok(path
-        .is_file()
-        .then(|| path.to_string_lossy().into_owned()))
+    Ok(path.is_file().then(|| path.to_string_lossy().into_owned()))
 }
 
 /// Install the baked statusline wrapper to `<app_data_dir>/bin/statusline-wrapper.js`
@@ -762,6 +761,10 @@ pub fn run() {
         })
         .manage(Arc::new(PtyManager::new()))
         .manage(WatchedSessionsState::default())
+        // The single transcript-polish llama-server manager (lazy-started by
+        // `voice_polish`). Held in managed state so it lives for the app's
+        // lifetime and the spawned sidecar is reaped on exit.
+        .manage(Arc::new(polish::LlamaServer::default()))
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
             pty_write,
@@ -793,6 +796,7 @@ pub fn run() {
             transcribe::voice_transcribe_stream,
             models::voice_download_models,
             models::voice_models_status,
+            polish::voice_polish,
             voice_bundled_model_path
         ])
         .on_window_event(|window, event| {
@@ -891,8 +895,14 @@ mod tests {
             assert_eq!(mode & 0o777, 0o755, "event hook must be mode 0755");
         }
         // The socket path sits at the app-data root and the events dir exists.
-        assert_eq!(PathBuf::from(&paths.socket_path), tmp.path().join(SOCKET_FILE));
-        assert!(tmp.path().join(EVENTS_DIR).is_dir(), "events dir must exist");
+        assert_eq!(
+            PathBuf::from(&paths.socket_path),
+            tmp.path().join(SOCKET_FILE)
+        );
+        assert!(
+            tmp.path().join(EVENTS_DIR).is_dir(),
+            "events dir must exist"
+        );
     }
 
     #[test]

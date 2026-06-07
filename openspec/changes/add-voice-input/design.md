@@ -68,8 +68,14 @@ tendency to hallucinate phantom text during silence.
 
 ### D4 — Polish: separate small local LLM, toggleable
 A second stage sends the final transcript to a small instruction-tuned LLM
-(Qwen3 1.7B or Llama 3.2 3B, Q4) running as a bundled local server subprocess
-(MLX preferred on Apple Silicon; llama.cpp fallback), with a tight system prompt:
+(Qwen3 1.7B Q4_K_M — the `models::POLISH` registry entry) running as a bundled
+local server subprocess. **Shippable baseline (implemented):** llama.cpp's
+`llama-server` provisioned as a Tauri sidecar (mirrors the whisper-cli sidecar;
+no Python/MLX dependency to ship), serving an OpenAI-compatible
+`POST /v1/chat/completions` on `127.0.0.1`, lazy-started with a `/health`
+backoff check (see `src-tauri/src/polish.rs`). **Future optimization:** an MLX
+server is preferred on Apple Silicon for speed, but is deferred — `llama-server`
+is the shippable v1. The tight system prompt:
 remove fillers/false-starts/repetitions, fix punctuation/capitalization,
 structure spoken lists, output clean prompt text, **add no new content**. A
 settings toggle (default on) bypasses this stage and inserts the raw transcript.

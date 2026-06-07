@@ -30,7 +30,8 @@
     "active": true,
     "targets": "all",
     "externalBin": [
-      "binaries/whisper-cli"
+      "binaries/whisper-cli",
+      "binaries/llama-server"
     ],
     "resources": [
       "models/ggml-tiny.bin"

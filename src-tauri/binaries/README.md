@@ -38,3 +38,45 @@ network access at build time. It does **not** commit anything.
 model-management slice (downloaded to app-data on first run), **not** bundled
 here, so the installer stays small. For a local MANUAL end-to-end test you can
 fetch a tiny model and pass its path to `voice_transcribe_final`.
+
+## `llama-server` — llama.cpp transcript-polish runtime
+
+The transcript-POLISH feature shells out to llama.cpp's `llama-server` to clean
+up the raw transcript on-device (see `src-tauri/src/polish.rs`). It serves an
+OpenAI-compatible `POST /v1/chat/completions` on `127.0.0.1`; the manager starts
+it lazily and health-checks `GET /health` before the first request.
+
+Same sidecar convention — on Apple Silicon the file must be:
+
+```
+binaries/llama-server-aarch64-apple-darwin
+```
+
+`tauri.conf.json` registers it as `bundle.externalBin: ["binaries/llama-server"]`
+and `capabilities/default.json` grants `shell:allow-execute` for it as a sidecar.
+
+### Provisioning
+
+```sh
+./scripts/fetch-llama.sh
+```
+
+Idempotent (skips if a real Mach-O binary is already present; replaces the
+committed shell-script placeholder), requires network at build time, commits
+nothing.
+
+### Polish model weights
+
+`llama-server` loads the polish GGUF model (Qwen3 1.7B Q4_K_M — the
+`models::POLISH` registry entry). It is downloaded to app-data by the
+model-management slice's `voice_download_models` when polish is enabled, **not**
+bundled here. The `voice_polish` command returns an error (so the frontend falls
+back to the raw transcript) if the model is absent.
+
+### Local placeholder
+
+A git-ignored shell-script PLACEHOLDER `llama-server-aarch64-apple-darwin` lets
+local `cargo build` resolve the sidecar without the real binary (mirrors
+`whisper-cli`). It is not a working server — it exits non-zero so a stray
+`voice_polish` in dev degrades to the raw transcript. A shippable `tauri build`
+needs the real binary via `./scripts/fetch-llama.sh`.
