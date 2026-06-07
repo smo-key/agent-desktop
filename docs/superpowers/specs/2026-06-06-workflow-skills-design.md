@@ -11,6 +11,16 @@ archive) and driving an external ticket/backlog tracker's status as work moves
 through the stages. The tracker is pluggable (local, GitHub Projects, Jira) and
 configured per-repo.
 
+## Dependencies & self-containment
+
+These skills are meant to be shared/exported on their own. They depend only on:
+the `openspec-*` skills (the lifecycle they orchestrate) and standard host tools
+(`git`, `gh`, `curl`, and the host's subagent/Task dispatch). They explicitly do
+**not** depend on the superpowers skill set (brainstorming, TDD,
+subagent-driven-development) — that is not shipped with them. Any methodology the
+skills need (the subagent-driven build loop, the TDD discipline) is documented
+inline in `references/build-loop.md` so the skills are fully self-contained.
+
 ## Skills
 
 All live as flat directories under `.claude/skills/`, matching the existing
@@ -24,7 +34,8 @@ All live as flat directories under `.claude/skills/`, matching the existing
   (`openspec-explore` or `openspec-propose`) → apply-ready OpenSpec change →
   commit.
 - **`workflow-build`** — resume the active change → status update →
-  `openspec-apply-change` (TDD) → tasks complete.
+  self-contained **subagent-driven build loop** (fresh subagent per task, TDD,
+  spec + quality review gates) over the change's `tasks.md` → tasks complete.
 - **`workflow-close`** — spec/implementation drift reconciliation →
   `openspec-verify-change` → `openspec-archive-change` → final status update.
 - **`workflow-quick`** — fast lane for small, clear changes: intake (asking
@@ -133,7 +144,12 @@ Co-located with the change, version-controlled. `workflow-build` and
 ### Build (`workflow-build`)
 1. Resolve the active change from `workflow.json` / current branch / ask.
    `set_status(implementing)`.
-2. Invoke `openspec-apply-change` (TDD per superpowers) through all tasks.
+2. Drive the change's `tasks.md` through the **subagent-driven build loop**
+   (`references/build-loop.md`): for each task, dispatch a fresh implementer
+   subagent (TDD), then a spec-compliance review subagent, then a code-quality
+   review subagent, fixing in loops; mark each task complete. Spawn subagents as
+   needed — trivial tasks may be done inline. End with a final review over the
+   whole change.
 3. `set_status(review)`.
 
 ### Close (`workflow-close`)

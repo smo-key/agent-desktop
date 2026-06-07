@@ -23,6 +23,7 @@ workflow/
     config.md                   # config schema + scaffold default (Task 1)
     linkage.md                  # workflow.json format + read/write (Task 2)
     providers.md                # provider contract + event→status mapping (Task 3)
+    build-loop.md               # subagent-driven build loop + TDD (Task 6.5)
     providers/
       local.md                  # local provider (Task 4)
       github.md                 # GitHub Projects provider (Task 5)
@@ -489,6 +490,110 @@ git commit -m "feat(workflow): jira provider reference"
 
 ---
 
+### Task 6.5: Build-loop reference (`references/build-loop.md`)
+
+The self-contained subagent-driven build methodology `workflow-build` follows
+(and the TDD discipline `workflow-quick` borrows). Documents how to spawn
+implementer/reviewer subagents per task. Deliberately references **no** external
+skill set so the workflow skills can be shared standalone.
+
+**Files:**
+- Create: `.claude/skills/workflow/references/build-loop.md`
+
+- [ ] **Step 1: Write the file**
+
+````markdown
+# Build loop — subagent-driven implementation
+
+`workflow-build` implements a change's tasks by dispatching fresh subagents — one
+per task — with review gates. Isolated context per task keeps quality high and
+the orchestrator's context clean. This loop is self-contained: it depends on no
+external skill set, only the host's ability to spawn a subagent with a prompt and
+read its final report (e.g. Claude Code's Task/Agent tool).
+
+## Loop
+
+For the active change, read `openspec/changes/<name>/tasks.md`. For each unchecked
+task (or coherent group of small tasks), in order:
+
+1. **Dispatch an implementer subagent** with the full task text plus enough
+   surrounding context to place it (relevant files, conventions, excerpts of the
+   change's proposal/specs). Do NOT have it read this file or the plan — give it
+   the task text directly. Instruct it to:
+   - Follow the TDD discipline below.
+   - Implement ONLY what the task specifies — nothing extra.
+   - Run the tests/build and confirm they pass.
+   - Self-review its diff, then commit.
+   - Report `STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED`.
+
+2. **Handle status.** `NEEDS_CONTEXT` → provide it and re-dispatch.
+   `DONE_WITH_CONCERNS` → read the concerns; resolve correctness/scope ones before
+   reviewing. `BLOCKED` → change something before retrying (more context, a more
+   capable model, or split the task); never silently re-run the same prompt and
+   model. Escalate to the user only if the plan itself is wrong.
+
+3. **Spec-compliance review.** Dispatch a reviewer subagent that checks the commit
+   implements exactly the task's requirements — nothing missing, nothing extra. If
+   it finds issues, the SAME implementer subagent fixes them; re-review until
+   clean. Do this BEFORE quality review.
+
+4. **Code-quality review.** Only after spec compliance passes, dispatch a reviewer
+   subagent for correctness, clarity, test quality, and adherence to local
+   conventions. Fix loop until approved.
+
+5. **Mark the task** `- [x]` in `tasks.md`, then move to the next.
+
+After all tasks pass both reviews, dispatch one final reviewer subagent over the
+whole change's diff to confirm the change is coherent and complete.
+
+## When to spawn (vs inline)
+
+Spawn subagents for substantive tasks. A trivial task (a one-line edit, a doc
+tweak) may be done inline without the full loop — use judgment. The default for
+real implementation work is: one implementer subagent per task.
+
+## Concurrency
+
+Dispatch ONE implementer at a time — parallel implementers editing shared files
+conflict. Independent tasks touching strictly disjoint files MAY be parallelized
+only when you are certain they do not overlap.
+
+## Model selection
+
+Use the cheapest model that fits each role: mechanical, well-specified single-file
+tasks → a fast model; multi-file integration → a standard model; design or review
+judgment → the most capable model.
+
+## TDD discipline
+
+For each unit of behavior:
+
+1. Write a failing test first.
+2. Run it; confirm it fails for the right reason.
+3. Write the minimal code to make it pass.
+4. Run it; confirm it passes.
+5. Refactor if needed; keep tests green.
+6. Commit.
+
+Never write implementation before a failing test exists for it. If a unit is not
+testable (pure docs/config), substitute the task's own verification command for
+the test.
+````
+
+- [ ] **Step 2: Verify**
+
+Run: `grep -E "^## (Loop|Concurrency|Model selection|TDD discipline)" .claude/skills/workflow/references/build-loop.md && ! grep -qi superpowers .claude/skills/workflow/references/build-loop.md && echo "no-superpowers-ok"`
+Expected: the four headers listed, then `no-superpowers-ok`.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add .claude/skills/workflow/references/build-loop.md
+git commit -m "feat(workflow): self-contained subagent-driven build-loop reference"
+```
+
+---
+
 ### Task 7: `workflow` index skill
 
 Router/overview. Explains the staged process, links the references, and routes to a stage skill (including `quick`).
@@ -514,15 +619,20 @@ Per-repo config: `.claude/workflow.yaml` (schema in `references/config.md`). If
 missing, the stage skills scaffold a `local` default. The tracker is pluggable —
 see `references/providers.md` and `references/providers/{local,github,jira}.md`.
 Each task is linked to its OpenSpec change via `workflow.json`
-(`references/linkage.md`).
+(`references/linkage.md`). Building is subagent-driven and self-contained —
+`references/build-loop.md`.
+
+These skills depend only on the `openspec-*` skills and standard host tools (no
+other skill set required), so they can be shared standalone.
 
 ## Stages
 
 1. **Start** — `workflow-start`: take a task (ticket ref, free-form, or pick from
    the tracker), set it In Progress, run OpenSpec explore/propose until an
    apply-ready change exists, commit.
-2. **Build** — `workflow-build`: resume the change, run
-   `openspec-apply-change` (TDD), mark it In Review.
+2. **Build** — `workflow-build`: resume the change, implement its tasks via the
+   subagent-driven build loop (fresh subagent per task, TDD, spec + quality
+   review — `references/build-loop.md`), mark it In Review.
 3. **Close** — `workflow-close`: reconcile spec drift, verify, archive, mark Done.
 
 **Quick** — `workflow-quick`: a fast lane for small, clear changes. One pass:
@@ -647,17 +757,22 @@ git commit -m "feat(workflow): workflow-start skill"
 ````markdown
 ---
 name: workflow-build
-description: Implement the active OpenSpec change in the development workflow — mark it in progress, work through tasks with TDD via openspec-apply-change, then mark it in review. Use when the user wants to implement or continue work on a started change.
+description: Implement the active OpenSpec change in the development workflow — mark it in progress, then drive the change's tasks through a self-contained subagent-driven build loop (fresh subagent per task, TDD, spec + quality review), and mark it in review. Use when the user wants to implement or continue work on a started change.
 ---
 
 # Workflow — Build
 
-Resume the active change and implement it, updating the tracker.
+Resume the active change and implement its tasks, updating the tracker. Building
+is **subagent-driven**: each task is delegated to a fresh subagent with isolated
+context, then reviewed, so quality stays high and your own context stays clean.
+This skill is self-contained — it relies on no external skill set.
 
 Read first:
 - `.claude/skills/workflow/references/linkage.md`
 - `.claude/skills/workflow/references/providers.md` and the configured provider
   file.
+- `.claude/skills/workflow/references/build-loop.md` (the subagent-driven build
+  loop + TDD discipline you will follow in step 4).
 
 ## Steps
 
@@ -669,10 +784,13 @@ Read first:
 
 3. **Mark implementing.** Emit the `implementing` event; update `lastEvent`.
 
-4. **Implement.** Invoke **openspec-apply-change** for this change. Work through
-   every task in `tasks.md` using TDD (per the superpowers
-   test-driven-development discipline), committing frequently. Do not stop until
-   all `- [ ]` tasks are checked.
+4. **Run the build loop.** Read the change's `tasks.md` and implement it by
+   following `references/build-loop.md`: for each unchecked task, dispatch a
+   fresh implementer subagent (TDD, full task text + context), then a
+   spec-compliance review subagent, then a code-quality review subagent, fixing
+   in loops until both pass; mark the task `- [x]` and commit. Spawn subagents as
+   needed — a trivial task may be done inline. Do not stop until every `- [ ]`
+   task is checked. End with one final review subagent over the whole change.
 
 5. **Mark review.** When tasks are complete, emit the `review` event; update
    `lastEvent`.
@@ -684,7 +802,7 @@ Read first:
 - [ ] **Step 2: Verify**
 
 Run: `head -3 .claude/skills/workflow-build/SKILL.md && grep -cE "^[0-9]+\. \*\*" .claude/skills/workflow-build/SKILL.md`
-Expected: valid frontmatter; step count `6`.
+Expected: valid frontmatter; step count `6`. Also confirm no occurrence of "superpowers": `! grep -qi superpowers .claude/skills/workflow-build/SKILL.md && echo "no-superpowers-ok"`.
 
 - [ ] **Step 3: Commit**
 
@@ -780,6 +898,7 @@ Read first:
 - `.claude/skills/workflow/references/config.md`
 - `.claude/skills/workflow/references/providers.md` and the configured provider.
 - `.claude/skills/workflow/references/linkage.md`
+- `.claude/skills/workflow/references/build-loop.md` (TDD discipline)
 
 ## Steps
 
@@ -793,8 +912,10 @@ Read first:
 
 4. **Branch** if `branchPerTask` (`git switch -c <change-name>`).
 
-5. **Implement with TDD.** Make the change directly using the superpowers
-   test-driven-development discipline, committing as you go.
+5. **Implement with TDD.** Make the change directly following the TDD discipline
+   in `references/build-loop.md` (failing test → minimal code → pass → commit),
+   committing as you go. Spawn a subagent for any chunky sub-part if it helps,
+   but a quick change is usually done inline.
 
 6. **Capture the delta.** Create a minimal OpenSpec change directory for
    `<change-name>` containing a spec delta (`## ADDED`/`## MODIFIED` with at least
@@ -879,11 +1000,18 @@ Every `references/...` path mentioned in the SKILL.md files must exist.
 ls .claude/skills/workflow/references/config.md \
    .claude/skills/workflow/references/linkage.md \
    .claude/skills/workflow/references/providers.md \
+   .claude/skills/workflow/references/build-loop.md \
    .claude/skills/workflow/references/providers/local.md \
    .claude/skills/workflow/references/providers/github.md \
    .claude/skills/workflow/references/providers/jira.md
 ```
-Expected: all six listed, no "No such file".
+Expected: all seven listed, no "No such file".
+
+Also confirm no shared skill leaks a superpowers dependency:
+```bash
+! grep -rqi superpowers .claude/skills/workflow .claude/skills/workflow-* && echo "self-contained-ok"
+```
+Expected: `self-contained-ok`.
 
 - [ ] **Step 4: Existing OpenSpec gate still passes**
 
