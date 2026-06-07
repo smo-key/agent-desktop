@@ -19,11 +19,10 @@
   let command = $state('');
   let prompt = $state('');
 
-  // A save needs a non-empty name; an agent task also needs a non-empty prompt.
-  // An empty command IS allowed for a terminal — it means an interactive shell.
-  const canSave = $derived(
-    name.trim() !== '' && (kind !== 'agent' || prompt.trim() !== '')
-  );
+  // The name is OPTIONAL (the store derives a default from the command/prompt when
+  // blank). A terminal saves with any input (an empty command means an interactive
+  // shell); an agent task still needs a non-empty prompt to do anything.
+  const canSave = $derived(kind !== 'agent' || prompt.trim() !== '');
 
   // When the dialog opens (the open transition only), seed the form: EDIT mode
   // prefills from the existing def; CREATE mode resets to a blank terminal. The
@@ -122,11 +121,11 @@
         </div>
       </section>
 
-      <!-- Name: required. -->
+      <!-- Name: optional (derived from the command/prompt when left blank). -->
       <section class="field">
-        <span class="label">Name</span>
+        <span class="label">Name <span class="opt">optional</span></span>
         <!-- svelte-ignore a11y_autofocus -->
-        <input bind:value={name} autofocus placeholder="Task name" />
+        <input bind:value={name} autofocus placeholder="Defaults to the command" />
       </section>
 
       <!-- Command (terminal) or Prompt (agent) — only one shows per kind. -->
@@ -223,6 +222,12 @@
     letter-spacing: 0.07em;
     text-transform: uppercase;
     color: var(--fg-3);
+  }
+  .label .opt {
+    color: var(--fg-4);
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
   }
 
   .field input,

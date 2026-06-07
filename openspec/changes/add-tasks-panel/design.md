@@ -38,7 +38,8 @@ existing resize/persistence primitives should be reused.
 - Right panel renamed "Tasks", `+` removed; terminal tasks auto-close on success,
   stay open + failed on error; long-runners persist until stopped.
 - Agent tasks open a normal Claude workspace session seeded with the prompt.
-- Bare shells still launchable (⌘T + `[⊳ Terminal]`), unchanged persist-on-exit.
+- Bare shells still launchable (⌘Y + the Terminals panel `＋`); they close on a
+  clean exit and stay on error, same as terminal tasks.
 
 **Non-Goals:**
 - Changing PTY/agent spawn internals.
@@ -71,10 +72,9 @@ remain bare terminals.
 ### D3 — Bare terminal vs task = a transient runtime entry, not a `TaskDef`
 A bare interactive terminal is launched from the right-docked **Terminals**
 panel's `＋` button and via **⌘Y**. It is a transient runtime-only entry (no
-`TaskDef`, never persisted) that keeps today's persist-on-exit "stopped slot"
-behavior. A task is a saved `TaskDef`. Completion semantics therefore key off
-"is this a task with a command" — command tasks auto-close on success; bare
-terminals do not.
+`TaskDef`, never persisted). A task is a saved `TaskDef`. Completion semantics are
+UNIFORM for any terminal — task or bare: a clean exit (code 0) closes it (the
+pane/slot is removed); a non-zero exit keeps it visible so the error is readable.
 - *Why:* matches the user's "a bare terminal is a different experience from a
   task" while reusing one runtime/store. The bare-terminal entry lives in the
   Terminals panel (where the running shells appear), not the task launcher.
@@ -86,12 +86,16 @@ Task creation and editing happen in a modal `TaskDialog.svelte` modeled on the
 session `Launcher.svelte` (backdrop, dialog card, kind selector, name + command/
 prompt fields, Cancel + blue primary, Esc / ⌘-Enter). A small `taskDialog` store
 (mirroring `launcherStore`) holds open/edit/project state so the launcher header
-`＋`, a row's edit action, and ⌘T can all open it. The task **name is required**
-(submit disabled while empty); the terminal command field is monospace. The store
-gains an `update(id, fields)` method for edits. Deleting a task goes through a
-`confirm()` (the same pattern the session rail uses before discarding a session).
+`＋`, a row's context-menu edit, and ⌘T can all open it. The task **name is
+optional** (the store derives a default from the command/prompt when blank); the
+terminal command field is monospace. The store gains an `update(id, fields)`
+method for edits. In the launcher, **clicking a row starts** the task (a running
+row reveals the Terminals panel) and a **right-click context menu** (the shared
+`ContextMenu`) offers Edit / Delete (+ Stop / Dismiss contextually); Delete goes
+through a `confirm()` (the same pattern the session rail uses).
 - *Why:* the inline form was cramped and offered no edit path; a dialog matches
-  the app's existing create flow and makes name-required + validation clear.
+  the app's existing create flow. Click-to-start makes the common action one
+  click, and the context menu keeps management actions out of the way.
 
 ### D4 — Completion semantics for terminal tasks
 On PTY exit for a terminal-kind task: exit code 0 → remove the running pane from

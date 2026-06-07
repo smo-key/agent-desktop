@@ -1,18 +1,18 @@
 <script lang="ts">
   // The LEFT Tasks launcher (tasks-panel spec — "Tasks launcher panel" + "Task
   // launcher controls"). It is the CATALOG / launch surface for the Tasks feature:
-  // it lists the ACTIVE PROJECT's task DEFINITIONS (both terminal and agent kinds,
-  // running or idle) and lets the user create, start/stop/restart, rename, dismiss,
-  // and remove them — plus launch a bare interactive shell. The running terminal
-  // panes live in the separate right-docked Tasks panel (RunningTasksPanel); this
-  // launcher just drives the lifecycle via the `projectTasks` store and flips
-  // `tasksPanel.open` true so the running surface becomes visible.
+  // it lists the ACTIVE PROJECT's task DEFINITIONS (terminal + agent kinds, running
+  // or idle). CLICKING a row starts the task (or, if it's already running, reveals
+  // the Terminals panel); RIGHT-CLICK opens a context menu to edit/delete (and to
+  // stop a running task / dismiss a failed one). Create via the header ＋. Running
+  // terminal panes live in the separate right-docked Terminals panel.
   //
   // Self-contained (no props): it derives its own active project exactly like the
   // right panel does — selected project filter wins, else the focused agent's
   // project. Agent-task runtime isn't tracked (agents are workspace sessions, not
   // right-panel panes — design D5), so agent rows show a best-effort idle dot.
   import Icon from '../icons/Icon.svelte';
+  import ContextMenu, { type MenuItem } from '../ui/ContextMenu.svelte';
   import { workspace } from '../layout/workspace.svelte';
   import { projectFilter } from '../projects/projectFilter.svelte';
   import { ALL, UNASSIGNED } from '../projects/projectRollup';
@@ -57,10 +57,49 @@
     return c || 'interactive shell';
   }
 
-  // --- Row actions ------------------------------------------------------------
+  function isRunning(def: TaskDef): boolean {
+    return def.kind === 'terminal' && projectTasks.runtime[def.id]?.running === true;
+  }
+
+  // --- Row interactions -------------------------------------------------------
   function start(id: string) {
     projectTasks.startTask(id);
     tasksPanel.open = true;
+  }
+
+  /** Click a row: a running terminal reveals the Terminals panel; anything else
+   *  (idle / failed / agent) starts (or restarts / launches) the task. */
+  function rowClick(def: TaskDef) {
+    if (isRunning(def)) tasksPanel.open = true;
+    else start(def.id);
+  }
+
+  // --- Right-click context menu (edit / delete, plus stop / dismiss) ----------
+  let menu = $state<{ open: boolean; x: number; y: number; items: MenuItem[] }>({
+    open: false,
+    x: 0,
+    y: 0,
+    items: []
+  });
+
+  function openMenu(e: MouseEvent, def: TaskDef) {
+    e.preventDefault();
+    const items: MenuItem[] = [];
+    if (isRunning(def)) {
+      items.push({ label: 'Stop', icon: 'square', onClick: () => projectTasks.stop(def.id) });
+    } else if (def.kind === 'terminal' && projectTasks.isFailed(def.id)) {
+      items.push({ label: 'Dismiss', icon: 'x', onClick: () => projectTasks.dismiss(def.id) });
+    }
+    items.push({ label: 'Edit…', icon: 'pencil', onClick: () => taskDialog.showEdit(def.id, activeId) });
+    items.push({
+      label: 'Delete',
+      icon: 'trash-2',
+      danger: true,
+      onClick: () => {
+        if (confirm(`Delete task "${def.name}"?`)) projectTasks.remove(def.id);
+      }
+    });
+    menu = { open: true, x: e.clientX, y: e.clientY, items };
   }
 </script>
 
@@ -94,54 +133,36 @@
           {@const running = dot === 'running'}
           {@const failed = dot === 'failed'}
           <li class="row">
-            <span class="dot" class:on={running} class:fail={failed} title={dot}></span>
-            <Icon name={def.kind === 'agent' ? 'bot' : 'terminal'} size={13} />
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <span class="nm" ondblclick={() => taskDialog.showEdit(def.id, activeId)}>
-              <span class="t" title="Double-click to edit">{def.name}</span>
-              <span class="s" title={subLabel(def)}>{subLabel(def)}</span>
-            </span>
-            <div class="acts">
-              {#if def.kind === 'agent'}
-                <button class="act" title="Launch" aria-label="Launch agent" onclick={() => start(def.id)}>
-                  <Icon name="play" size={12} />
-                </button>
-              {:else if running}
-                <button class="act" title="Stop" aria-label="Stop task" onclick={() => projectTasks.stop(def.id)}>
-                  <Icon name="square" size={12} />
-                </button>
-              {:else if failed}
-                <button class="act" title="Restart" aria-label="Restart task" onclick={() => start(def.id)}>
-                  <Icon name="play" size={12} />
-                </button>
-                <button class="act" title="Dismiss" aria-label="Dismiss failure" onclick={() => projectTasks.dismiss(def.id)}>
-                  <Icon name="x" size={12} />
-                </button>
-              {:else}
-                <button class="act" title="Start" aria-label="Start task" onclick={() => start(def.id)}>
-                  <Icon name="play" size={12} />
-                </button>
-              {/if}
-              <button class="act" title="Edit" aria-label="Edit task" onclick={() => taskDialog.showEdit(def.id, activeId)}>
-                <Icon name="pencil" size={12} />
-              </button>
-              <button
-                class="act"
-                title="Remove"
-                aria-label="Remove task"
-                onclick={() => {
-                  if (confirm(`Delete task "${def.name}"?`)) projectTasks.remove(def.id);
-                }}
-              >
-                <Icon name="trash-2" size={12} />
-              </button>
-            </div>
+            <button
+              type="button"
+              class="rowbtn"
+              onclick={() => rowClick(def)}
+              oncontextmenu={(e) => openMenu(e, def)}
+              title={running
+                ? 'Click to reveal · right-click for options'
+                : 'Click to start · right-click for options'}
+            >
+              <span class="dot" class:on={running} class:fail={failed} title={dot}></span>
+              <Icon name={def.kind === 'agent' ? 'bot' : 'terminal'} size={13} />
+              <span class="nm">
+                <span class="t">{def.name}</span>
+                <span class="s" title={subLabel(def)}>{subLabel(def)}</span>
+              </span>
+            </button>
           </li>
         {/each}
       </ul>
     {/if}
   </div>
 </section>
+
+<ContextMenu
+  open={menu.open}
+  x={menu.x}
+  y={menu.y}
+  items={menu.items}
+  onClose={() => (menu = { ...menu, open: false })}
+/>
 
 <style>
   .launcher {
@@ -223,12 +244,25 @@
   }
   .row {
     display: flex;
+  }
+  /* The whole row is a click target: click to start (or reveal), right-click for
+     the edit/delete menu. */
+  .rowbtn {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
     align-items: center;
     gap: 9px;
-    padding: 8px 12px 8px 16px;
+    padding: 8px 16px;
+    border: none;
     border-left: 2px solid transparent;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
   }
-  .row:hover {
+  .rowbtn:hover {
     background: rgba(255, 255, 255, 0.025);
   }
   .dot {
@@ -244,7 +278,7 @@
   .dot.fail {
     background: #e5484d;
   }
-  .row :global(.mc-icon) {
+  .rowbtn :global(.mc-icon) {
     color: var(--fg-3);
   }
   .nm {
@@ -268,31 +302,5 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     margin-top: 1px;
-  }
-  .acts {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    flex: none;
-    opacity: 0;
-    transition: opacity var(--dur-fast);
-  }
-  .row:hover .acts {
-    opacity: 1;
-  }
-  .act {
-    display: grid;
-    place-items: center;
-    width: 22px;
-    height: 22px;
-    border: none;
-    border-radius: var(--r-sm);
-    background: transparent;
-    color: var(--fg-2);
-    cursor: pointer;
-  }
-  .act:hover {
-    background: var(--space-800);
-    color: var(--fg-1);
   }
 </style>

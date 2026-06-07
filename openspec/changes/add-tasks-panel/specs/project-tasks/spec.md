@@ -124,13 +124,18 @@ SHALL NOT create a pane in the right-docked running surface.
 ### Requirement: Bare interactive terminals are not tasks
 
 The system SHALL allow launching a bare interactive shell (no command) that is
-not a saved task definition. A bare terminal SHALL keep the existing
-persist-on-exit behavior (it becomes a stopped slot rather than auto-closing).
+not a saved task definition. A bare terminal SHALL follow the same close-on-exit
+rule as a terminal task: a clean exit (code 0) closes it (the slot is removed),
+and a non-zero exit keeps it as a stopped slot so the error is readable.
 
 #### Scenario: Bare shell launch
 - **WHEN** the user launches a bare terminal with no command
 - **THEN** an interactive shell runs and no `TaskDef` is created for it
 
-#### Scenario: Bare shell persists on exit
-- **WHEN** a bare interactive shell exits
-- **THEN** it remains as a stopped slot and is not auto-closed
+#### Scenario: Bare shell closes on success
+- **WHEN** a bare interactive shell exits with code 0
+- **THEN** its slot is removed (the terminal closes)
+
+#### Scenario: Bare shell stays open on error
+- **WHEN** a bare interactive shell exits with a non-zero code
+- **THEN** it remains as a stopped slot until dismissed

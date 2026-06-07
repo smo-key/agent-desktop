@@ -253,17 +253,15 @@ describe('project-tasks — persistence & lifecycle', () => {
     expect(store.runtime[id].running).toBe(true);
   });
 
-  it('No-command terminal exit zero stays stopped', async () => {
-    // A terminal task with NO command (a saved bare shell) is the "different
-    // experience": even a clean exit (code 0) must NOT auto-close — it stays as a
-    // stopped slot, unlike a command task whose success removes its pane.
+  it('No-command terminal exit zero closes', async () => {
+    // A clean exit (code 0) closes ANY terminal — including a no-command shell task
+    // — by removing its runtime pane. The def stays as an idle task.
     const store = new ProjectTasksStore();
     const id = await store.create('p', { kind: 'terminal', command: null });
     store.startTask(id);
     store.noteExit(id, 0);
-    expect(store.runtime[id]).toBeDefined();
-    expect(store.runtime[id].running).toBe(false);
-    expect(store.runtime[id].exitCode).toBe(0);
+    expect(store.runtime[id]).toBeUndefined();
+    expect(store.forProject('p').some((t) => t.id === id)).toBe(true);
   });
 });
 
@@ -302,15 +300,23 @@ describe('project-tasks — bare terminals', () => {
     expect(JSON.stringify(store.byProject)).toBe(before);
   });
 
-  it('Bare shell persists on exit', () => {
+  it('Bare shell closes on success', () => {
     const store = new ProjectTasksStore();
     const id = store.launchBareTerminal('p');
     store.noteBareExit(id, 0);
+    // A clean exit closes the bare terminal — its slot is removed.
+    expect(store.bareForProject('p').find((b) => b.id === id)).toBeUndefined();
+  });
+
+  it('Bare shell stays open on error', () => {
+    const store = new ProjectTasksStore();
+    const id = store.launchBareTerminal('p');
+    store.noteBareExit(id, 1);
     const bare = store.bareForProject('p').find((b) => b.id === id);
-    // Even on a clean exit the bare shell stays as a stopped slot (not removed).
+    // A non-zero exit stays as a stopped slot so the error is readable.
     expect(bare).toBeDefined();
     expect(bare?.running).toBe(false);
-    expect(bare?.exitCode).toBe(0);
+    expect(bare?.exitCode).toBe(1);
   });
 });
 

@@ -362,17 +362,14 @@ export class ProjectTasksStore {
 
   /**
    * Record that terminal task `id`'s process exited on its own (EOF from the PTY).
-   * A COMMAND task that exited cleanly (code 0) AUTO-CLOSES — its running pane is
-   * removed from the right panel (the def stays in `byProject` as idle). Otherwise —
-   * a non-zero exit (failed) OR a bare/no-command shell — it stays as a stopped slot
-   * remembering the exit code.
+   * A clean exit (code 0) CLOSES the terminal — its running pane is removed from the
+   * right panel (the def stays in `byProject` as idle). A non-zero exit (failed)
+   * stays as a stopped slot remembering the exit code, so the error is readable.
    */
   noteExit(id: string, code: number): void {
     const rt = this.runtime[id];
     if (!rt) return;
-    const def = this.defForId(id);
-    const hasCommand = def?.kind === 'terminal' && !!def.command && def.command.trim() !== '';
-    if (hasCommand && code === 0) {
+    if (code === 0) {
       delete this.runtime[id];
       return;
     }
@@ -421,14 +418,18 @@ export class ProjectTasksStore {
   }
 
   /**
-   * Record that bare shell `id`'s process exited. Unlike a terminal task, a bare
-   * shell PERSISTS AS A STOPPED slot (it is NOT auto-removed, even on a clean exit)
-   * — a different experience from a task.
+   * Record that bare shell `id`'s process exited. A clean exit (code 0) CLOSES the
+   * terminal — the slot is removed. A non-zero exit stays as a stopped slot so the
+   * error is readable (dismiss it with the × action).
    */
   noteBareExit(id: string, code: number): void {
     const found = this.bareById(id);
     if (!found) return;
     const { projectId } = found;
+    if (code === 0) {
+      this.removeBareTerminal(id);
+      return;
+    }
     this.bareByProject = {
       ...this.bareByProject,
       [projectId]: (this.bareByProject[projectId] ?? []).map((b) =>

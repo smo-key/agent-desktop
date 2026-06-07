@@ -33,10 +33,13 @@ prompt, with clear start/stop and success/error feedback.
   Agents rail** (not the right panel), seeded with the task's prompt.
 - **Bare interactive shells** (no command) remain launchable via **⌘Y** and a
   blue `＋` button in the right-docked **Terminals** panel header, and keep
-  today's persist-on-exit behavior — a bare terminal is explicitly *not* a task.
+  the same close-on-exit rule as a terminal — closes on a clean exit (code 0),
+  stays on a non-zero exit — a bare terminal is explicitly *not* a task.
 - **Create/edit happen in a modal dialog** (modeled on the New session dialog),
   not inline: the launcher header's blue `＋` and **⌘T** open it. A task **name
-  is required**; the command field is monospace. **Deleting** a task requires
+  is optional** (derived from the command/prompt when blank); the command field
+  is monospace. Clicking a task row starts it; edit/delete live in a right-click
+  context menu. **Deleting** a task requires
   confirmation.
 
 ## Capabilities

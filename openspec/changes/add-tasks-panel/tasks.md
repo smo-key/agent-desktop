@@ -67,3 +67,11 @@
 - [x] 9.7 `+page.svelte`: ⌘T opens the create-task dialog; ⌘Y launches a bare terminal (the old ⌘T behavior); mount `<TaskDialog />` at the app root
 - [x] 9.8 Update the `tasks-panel` MANUAL scenario set in `tools/check-scenario-coverage.mjs` to the revised scenario titles; gate PASS
 - [x] 9.9 Verify: `npm run check`, `npm run test`, coverage gate, `openspec validate --strict`
+
+## 10. Follow-up: click-to-start, context menu, optional name, close-on-exit-0
+
+- [x] 10.1 Task name is OPTIONAL: dialog Save no longer requires a name (store derives a default from the command/prompt)
+- [x] 10.2 Uniform close-on-exit: `noteExit` removes the pane on code 0 (any terminal task, command or not); `noteBareExit` removes the bare slot on code 0; non-zero stays. Update tests (`No-command terminal exit zero closes`, `Bare shell closes on success`, `Bare shell stays open on error`)
+- [x] 10.3 `TasksLauncher`: clicking a row starts the task (running row reveals the Terminals panel); remove the inline hover action buttons
+- [x] 10.4 `TasksLauncher`: right-click opens a `ContextMenu` (Edit / Delete, + Stop / Dismiss contextually); Delete confirms
+- [x] 10.5 Sync artifacts (project-tasks + tasks-panel specs, design D3/D4/D8, proposal) and the coverage gate; `openspec validate --strict`; `npm run check` + `npm run test`

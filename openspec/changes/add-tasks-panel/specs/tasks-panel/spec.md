@@ -32,14 +32,25 @@ launch button (the same control treatment as the Agents roster header).
 
 ### Requirement: Task launcher controls
 
-The Tasks panel SHALL let the user create a task (the header `＋`), and edit,
-start, stop, and delete tasks from the list. Creating and editing SHALL happen in
-a dialog (not inline). The list SHALL reflect each task's status (idle / running /
-failed). Deleting a task SHALL require explicit confirmation.
+The Tasks panel SHALL let the user create a task (the header `＋`). **Clicking a
+task row** in the list SHALL start it (a running task's row instead reveals the
+Terminals panel). A **right-click context menu** on a row SHALL offer Edit and
+Delete (and, contextually, Stop for a running task or Dismiss for a failed one).
+Creating and editing SHALL happen in a dialog (not inline). The list SHALL
+reflect each task's status (idle / running / failed). Deleting a task SHALL
+require explicit confirmation.
 
 #### Scenario: Create a task via the dialog
 - **WHEN** the user activates the header `＋`
 - **THEN** the create-task dialog opens, and on submit a new task of the chosen kind is added to the active project's list
+
+#### Scenario: Clicking a task starts it
+- **WHEN** the user clicks a non-running task's row
+- **THEN** the task starts (a terminal task's pane opens in the Terminals panel; an agent task opens a Claude session)
+
+#### Scenario: Edit or delete via context menu
+- **WHEN** the user right-clicks a task row
+- **THEN** a context menu offers Edit and Delete (and Stop / Dismiss when applicable)
 
 #### Scenario: Edit a task via the dialog
 - **WHEN** the user edits an existing task
@@ -60,18 +71,18 @@ failed). Deleting a task SHALL require explicit confirmation.
 ### Requirement: Create/edit task dialog
 
 The system SHALL provide a modal dialog, modeled on the New session dialog, to
-create or edit a task. The dialog SHALL require a non-empty task name before it
-can be submitted. For a terminal task the command input SHALL use a monospace
-font. The dialog SHALL be dismissable (Cancel / Escape / backdrop) without
-changing any task.
+create or edit a task. The task name SHALL be OPTIONAL — when left blank the
+system derives a default from the command or prompt. For a terminal task the
+command input SHALL use a monospace font. The dialog SHALL be dismissable
+(Cancel / Escape / backdrop) without changing any task.
 
 #### Scenario: Dialog mimics the New session modal
 - **WHEN** the create/edit dialog opens
 - **THEN** it presents as a centered modal with a backdrop, kind selector, name and command/prompt fields, and Cancel / primary actions, like the New session dialog
 
-#### Scenario: Name is required
-- **WHEN** the task name field is empty
-- **THEN** the dialog's submit action is disabled and no task is created or updated
+#### Scenario: Name is optional
+- **WHEN** a task is submitted with an empty name
+- **THEN** the task is created with a name derived from its command or prompt
 
 #### Scenario: Command field is monospace
 - **WHEN** a terminal task's command field is shown in the dialog
