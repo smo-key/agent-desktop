@@ -75,3 +75,9 @@
 - [x] 10.3 `TasksLauncher`: clicking a row starts the task (running row reveals the Terminals panel); remove the inline hover action buttons
 - [x] 10.4 `TasksLauncher`: right-click opens a `ContextMenu` (Edit / Delete, + Stop / Dismiss contextually); Delete confirms
 - [x] 10.5 Sync artifacts (project-tasks + tasks-panel specs, design D3/D4/D8, proposal) and the coverage gate; `openspec validate --strict`; `npm run check` + `npm run test`
+
+## 11. Follow-up: auto-archive task-spawned agents
+
+- [x] 11.1 Pure `taskAgentReturnedToUser(status, timeline)` helper (`src/lib/tasks/agentTask.ts`) + tests: archives on waiting/finished only after a `UserPromptSubmit` (never the fresh-session idle state)
+- [x] 11.2 `+page.svelte`: capture the launched paneId in `setAgentLauncher`, track task-spawned agent panes, and a watcher `$effect` that `workspace.closeAgent(paneId)` once the agent returns to the user; cleanup on pane removal
+- [x] 11.3 Spec: add the "Agent task archives when it returns to the user" scenario to project-tasks; `openspec validate --strict`

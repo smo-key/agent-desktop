@@ -34,6 +34,7 @@
   import { taskDialog } from '$lib/tasks/taskDialogStore.svelte';
   import { tasksPanel } from '$lib/tasks/panel.svelte';
   import { projectTasks } from '$lib/tasks/projectTasks.svelte';
+  import { taskAgentReturnedToUser } from '$lib/tasks/agentTask';
   import { activeProjectId } from '$lib/tasks/activeProject';
   import { projectForId } from '$lib/projects/projects';
   import { buildLaunchPlan } from '$lib/launcher/plan';
@@ -52,6 +53,12 @@
   // workspace whose PTYs we'd immediately tear down.
   let restored = $state(false);
 
+  // Pane ids of Claude sessions spawned by an AGENT task. Once such a session
+  // finishes the turn it was launched for and returns to the user, the watcher
+  // effect below archives it (so task agents are fire-and-forget, not clutter).
+  // A plain set: the effect re-runs off the event store, not off this set.
+  const taskAgentPanes = new Set<string>();
+
   // Seed the store from the persisted layout (or a fresh single-pane `claude`
   // workspace on first launch / corrupt state), then start the debounced +
   // on-quit persistence. Rendering the restored PaneNodes re-spawns one PTY per
@@ -68,7 +75,7 @@
     projectTasks.setAgentLauncher((def, projectId) => {
       const proj = projectForId(projects.list, projectId);
       if (!proj) return;
-      workspace.launch(
+      const paneId = workspace.launch(
         buildLaunchPlan({
           folder: proj.path,
           prompt: def.prompt ?? '',
@@ -76,6 +83,9 @@
           projectId: proj.id
         })
       );
+      // Remember this session was spawned by a task: once it finishes its turn and
+      // returns to the user, an $effect (below) auto-archives it (project-tasks spec).
+      if (paneId) taskAgentPanes.add(paneId);
     });
     // Load each project's task definitions and selectively auto-restart the
     // terminal tasks that were running at the previous quit (project-tasks spec).
@@ -245,6 +255,29 @@
   // such change; `retain` is a no-op (no reactive write) when nothing is stale.
   $effect(() => {
     snapshots.retain(workspace.allPaneIds());
+  });
+
+  // AUTO-ARCHIVE TASK AGENTS: a Claude session spawned by an agent task is meant to
+  // be fire-and-forget. Once it FINISHES the turn it was launched for and returns to
+  // the user (event status → `waiting`/`finished`, with a `UserPromptSubmit` already
+  // in its timeline so we don't archive the pre-work idle state), archive it. Reading
+  // `events.activityMap()` makes this re-run on every event (incl. a newly-spawned
+  // pane's first events); `workspace.allPaneIds()` re-runs it when panes come/go.
+  $effect(() => {
+    const statusByPane = events.activityMap();
+    if (taskAgentPanes.size === 0) return;
+    const live = workspace.allPaneIds();
+    for (const paneId of [...taskAgentPanes]) {
+      if (!live.has(paneId)) {
+        taskAgentPanes.delete(paneId); // pane was deleted before it returned
+        continue;
+      }
+      if (!taskAgentReturnedToUser(statusByPane[paneId]?.status, events.timeline(paneId))) {
+        continue;
+      }
+      taskAgentPanes.delete(paneId);
+      workspace.closeAgent(paneId);
+    }
   });
 
   // With no workspaces left (first launch, or the last agent closed/exited), the

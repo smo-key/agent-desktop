@@ -111,7 +111,10 @@ remain running until explicitly stopped.
 
 Starting an `agent`-kind task SHALL open a new Claude session in the main
 workspace and Agents rail, seeded with the task's `prompt` as initial input, and
-SHALL NOT create a pane in the right-docked running surface.
+SHALL NOT create a pane in the right-docked running surface. Once that session
+FINISHES the turn it was launched for and returns to the user (it is awaiting
+input again after having started its turn), the system SHALL archive it
+automatically.
 
 #### Scenario: Agent task opens a workspace session
 - **WHEN** an agent task is started
@@ -120,6 +123,10 @@ SHALL NOT create a pane in the right-docked running surface.
 #### Scenario: Agent task does not use the right panel
 - **WHEN** an agent task is started
 - **THEN** no terminal pane for it is added to the right-docked running surface
+
+#### Scenario: Agent task archives when it returns to the user
+- **WHEN** a task-spawned agent session has started its turn (a prompt was submitted) and then returns to awaiting the user (status waiting/finished)
+- **THEN** the session is archived automatically
 
 ### Requirement: Bare interactive terminals are not tasks
 
