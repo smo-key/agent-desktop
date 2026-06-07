@@ -2,3 +2,9 @@
 # will have compiled files and executables
 /target/
 /gen/schemas
+
+# Provisioned sidecar binaries (fetched/built at build time via
+# scripts/fetch-whisper.sh, never committed). Keep the dir + its docs.
+/binaries/*
+!/binaries/.gitkeep
+!/binaries/README.md

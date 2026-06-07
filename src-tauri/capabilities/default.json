@@ -9,6 +9,16 @@
     "core:default",
     "dialog:allow-open",
     "core:window:allow-start-dragging",
-    "core:window:allow-destroy"
+    "core:window:allow-destroy",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/whisper-cli",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    }
   ]
 }

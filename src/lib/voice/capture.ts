@@ -22,14 +22,34 @@
 //   raw-PCM transport proves lower-latency). MANUAL: live capture is verified in
 //   a real window (task 9.1), not headlessly.
 
+import { concatFloat32 } from './pcm';
+
+// RAW-PCM PATH (STT slice, task 4.3): whisper.cpp needs raw 16 kHz mono PCM, so
+// alongside the `MediaRecorder` Blob path we tap the `AudioContext` for
+// `Float32Array` PCM at the context sample rate (decode-free — no Opus/WebM
+// container to decode). The Rust side (`transcribe.rs`) resamples to 16 kHz,
+// encodes a WAV, and VAD-gates it. We use a `ScriptProcessorNode` (deprecated but
+// universally available, incl. the macOS WKWebView, with no separate worklet
+// module file to bundle); the pure concat math lives in the tested `pcm.ts`.
+
 /** How often (ms) `MediaRecorder` flushes a chunk via `onChunk` while recording. */
 const CHUNK_TIMESLICE_MS = 250;
+
+/** ScriptProcessor buffer size (frames). 4096 ≈ 85ms @ 48k — low overhead. */
+const PCM_BUFFER_SIZE = 4096;
 
 export interface MicCaptureOptions {
   /** Called for each audio chunk while recording (live STT transport). */
   onChunk?: (chunk: Blob) => void;
   /** Called once with the full recording when capture stops (final STT pass). */
   onStop?: (full: Blob) => void;
+  /**
+   * Called for each raw-PCM frame buffer while recording (live STT transport for
+   * the whisper.cpp sidecar). `samples` is mono `Float32Array` in [-1, 1] at
+   * `sampleRate` (the AudioContext rate, typically 48000); the chunk is a COPY,
+   * safe to retain. Enables the raw-PCM path without decoding a container.
+   */
+  onPcm?: (samples: Float32Array, sampleRate: number) => void;
 }
 
 /**
@@ -41,6 +61,12 @@ export class MicCapture {
   #stream: MediaStream | null = null;
   #recorder: MediaRecorder | null = null;
   #chunks: Blob[] = [];
+  // Raw-PCM path state (task 4.3).
+  #audioCtx: AudioContext | null = null;
+  #source: MediaStreamAudioSourceNode | null = null;
+  #processor: ScriptProcessorNode | null = null;
+  #pcmChunks: Float32Array[] = [];
+  #sampleRate = 0;
   readonly #opts: MicCaptureOptions;
 
   constructor(opts: MicCaptureOptions = {}) {
@@ -78,6 +104,49 @@ export class MicCapture {
     };
 
     recorder.start(CHUNK_TIMESLICE_MS);
+
+    // Raw-PCM tap (task 4.3): an AudioContext + ScriptProcessor over the same
+    // stream produces decode-free Float32 PCM for the whisper.cpp sidecar. Best-
+    // effort — if the AudioContext is unavailable the Blob path still works.
+    try {
+      const AC: typeof AudioContext =
+        window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = new AC();
+      this.#audioCtx = ctx;
+      this.#sampleRate = ctx.sampleRate;
+      this.#pcmChunks = [];
+      const source = ctx.createMediaStreamSource(stream);
+      this.#source = source;
+      const processor = ctx.createScriptProcessor(PCM_BUFFER_SIZE, 1, 1);
+      this.#processor = processor;
+      processor.onaudioprocess = (e: AudioProcessingEvent) => {
+        // Copy the channel data — the node reuses its buffer across callbacks.
+        const frame = new Float32Array(e.inputBuffer.getChannelData(0));
+        this.#pcmChunks.push(frame);
+        this.#opts.onPcm?.(frame, ctx.sampleRate);
+      };
+      source.connect(processor);
+      // ScriptProcessor only fires while connected to the graph; route through a
+      // muted gain so we don't echo the mic to the speakers.
+      const sink = ctx.createGain();
+      sink.gain.value = 0;
+      processor.connect(sink);
+      sink.connect(ctx.destination);
+    } catch {
+      // No AudioContext (or createScriptProcessor unsupported) — the Blob path
+      // remains; getPcm() will simply return an empty buffer.
+      this.#audioCtx = null;
+    }
+  }
+
+  /**
+   * Return the full raw-PCM utterance captured so far as one contiguous mono
+   * `Float32Array` plus its `sampleRate`, for the final whisper pass. Returns an
+   * empty buffer (sampleRate 0) when the raw-PCM tap never ran. Pure concat is in
+   * the tested `pcm.ts`.
+   */
+  getPcm(): { samples: Float32Array; sampleRate: number } {
+    return { samples: concatFloat32(this.#pcmChunks), sampleRate: this.#sampleRate };
   }
 
   /**
@@ -95,6 +164,31 @@ export class MicCapture {
       }
     }
     this.#recorder = null;
+
+    // Tear down the raw-PCM graph (disconnect nodes, close the context).
+    if (this.#processor) {
+      this.#processor.onaudioprocess = null;
+      try {
+        this.#processor.disconnect();
+      } catch {
+        // Already disconnected — ignore.
+      }
+    }
+    this.#processor = null;
+    if (this.#source) {
+      try {
+        this.#source.disconnect();
+      } catch {
+        // Already disconnected — ignore.
+      }
+    }
+    this.#source = null;
+    if (this.#audioCtx) {
+      void this.#audioCtx.close().catch(() => {
+        // Closing a context that's already closed — ignore.
+      });
+    }
+    this.#audioCtx = null;
 
     const stream = this.#stream;
     if (stream) {

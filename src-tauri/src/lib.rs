@@ -4,7 +4,9 @@ pub mod git;
 pub mod pty;
 pub mod subagents;
 pub mod task;
+pub mod transcribe;
 pub mod usage;
+pub mod vad;
 pub mod voice_activation;
 
 use std::fs;
@@ -660,6 +662,11 @@ pub fn run() {
         // `open({ directory: true })`). Granted `dialog:allow-open` in
         // capabilities/default.json.
         .plugin(tauri_plugin_dialog::init())
+        // Shell plugin: runs the bundled whisper.cpp `whisper-cli` STT sidecar
+        // (voice input, Milestone 4). The sidecar scope is granted in
+        // capabilities/default.json (`shell:allow-execute` + the externalBin
+        // entry). See src/transcribe.rs.
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -758,7 +765,9 @@ pub fn run() {
             subagents_for,
             activity_for,
             git_status_for,
-            events_for
+            events_for,
+            transcribe::voice_transcribe_final,
+            transcribe::voice_transcribe_stream
         ])
         .on_window_event(|window, event| {
             // Kill + reap every pane on app quit so no zombie/orphan processes

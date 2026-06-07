@@ -32,6 +32,11 @@ portable-pty = "0.9"
 notify = "8"
 tauri-plugin-dialog = "2.7.1"
 
+# Run the bundled whisper.cpp `whisper-cli` STT sidecar (Milestone 4 / voice
+# input). The shell plugin's sidecar API resolves the externalBin binary named
+# `whisper-cli-<target-triple>` and runs it; see src/transcribe.rs.
+tauri-plugin-shell = "2"
+
 # Native macOS NSEvent monitor for the voice-panel double-tap-right-Command
 # gesture (see src/voice_activation.rs). objc2 0.6 / objc2-app-kit 0.3 are the
 # tauri-2-compatible bindings (objc2 itself is already in the tree via the
