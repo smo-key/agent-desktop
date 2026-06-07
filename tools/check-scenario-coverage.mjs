@@ -315,6 +315,7 @@ const MANUAL_SCENARIOS = {
     'cmd_t_opens_the_task_dialog',
     'keyboard_shortcut_opens_a_bare_terminal',
     'new_terminal_button',
+    'completion_toast_on_success',
   ]),
 };
 

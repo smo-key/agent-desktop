@@ -222,6 +222,27 @@ describe('project-tasks — persistence & lifecycle', () => {
     expect(store.forProject('p').some((t) => t.id === id)).toBe(true);
   });
 
+  it('Successful task announces completion', async () => {
+    const store = new ProjectTasksStore();
+    const completed: string[] = [];
+    store.setTaskCompleteHandler((name) => completed.push(name));
+    const id = await store.create('p', { kind: 'terminal', command: 'npm test', name: 'Run tests' });
+    store.startTask(id);
+    store.noteExit(id, 0);
+    // The completion handler fired with the task's name (the app shows a toast).
+    expect(completed).toEqual(['Run tests']);
+  });
+
+  it('does not announce completion on a failed exit', async () => {
+    const store = new ProjectTasksStore();
+    const completed: string[] = [];
+    store.setTaskCompleteHandler((name) => completed.push(name));
+    const id = await store.create('p', { kind: 'terminal', command: 'npm test', name: 'Run tests' });
+    store.startTask(id);
+    store.noteExit(id, 1);
+    expect(completed).toEqual([]);
+  });
+
   it('Error keeps pane open and marks failed', async () => {
     const store = new ProjectTasksStore();
     const id = await store.create('p', { kind: 'terminal', command: 'npm test' });

@@ -129,3 +129,12 @@ interactive terminal via ⌘Y and via the Terminals panel's `＋` button.
 #### Scenario: New terminal button
 - **WHEN** the user activates the Terminals panel's `＋` button
 - **THEN** a bare interactive terminal is launched
+
+### Requirement: Task completion toast
+
+When a terminal task completes successfully, the system SHALL show a transient
+toast notification reading "<task name> completed".
+
+#### Scenario: Completion toast on success
+- **WHEN** a terminal task's command exits with code 0
+- **THEN** a toast reading "<task name> completed" appears briefly and auto-dismisses

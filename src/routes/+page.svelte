@@ -33,6 +33,8 @@
   import RunningTasksPanel from '$lib/tasks/RunningTasksPanel.svelte';
   import TaskDialog from '$lib/tasks/TaskDialog.svelte';
   import { taskDialog } from '$lib/tasks/taskDialogStore.svelte';
+  import Toast from '$lib/ui/Toast.svelte';
+  import { toast } from '$lib/ui/toastStore.svelte';
   import { tasksPanel } from '$lib/tasks/panel.svelte';
   import { projectTasks } from '$lib/tasks/projectTasks.svelte';
   import { taskAgentReturnedToUser } from '$lib/tasks/agentTask';
@@ -88,6 +90,8 @@
       // returns to the user, an $effect (below) auto-archives it (project-tasks spec).
       if (paneId) taskAgentPanes.add(paneId);
     });
+    // A terminal task that succeeds (exit 0) pops a "<name> completed" toast.
+    projectTasks.setTaskCompleteHandler((name) => toast.show(`${name} completed`));
     // Load each project's task definitions and selectively auto-restart the
     // terminal tasks that were running at the previous quit (project-tasks spec).
     void projectTasks.load();
@@ -647,6 +651,8 @@
      row's edit action, and the ⌘T shortcut (all via the shared `taskDialog`
      store). Position:fixed backdrop, so it lives at the root, single-instance. -->
 <TaskDialog />
+<!-- Transient toast notifications (e.g. "<task> completed" on task success). -->
+<Toast />
 <HelpModal />
 <SettingsModal />
 <VoicePanel />

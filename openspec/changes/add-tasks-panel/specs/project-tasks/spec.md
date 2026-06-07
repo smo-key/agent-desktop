@@ -86,14 +86,19 @@ Starting a stopped task SHALL allocate a fresh `paneId`.
 ### Requirement: Terminal task completion semantics
 
 When a terminal-kind task's process exits, an exit code of 0 SHALL cause its
-running pane to be auto-closed (removed from the running surface), and a non-zero
-exit SHALL keep the pane open, mark the task failed, and expose a dismiss action
-that removes the pane. A long-running terminal task that does not exit SHALL
-remain running until explicitly stopped.
+running pane to be auto-closed (removed from the running surface) AND SHALL emit a
+success notification carrying the task's name; a non-zero exit SHALL keep the pane
+open, mark the task failed, and expose a dismiss action that removes the pane. A
+long-running terminal task that does not exit SHALL remain running until explicitly
+stopped.
 
 #### Scenario: Success auto-closes
 - **WHEN** a terminal task's command exits with code 0
 - **THEN** its running pane is removed automatically
+
+#### Scenario: Successful task announces completion
+- **WHEN** a terminal task's command exits with code 0
+- **THEN** a completion notification carrying the task's name is emitted (and a non-zero exit emits none)
 
 #### Scenario: Error keeps pane open and marks failed
 - **WHEN** a terminal task's command exits with a non-zero code

@@ -81,3 +81,10 @@
 - [x] 11.1 Pure `taskAgentReturnedToUser(status, timeline)` helper (`src/lib/tasks/agentTask.ts`) + tests: archives on waiting/finished only after a `UserPromptSubmit` (never the fresh-session idle state)
 - [x] 11.2 `+page.svelte`: capture the launched paneId in `setAgentLauncher`, track task-spawned agent panes, and a watcher `$effect` that `workspace.closeAgent(paneId)` once the agent returns to the user; cleanup on pane removal
 - [x] 11.3 Spec: add the "Agent task archives when it returns to the user" scenario to project-tasks; `openspec validate --strict`
+
+## 12. Follow-up: task completion toast
+
+- [x] 12.1 Toast store + component (`src/lib/ui/toastStore.svelte.ts` + `Toast.svelte`), mounted at the app root; unit-tested (show/dismiss/stack)
+- [x] 12.2 `projectTasks` emits a completion event on success (`onTaskComplete` handler fired from `noteExit` on code 0, with the task name); tests `Successful task announces completion` + no-announce-on-failure
+- [x] 12.3 `+page.svelte` wires the handler to `toast.show("<name> completed")`
+- [x] 12.4 Specs (project-tasks success-announce scenario; tasks-panel "Completion toast on success" MANUAL) + coverage gate; `openspec validate --strict`

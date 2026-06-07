@@ -123,6 +123,18 @@ export class ProjectTasksStore {
     this.agentLauncher = fn;
   }
 
+  /**
+   * Injected handler fired when a terminal task COMPLETES SUCCESSFULLY (its command
+   * exits with code 0), with the task's display name. The app wires this to a toast.
+   * Injected so the store stays UI-free; null until the app sets it.
+   */
+  onTaskComplete: ((name: string) => void) | null = null;
+
+  /** Set the injected success handler (the app shows a "<name> completed" toast). */
+  setTaskCompleteHandler(fn: (name: string) => void): void {
+    this.onTaskComplete = fn;
+  }
+
   /** The user's login shell, resolved once. */
   readonly shell = loginShell();
 
@@ -370,6 +382,10 @@ export class ProjectTasksStore {
     const rt = this.runtime[id];
     if (!rt) return;
     if (code === 0) {
+      // Success: announce completion (the app shows a "<name> completed" toast),
+      // then close the pane.
+      const def = this.defForId(id);
+      if (def) this.onTaskComplete?.(this.displayName(def));
       delete this.runtime[id];
       return;
     }
