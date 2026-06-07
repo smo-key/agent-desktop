@@ -33,6 +33,8 @@
   import { tasksPanel } from '$lib/tasks/panel.svelte';
   import { projectTasks } from '$lib/tasks/projectTasks.svelte';
   import { activeProjectId } from '$lib/tasks/activeProject';
+  import { projectForId } from '$lib/projects/projects';
+  import { buildLaunchPlan } from '$lib/launcher/plan';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import { ALL, UNASSIGNED } from '$lib/projects/projectRollup';
   import { focusTerminal, scrollTerminalToBottom } from '$lib/layout/terminals';
@@ -57,8 +59,24 @@
     void openWith.load();
     // Load voice-input preferences from the shared settings blob (seeds defaults).
     void voice.load();
-    // Load each project's terminal definitions and selectively auto-restart the
-    // terminals that were running at the previous quit (project-terminals spec).
+    // Agent-kind tasks open a normal Claude session in the workspace + Agents rail
+    // (design D5): wire the store's launcher hook to the same launch path used by
+    // the inbox "+" / ⌘N, seeded with the task's prompt. Set BEFORE load() so a
+    // task started early dispatches correctly.
+    projectTasks.setAgentLauncher((def, projectId) => {
+      const proj = projectForId(projects.list, projectId);
+      if (!proj) return;
+      workspace.launch(
+        buildLaunchPlan({
+          folder: proj.path,
+          prompt: def.prompt ?? '',
+          placement: 'tab',
+          projectId: proj.id
+        })
+      );
+    });
+    // Load each project's task definitions and selectively auto-restart the
+    // terminal tasks that were running at the previous quit (project-tasks spec).
     void projectTasks.load();
     // Capture each terminal's running state on quit so the next launch can
     // selectively auto-restart. Awaited by Tauri before the native close (and
