@@ -138,8 +138,12 @@ async function transcribeFinal(
 
 // --- The controller ---------------------------------------------------------
 
-/** How often the live-partials loop re-transcribes the audio-so-far (ms). */
-const PARTIAL_INTERVAL_MS = 600;
+/**
+ * How often the live-partials loop re-transcribes the audio-so-far (ms). Each tick
+ * spawns a whisper pass over the growing buffer, so a longer interval is calmer
+ * (less text churn) and lighter on CPU; the final pass on stop is authoritative.
+ */
+const PARTIAL_INTERVAL_MS = 1500;
 
 /**
  * Drives one dictation session: capture → live partials → stop&insert / cancel.

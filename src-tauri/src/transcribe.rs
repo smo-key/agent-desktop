@@ -110,8 +110,31 @@ pub fn parse_whisper_json(stdout: &str) -> Result<String, String> {
         .filter_map(|seg| seg.get("text").and_then(|t| t.as_str()))
         .collect::<Vec<_>>()
         .join("");
-    // Collapse internal runs of whitespace and trim the ends.
-    Ok(joined.split_whitespace().collect::<Vec<_>>().join(" "))
+    // Strip non-speech annotations + collapse whitespace.
+    Ok(strip_nonspeech(&joined))
+}
+
+/// Remove whisper.cpp's NON-SPEECH annotations — the bracketed/parenthesized
+/// tokens it emits for silence/noise/music (e.g. `[BLANK_AUDIO]`, `[MUSIC]`,
+/// `[INAUDIBLE]`, `(wind blowing)`, `(laughs)`) — then collapse whitespace. A
+/// noise-only utterance thus yields an EMPTY string rather than an annotation that
+/// the polish LLM would treat as "no transcript provided". Real speech is
+/// unaffected (whisper does not bracket ordinary words).
+pub fn strip_nonspeech(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut sq = 0i32; // [...] depth
+    let mut rd = 0i32; // (...) depth
+    for c in text.chars() {
+        match c {
+            '[' => sq += 1,
+            ']' => sq = (sq - 1).max(0),
+            '(' => rd += 1,
+            ')' => rd = (rd - 1).max(0),
+            _ if sq == 0 && rd == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 // --- Pure helper: WAV encoder -----------------------------------------------
@@ -317,9 +340,10 @@ async fn run_whisper(app: &AppHandle, args: &[String], json_path: &str) -> Resul
 }
 
 /// Collapse a raw text blob (e.g. whisper-cli's plain stdout) into a single-spaced
-/// trimmed transcript. Used as the stdout fallback when the JSON output is absent.
+/// trimmed transcript, stripping non-speech annotations. Used as the stdout
+/// fallback when the JSON output is absent.
 pub fn clean_transcript_text(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+    strip_nonspeech(s)
 }
 
 /// Live partial transcription over a sliding window (scaffolding + typed channel
@@ -367,6 +391,22 @@ mod tests {
             "Hello world, this is a test."
         );
         assert_eq!(clean_transcript_text("   \n\t  "), "");
+    }
+
+    #[test]
+    fn strip_nonspeech_drops_whisper_annotations() {
+        // Noise-only utterances → empty (so polish never sees "[BLANK_AUDIO]").
+        assert_eq!(strip_nonspeech("[BLANK_AUDIO]"), "");
+        assert_eq!(strip_nonspeech("[ Silence ]"), "");
+        assert_eq!(strip_nonspeech("(wind blowing)"), "");
+        // Real speech with an embedded annotation keeps the words.
+        assert_eq!(
+            strip_nonspeech("Hello [MUSIC] world (laughs) again"),
+            "Hello world again"
+        );
+        // parse_whisper_json applies it too.
+        let json = r#"{"transcription":[{"text":" [BLANK_AUDIO]"}]}"#;
+        assert_eq!(parse_whisper_json(json).unwrap(), "");
     }
 
     #[test]
