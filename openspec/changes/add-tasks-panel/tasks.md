@@ -52,7 +52,7 @@
 
 - [x] 8.1 `terminals_load` is intentionally KEPT (the one-time `terminals.json` → `tasks.json` migration reads it); `terminals_save` is now unreferenced but its removal is deferred to avoid colliding with the concurrent voice-input backend edits to `lib.rs` — harmless dead code, no `terminals`-named symbols remain in `src/`
 - [x] 8.2 Full frontend suite green (432/432 vitest), `cargo check` green (24s), `vite build` green — no regressions
-- [ ] 8.3 Manual smoke (LIVE in-app — cannot run headless): create a terminal task (Git Push) → succeeds & auto-closes; make it fail → stays red & dismissable; Start Dev Server → persists; create an agent task → opens a Claude session; ⌘Y + Terminals `＋` → bare shells; ⌘T → task dialog; resize the splitter and reload → size persists
+- [x] 8.3 Manual smoke (LIVE in-app) — confirmed by the user: terminal task succeed→auto-close / fail→red+dismiss / dev-server persists; agent task → Claude session (auto-archives on return); ⌘Y + Terminals `＋` → bare shells; ⌘T → task dialog; splitter size persists across reload
 - [x] 8.4 `openspec validate add-tasks-panel --strict` → valid
 - [x] 8.5 Enforce the `project-tasks` (19 scenarios, all unit-tested) and `tasks-panel` (14 scenarios, all live-DOM/PTY → MANUAL) capabilities in `tools/check-scenario-coverage.mjs`; gate RESULT: PASS
 
