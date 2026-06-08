@@ -15,6 +15,7 @@
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import { projectGit } from '$lib/projects/projectGit.svelte';
   import { pushProject, pullProject } from '$lib/projects/projectGitActions';
+  import { gitBusy } from '$lib/projects/projectGitBusy.svelte';
   import { view as topView } from '$lib/overview/view.svelte';
   import LimitBars from './LimitBars.svelte';
   import GitInfo from './GitInfo.svelte';
@@ -62,6 +63,10 @@
     gitProject?.path ? () => void pullProject(gitProject.path, gitProject.name, gitProject.id) : undefined
   );
 
+  // True while a push/pull is in flight for the footer's project — disables both
+  // git buttons so the sync can't be re-triggered.
+  const gitSyncing = $derived(gitBusy.isBusy(gitProject?.path));
+
   // The terminal area's left edge as a fraction [0,1] of the surface, or null when
   // there's no terminal pane / not in grid view. A "terminal" pane is a non-claude
   // (shell) pane; agents are claude panes. Reading the active tree + registry keeps
@@ -96,7 +101,7 @@
   aria-label="Status footer"
 >
   <div class="zone left">
-    <div class="left-git"><GitInfo git={folderGit} always {onPush} {onPull} /></div>
+    <div class="left-git"><GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} /></div>
     <span class="sep" aria-hidden="true"></span>
     <LimitBars fiveHour={view.fiveHour} sevenDay={view.sevenDay} {now} />
   </div>

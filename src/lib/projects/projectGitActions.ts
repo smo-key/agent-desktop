@@ -7,6 +7,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from '../ui/toastStore.svelte';
+import { gitBusy } from './projectGitBusy.svelte';
 
 /**
  * Opens an interactive terminal in project `projectId`'s folder that runs
@@ -68,12 +69,17 @@ export async function pushProject(
     toast.show(`"${name}" has no folder to push.`);
     return;
   }
+  // Guard against a double-trigger: a push/pull is already running in this folder.
+  if (gitBusy.isBusy(path)) return;
+  gitBusy.begin(path);
   try {
     const out = await invoke<string>('git_push', { repoPath: path });
     const detail = oneLine(out);
     toast.show(detail ? `Pushed "${name}" — ${detail}` : `Pushed "${name}".`);
   } catch (err) {
     surfaceFailure(projectId, 'git push', name, 'Push', err);
+  } finally {
+    gitBusy.end(path);
   }
 }
 
@@ -94,11 +100,16 @@ export async function pullProject(
     toast.show(`"${name}" has no folder to pull.`);
     return;
   }
+  // Guard against a double-trigger: a push/pull is already running in this folder.
+  if (gitBusy.isBusy(path)) return;
+  gitBusy.begin(path);
   try {
     const out = await invoke<string>('git_pull', { repoPath: path });
     const detail = oneLine(out);
     toast.show(detail ? `Pulled "${name}" — ${detail}` : `Pulled "${name}".`);
   } catch (err) {
     surfaceFailure(projectId, 'git pull', name, 'Pull', err);
+  } finally {
+    gitBusy.end(path);
   }
 }

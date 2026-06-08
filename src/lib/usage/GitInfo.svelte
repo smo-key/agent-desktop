@@ -12,7 +12,8 @@
   // When `onPush`/`onPull` are provided, the ahead (↑) and behind (↓) indicators
   // become CLICKABLE buttons that push / pull the underlying project (same behavior
   // as the project pane's context-menu Push/Pull); without them the indicators are
-  // plain display pills.
+  // plain display pills. While `busy` is set (a push/pull is already running for
+  // this project) BOTH buttons are disabled so the operation can't be re-triggered.
   import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import type { GitStatus } from './snapshots.svelte';
@@ -22,13 +23,15 @@
     always = false,
     stack = false,
     onPush,
-    onPull
+    onPull,
+    busy = false
   }: {
     git: GitStatus | null;
     always?: boolean;
     stack?: boolean;
     onPush?: () => void;
     onPull?: () => void;
+    busy?: boolean;
   } = $props();
 </script>
 
@@ -48,7 +51,8 @@
             class="pill behind action"
             class:zero={(git.behind ?? 0) === 0}
             onclick={onPull}
-            use:tooltip={'Pull from origin'}
+            disabled={busy}
+            use:tooltip={busy ? 'Sync in progress…' : 'Pull from origin'}
           >
             <Icon name="arrow-down" size={12} />
             <span class="txt">{git.behind ?? 0}</span>
@@ -71,7 +75,8 @@
             class="pill ahead action"
             class:zero={(git.ahead ?? 0) === 0}
             onclick={onPush}
-            use:tooltip={'Push to origin'}
+            disabled={busy}
+            use:tooltip={busy ? 'Sync in progress…' : 'Push to origin'}
           >
             <Icon name="arrow-up" size={12} />
             <span class="txt">{git.ahead ?? 0}</span>
@@ -172,6 +177,14 @@
   }
   button.pill.action:active {
     transform: translateY(0.5px);
+  }
+  /* While a sync is in flight both buttons are disabled — dim them and drop the
+     hover/active affordances so they read as non-interactive. */
+  button.pill.action:disabled {
+    cursor: default;
+    opacity: 0.5;
+    filter: none;
+    transform: none;
   }
   .branch {
     max-width: 220px;
