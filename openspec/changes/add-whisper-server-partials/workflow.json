@@ -1,0 +1,6 @@
+{
+  "provider": "local",
+  "taskRef": "add-whisper-server-partials",
+  "url": "",
+  "lastEvent": "planned"
+}
