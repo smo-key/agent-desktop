@@ -70,8 +70,10 @@ once into committed text and never reprocessed:
     trailing — so each committed chunk is ~6s. (Firing at 1× would finalize a tiny
     ~per-tick sliver every 100ms; whisper transcribes ~100ms fragments to
     empty/garbage, so `committed` never accumulates and older text is lost — the
-    "cuts off" bug.) The cut prefers a **silence boundary** near `end − 6s` so a word
-    isn't split (force-cut at the target otherwise). Transcribe `pcm[committedSamples..cut]`
+    "cuts off" bug.) The cut prefers the nearest **silence boundary** within
+    `searchRadius` on EITHER side of `end − 6s` so a word isn't split (force-cut at
+    the target otherwise; cutting just after the target only shrinks the trailing
+    window, so it stays bounded). Transcribe `pcm[committedSamples..cut]`
     via `voice_transcribe_partial`, append to `committed`, set `committedSamples = cut`.
     Consequence: the per-tick reprocess span oscillates between 6s and 12s (still
     bounded and fast on the resident tiny model), not a strict 6s.

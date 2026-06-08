@@ -57,6 +57,23 @@ describe('commitCut — finalize-cut for the sliding reprocess window', () => {
     expect(cut!).toBeLessThanOrEqual(gapStart + gapLen);
   });
 
+  it('snaps to a silence gap just AFTER the target (search is symmetric)', () => {
+    const end = 14 * SR;
+    const target = end - WIN * SR; // 8s
+    // Gap sits a little AFTER the target; the nearest pause is past it. The cut
+    // should still snap to the gap (not fall back to the mid-speech target), and
+    // still leave a trailing window (cut < end).
+    const gapStart = target + 2000;
+    const gapLen = 2000;
+    const samples = withSilenceGap(end, gapStart, gapLen);
+    const cut = commitCut(samples, 0, end, SR, WIN);
+    expect(cut).not.toBeNull();
+    expect(cut!).toBeGreaterThan(target);
+    expect(cut!).toBeGreaterThanOrEqual(gapStart);
+    expect(cut!).toBeLessThanOrEqual(gapStart + gapLen);
+    expect(cut!).toBeLessThan(end); // a trailing window always remains
+  });
+
   it('advances monotonically and leaves only the window trailing', () => {
     const end = 25 * SR;
     const samples = new Float32Array(end).fill(0.5);

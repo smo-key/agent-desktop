@@ -56,9 +56,9 @@ const DEFAULT_OPTS: CommitCutOpts = {
  * index, which:
  *   - leaves AT MOST `reprocessWindowSec` of trailing audio (`end - cut <= window`),
  *     so the per-tick reprocess span stays bounded (window..2×window),
- *   - prefers a silence frame within `searchRadius` of the target `end - window`
- *     (so the boundary falls in a pause, not mid-word), falling back to the raw
- *     target when no silence is found,
+ *   - prefers the nearest silence frame within `searchRadius` on EITHER side of the
+ *     target `end - window` (so the boundary falls in a pause, not mid-word),
+ *     falling back to the raw target when no silence is found,
  *   - is strictly greater than `committedSamples` (monotonic — never re-finalizes).
  */
 export function commitCut(
@@ -79,11 +79,15 @@ export function commitCut(
   const target = end - windowSamples;
 
   const { frameLen, threshold, searchRadius } = opts;
-  // Hunt for a silence frame near the target. Bound the search so the chosen cut
-  // can never leave more than the window unprocessed (cut ≤ target) nor re-finalize
-  // committed audio (cut > committedSamples).
+  // Hunt for a silence frame near the target, searching BOTH sides (the closest
+  // pause may fall just after the target). Bounds keep the cut monotonic
+  // (> committedSamples) and the trailing window bounded: cutting after the target
+  // only leaves LESS than a window trailing, and `hi` is capped below `end` so a
+  // trailing window always remains. The 2×-window fire condition guarantees
+  // `target − committedSamples > windowSamples ≫ searchRadius`, so `lo` clamps to
+  // `target − searchRadius` (never a tiny committed sliver).
   const lo = Math.max(committedSamples + frameLen, target - searchRadius);
-  const hi = Math.min(target, target + searchRadius);
+  const hi = Math.min(target + searchRadius, end - frameLen);
 
   let best: number | null = null;
   let bestDist = Infinity;
@@ -98,10 +102,9 @@ export function commitCut(
     }
   }
 
-  // Prefer the silence boundary; fall back to the raw target. Either way clamp to
-  // (committedSamples, target] so it's monotonic and bounded.
+  // Prefer the silence boundary; fall back to the raw target. Clamp to
+  // (committedSamples, end) so it's monotonic and always leaves a trailing window.
   let cut = best ?? target;
-  if (cut > target) cut = target;
-  if (cut <= committedSamples) cut = target;
+  if (cut <= committedSamples || cut >= end) cut = target;
   return cut;
 }
