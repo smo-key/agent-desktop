@@ -63,3 +63,10 @@
 - [x] 8.3 End-to-end: cross-project / invalid / closed targets are rejected; an injection to a busy agent is deferred until idle — verified by `executor.svelte.test.ts` (scoping, idle-gating, coordinator-target rejection)
 - [x] 8.4 Confirm additive behavior: a project with no coordinator and no specialists behaves exactly as today — verified by review (no interception without a coordinator; empty-state panels)
 - [x] 8.5 Run `openspec validate add-agent-specialists` and the project's lint/test suite (`npm` + `cargo test`) — vitest 656/656; cargo 162 pass (+2 pre-existing unrelated `events::tests`); openspec validate green
+
+## 10. Coordinator constraints + Sessions placement (follow-up scope)
+
+- [x] 10.1 Restrict the coordinator at launch so it cannot do work: disallow the work tools (`Edit`, `Write`, `Bash`, `NotebookEdit`) and the internal `Task` tool while keeping the orchestration toolkit + read-only inspection; reinforce in the orchestrator system prompt that it must create sessions (optionally specialists) to do all work and never do it itself
+- [x] 10.2 Pin the coordinator to the TOP of the Sessions list (above all other sessions), with a horizontal rule separating it from the rest and no separate heading
+- [x] 10.3 When the active project has no running coordinator, show a focusable "Start coordinator" affordance in that top slot
+- [x] 10.4 Focusing the not-started coordinator shows an empty main-pane state inviting the user to click a Start button that launches the orchestrator

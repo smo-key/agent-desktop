@@ -61,6 +61,48 @@ visual workflow builder.
 - **WHEN** a workflow completes
 - **THEN** no workflow definition is persisted and no builder UI is involved
 
+### Requirement: Coordinator delegates all work and cannot perform it directly
+The coordinator SHALL NOT perform work itself — no file edits, shell commands,
+notebook edits, or other direct task execution. It SHALL accomplish a goal only by
+creating sessions (optionally as specialists) and coordinating them via the
+toolkit. The coordinator's launch SHALL restrict its available tools so the work
+tools (file write/edit, shell, notebook edit) and the internal `Task` tool are
+unavailable, while the orchestration toolkit (and read-only inspection) remain
+available.
+
+#### Scenario: Coordinator launch excludes work tools
+- **WHEN** a coordinator is started for a project
+- **THEN** its available tools exclude the work tools (file write/edit, shell, notebook edit) and the internal `Task` tool
+- **AND** the orchestration toolkit remains available
+
+#### Scenario: Coordinator delegates rather than doing the work
+- **WHEN** the coordinator is given a goal that requires doing work
+- **THEN** it creates one or more sessions (optionally specialists) to perform the work
+- **AND** it does not perform the work in its own session
+
+### Requirement: Coordinator is pinned to the top of the Sessions list
+The coordinator SHALL appear at the top of the Sessions list, above all other
+sessions, separated from them by a horizontal rule, with no separate heading for
+it. When the active project has no running coordinator, the Sessions list SHALL
+show a focusable "Start coordinator" affordance in that top position. Focusing it
+SHALL show an empty main-pane state inviting the user to click a Start button to
+launch the orchestrator; clicking Start SHALL launch the coordinator.
+
+#### Scenario: Running coordinator is pinned at the top
+- **WHEN** a project has a running coordinator
+- **THEN** the coordinator appears at the top of the Sessions list above all other sessions
+- **AND** a horizontal rule separates it from the remaining sessions
+- **AND** there is no separate heading for it
+
+#### Scenario: Start affordance shown when no coordinator
+- **WHEN** the active project has no running coordinator
+- **THEN** a focusable "Start coordinator" affordance appears at the top of the Sessions list
+
+#### Scenario: Focusing the not-started coordinator shows a Start prompt
+- **WHEN** the user focuses the not-started coordinator affordance
+- **THEN** the main pane shows an empty state inviting the user to click Start to launch the orchestrator
+- **AND** clicking Start launches the coordinator
+
 ### Requirement: Coordinated agents are attributed in the roster
 Agents the coordinator spawns or drives are real panes and SHALL be surfaced in
 the roster / overview with attribution to the specialist they were launched as
