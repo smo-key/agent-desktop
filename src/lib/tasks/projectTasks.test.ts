@@ -292,7 +292,9 @@ describe('project-terminals — Per-project sanitized tasks file', () => {
     expect(env).not.toHaveProperty('projects');
   });
 
-  it('serializes the flat versioned envelope', () => {
+  it('Flat per-project envelope', () => {
+    // serializeProjectTasks yields a flat `{ version, tasks: [...] }` envelope
+    // (no projectId keying).
     const env = JSON.parse(serializeProjectTasks([t({ id: 'a' })]));
     expect(env.version).toBe(TASKS_VERSION);
     expect(Array.isArray(env.tasks)).toBe(true);
@@ -300,7 +302,7 @@ describe('project-terminals — Per-project sanitized tasks file', () => {
     expect(env).not.toHaveProperty('projects');
   });
 
-  it('strips machine-local restore hints (wasRunning / lastCommand)', () => {
+  it('Restore hints stripped', () => {
     const defs: TaskDef[] = [
       t({ id: 'a', wasRunning: true, lastCommand: 'vim x' })
     ];
@@ -311,7 +313,7 @@ describe('project-terminals — Per-project sanitized tasks file', () => {
     expect(env.tasks[0]).toMatchObject({ id: 'a', name: 'dev server', command: 'npm run dev' });
   });
 
-  it('retains cwd and closeOnComplete:false', () => {
+  it('Definition fields kept', () => {
     const defs: TaskDef[] = [
       t({ id: 'a', cwd: '/custom', closeOnComplete: false })
     ];
@@ -324,7 +326,8 @@ describe('project-terminals — Per-project sanitized tasks file', () => {
     expect(JSON.parse(serializeProjectTasks([])).tasks).toEqual([]);
   });
 
-  it('parseProjectTasks of bad inputs collapses to []', () => {
+  it('Missing file is empty', () => {
+    // A missing/empty project tasks file (null / '' / missing) parses to [] without throwing.
     expect(parseProjectTasks(null)).toEqual([]);
     expect(parseProjectTasks(undefined)).toEqual([]);
     expect(parseProjectTasks('')).toEqual([]);
@@ -372,7 +375,8 @@ describe('project-terminals — Per-project config file', () => {
     expect(env.autoWorktree).toBe(true);
   });
 
-  it('bad config inputs collapse to {}', () => {
+  it('Absent config defaults off', () => {
+    // An absent / unparseable config parses to {} (autoWorktree undefined ⇒ off).
     expect(parseProjectConfig(null)).toEqual({});
     expect(parseProjectConfig(undefined)).toEqual({});
     expect(parseProjectConfig('')).toEqual({});
@@ -381,9 +385,13 @@ describe('project-terminals — Per-project config file', () => {
     expect(parseProjectConfig('null')).toEqual({});
     // autoWorktree present but not a boolean ⇒ ignored.
     expect(parseProjectConfig('{"version":1,"autoWorktree":"yes"}')).toEqual({});
+    // A config that simply omits autoWorktree leaves it undefined (treated false).
+    expect(parseProjectConfig('{"version":1}').autoWorktree).toBeUndefined();
   });
 
-  it('only sets autoWorktree from a real boolean', () => {
+  it('Auto-worktree read from config', () => {
+    // A config envelope carrying autoWorktree:true reads back as true; false as
+    // false; only a real boolean is honored.
     expect(parseProjectConfig('{"version":1,"autoWorktree":true}')).toEqual({ autoWorktree: true });
     expect(parseProjectConfig('{"version":1,"autoWorktree":false}')).toEqual({ autoWorktree: false });
     expect(parseProjectConfig('{"version":1}')).toEqual({});

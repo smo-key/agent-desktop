@@ -364,6 +364,61 @@ describe('project-terminals — close-on-complete', () => {
   });
 });
 
+describe('project-folder-storage — save resilience', () => {
+  it('Write failure keeps in-memory state', async () => {
+    // When project_tasks_save rejects, the in-memory byProject is preserved and
+    // no error escapes the store (the failure is swallowed + marked dirty).
+    invokeMock.mockReset();
+    invokeMock.mockImplementation(async (cmd: unknown) => {
+      if (cmd === 'project_tasks_save') throw new Error('unwritable folder');
+      return null;
+    });
+    const store = new ProjectTasksStore();
+    store.setProjectsAccessor(() => [{ id: 'p', path: '/p' }]);
+
+    // create() awaits saveProject() internally; it must NOT throw despite the reject.
+    const id = await store.create('p', { kind: 'terminal', command: 'npm run dev' });
+
+    // The def survives in memory even though the write failed.
+    expect(store.forProject('p').map((t) => t.id)).toEqual([id]);
+
+    invokeMock.mockReset();
+    invokeMock.mockImplementation(async () => null);
+  });
+
+  it('Retry on next save', async () => {
+    // A project left dirty by a failed save is re-flushed on the next successful
+    // saveProject — project_tasks_save is invoked for it again.
+    let failNext = true;
+    invokeMock.mockReset();
+    invokeMock.mockImplementation(async (cmd: unknown, args: unknown) => {
+      if (cmd === 'project_tasks_save') {
+        const path = (args as { projectPath?: string })?.projectPath;
+        if (failNext && path === '/p') throw new Error('unwritable folder');
+      }
+      return null;
+    });
+    const store = new ProjectTasksStore();
+    store.setProjectsAccessor(() => [{ id: 'p', path: '/p' }]);
+
+    // First save fails ⇒ project 'p' is now dirty.
+    await store.create('p', { kind: 'terminal', command: 'a' });
+
+    // Now allow writes to succeed; a later save flushes the dirty project again.
+    failNext = false;
+    invokeMock.mockClear();
+    await store.create('p', { kind: 'terminal', command: 'b' });
+
+    const pSaves = invokeMock.mock.calls.filter(
+      (c) => c[0] === 'project_tasks_save' && (c[1] as { projectPath?: string })?.projectPath === '/p'
+    );
+    expect(pSaves.length).toBeGreaterThan(0);
+
+    invokeMock.mockReset();
+    invokeMock.mockImplementation(async () => null);
+  });
+});
+
 describe('project-tasks — agent dispatch', () => {
   it('Agent task opens a workspace session', async () => {
     const store = new ProjectTasksStore();

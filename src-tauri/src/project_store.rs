@@ -127,10 +127,10 @@ mod tests {
     const TASKS_JSON: &str = r#"{"tasks":[{"id":"a","label":"Build"}]}"#;
     const CONFIG_JSON: &str = r#"{"autoWorktree":true,"branchPrefix":"feat/"}"#;
 
-    /// Loading tasks from a project with no `.agent-desktop/` dir yields `None`,
-    /// not an error.
+    /// Loading tasks from a project with no `.agent-desktop/` dir yields `None`
+    /// (Ok(None)), not an error. (Scenario: Load missing file.)
     #[test]
-    fn load_tasks_missing_is_none() {
+    fn load_missing_file() {
         let tmp = TempDir::new("tasks-missing");
         assert_eq!(load_tasks(tmp.path()).unwrap(), None);
     }
@@ -150,19 +150,47 @@ mod tests {
         assert_eq!(load_tasks(tmp.path()).unwrap().as_deref(), Some(TASKS_JSON));
     }
 
-    /// Saving creates the `.agent-desktop/` dir when it doesn't exist yet, lands
-    /// the file at the expected path, and leaves NO `.tmp` file behind.
+    /// Saving creates the `.agent-desktop/` dir when it doesn't exist yet and
+    /// lands the file at `<project>/.agent-desktop/tasks.json`.
+    /// (Scenario: Directory location.)
     #[test]
-    fn save_creates_dir_and_leaves_no_tmp() {
+    fn directory_location() {
         let tmp = TempDir::new("createdir");
-        let dir = tmp.path().join(".agent-desktop");
+        let dir = agent_desktop_dir(tmp.path());
         assert!(!dir.exists(), "agent-desktop dir absent before save");
         save_tasks(tmp.path(), TASKS_JSON).unwrap();
         assert!(dir.exists(), "agent-desktop dir created by save");
         assert!(dir.join("tasks.json").is_file(), "file at tasks.json");
+    }
+
+    /// The atomic write (sibling temp file + rename) leaves the target in place
+    /// and NO `.json.tmp` sibling behind. (Scenario: Atomic save.)
+    #[test]
+    fn atomic_save() {
+        let tmp = TempDir::new("atomic");
+        save_tasks(tmp.path(), TASKS_JSON).unwrap();
+        let dir = agent_desktop_dir(tmp.path());
+        assert!(dir.join("tasks.json").is_file(), "target file present");
         assert!(
             !dir.join("tasks.json.tmp").exists(),
             "no temp file left after atomic rename"
+        );
+    }
+
+    /// The store never writes a `.gitignore`: a project's tasks/config travel
+    /// with the repo, so the project dir gains no ignore file from a save.
+    /// (Scenario: Not gitignored.)
+    #[test]
+    fn not_gitignored() {
+        let tmp = TempDir::new("gitignore");
+        save_tasks(tmp.path(), TASKS_JSON).unwrap();
+        assert!(
+            !tmp.path().join(".gitignore").exists(),
+            "store writes no .gitignore in the project dir"
+        );
+        assert!(
+            !agent_desktop_dir(tmp.path()).join(".gitignore").exists(),
+            "store writes no .gitignore in .agent-desktop"
         );
     }
 

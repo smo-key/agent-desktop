@@ -30,7 +30,7 @@ beforeEach(() => {
 });
 
 describe('project-folder-storage — migration', () => {
-  it('moves user-level tasks into per-project files (sanitized) and clears the user-level file', async () => {
+  it('Tasks migrated to project folder', async () => {
     const tasks: Record<string, TaskDef[]> = {
       p: [
         {
@@ -65,7 +65,7 @@ describe('project-folder-storage — migration', () => {
     expect(call('tasks_clear')).toHaveLength(1);
   });
 
-  it('lifts autoWorktree into per-project config and strips it from projects.json', async () => {
+  it('autoWorktree lifted out of the registry', async () => {
     invokeMock.mockImplementation(async (cmd: unknown) => {
       if (cmd === 'tasks_load') return userTasks({ p: [] });
       if (cmd === 'projects_load')
@@ -88,7 +88,7 @@ describe('project-folder-storage — migration', () => {
     expect(payload.projects[0]).toMatchObject({ id: 'p', path: '/p' });
   });
 
-  it('skips an unwritable project: keeps the user-level file and retains its autoWorktree', async () => {
+  it('Unwritable project skipped', async () => {
     const tasks: Record<string, TaskDef[]> = {
       p: [{ id: 'a', name: 'dev', kind: 'terminal', command: 'x', cwd: null }]
     };
@@ -128,7 +128,7 @@ describe('project-folder-storage — migration', () => {
     expect(payload.projects[0].autoWorktree).toBe(true);
   });
 
-  it('is idempotent — a second run with no user-level data writes nothing', async () => {
+  it('Idempotent', async () => {
     invokeMock.mockImplementation(async (cmd: unknown) => {
       if (cmd === 'tasks_load') return null;
       if (cmd === 'terminals_load') return null;
