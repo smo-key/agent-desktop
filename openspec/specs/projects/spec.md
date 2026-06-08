@@ -9,20 +9,26 @@ the focused/selected project's git state is shown in the app footer rather than 
 the rows. (Broader project-model requirements are defined by the `add-agent-desktop`
 change and fold in when it archives; this spec currently captures the context-menu
 git actions and the footer git indicator.)
-
 ## Requirements
-
 ### Requirement: Push And Pull A Project From Its Context Menu
 
-A project row's right-click context menu in the project pane SHALL offer **Push**
-and **Pull** actions that sync the project's checkout with its git remote. Both
-act on the project's FOLDER (independent of any running agent session), shelling
-out to `git push` / `git pull --ff-only` in that folder, and SHALL surface the
-outcome non-blockingly via a toast — never blocking the UI and never throwing out
-of the menu. Both run git NON-INTERACTIVELY (no credential / passphrase /
-host-key prompt) so a sync against a remote that would otherwise prompt fails
-fast instead of hanging. Pull is fast-forward only, so a divergent branch fails
-cleanly without ever leaving the worktree mid-merge.
+A project's checkout SHALL be syncable with its git remote via **Push** and
+**Pull** actions, exposed in TWO places: the project row's right-click context
+menu in the project pane, AND the app footer's git indicators for the project the
+footer is showing — the **ahead** (↑) indicator becomes a Push button and the
+**behind** (↓) indicator a Pull button. Both surfaces invoke the SAME action
+against the project's FOLDER (independent of any running agent session), shelling
+out to `git push` / `git pull --ff-only` in that folder, run NON-INTERACTIVELY
+(no credential / passphrase / host-key prompt) so a sync that would otherwise
+prompt fails fast instead of hanging. Pull is fast-forward only, so a divergent
+branch fails cleanly without ever leaving the worktree mid-merge.
+
+On SUCCESS, the action shows a non-blocking toast naming the project and echoing
+git's message. On FAILURE, the action opens an interactive terminal in the
+project's folder that runs the failed git command, so the user sees git's full
+output and can act on it (authenticate, resolve a conflict, retry); when no
+terminal surface is available it falls back to a non-blocking failure toast
+carrying git's own error. The action never blocks the UI and never throws.
 
 #### Scenario: Push succeeds
 
@@ -38,14 +44,30 @@ cleanly without ever leaving the worktree mid-merge.
 - **THEN** the app runs `git pull` in that folder, bringing the new commits in
 - **AND** shows a success toast naming the project.
 
-#### Scenario: Push or pull fails
+#### Scenario: Push or pull failure opens a terminal
 
 - **WHEN** a Push or Pull cannot complete (no upstream, rejected non-fast-forward,
-  a divergent branch on pull, or no network / a remote that would prompt)
+  a divergent branch on pull, or no network / a remote that would prompt) AND a
+  terminal surface is available
+- **THEN** the app opens an interactive terminal in the project's folder running
+  the failed git command (`git push` / `git pull`)
+- **AND** the action does not throw, and a failed pull leaves the worktree
+  untouched (no mid-merge state).
+
+#### Scenario: Push or pull fails
+
+- **WHEN** a Push or Pull fails and no terminal surface is wired (or the project
+  id is unknown)
 - **THEN** the app shows a failure toast naming the project and carrying git's own
   error message
-- **AND** the menu action does not throw, and a failed pull leaves the worktree
-  untouched (no mid-merge state).
+- **AND** the action does not throw.
+
+#### Scenario: Push and pull are available from the footer
+
+- **WHEN** the footer is showing a project's git state and the user clicks the
+  ahead (↑) Push button or the behind (↓) Pull button
+- **THEN** the app runs the same Push / Pull action against that project's folder
+  (success toast; interactive terminal on failure).
 
 #### Scenario: Project has no folder
 
@@ -88,3 +110,4 @@ the project's icon, name, attention dot, and agent count.
 - **WHEN** the project pane renders its project rows
 - **THEN** each row shows only the project icon, name, an attention dot when
   applicable, and the agent count — and no git status line.
+

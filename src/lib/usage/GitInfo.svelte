@@ -161,7 +161,9 @@
   /* A clickable indicator (footer push/pull): reset the button chrome to match the
      display pill, add a pointer + subtle hover lift so it reads as actionable. */
   button.pill {
-    font: inherit;
+    /* Inherit only the family (drop the UA button font); keep `.pill`'s 11px /
+       600 so a push/pull button matches the display pills exactly. */
+    font-family: inherit;
     border: none;
     cursor: pointer;
   }

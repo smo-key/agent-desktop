@@ -88,16 +88,29 @@ Starting a stopped task SHALL allocate a fresh `paneId`.
 
 ### Requirement: Terminal task completion semantics
 
-When a terminal-kind task's process exits, an exit code of 0 SHALL cause its
-running pane to be auto-closed (removed from the running surface) AND SHALL emit a
-success notification carrying the task's name; a non-zero exit SHALL keep the pane
-open, mark the task failed, and expose a dismiss action that removes the pane. A
+When a terminal-kind task's process exits, an exit code of 0 SHALL emit a success
+notification carrying the task's name AND, unless the task has opted out via its
+`closeOnComplete` flag, auto-close the running pane (remove it from the running
+surface). A terminal with `closeOnComplete` set to `false` SHALL instead keep its
+pane open on success as a stopped, non-failed slot (exit code 0) so its output
+stays readable, while still emitting the success notification. A non-zero exit
+SHALL always keep the pane open, mark the task failed, and expose a dismiss action
+that removes the pane, regardless of `closeOnComplete`. The flag SHALL default to
+"close" (its absence) and SHALL be persisted only when opted out (`false`). A
 long-running terminal task that does not exit SHALL remain running until explicitly
 stopped.
 
 #### Scenario: Success auto-closes
-- **WHEN** a terminal task's command exits with code 0
+- **WHEN** a terminal task with the default (close) option exits with code 0
 - **THEN** its running pane is removed automatically
+
+#### Scenario: Keep open on success when opted out
+- **WHEN** a terminal task with `closeOnComplete` disabled exits with code 0
+- **THEN** its pane stays open as a stopped, non-failed slot AND a completion notification is still emitted
+
+#### Scenario: Close-on-complete choice persists
+- **WHEN** a terminal task that opted out of auto-close is serialized and reloaded
+- **THEN** its `closeOnComplete: false` choice round-trips (while a default task stores no flag)
 
 #### Scenario: Successful task announces completion
 - **WHEN** a terminal task's command exits with code 0
@@ -138,10 +151,14 @@ automatically.
 
 ### Requirement: Bare interactive terminals are not tasks
 
-The system SHALL allow launching a bare interactive shell (no command) that is
-not a saved task definition. A bare terminal SHALL follow the same close-on-exit
-rule as a terminal task: a clean exit (code 0) closes it (the slot is removed),
-and a non-zero exit keeps it as a stopped slot so the error is readable.
+The system SHALL allow launching a bare interactive shell that is not a saved
+task definition. A bare terminal SHALL follow the same close-on-exit rule as a
+terminal task: a clean exit (code 0) closes it (the slot is removed), and a
+non-zero exit keeps it as a stopped slot so the error is readable. A bare
+terminal MAY be launched with an optional one-shot command that is typed and run
+once after spawn (so a caller can open an interactive shell that has already run
+a command, e.g. a failed `git push`); a blank/whitespace command leaves a plain
+interactive shell.
 
 #### Scenario: Bare shell launch
 - **WHEN** the user launches a bare terminal with no command
@@ -154,4 +171,11 @@ and a non-zero exit keeps it as a stopped slot so the error is readable.
 #### Scenario: Bare shell stays open on error
 - **WHEN** a bare interactive shell exits with a non-zero code
 - **THEN** it remains as a stopped slot until dismissed
+
+#### Scenario: Bare shell runs an initial command
+- **WHEN** a bare terminal is launched with a non-blank command
+- **THEN** the command is carried as the terminal's one-shot initial input (typed
+  and run once after spawn) while the shell stays interactive
+- **AND** a blank/whitespace command leaves a plain interactive shell with no
+  initial input
 

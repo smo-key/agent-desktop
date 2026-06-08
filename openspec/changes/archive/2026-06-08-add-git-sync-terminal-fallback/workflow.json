@@ -2,5 +2,5 @@
   "provider": "local",
   "taskRef": "add-git-sync-terminal-fallback",
   "url": "",
-  "lastEvent": "started"
+  "lastEvent": "done"
 }
