@@ -15,7 +15,8 @@
     "test": "vitest run",
     "coverage": "node tools/check-scenario-coverage.mjs",
     "check:gate": "npm run check && npm run test && npm run coverage",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "package:mac": "tauri build"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "3.0.10",
