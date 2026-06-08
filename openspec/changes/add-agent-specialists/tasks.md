@@ -73,3 +73,8 @@
 - [x] 10.5 The coordinator row is always labeled "Coordinator" (running or not) and carries no role/"not started" badge
 - [x] 10.6 Show the coordinator (or its start affordance) for the active project even when there are no other sessions; render the "No sessions yet" empty state below the coordinator + rule
 - [x] 10.7 Remove the "Start coordinator" entry from the project context menu (the coordinator is started from the Sessions list)
+- [x] 10.8 Include the coordinator (running row + not-started affordance) in ⌘↑/⌘↓ session cycling, including when it is the only entry
+- [x] 10.9 Prevent pausing/archiving the coordinator (omit those actions for it); allow deleting it
+- [x] 10.10 Fix: show the "No sessions yet" box whenever there are no non-coordinator sessions — including when the coordinator IS running (not only when not started)
+- [x] 10.11 Add a coordinator "needs input" tool to the orchestration toolkit (adapter + control socket) the coordinator calls when it needs user input without an AskUserQuestion
+- [x] 10.12 Suppress the default needs-input heuristic for the coordinator (show needs-input only on a pending AskUserQuestion or the needs-input tool); on the tool call, surface the coordinator as needing input and clear it when it resumes; add the instruction to the orchestrator system prompt

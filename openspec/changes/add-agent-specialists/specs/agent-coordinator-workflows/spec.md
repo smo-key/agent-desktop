@@ -116,6 +116,54 @@ orchestrator, and clicking Start SHALL launch the coordinator.
 - **WHEN** the user opens a project's context menu
 - **THEN** it does not contain a "Start coordinator" entry (the coordinator is started from the Sessions list)
 
+### Requirement: Coordinator is included in session cycling
+The ⌘↑ / ⌘↓ session-cycling SHALL include the coordinator — its running row, or,
+when not started, its top-slot affordance — so the user can focus it via the
+keyboard, including when it is the only entry in the Sessions list.
+
+#### Scenario: Cycling reaches the coordinator
+- **WHEN** the user presses ⌘↑ or ⌘↓ to cycle sessions
+- **THEN** the cycle includes the coordinator (its running row, or the not-started affordance)
+
+#### Scenario: Cycling works when the coordinator is the only entry
+- **WHEN** the coordinator (or its not-started affordance) is the only entry in the Sessions list
+- **THEN** ⌘↑ / ⌘↓ still focuses it
+
+### Requirement: Coordinator cannot be paused or archived, only deleted
+The user SHALL NOT be able to pause or archive the coordinator. The coordinator
+SHALL be deletable. (This complements the toolkit's rejection of `archive_agent` /
+`unarchive_agent` targeting a coordinator pane.)
+
+#### Scenario: Pause and archive are not offered for the coordinator
+- **WHEN** the user views the coordinator's available actions
+- **THEN** pause and archive actions are not offered for it
+
+#### Scenario: Coordinator can be deleted
+- **WHEN** the user deletes the coordinator
+- **THEN** the coordinator is removed
+
+### Requirement: Coordinator surfaces needs-input only on explicit signal
+The coordinator SHALL NOT be shown as needing input by the default activity
+heuristic. It SHALL be shown as needing input ONLY when it asks the user a
+question via the AskUserQuestion tool, or when it calls a dedicated needs-input
+tool. The coordinator's context SHALL instruct it that when it needs user input
+without asking a question via AskUserQuestion, it MUST call the needs-input tool.
+When that tool is called, the user SHALL see that the coordinator needs input;
+the indication SHALL clear once the coordinator resumes.
+
+#### Scenario: Idle coordinator is not flagged as needing input
+- **WHEN** the coordinator is idle or waiting but has neither asked a question via AskUserQuestion nor called the needs-input tool
+- **THEN** it is not shown as needing input
+
+#### Scenario: AskUserQuestion shows needs-input
+- **WHEN** the coordinator asks the user a question via the AskUserQuestion tool
+- **THEN** it is shown as needing input
+
+#### Scenario: Needs-input tool shows needs-input
+- **WHEN** the coordinator calls the needs-input tool
+- **THEN** the user sees that the coordinator needs input
+- **AND** the indication clears once the coordinator resumes
+
 ### Requirement: Coordinated agents are attributed in the roster
 Agents the coordinator spawns or drives are real panes and SHALL be surfaced in
 the roster / overview with attribution to the specialist they were launched as
