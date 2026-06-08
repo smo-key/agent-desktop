@@ -713,6 +713,39 @@ fn git_status_for(paths: Vec<String>) -> Result<HashMap<String, git::GitStatus>,
     Ok(git::status_for_paths(&paths))
 }
 
+/// Create a fresh session worktree off `repo_path`'s HEAD (auto-worktree
+/// projects). Returns `{ path, branch, base }`; ensures `.worktrees` is gitignored
+/// and the branch is unique. `Err` when `repo_path` isn't a git repo or git fails.
+#[tauri::command(async)]
+fn worktree_create(repo_path: String) -> Result<git::WorktreeCreated, String> {
+    git::worktree_create(&repo_path)
+}
+
+/// Remove a session worktree (and its branch) only if it's clean — empty
+/// `status --porcelain` and zero commits past `base`. Returns `{ removed, reason }`;
+/// a kept (dirty / has-commits) worktree is NOT an error. `Err` only on git failure.
+#[tauri::command(async)]
+fn worktree_remove_if_clean(
+    worktree_path: String,
+    base: String,
+) -> Result<git::WorktreeRemoval, String> {
+    git::worktree_remove_if_clean(&worktree_path, &base)
+}
+
+/// List the session worktrees under `<repo>/.worktrees/`, each as
+/// `{ path, branch, clean }`, for the management UI. Off-repo yields `[]`.
+#[tauri::command(async)]
+fn worktree_list(repo_path: String) -> Result<Vec<git::WorktreeInfo>, String> {
+    Ok(git::worktree_list(&repo_path))
+}
+
+/// Explicitly prune a worktree (and its branch), passing `--force` when `force`
+/// is true. Used by the management UI. `Err` on git failure.
+#[tauri::command(async)]
+fn worktree_remove(worktree_path: String, force: bool) -> Result<(), String> {
+    git::worktree_remove(&worktree_path, force)
+}
+
 /// Return the `pane_id -> [AgentEvent]` timeline for the caller's app panes, used
 /// to SEED the overview's event store on mount/resume. For each pane the events
 /// come from the in-memory ring (hot cache) first, then the durable per-session
@@ -865,6 +898,10 @@ pub fn run() {
             subagents_for,
             activity_for,
             git_status_for,
+            worktree_create,
+            worktree_remove_if_clean,
+            worktree_list,
+            worktree_remove,
             events_for,
             transcribe::voice_transcribe_final,
             transcribe::voice_transcribe_stream,

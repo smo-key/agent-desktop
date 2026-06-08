@@ -15,7 +15,9 @@
 
 use std::collections::HashMap;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
@@ -101,9 +103,426 @@ pub fn status_for_paths(paths: &[String]) -> HashMap<String, GitStatus> {
     map
 }
 
+// ───────────────────────── git worktrees ─────────────────────────
+//
+// Auto-worktree projects launch each agent session into an isolated git
+// worktree under `<repo>/.worktrees/<branch>`, branched off HEAD, so concurrent
+// sessions never clobber one another's working tree. A session's worktree is
+// pruned on close when it left nothing behind (clean tree, no commits past the
+// base it forked from); otherwise it's kept for the user to reconcile. The
+// management UI can list and explicitly prune accumulated worktrees.
+
+/// Result of creating a fresh session worktree. JS sees `path/branch/base`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeCreated {
+    /// Absolute path of the new worktree (`<repo>/.worktrees/<branch>`).
+    pub path: String,
+    /// The fresh `session/<ts>-<id>` branch the worktree is checked out on.
+    pub branch: String,
+    /// The base commit SHA (HEAD at creation) the branch forked from.
+    pub base: String,
+}
+
+/// Outcome of a clean-only worktree removal. JS sees `removed/reason`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeRemoval {
+    /// True when the worktree (and its branch) were removed.
+    pub removed: bool,
+    /// Short why-kept reason when `removed` is false (`"dirty"` / `"has commits"`).
+    pub reason: Option<String>,
+}
+
+/// One accumulated session worktree, for the management UI. JS sees
+/// `path/branch/clean`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeInfo {
+    pub path: String,
+    pub branch: Option<String>,
+    pub clean: bool,
+}
+
+/// Process-local counter, mixed into the branch name so rapid successive calls
+/// within the same second/nanosecond tick still get distinct branches.
+static WORKTREE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Generate a unique `session/<unix-seconds>-<seq><nanos-suffix>` branch name.
+fn unique_branch_name() -> String {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let seq = WORKTREE_SEQ.fetch_add(1, Ordering::Relaxed);
+    // seq guarantees process-local uniqueness; nanos disambiguates across runs.
+    format!("session/{}-{}{:09}", now.as_secs(), seq, now.subsec_nanos())
+}
+
+/// Ensure the repo-root `.gitignore` ignores `.worktrees`. Idempotent: appends a
+/// `.worktrees` line only if no line exactly equal to `.worktrees` (or
+/// `.worktrees/`) already exists; creates the file if missing.
+fn ensure_worktrees_ignored(repo_path: &str) -> Result<(), String> {
+    let gitignore = std::path::Path::new(repo_path).join(".gitignore");
+    let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+    let already = existing
+        .lines()
+        .any(|l| matches!(l.trim(), ".worktrees" | ".worktrees/"));
+    if already {
+        return Ok(());
+    }
+    // Preserve existing content; ensure we start on a fresh line.
+    let mut body = existing;
+    if !body.is_empty() && !body.ends_with('\n') {
+        body.push('\n');
+    }
+    body.push_str(".worktrees\n");
+    std::fs::write(&gitignore, body).map_err(|e| format!("writing .gitignore failed: {e}"))
+}
+
+/// Create a fresh session worktree off `repo_path`'s HEAD. Returns the worktree
+/// path, the new branch, and the base SHA. `Err` on any failure (not a repo, git
+/// error) — never panics.
+pub fn worktree_create(repo_path: &str) -> Result<WorktreeCreated, String> {
+    // Base SHA = HEAD. Also validates that this is a git repo with a commit.
+    let base = run_git(repo_path, &["rev-parse", "HEAD"])
+        .ok_or_else(|| format!("{repo_path} is not a git repo (or has no commits)"))?;
+
+    ensure_worktrees_ignored(repo_path)?;
+
+    let branch = unique_branch_name();
+    let wt_path = std::path::Path::new(repo_path)
+        .join(".worktrees")
+        .join(&branch);
+    let wt_str = wt_path.to_str().ok_or("worktree path is not valid UTF-8")?;
+
+    run_git(
+        repo_path,
+        &["worktree", "add", "-b", &branch, wt_str, "HEAD"],
+    )
+    .ok_or_else(|| format!("git worktree add failed for {wt_str}"))?;
+
+    // Return the CANONICAL path (matching what `git worktree list` reports), so
+    // callers can compare/round-trip it against the listing without symlink skew.
+    let path = std::fs::canonicalize(&wt_path)
+        .ok()
+        .and_then(|p| p.to_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| wt_str.to_string());
+
+    Ok(WorktreeCreated { path, branch, base })
+}
+
+/// Remove a session worktree only if it's "clean": its `status --porcelain` is
+/// empty AND it has zero commits past `base`. When clean, the worktree is removed
+/// and its branch deleted (`removed=true`). When not clean, it's left intact
+/// (`removed=false`, with a short reason). Only `Err`s on unexpected git failures.
+pub fn worktree_remove_if_clean(worktree_path: &str, base: &str) -> Result<WorktreeRemoval, String> {
+    // Resolve the branch and owning repo BEFORE removing, so we can delete the
+    // branch from the main repo afterwards (the worktree dir is gone by then).
+    let branch = run_git(worktree_path, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .ok_or_else(|| format!("{worktree_path} is not a git worktree"))?;
+    let main_repo = main_repo_dir(worktree_path);
+
+    let porcelain = run_git(worktree_path, &["status", "--porcelain"])
+        .ok_or_else(|| format!("git status failed in {worktree_path}"))?;
+    if !porcelain.is_empty() {
+        return Ok(WorktreeRemoval {
+            removed: false,
+            reason: Some("dirty".to_string()),
+        });
+    }
+
+    let count = run_git(
+        worktree_path,
+        &["rev-list", &format!("{base}..HEAD"), "--count"],
+    )
+    .ok_or_else(|| format!("git rev-list failed in {worktree_path}"))?;
+    if count.trim() != "0" {
+        return Ok(WorktreeRemoval {
+            removed: false,
+            reason: Some("has commits".to_string()),
+        });
+    }
+
+    // Clean: prune the worktree, then delete the now-unused branch from the main
+    // repo (the worktree dir no longer exists after removal).
+    remove_worktree(worktree_path, false)?;
+    if let Some(repo) = main_repo.as_deref() {
+        delete_branch(repo, &branch);
+    }
+    Ok(WorktreeRemoval {
+        removed: true,
+        reason: None,
+    })
+}
+
+/// Resolve the MAIN repository working dir that owns `worktree_path`, so a branch
+/// delete can run there AFTER the worktree dir is gone. Uses
+/// `git rev-parse --path-format=absolute --git-common-dir`, whose parent is the
+/// main worktree root. Falls back to `<repo>/.worktrees` parent inference when git
+/// can't answer. `None` only if neither works.
+fn main_repo_dir(worktree_path: &str) -> Option<String> {
+    if let Some(common) = run_git(
+        worktree_path,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    ) {
+        // `--git-common-dir` points at the main repo's `.git`; its parent is the
+        // main worktree root.
+        let p = std::path::Path::new(common.trim());
+        if let Some(parent) = p.parent() {
+            return parent.to_str().map(|s| s.to_string());
+        }
+    }
+    // Fallback: <repo>/.worktrees/<branch...> → climb to the dir holding
+    // `.worktrees`.
+    let path = std::path::Path::new(worktree_path);
+    for anc in path.ancestors() {
+        if anc.file_name().and_then(|n| n.to_str()) == Some(".worktrees") {
+            return anc.parent().and_then(|p| p.to_str()).map(|s| s.to_string());
+        }
+    }
+    None
+}
+
+/// List the session worktrees under `<repo>/.worktrees/`, with each one's branch
+/// and clean flag. Off-repo / git failure yields an empty list.
+pub fn worktree_list(repo_path: &str) -> Vec<WorktreeInfo> {
+    let Some(porcelain) = run_git(repo_path, &["worktree", "list", "--porcelain"]) else {
+        return Vec::new();
+    };
+    let raw_prefix = std::path::Path::new(repo_path).join(".worktrees");
+    // Git reports CANONICALIZED paths (e.g. /private/var on macOS) while the repo
+    // path the caller passed may be symlinked (/var). Canonicalize the prefix so
+    // the `starts_with` filter matches regardless; fall back to the raw prefix.
+    let prefix = std::fs::canonicalize(&raw_prefix).unwrap_or(raw_prefix);
+
+    let mut out = Vec::new();
+    let mut cur_path: Option<String> = None;
+    let mut cur_branch: Option<String> = None;
+
+    // The porcelain output is record-per-worktree, blank-line separated; a record
+    // starts with `worktree <abs-path>` and may carry a `branch refs/heads/<name>`.
+    let flush = |path: &mut Option<String>, branch: &mut Option<String>, out: &mut Vec<WorktreeInfo>| {
+        if let Some(p) = path.take() {
+            if std::path::Path::new(&p).starts_with(&prefix) {
+                let clean = run_git(&p, &["status", "--porcelain"])
+                    .map(|s| s.is_empty())
+                    .unwrap_or(false);
+                out.push(WorktreeInfo {
+                    path: p,
+                    branch: branch.clone(),
+                    clean,
+                });
+            }
+        }
+        *branch = None;
+    };
+
+    for line in porcelain.lines() {
+        if let Some(p) = line.strip_prefix("worktree ") {
+            // New record begins — flush the previous one.
+            flush(&mut cur_path, &mut cur_branch, &mut out);
+            cur_path = Some(p.trim().to_string());
+        } else if let Some(b) = line.strip_prefix("branch ") {
+            cur_branch = Some(b.trim().trim_start_matches("refs/heads/").to_string());
+        }
+    }
+    flush(&mut cur_path, &mut cur_branch, &mut out);
+    out
+}
+
+/// Explicitly remove a worktree (management UI prune). `force` passes `--force`
+/// to git (drops uncommitted changes). The worktree's branch is also deleted.
+pub fn worktree_remove(worktree_path: &str, force: bool) -> Result<(), String> {
+    // Resolve the branch and owning repo before removal so we can delete the
+    // branch from the main repo afterwards (the worktree dir is gone by then).
+    let branch = run_git(worktree_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    let main_repo = main_repo_dir(worktree_path);
+    remove_worktree(worktree_path, force)?;
+    if let (Some(b), Some(repo)) = (branch, main_repo.as_deref()) {
+        delete_branch(repo, &b);
+    }
+    Ok(())
+}
+
+/// Run `git worktree remove [--force] <path>`. Spawns from the worktree itself so
+/// git resolves the owning repo; the explicit path arg keeps the target
+/// unambiguous. `Err` on git failure.
+fn remove_worktree(worktree_path: &str, force: bool) -> Result<(), String> {
+    let mut args = vec!["worktree", "remove"];
+    if force {
+        args.push("--force");
+    }
+    args.push(worktree_path);
+    run_git(worktree_path, &args)
+        .or_else(|| {
+            // The worktree dir may already be gone (e.g. removed underneath us);
+            // fall back to a prune from the worktree's parent repo so the branch
+            // delete below still runs against a consistent state.
+            run_git(worktree_path, &["worktree", "prune"])
+        })
+        .map(|_| ())
+        .ok_or_else(|| format!("git worktree remove failed for {worktree_path}"))
+}
+
+/// Best-effort delete of a now-unused branch. Run from the worktree path (which,
+/// after `worktree remove`, resolves to the owning repo via git's discovery).
+/// Failure is swallowed: a leftover branch is harmless and must not fail close.
+fn delete_branch(dir: &str, branch: &str) {
+    let _ = run_git(dir, &["branch", "-D", branch]);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    /// A throwaway temp dir, removed on drop.
+    struct TempRepo(PathBuf);
+    impl TempRepo {
+        /// `git init` a fresh repo under the system temp dir with an identity and
+        /// one initial commit, so HEAD resolves.
+        fn new(tag: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let dir = std::env::temp_dir().join(format!("agentdesk-git-{tag}-{nanos}"));
+            fs::create_dir_all(&dir).unwrap();
+            let path = dir.to_str().unwrap();
+            run(path, &["init", "-q"]);
+            run(path, &["config", "user.email", "t@example.com"]);
+            run(path, &["config", "user.name", "Test"]);
+            // Keep default branch deterministic across git versions.
+            run(path, &["checkout", "-q", "-b", "main"]);
+            fs::write(dir.join("README.md"), "hello\n").unwrap();
+            run(path, &["add", "."]);
+            run(path, &["commit", "-q", "-m", "init"]);
+            TempRepo(dir)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+        fn str(&self) -> &str {
+            self.0.to_str().unwrap()
+        }
+    }
+    impl Drop for TempRepo {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Run a git command in `dir`, asserting success (test setup helper).
+    fn run(dir: &str, args: &[&str]) {
+        let out = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn launching_an_auto_worktree_project() {
+        let repo = TempRepo::new("create");
+        let info = worktree_create(repo.str()).expect("create should succeed");
+        // Path is under <repo>/.worktrees/ (canonicalize to absorb macOS's
+        // /var -> /private/var symlink, since the returned path is canonical).
+        let wt_dir = fs::canonicalize(repo.path()).unwrap().join(".worktrees");
+        assert!(
+            Path::new(&info.path).starts_with(&wt_dir),
+            "{} should be under {:?}",
+            info.path,
+            wt_dir
+        );
+        // Branch is a fresh session/... branch.
+        assert!(info.branch.starts_with("session/"), "branch was {}", info.branch);
+        // Base SHA is a 40-char-ish hex commit.
+        assert!(info.base.len() >= 7 && info.base.chars().all(|c| c.is_ascii_hexdigit()));
+        // The worktree directory exists on disk.
+        assert!(Path::new(&info.path).is_dir(), "worktree dir should exist");
+    }
+
+    #[test]
+    fn worktree_create_errors_on_non_git_dir() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("agentdesk-git-nonrepo-{nanos}"));
+        fs::create_dir_all(&dir).unwrap();
+        let res = worktree_create(dir.to_str().unwrap());
+        let _ = fs::remove_dir_all(&dir);
+        assert!(res.is_err(), "non-git dir should Err, got {:?}", res);
+    }
+
+    #[test]
+    fn first_worktree_updates_gitignore() {
+        let repo = TempRepo::new("gitignore");
+        worktree_create(repo.str()).unwrap();
+        let gi = repo.path().join(".gitignore");
+        let body = fs::read_to_string(&gi).expect(".gitignore should exist");
+        let count = body.lines().filter(|l| l.trim() == ".worktrees").count();
+        assert_eq!(count, 1, ".worktrees should appear exactly once: {:?}", body);
+        // A second create must NOT duplicate the ignore line.
+        worktree_create(repo.str()).unwrap();
+        let body2 = fs::read_to_string(&gi).unwrap();
+        let count2 = body2.lines().filter(|l| l.trim() == ".worktrees").count();
+        assert_eq!(count2, 1, "second create should not duplicate: {:?}", body2);
+    }
+
+    #[test]
+    fn concurrent_launches_get_distinct_worktrees() {
+        let repo = TempRepo::new("distinct");
+        let a = worktree_create(repo.str()).unwrap();
+        let b = worktree_create(repo.str()).unwrap();
+        assert_ne!(a.branch, b.branch, "branches must differ");
+        assert_ne!(a.path, b.path, "paths must differ");
+    }
+
+    #[test]
+    fn clean_worktree_is_removed_on_close() {
+        let repo = TempRepo::new("clean");
+        let info = worktree_create(repo.str()).unwrap();
+        let res = worktree_remove_if_clean(&info.path, &info.base).unwrap();
+        assert!(res.removed, "clean worktree should be removed: {:?}", res);
+        assert!(!Path::new(&info.path).is_dir(), "worktree dir should be gone");
+    }
+
+    #[test]
+    fn dirty_worktree_is_kept_on_close() {
+        let repo = TempRepo::new("dirty");
+        let info = worktree_create(repo.str()).unwrap();
+        // Make the worktree dirty with an uncommitted file.
+        fs::write(Path::new(&info.path).join("scratch.txt"), "wip\n").unwrap();
+        let res = worktree_remove_if_clean(&info.path, &info.base).unwrap();
+        assert!(!res.removed, "dirty worktree should be kept: {:?}", res);
+        assert!(Path::new(&info.path).is_dir(), "worktree dir should remain");
+    }
+
+    #[test]
+    fn listing_accumulated_worktrees() {
+        let repo = TempRepo::new("list");
+        let info = worktree_create(repo.str()).unwrap();
+        let list = worktree_list(repo.str());
+        let found = list
+            .iter()
+            .find(|w| w.path == info.path)
+            .expect("created worktree should be listed");
+        assert_eq!(found.branch.as_deref(), Some(info.branch.as_str()));
+        assert!(found.clean, "fresh worktree should be clean");
+    }
+
+    #[test]
+    fn pruning_a_worktree() {
+        let repo = TempRepo::new("prune");
+        let info = worktree_create(repo.str()).unwrap();
+        // Dirty it so a non-force remove would refuse; force should still prune.
+        fs::write(Path::new(&info.path).join("scratch.txt"), "wip\n").unwrap();
+        worktree_remove(&info.path, true).expect("force remove should succeed");
+        assert!(!Path::new(&info.path).is_dir(), "worktree dir should be gone");
+    }
 
     #[test]
     fn blank_or_off_repo_dir_is_all_null() {
