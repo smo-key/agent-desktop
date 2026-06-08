@@ -84,7 +84,7 @@
   aria-label="Status footer"
 >
   <div class="zone left">
-    <GitInfo git={folderGit} always />
+    <div class="left-git"><GitInfo git={folderGit} always /></div>
     <span class="sep" aria-hidden="true"></span>
     <LimitBars fiveHour={view.fiveHour} sevenDay={view.sevenDay} {now} />
   </div>
@@ -129,6 +129,17 @@
   .zone.left {
     padding-left: 14px;
     overflow: hidden;
+  }
+  /* The left zone is overflow-hidden with a fixed flex-basis in aligned mode, so a
+     long branch name must not push the (rigid) limit bars out of view: let the git
+     shrink and ellipsize first, and never shrink the bars. */
+  .left-git {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .zone.left :global(.limits) {
+    flex: none;
   }
   /* The divider between the agents (left) and terminal (right) zones. */
   .zone.right {
