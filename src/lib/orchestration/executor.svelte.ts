@@ -1,0 +1,485 @@
+// FRONTEND EXECUTOR for the orchestration toolkit (agent-orchestration-runtime,
+// tasks 4.1–4.6). The pane registry is FRONTEND-owned, so when a coordinator's
+// bundled MCP toolkit calls an op it round-trips Rust → the Tauri
+// `orchestration://request` event → THIS executor → the `orchestration_reply`
+// command → back over the socket. We perform the op against the existing
+// pane/launcher/activity stores and reply with a result or a structured error.
+//
+// ── ORCHESTRATOR-PROJECT SCOPING (critical; task 6.2 depends on this) ─────────
+// Every op is bounded to the orchestrator's `projectId`. The request payload is
+// `{ id, op, args }` and — by the existing Rust/adapter contract, which this task
+// must NOT change — `projectId` is NOT injected anywhere in transport. So the
+// executor reads the orchestrator's project from **`args.projectId`**. The
+// coordinator-launch task (6.2) MUST therefore supply the coordinator's own
+// `projectId` so it rides in every toolkit call's args (e.g. by stamping it into
+// the adapter env and having the adapter merge it into args, OR by the toolkit
+// tool schemas carrying it). When `args.projectId` is absent the executor cannot
+// safely scope the op and REJECTS it with a clear error rather than guessing —
+// the singleton executor may face several coordinators (one per project), so a
+// heuristic "the only project" fallback would be wrong. This keeps the contract
+// explicit and the executor correct under multiple coordinators.
+//
+// ── IDLE-GATING for message_agent (task 4.6) ─────────────────────────────────
+// Injecting input mid-turn garbles a session, so delivery is gated on the target
+// being ready: its effective status (event-sourced when available, PTY-byte
+// heuristic otherwise — mirroring the roster) must NOT be `working`. A busy
+// target is retried on a short bounded poll; if it never goes idle within the
+// window we return a structured `busy` error (Rust already serializes per-target
+// round-trips, so two injections to one pane never interleave).
+
+import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { workspace, type PaneSession } from '../layout/workspace.svelte';
+import { leavesInOrder } from '../layout/tree';
+import { getTerminal } from '../layout/terminals';
+import { getRuntime } from '../overview/runtime';
+import { deriveStatus, type AgentStatus } from '../overview/roster';
+import { events } from '../overview/events.svelte';
+import { activity } from '../overview/activity.svelte';
+import { projects } from '../projects/projects.svelte';
+import { projectForId } from '../projects/projects';
+import { specialists } from '../specialists/specialists.svelte';
+import { parseSpecialist } from '../specialists/specialists';
+import { specialistLaunchArgs } from './launchArgs';
+import { buildLaunchPlan } from '../launcher/plan';
+
+/** The Tauri event name the Rust control server emits each request on. */
+export const REQUEST_EVENT = 'orchestration://request';
+
+/** One inbound orchestration request (Rust payload: `{ id, op, args }`). */
+export interface OrchestrationRequest {
+  /** Rust-assigned request id; echoed back in the reply. */
+  id: number;
+  /** The toolkit op name (`spawn_agent`, `message_agent`, …). */
+  op: string;
+  /** Opaque op args (forwarded verbatim by the adapter + Rust). */
+  args: unknown;
+}
+
+/** A handler's outcome: a JSON result, or a structured error string. */
+type OpResult = { result: unknown } | { error: string };
+
+/**
+ * One agent pane as seen by the toolkit: its identity + current state. Returned by
+ * `list_agents` (array) and `inspect_agent` (single).
+ */
+export interface AgentInfo {
+  paneId: string;
+  /** Display-ish name: the workspace name, else the cwd's leaf, else the pane id. */
+  name: string;
+  cwd: string | null;
+  projectId: string | null;
+  /** Effective status (event-sourced, else PTY heuristic): working|waiting|finished|error|idle. */
+  status: AgentStatus;
+  /** Whether the pane is archived (closed). */
+  archived: boolean;
+  /** The specialist this pane was spawned as, or null. */
+  specialist: string | null;
+}
+
+/** A located pane: its workspace id + paneId + session, found across all workspaces. */
+interface LocatedPane {
+  workspaceId: string;
+  paneId: string;
+  session: PaneSession;
+}
+
+/**
+ * Injectable dependencies, so the dispatcher/handlers are unit-testable without a
+ * live workspace/PTY/Tauri. The singleton (`executor`) binds these to the real
+ * stores; tests pass fakes.
+ */
+export interface ExecutorDeps {
+  /** Reply to a request id with a result XOR an error (the `orchestration_reply` cmd). */
+  reply: (id: number, outcome: OpResult) => Promise<void> | void;
+  /** Locate a pane by id across all workspaces, or null when unknown. */
+  locate: (paneId: string) => LocatedPane | null;
+  /** Every `claude` pane in the given project (incl. user-started, excl. archived-only filter is per-caller). */
+  panesInProject: (projectId: string) => LocatedPane[];
+  /** The effective status for a pane (event-sourced, else PTY heuristic). */
+  statusOf: (paneId: string) => AgentStatus;
+  /** Recent activity text for a pane (summary + recent messages + question). */
+  readActivity: (paneId: string) => { summary: string | null; messages: string[]; question: string | null; contextPct: number | null };
+  /** Deliver text to a pane's live PTY; false when there's no live PTY. */
+  sendToPane: (paneId: string, text: string) => boolean;
+  /** Resolve a project's absolute folder path by id, or null. */
+  projectPath: (projectId: string) => string | null;
+  /** Load + parse a specialist by name within a project path; throws on failure. */
+  loadSpecialist: (projectPath: string, name: string) => Promise<import('../specialists/specialists').Specialist>;
+  /** Launch a new claude pane; returns the new pane id. */
+  launch: (plan: Parameters<typeof workspace.launch>[0]) => string;
+  /** Archive (close) / unarchive (restore) a pane. */
+  archive: (paneId: string) => void;
+  unarchive: (paneId: string) => void;
+  /** Schedule `run` after `ms` (setTimeout in prod; tests inject a controllable one). */
+  schedule: (run: () => void, ms: number) => void;
+}
+
+/** How long to keep retrying a busy `message_agent` target before erroring (ms). */
+export const BUSY_WAIT_MS = 8000;
+/** Poll interval while waiting for a busy target to go idle (ms). */
+export const BUSY_POLL_MS = 250;
+
+/**
+ * The orchestration executor. Construct with deps (or use the `executor`
+ * singleton), call `start()` to subscribe to `orchestration://request`, and
+ * `stop()` (via the returned unlisten) on teardown.
+ */
+export class OrchestrationExecutor {
+  private unlisten: UnlistenFn | null = null;
+
+  constructor(private readonly deps: ExecutorDeps) {}
+
+  /**
+   * Subscribe to `orchestration://request` and dispatch each request, replying
+   * with the outcome. Returns an unlisten fn (also stored for `stop()`). Outside
+   * Tauri (no backend) it logs once and returns a no-op.
+   */
+  async start(): Promise<UnlistenFn> {
+    try {
+      this.unlisten = await listen<OrchestrationRequest>(REQUEST_EVENT, (event) => {
+        void this.onRequest(event.payload);
+      });
+    } catch (err) {
+      console.warn('orchestration://request listen failed; executor inactive:', err);
+      this.unlisten = () => {};
+    }
+    return this.unlisten;
+  }
+
+  /** Stop listening (idempotent). */
+  stop(): void {
+    this.unlisten?.();
+    this.unlisten = null;
+  }
+
+  /**
+   * Handle ONE request: dispatch to the op handler, then reply. A thrown handler
+   * error becomes a structured `{ error }` reply rather than crashing the listener.
+   */
+  async onRequest(req: OrchestrationRequest): Promise<void> {
+    if (!req || typeof req.id !== 'number' || typeof req.op !== 'string') return;
+    let outcome: OpResult;
+    try {
+      outcome = await this.dispatch(req.op, asObject(req.args));
+    } catch (err) {
+      outcome = { error: err instanceof Error ? err.message : String(err) };
+    }
+    await this.deps.reply(req.id, outcome);
+  }
+
+  /** Route an op name to its handler. Unknown ops return a structured error. */
+  private dispatch(op: string, args: Record<string, unknown>): Promise<OpResult> | OpResult {
+    switch (op) {
+      case 'spawn_agent':
+        return this.spawnAgent(args);
+      case 'message_agent':
+        return this.messageAgent(args);
+      case 'read_agent':
+        return this.readAgent(args);
+      case 'list_agents':
+        return this.listAgents(args);
+      case 'inspect_agent':
+        return this.inspectAgent(args);
+      case 'archive_agent':
+        return this.archiveAgent(args);
+      case 'unarchive_agent':
+        return this.unarchiveAgent(args);
+      default:
+        return { error: `unknown op: ${op}` };
+    }
+  }
+
+  // ── Scoping helpers (task 4.6) ─────────────────────────────────────────────
+
+  /** The orchestrator's projectId from args, or null when absent/blank. */
+  private orchestratorProject(args: Record<string, unknown>): string | null {
+    const id = args.projectId;
+    return typeof id === 'string' && id.trim() !== '' ? id : null;
+  }
+
+  /**
+   * Resolve a TARGET pane for an op, enforcing scope + safety: the pane must
+   * exist, not be archived/closed, and belong to the orchestrator's project.
+   * Returns the located pane, or a structured-error result to reply with.
+   */
+  private resolveTarget(
+    args: Record<string, unknown>
+  ): { pane: LocatedPane } | { error: string } {
+    const projectId = this.orchestratorProject(args);
+    if (!projectId) return { error: 'missing orchestrator projectId in args (scope required)' };
+    const paneId = typeof args.paneId === 'string' ? args.paneId : '';
+    if (!paneId) return { error: 'missing paneId' };
+    const pane = this.deps.locate(paneId);
+    if (!pane) return { error: `no such agent pane: ${paneId}` };
+    if (pane.session.program !== 'claude') return { error: `not an agent pane: ${paneId}` };
+    if (pane.session.closed === true) return { error: `agent pane is closed: ${paneId}` };
+    if ((pane.session.projectId ?? null) !== projectId) {
+      return { error: `agent pane is outside the orchestrator's project: ${paneId}` };
+    }
+    return { pane };
+  }
+
+  // ── Op handlers ────────────────────────────────────────────────────────────
+
+  /**
+   * `spawn_agent({ prompt, specialist?, cwd?, projectId })`: launch a new claude
+   * pane in the orchestrator's project with `prompt` as initial input. With a
+   * specialist, compose the launch from `.claude/agents/<specialist>.md` (system
+   * prompt + model + tools) and record the specialist on the pane. Returns the new
+   * pane's id.
+   */
+  private async spawnAgent(args: Record<string, unknown>): Promise<OpResult> {
+    const projectId = this.orchestratorProject(args);
+    if (!projectId) return { error: 'missing orchestrator projectId in args (scope required)' };
+    const projPath = this.deps.projectPath(projectId);
+    if (!projPath) return { error: `unknown project: ${projectId}` };
+
+    const prompt = typeof args.prompt === 'string' ? args.prompt : '';
+    const cwdArg = typeof args.cwd === 'string' && args.cwd.trim() !== '' ? args.cwd : projPath;
+    const specialistName =
+      typeof args.specialist === 'string' && args.specialist.trim() !== ''
+        ? args.specialist.trim()
+        : undefined;
+
+    let extraArgs: string[] | undefined;
+    if (specialistName) {
+      let spec: import('../specialists/specialists').Specialist;
+      try {
+        spec = await this.deps.loadSpecialist(projPath, specialistName);
+      } catch (err) {
+        return {
+          error: `could not load specialist "${specialistName}": ${err instanceof Error ? err.message : String(err)}`
+        };
+      }
+      extraArgs = specialistLaunchArgs(spec);
+    }
+
+    const plan = buildLaunchPlan({ folder: cwdArg, prompt, placement: 'tab', projectId });
+    const paneId = this.deps.launch({ ...plan, specialist: specialistName, extraArgs });
+    if (!paneId) return { error: 'failed to launch agent' };
+    return { result: { paneId, specialist: specialistName ?? null } };
+  }
+
+  /**
+   * `message_agent({ paneId, text, projectId })`: deliver `text` to the target
+   * pane's PTY, gated on the target being idle (task 4.6). A busy target is
+   * retried on a bounded poll; persistent busyness returns a `busy` error.
+   */
+  private messageAgent(args: Record<string, unknown>): Promise<OpResult> {
+    const resolved = this.resolveTarget(args);
+    if ('error' in resolved) return Promise.resolve(resolved);
+    const paneId = resolved.pane.paneId;
+    const text = typeof args.text === 'string' ? args.text : '';
+
+    return new Promise<OpResult>((resolve) => {
+      const deadline = Date.now() + BUSY_WAIT_MS;
+      const attempt = () => {
+        // Re-check existence each attempt — the pane could close while we wait.
+        const still = this.deps.locate(paneId);
+        if (!still || still.session.closed === true) {
+          resolve({ error: `agent pane is no longer available: ${paneId}` });
+          return;
+        }
+        if (this.deps.statusOf(paneId) === 'working') {
+          if (Date.now() >= deadline) {
+            resolve({ error: `agent is busy (mid-turn); message not delivered: ${paneId}` });
+            return;
+          }
+          this.deps.schedule(attempt, BUSY_POLL_MS);
+          return;
+        }
+        const ok = this.deps.sendToPane(paneId, text);
+        resolve(ok ? { result: { delivered: true } } : { error: `no live session for agent: ${paneId}` });
+      };
+      attempt();
+    });
+  }
+
+  /** `read_agent({ paneId, projectId })`: return the agent's recent output/activity. */
+  private readAgent(args: Record<string, unknown>): OpResult {
+    const resolved = this.resolveTarget(args);
+    if ('error' in resolved) return resolved;
+    const paneId = resolved.pane.paneId;
+    const act = this.deps.readActivity(paneId);
+    return {
+      result: {
+        paneId,
+        status: this.deps.statusOf(paneId),
+        summary: act.summary,
+        messages: act.messages,
+        question: act.question,
+        contextPct: act.contextPct
+      }
+    };
+  }
+
+  /** `list_agents({ projectId })`: every claude pane in the project (incl. user-started). */
+  private listAgents(args: Record<string, unknown>): OpResult {
+    const projectId = this.orchestratorProject(args);
+    if (!projectId) return { error: 'missing orchestrator projectId in args (scope required)' };
+    const agents = this.deps.panesInProject(projectId).map((p) => this.infoFor(p));
+    return { result: { agents } };
+  }
+
+  /** `inspect_agent({ paneId, projectId })`: a single agent's identity + state. */
+  private inspectAgent(args: Record<string, unknown>): OpResult {
+    const resolved = this.resolveTarget(args);
+    if ('error' in resolved) return resolved;
+    return { result: this.infoFor(resolved.pane) };
+  }
+
+  /** `archive_agent({ paneId, projectId })`: archive the pane (existing close path). */
+  private archiveAgent(args: Record<string, unknown>): OpResult {
+    const resolved = this.resolveTarget(args);
+    if ('error' in resolved) return resolved;
+    this.deps.archive(resolved.pane.paneId);
+    return { result: { archived: true } };
+  }
+
+  /**
+   * `unarchive_agent({ paneId, projectId })`: restore an archived pane. Unlike the
+   * other ops the target IS expected to be closed, so we scope/exist-check by hand
+   * here (resolveTarget rejects closed panes).
+   */
+  private unarchiveAgent(args: Record<string, unknown>): OpResult {
+    const projectId = this.orchestratorProject(args);
+    if (!projectId) return { error: 'missing orchestrator projectId in args (scope required)' };
+    const paneId = typeof args.paneId === 'string' ? args.paneId : '';
+    if (!paneId) return { error: 'missing paneId' };
+    const pane = this.deps.locate(paneId);
+    if (!pane) return { error: `no such agent pane: ${paneId}` };
+    if (pane.session.program !== 'claude') return { error: `not an agent pane: ${paneId}` };
+    if ((pane.session.projectId ?? null) !== projectId) {
+      return { error: `agent pane is outside the orchestrator's project: ${paneId}` };
+    }
+    this.deps.unarchive(paneId);
+    return { result: { unarchived: true } };
+  }
+
+  /** Build the `AgentInfo` for a located pane. */
+  private infoFor(pane: LocatedPane): AgentInfo {
+    return {
+      paneId: pane.paneId,
+      name: nameFor(pane),
+      cwd: pane.session.cwd,
+      projectId: pane.session.projectId ?? null,
+      status: this.deps.statusOf(pane.paneId),
+      archived: pane.session.closed === true,
+      specialist: pane.session.specialist ?? null
+    };
+  }
+}
+
+/** Coerce an unknown args value into a plain object (null/non-object → {}). */
+function asObject(v: unknown): Record<string, unknown> {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+}
+
+/** Display name for a located pane: workspace name, else cwd leaf, else paneId. */
+function nameFor(pane: LocatedPane): string {
+  const entry = workspace.workspaces.find((w) => w.id === pane.workspaceId);
+  const wsName = entry?.name?.trim();
+  if (wsName) return wsName;
+  const cwd = pane.session.cwd;
+  if (cwd) {
+    const leaf = cwd.replace(/[/\\]+$/, '').split(/[/\\]/).pop();
+    if (leaf) return leaf;
+  }
+  return pane.paneId;
+}
+
+// ── Real-store dependency bindings ───────────────────────────────────────────
+
+/** Locate a pane by id across all live workspaces. */
+function locateReal(paneId: string): LocatedPane | null {
+  for (const entry of workspace.workspaces) {
+    const session = entry.registry[paneId];
+    if (!session) continue;
+    if (leavesInOrder(entry.ws.root).some((l) => l.paneId === paneId)) {
+      return { workspaceId: entry.id, paneId, session };
+    }
+  }
+  return null;
+}
+
+/** Every `claude` pane in `projectId` across all workspaces (incl. archived + user-started). */
+function panesInProjectReal(projectId: string): LocatedPane[] {
+  const out: LocatedPane[] = [];
+  for (const entry of workspace.workspaces) {
+    for (const leaf of leavesInOrder(entry.ws.root)) {
+      const session = entry.registry[leaf.paneId];
+      if (!session || session.program !== 'claude') continue;
+      if ((session.projectId ?? null) !== projectId) continue;
+      out.push({ workspaceId: entry.id, paneId: leaf.paneId, session });
+    }
+  }
+  return out;
+}
+
+/** Effective status: event-sourced when available, PTY heuristic otherwise (mirrors roster). */
+function statusOfReal(paneId: string): AgentStatus {
+  const session = locateReal(paneId)?.session;
+  if (session?.closed === true) return 'finished';
+  const runtime = getRuntime(paneId);
+  const ptyStatus = deriveStatus(runtime, Date.now());
+  if (runtime?.exited) return ptyStatus;
+  return events.activityFor(paneId).status ?? ptyStatus;
+}
+
+/** Read recent activity (summary + recent messages + pending question) for a pane. */
+function readActivityReal(paneId: string) {
+  const a = activity.forPane(paneId);
+  return {
+    summary: a.summary ?? null,
+    messages: Array.isArray(a.messages) ? a.messages : [],
+    question: a.question ?? null,
+    contextPct: typeof a.contextPct === 'number' ? a.contextPct : null
+  };
+}
+
+/** Resolve a project's folder path by id. */
+function projectPathReal(projectId: string): string | null {
+  return projectForId(projects.list, projectId)?.path ?? null;
+}
+
+/** Load + parse a specialist `.md` by name within a project path. */
+async function loadSpecialistReal(projectPath: string, name: string) {
+  const raw = await invoke<string>('specialists_read', { projectPath, name });
+  return parseSpecialist(raw);
+}
+
+/** The default deps, bound to the real stores + Tauri commands. */
+function realDeps(): ExecutorDeps {
+  return {
+    reply: (id, outcome) => {
+      void invoke('orchestration_reply', {
+        id,
+        result: 'result' in outcome ? outcome.result : undefined,
+        error: 'error' in outcome ? outcome.error : undefined
+      }).catch((e) => console.warn('orchestration_reply failed:', e));
+    },
+    locate: locateReal,
+    panesInProject: panesInProjectReal,
+    statusOf: statusOfReal,
+    readActivity: readActivityReal,
+    sendToPane: (paneId, text) => getTerminal(paneId)?.send(text) ?? false,
+    projectPath: projectPathReal,
+    loadSpecialist: loadSpecialistReal,
+    launch: (plan) => workspace.launch(plan),
+    archive: (paneId) => workspace.closeAgent(paneId),
+    unarchive: (paneId) => workspace.restoreAgent(paneId),
+    schedule: (run, ms) => {
+      setTimeout(run, ms);
+    }
+  };
+}
+
+// Note `specialists` is imported only so the real-deps wiring shares the same
+// store family as the panel; the executor reads specialists via `specialists_read`
+// directly (the active-project store may be loaded for a DIFFERENT project than the
+// orchestrator's, so we never rely on its in-memory list for scoping).
+void specialists;
+
+/** The singleton executor, wired to the real stores. The app starts/stops it. */
+export const executor = new OrchestrationExecutor(realDeps());

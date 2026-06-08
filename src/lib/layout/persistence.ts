@@ -90,6 +90,18 @@ export interface PersistedSession {
   /** The user-message hash captured when the preview began (runtime-only, not
    *  serialized). The inbox unarchives the session when the live hash differs. */
   previewHash?: string | null;
+  /**
+   * OPTIONAL specialist name this pane was spawned AS (orchestration `spawn_agent`).
+   * Persisted so the roster attribution survives a restart. Absent for non-specialist
+   * panes.
+   */
+  specialist?: string;
+  /**
+   * OPTIONAL extra `claude` CLI args (specialist persona/model/tool flags). Persisted
+   * so a resumed specialist pane re-applies its persona on restart. Absent for panes
+   * spawned without a specialist.
+   */
+  extraArgs?: string[];
 }
 
 /** One serialized workspace: identity + name + its pane tree + its registry. */
@@ -192,6 +204,12 @@ function projectRegistry(
       // never paused, so this branch is skipped for it.
       ...(src?.paused && !src?.preview
         ? { paused: true, pausedHash: src.pausedHash ?? null }
+        : {}),
+      // Persist the specialist attribution + its composed CLI args so a resumed
+      // specialist pane keeps both its roster badge and its persona across a restart.
+      ...(src?.specialist ? { specialist: src.specialist } : {}),
+      ...(Array.isArray(src?.extraArgs) && src.extraArgs.length > 0
+        ? { extraArgs: src.extraArgs }
         : {})
     };
   }
@@ -307,7 +325,17 @@ function sanitizeRegistry(
         ...(sessionId ? { sessionId } : {}),
         ...(resume ? { resume: true } : {}),
         ...(closed ? { closed: true } : {}),
-        ...(paused ? { paused: true, pausedHash } : {})
+        ...(paused ? { paused: true, pausedHash } : {}),
+        // Restore the specialist attribution + its composed CLI args (a resumed
+        // specialist pane re-applies its persona via the `args` prop on respawn).
+        ...(typeof raw.specialist === 'string' && raw.specialist
+          ? { specialist: raw.specialist }
+          : {}),
+        ...(Array.isArray(raw.extraArgs) &&
+        raw.extraArgs.every((a) => typeof a === 'string') &&
+        raw.extraArgs.length > 0
+          ? { extraArgs: raw.extraArgs as string[] }
+          : {})
       };
     } else {
       out[leafNode.paneId] = { program: '/bin/zsh', cwd: null };

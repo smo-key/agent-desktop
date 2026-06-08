@@ -132,6 +132,7 @@
         <TerminalPane
           paneId={node.paneId}
           program={session?.program ?? '/bin/zsh'}
+          args={session?.extraArgs ?? []}
           cwd={session?.cwd ?? null}
           initialInput={session?.initialInput}
           sessionId={session?.sessionId}

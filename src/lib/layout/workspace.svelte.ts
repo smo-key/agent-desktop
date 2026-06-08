@@ -117,6 +117,22 @@ export interface PaneSession {
   /** The user-message hash captured when the preview began; the inbox unarchives the
    *  session once the live hash differs (a new message was sent). */
   previewHash?: string | null;
+  /**
+   * OPTIONAL name of the SPECIALIST (`.claude/agents/<name>.md`) this pane was
+   * spawned AS by the orchestration toolkit (`spawn_agent({ specialist })`).
+   * Recorded so the roster can badge/attribute the agent (badging is task 5.4 —
+   * this only RECORDS it). PERSISTED so the attribution survives a restart. Absent
+   * for panes not spawned as a specialist (user-started sessions, plain spawns).
+   */
+  specialist?: string;
+  /**
+   * OPTIONAL extra `claude` CLI args composed for this pane at launch — the
+   * specialist persona/model/tool flags from {@link specialistLaunchArgs}. Passed
+   * to `TerminalPane` as its `args` prop (PREPENDED before the spawn override's
+   * own `--session-id` / `--settings`). PERSISTED so a resumed specialist pane
+   * keeps its persona across a restart. Absent for panes spawned without a specialist.
+   */
+  extraArgs?: string[];
 }
 
 /** A fresh Claude session id for a `claude` pane (so the app owns it and can find
@@ -189,7 +205,9 @@ function makeEntry(
   initialInput?: string,
   projectId?: string,
   worktreePath?: string,
-  worktreeBase?: string
+  worktreeBase?: string,
+  specialist?: string,
+  extraArgs?: string[]
 ): WorkspaceEntry {
   return {
     id: nextWorkspaceId(),
@@ -203,6 +221,8 @@ function makeEntry(
         projectId,
         worktreePath,
         worktreeBase,
+        specialist,
+        extraArgs,
         sessionId: claudeSessionId(program)
       }
     }
@@ -323,7 +343,9 @@ export class WorkspaceStore {
     initialInput?: string,
     projectId?: string,
     worktreePath?: string,
-    worktreeBase?: string
+    worktreeBase?: string,
+    specialist?: string,
+    extraArgs?: string[]
   ): string {
     const name = this.nextSessionName();
     const entry = makeEntry(
@@ -334,7 +356,9 @@ export class WorkspaceStore {
       initialInput,
       projectId,
       worktreePath,
-      worktreeBase
+      worktreeBase,
+      specialist,
+      extraArgs
     );
     this.workspaces = [...this.workspaces, entry];
     this.activeWorkspaceId = entry.id;
@@ -401,7 +425,9 @@ export class WorkspaceStore {
     initialInput?: string,
     projectId?: string,
     worktreePath?: string,
-    worktreeBase?: string
+    worktreeBase?: string,
+    specialist?: string,
+    extraArgs?: string[]
   ): string {
     const entry = this.requireActive();
     const id = nextPaneId();
@@ -414,6 +440,8 @@ export class WorkspaceStore {
         projectId,
         worktreePath,
         worktreeBase,
+        specialist,
+        extraArgs,
         sessionId: claudeSessionId(program)
       }
     };
@@ -467,7 +495,9 @@ export class WorkspaceStore {
     where: SplitWhere = 'after',
     projectId?: string,
     worktreePath?: string,
-    worktreeBase?: string
+    worktreeBase?: string,
+    specialist?: string,
+    extraArgs?: string[]
   ): string | null {
     const entry = this.active;
     if (!entry) return null;
@@ -478,7 +508,9 @@ export class WorkspaceStore {
       initialInput,
       projectId,
       worktreePath,
-      worktreeBase
+      worktreeBase,
+      specialist,
+      extraArgs
     );
 
     const root = splitLeaf(
@@ -522,15 +554,29 @@ export class WorkspaceStore {
     projectId?: string;
     worktreePath?: string;
     worktreeBase?: string;
+    /** OPTIONAL specialist name this pane is spawned AS (orchestration spawn_agent). */
+    specialist?: string;
+    /** OPTIONAL extra claude CLI args (specialist persona/model/tool flags). */
+    extraArgs?: string[];
   }): string {
-    const { program, cwd, initialInput, projectId, worktreePath, worktreeBase } = plan;
+    const { program, cwd, initialInput, projectId, worktreePath, worktreeBase, specialist, extraArgs } =
+      plan;
     // A split needs a focused leaf in the active workspace; otherwise open a tab.
     const canSplit = this.focusedPaneId !== null;
     const placement =
       plan.placement !== 'tab' && !canSplit ? 'tab' : plan.placement;
 
     if (placement === 'tab') {
-      this.newWorkspace(program, cwd, initialInput, projectId, worktreePath, worktreeBase);
+      this.newWorkspace(
+        program,
+        cwd,
+        initialInput,
+        projectId,
+        worktreePath,
+        worktreeBase,
+        specialist,
+        extraArgs
+      );
       const id = this.focusedPaneId ?? '';
       this.lastLaunchedId = id || null;
       return id;
@@ -545,7 +591,9 @@ export class WorkspaceStore {
       'after',
       projectId,
       worktreePath,
-      worktreeBase
+      worktreeBase,
+      specialist,
+      extraArgs
     );
     this.lastLaunchedId = newPaneId ?? null;
     return newPaneId ?? '';

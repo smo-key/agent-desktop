@@ -48,6 +48,7 @@
   import { focusTerminal, scrollTerminalToBottom } from '$lib/layout/terminals';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { events } from '$lib/overview/events.svelte';
+  import { executor } from '$lib/orchestration/executor.svelte';
   import { titles } from '$lib/overview/titles.svelte';
   import { triggersTranscriptRead, SAFETY_POLL_MS } from '$lib/overview/poll';
   import { appSessionRefs } from '$lib/overview/sessionRefs';
@@ -159,6 +160,15 @@
       unlistenEvents = unlisten;
     });
 
+    // Start the ORCHESTRATION EXECUTOR: subscribe to `orchestration://request`
+    // (the Rust control socket round-trips a coordinator's toolkit ops here) and
+    // perform each op against the pane/launcher/activity stores, replying via the
+    // `orchestration_reply` command. Mirrors the other listeners' lifecycle.
+    let unlistenExecutor: (() => void) | undefined;
+    void executor.start().then((unlisten) => {
+      unlistenExecutor = unlisten;
+    });
+
     // Listen for the native right-Command tap gesture (`voice://activate`
     // from the Rust NSEvent monitor) and open the voice panel. The footer mic
     // button is the fallback if the monitor never installs/fires.
@@ -172,6 +182,7 @@
       unlistenSnapshots?.();
       unlistenSubagents?.();
       unlistenEvents?.();
+      unlistenExecutor?.();
       unlistenTermClose?.();
       unlistenVoice?.();
       events.onEvent = undefined;
