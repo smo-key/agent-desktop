@@ -1,6 +1,0 @@
-{
-  "provider": "local",
-  "taskRef": "add-whisper-server-partials",
-  "url": "",
-  "lastEvent": "review"
-}
