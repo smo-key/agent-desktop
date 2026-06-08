@@ -15,6 +15,7 @@
     READY_QUIET_MS,
     READY_MAX_MS
   } from './launcher/initialInput';
+  import { LaunchSpinner, spinnerLabel } from './launcher/spinner';
   import { noteOutput, noteExit, clearRuntime } from './overview/runtime';
 
   // PtyEvent — the exact wire shape the Rust backend streams over the per-pane
@@ -169,6 +170,17 @@
   let ptyId: number | undefined;
   // Reactive: surfaced on the host as `data-exited` for styling/tests.
   let exited = $state(false);
+
+  // Launch spinner: while an agent pane is spinning up (or resuming) we overlay a
+  // centered spinner + label so the user never sees a blank pane or a
+  // half-rendered TUI. `spinner` (the LaunchSpinner model) owns the readiness
+  // rules; `loading` mirrors `spinner.loading` into reactive state at the
+  // output/inject/exit sites that already drive this component. Both are
+  // initialized in onMount from the LAUNCH-TIME props (like `initialInputSender`),
+  // so the spinner is a spawn-time concern that never re-derives on a prop change.
+  let spinner: LaunchSpinner | undefined;
+  let loading = $state(false);
+  let loadingLabel = $state('Starting…');
   // True once `term.open()` has run, so the WebGL effect knows the renderer is
   // attachable. Plain local (not state): only read inside async/effect bodies.
   let opened = false;
@@ -394,6 +406,15 @@
     // spawn-time value; later prop changes must not re-send it).
     initialInputSender = new InitialInputSender(initialInput);
 
+    // Arm the launch spinner from the same launch-time values: agent panes
+    // (claude) show it; a prompt-bearing pane holds it until the prompt lands.
+    spinner = new LaunchSpinner({
+      isAgent: program === 'claude',
+      hasPrompt: initialInputSender.hasPrompt
+    });
+    loading = spinner.loading;
+    loadingLabel = spinnerLabel(resume);
+
     // Initial-prompt delivery waits for claude's startup output to go QUIET — the
     // TUI emits a burst of setup/render output on launch and is NOT yet accepting
     // input during it; writing then left the text garbled and the Enter swallowed
@@ -422,6 +443,10 @@
         },
         (run) => setTimeout(run, SUBMIT_DELAY_MS)
       );
+      // The prompt is being injected (or the readiness cap fired) — drop the
+      // launch spinner now that the agent's starting text has landed.
+      spinner?.onInjected();
+      loading = spinner?.loading ?? false;
     };
 
     // (Re)start the quiet window; start the hard cap once. Called when the PTY is
@@ -488,6 +513,11 @@
           noteOutput(paneId, Date.now());
           // Defer initial-prompt delivery until output settles (TUI ready).
           armInitial();
+          // First output means the TUI is rendering — clear the launch spinner
+          // for a promptless/resumed pane (a prompt-bearing pane stays covered
+          // until the prompt is injected; see deliverInitial).
+          spinner?.onOutput();
+          loading = spinner?.loading ?? false;
         } else {
           exited = true;
           // Record the exit for the overview status (finished vs errored, by code).
@@ -497,6 +527,9 @@
           // PTY that no longer exists, and `send` reports false rather than a
           // false success.
           ptyId = undefined;
+          // A child that exits before becoming ready must not spin forever.
+          spinner?.onExit();
+          loading = spinner?.loading ?? false;
           note(`[process exited${msg.code !== 0 ? ` (code ${msg.code})` : ''}]`);
           // Surface the exit to an interested parent (Terminals panel) so the slot
           // flips to stopped + records the code. Agent panes pass no callback.
@@ -725,11 +758,20 @@
   });
 </script>
 
-<div class="pane" data-pane-id={paneId} data-exited={exited}>
+<div class="pane" data-pane-id={paneId} data-exited={exited} data-loading={loading}>
   <div class="host" bind:this={host}>
     <!-- ⌘-hover file-link underline overlay; positioned + shown imperatively. -->
     <div class="file-link-underline" bind:this={underlineEl}></div>
   </div>
+  {#if loading}
+    <!-- Launch spinner: covers the pane while an agent spins up/resumes, so the
+         half-rendered TUI never flashes. Cleared when the agent is ready (see
+         LaunchSpinner). pointer-events:none so it never traps a click. -->
+    <div class="loading" role="status" aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <div class="loading-label">{loadingLabel}</div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -746,6 +788,56 @@
     inset: 0;
     /* small breathing room around the grid; xterm fills the rest */
     padding: 4px 6px;
+  }
+
+  /* Launch spinner overlay: an opaque cover (matching the terminal background)
+     so the half-rendered TUI never shows through while the agent spins up or
+     resumes. pointer-events:none — purely visual, never intercepts a click. */
+  .loading {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: #0d1117;
+    pointer-events: none;
+  }
+
+  .spinner {
+    width: 22px;
+    height: 22px;
+    border: 2px solid #30363d;
+    border-top-color: #58a6ff;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+
+  .loading-label {
+    color: #8b949e;
+    font:
+      13px/1.2 ui-monospace,
+      SFMono-Regular,
+      'SF Mono',
+      Menlo,
+      Consolas,
+      monospace;
+    letter-spacing: 0.02em;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* Respect reduced-motion: drop the rotation, keep the labeled indicator. */
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation: none;
+    }
   }
 
   /* xterm draws its own viewport; keep its internal scrollbar subtle */
