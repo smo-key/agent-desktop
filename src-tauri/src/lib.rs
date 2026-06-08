@@ -757,6 +757,13 @@ fn start_usage_bootstrap(app: &AppHandle) {
             return;
         }
     };
+    // Remove any stale bootstrap snapshot from a PRIOR launch before the frontend
+    // seeds from disk, so a cold start never briefly shows an expired rate-limit
+    // window (its `resets_at` already elapsed). The fresh probe re-creates this
+    // file within the TTL; until then the dashboard shows its normal empty state.
+    let stale = Path::new(&paths.snapshot_dir).join(format!("{USAGE_BOOTSTRAP_PANE}.json"));
+    let _ = fs::remove_file(&stale);
+
     let manager = app.state::<Arc<PtyManager>>().inner().clone();
     let cfg = usage_bootstrap_config(&paths);
     // Discard sink: returning Ok keeps the read loop alive (we don't render the
@@ -771,15 +778,22 @@ fn start_usage_bootstrap(app: &AppHandle) {
     // Kill the probe after the TTL on a throwaway thread (kill is idempotent, so
     // a child that already exited is a no-op). Killing also drops the pane from
     // the registry, so it is not double-killed by `kill_all` on quit.
-    std::thread::Builder::new()
+    let timer_manager = manager.clone();
+    let armed = std::thread::Builder::new()
         .name("usage-bootstrap-timer".into())
         .spawn(move || {
             std::thread::sleep(USAGE_BOOTSTRAP_TTL);
-            if let Err(e) = manager.kill(pane) {
+            if let Err(e) = timer_manager.kill(pane) {
                 log::warn!("usage bootstrap: kill failed: {e}");
             }
-        })
-        .ok();
+        });
+    if let Err(e) = armed {
+        // The TTL timer could not be armed. Rather than leak a hidden `claude`
+        // session (an interactive TUI never exits on its own) for the whole app
+        // lifetime, kill the probe now — it just won't populate limits this launch.
+        log::warn!("usage bootstrap: timer thread spawn failed: {e}; killing probe now");
+        let _ = manager.kill(pane);
+    }
 }
 
 /// The shared set of sessions the subagents watcher recomputes for, held in
@@ -1369,6 +1383,31 @@ mod tests {
         assert!(
             !cfg.env.iter().any(|(k, _)| k == "AGENT_DESKTOP_SOCKET_PATH"),
             "no socket env without hooks"
+        );
+    }
+
+    /// Spec scenario: the hidden bootstrap session must be invisible to the
+    /// overview — it is launched WITHOUT the event-hook lifecycle wiring (no
+    /// `hooks` in `--settings`, no `AGENT_DESKTOP_SOCKET_PATH` env), so it
+    /// produces no event-timeline entries or subagents.
+    #[test]
+    fn bootstrap_session_excluded_from_the_overview() {
+        let paths = UsagePaths {
+            wrapper_path: "/bin/statusline-wrapper.js".into(),
+            snapshot_dir: "/snapshots".into(),
+            event_hook_path: "/bin/event-hook.js".into(),
+            socket_path: "/events.sock".into(),
+        };
+        let cfg = usage_bootstrap_config(&paths);
+        let idx = cfg.args.iter().position(|a| a == "--settings").unwrap();
+        let settings: serde_json::Value = serde_json::from_str(&cfg.args[idx + 1]).unwrap();
+        assert!(
+            settings.get("hooks").is_none(),
+            "bootstrap must not wire event hooks"
+        );
+        assert!(
+            !cfg.env.iter().any(|(k, _)| k == "AGENT_DESKTOP_SOCKET_PATH"),
+            "bootstrap must not carry the event socket env"
         );
     }
 }

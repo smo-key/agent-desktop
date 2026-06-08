@@ -174,7 +174,19 @@ const MANUAL_SCENARIOS = {
   // (the headless test asserts only "delegation never crashes + snapshot still
   // written"); the notify watcher firing end-to-end against a live claude pane;
   // and the rendered two-row dashboard visual itself.
-  'usage-dashboard': new Set(),
+  //
+  // Startup usage-bootstrap session: the pure config builder (statusline wiring +
+  // shell-quoting + snapshot env + NO event-hook wiring) is unit-tested in lib.rs
+  // (usage_bootstrap_config_wires_statusline_and_snapshot_env +
+  // bootstrap_session_excluded_from_the_overview). The remaining three scenarios
+  // are inherently live: they need a real `claude` binary spawning under a PTY, a
+  // 30s wall-clock TTL, and the Tauri setup/AppHandle path — confirmed in-app, not
+  // headless.
+  'usage-dashboard': new Set([
+    'rate_limits_populated_before_any_user_session',
+    'bootstrap_session_killed_after_the_ttl',
+    'best_effort_startup_never_blocks',
+  ]),
   // task-detection: every derivation/parse/filter/heartbeat scenario has a REAL
   // headless test (Rust task.rs: newest_in_progress_entry_wins /
   // no_in_progress_entry_yields_null_task / activeform_present /

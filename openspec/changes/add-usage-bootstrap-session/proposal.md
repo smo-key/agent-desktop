@@ -20,4 +20,14 @@ deliberately **not** wired into the event-hook lifecycle, so it never appears in
 the overview's event timeline or subagents. The whole thing is best-effort: a
 failure to resolve the usage paths or spawn is logged and ignored.
 
+Two robustness details came out of the adversarial review:
+
+- **No stale window on cold start.** A prior launch's `snapshots/usage-bootstrap.json`
+  is deleted before the frontend seeds from disk, so the dashboard never briefly
+  shows an already-expired rate-limit window; the fresh probe re-creates the file
+  within the TTL.
+- **TTL is never silently void.** If the kill-timer thread fails to spawn, the probe
+  is killed immediately (an interactive `claude` TUI never exits on its own), so a
+  hidden session can't leak for the whole app lifetime.
+
 Capability touched: `usage-dashboard` (one ADDED requirement).
