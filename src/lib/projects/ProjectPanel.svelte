@@ -11,8 +11,9 @@
   // parent passes in. Creating a project persists it and selects it.
 
   import type { AgentRow } from '../overview/roster';
-  import type { Project } from './projects';
+  import type { Project, ProjectDraft } from './projects';
   import { projects } from './projects.svelte';
+  import { saveAutoWorktree } from './projectFolderConfig';
   import { projectFilter } from './projectFilter.svelte';
   import {
     projectCounts,
@@ -125,14 +126,24 @@
     worktreesFor ? (projects.list.find((p) => p.id === worktreesFor) ?? null) : null
   );
 
-  async function saveCreate(draft: Omit<Project, 'id'>) {
-    const stored = await projects.add({ id: crypto.randomUUID(), ...draft });
+  async function saveCreate(draft: ProjectDraft) {
+    // `autoWorktree` lives in the project folder's config, not the record — split it
+    // out before persisting the project, then write it to the folder config.
+    const { autoWorktree, ...record } = draft;
+    const stored = await projects.add({ id: crypto.randomUUID(), ...record });
+    if (typeof autoWorktree === 'boolean') {
+      await saveAutoWorktree(stored.path, autoWorktree);
+    }
     projectFilter.select(stored.id);
     creating = false;
   }
 
-  async function saveEdit(id: string, draft: Omit<Project, 'id'>) {
-    await projects.update(id, draft);
+  async function saveEdit(id: string, draft: ProjectDraft) {
+    const { autoWorktree, ...record } = draft;
+    await projects.update(id, record);
+    if (typeof autoWorktree === 'boolean') {
+      await saveAutoWorktree(record.path, autoWorktree);
+    }
     editingId = null;
   }
 </script>

@@ -6,9 +6,10 @@
   // initial color, lightness-corrected via OKLCH). A single full-width Create / Save
   // button commits. Emits the draft via `onSave`.
 
-  import type { Project } from './projects';
+  import type { Project, ProjectDraft } from './projects';
   import { PROJECT_ICON_CHOICES, PROJECT_COLOR_CHOICES, hexA } from './projects';
   import { processLogoFile } from './logo';
+  import { loadAutoWorktree } from './projectFolderConfig';
   import { pickFolder } from '../launcher/pick';
   import Icon from '../icons/Icon.svelte';
   import { tooltip } from '../ui/tooltip';
@@ -22,7 +23,7 @@
   }: {
     mode: 'create' | 'edit';
     initial?: Project;
-    onSave: (draft: Omit<Project, 'id'>) => void;
+    onSave: (draft: ProjectDraft) => void;
     onCancel: () => void;
   } = $props();
 
@@ -37,8 +38,18 @@
   let logo = $state<string | undefined>(seed?.logo);
   // The avatar is either an icon or a logo — start on whichever the project has.
   let appearance = $state<'icon' | 'logo'>(seed?.logo ? 'logo' : 'icon');
-  // Auto-worktree: launch each session in its own git worktree. Absent ⇒ off.
-  let autoWorktree = $state(seed?.autoWorktree ?? false);
+  // Auto-worktree: launch each session in its own git worktree. Now stored in the
+  // project folder's config (not on the record); in EDIT mode load it from there
+  // (default off until it resolves). The submitted draft still carries the flag —
+  // the parent routes it to the folder config.
+  let autoWorktree = $state(false);
+  $effect(() => {
+    if (mode === 'edit' && seed?.path) {
+      void loadAutoWorktree(seed.path).then((v) => {
+        autoWorktree = v;
+      });
+    }
+  });
 
   let browsing = $state(false);
   let logoBusy = $state(false);

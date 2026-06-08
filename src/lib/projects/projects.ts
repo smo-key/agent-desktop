@@ -29,10 +29,6 @@ export interface Project {
   /** Optional logo image as a downscaled PNG data URL; renders instead of the
    *  icon glyph. Additive + optional — absent for projects created before logos. */
   logo?: string;
-  /** Whether launching this project auto-creates a git worktree per agent.
-   *  Additive + optional — absent (≡ `false`) for projects created before the
-   *  setting existed. */
-  autoWorktree?: boolean;
   /**
    * OPTIONAL paneId of this project's COORDINATOR pane (task 6.1). A project has at
    * most one coordinator: a single `claude` session launched with the orchestration
@@ -45,6 +41,14 @@ export interface Project {
    */
   coordinatorPaneId?: string;
 }
+
+/**
+ * The CREATE/EDIT form's draft: the project record fields (no id) PLUS the
+ * per-project `autoWorktree` setting. `autoWorktree` is NOT a record field — it
+ * lives in `<project>/.agent-desktop/config.json` — so the panel splits it out of
+ * the draft and routes it to the folder config after saving the record.
+ */
+export type ProjectDraft = Omit<Project, 'id'> & { autoWorktree?: boolean };
 
 /** The top-level persisted envelope written to `projects.json`. */
 export interface PersistedProjects {
@@ -212,7 +216,9 @@ function normalize(arr: ReadonlyArray<unknown>): Project[] {
     seen.add(path);
     const clean: Project = { ...item, path };
     if (typeof clean.logo !== 'string') delete clean.logo; // drop a malformed logo
-    if (typeof clean.autoWorktree !== 'boolean') delete clean.autoWorktree; // additive optional
+    // `autoWorktree` moved to <project>/.agent-desktop/config.json — always strip
+    // it from the registry record (a one-time migration lifts any legacy value).
+    delete (clean as unknown as Record<string, unknown>).autoWorktree;
     if (typeof clean.coordinatorPaneId !== 'string' || clean.coordinatorPaneId === '')
       delete clean.coordinatorPaneId; // additive optional back-reference
     out.push(clean);

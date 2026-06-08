@@ -4,7 +4,7 @@
   // shared ProjectForm as its body. The form owns the fields + Save/Cancel actions;
   // this just frames it as a dialog and routes the close affordances to `onCancel`.
 
-  import type { Project } from './projects';
+  import type { Project, ProjectDraft } from './projects';
   import ProjectForm from './ProjectForm.svelte';
   import Icon from '../icons/Icon.svelte';
 
@@ -16,7 +16,7 @@
   }: {
     mode: 'create' | 'edit';
     initial?: Project;
-    onSave: (draft: Omit<Project, 'id'>) => void;
+    onSave: (draft: ProjectDraft) => void;
     onCancel: () => void;
   } = $props();
 

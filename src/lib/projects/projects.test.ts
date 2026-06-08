@@ -136,40 +136,21 @@ describe('logo field — persistence', () => {
   });
 });
 
-describe('autoWorktree field — persistence', () => {
-  it('Toggling the setting persists it', () => {
-    // Round-trip: serialize -> parse preserves autoWorktree: true.
-    const on = p({ id: 'a', autoWorktree: true });
-    const back = parseProjects(serializeProjects([on]));
-    expect(back[0].autoWorktree).toBe(true);
+describe('autoWorktree no longer lives on the record', () => {
+  it('strips autoWorktree from a loaded project', () => {
+    // autoWorktree moved to <project>/.agent-desktop/config.json; a legacy record
+    // that still carries the flag loses it on parse (a migration lifts the value).
+    const raw = JSON.stringify([{ ...p({ id: 'a' }), autoWorktree: true }]);
+    const back = parseProjects(raw);
+    expect(back).toHaveLength(1);
+    expect('autoWorktree' in back[0]).toBe(false);
   });
 
-  it('Existing projects default to off', () => {
-    // A legacy persisted project with no autoWorktree field loads with it
-    // absent/falsy — additive optional field, backward compatible.
-    const legacy = p({ id: 'b', path: '/b' });
-    const back = parseProjects(serializeProjects([legacy]));
-    expect(back[0].autoWorktree).toBeUndefined();
-    expect(Boolean(back[0].autoWorktree)).toBe(false);
-  });
-
-  it('edit-form draft carries autoWorktree through update unchanged', () => {
-    // The project form's onSave draft (which includes autoWorktree) flows into
-    // projects.update → updateProject. The edit patch must round-trip the flag,
-    // so reopening the form reflects the saved value.
-    const before = p({ id: 'c', autoWorktree: false });
-    const next = updateProject([before], 'c', {
-      name: 'Payments',
-      path: '/home/u/payments',
-      icon: 'credit-card',
-      color: '#4C8DFF',
-      autoWorktree: true
-    });
-    expect(next[0].autoWorktree).toBe(true);
-
-    // And it can be turned back off via the same path.
-    const off = updateProject(next, 'c', { autoWorktree: false });
-    expect(off[0].autoWorktree).toBe(false);
+  it('does not persist autoWorktree even when present on the input', () => {
+    // serialize/parse round-trip never carries the flag onto the record.
+    const withFlag = { ...p({ id: 'b', path: '/b' }), autoWorktree: true } as Project;
+    const back = parseProjects(serializeProjects([withFlag]));
+    expect('autoWorktree' in back[0]).toBe(false);
   });
 });
 

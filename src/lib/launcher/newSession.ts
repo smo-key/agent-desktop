@@ -17,6 +17,7 @@ import { workspace } from '../layout/workspace.svelte';
 import { buildLaunchPlan } from './plan';
 import { launcher } from './launcherStore.svelte';
 import { createWorktree } from './worktree';
+import { loadAutoWorktree } from '../projects/projectFolderConfig';
 import { toast } from '../ui/toastStore.svelte';
 
 /** Warning shown when a worktree was requested but couldn't be created. */
@@ -45,7 +46,7 @@ export async function startNewSession(): Promise<void> {
   let worktreePath: string | undefined;
   let worktreeBase: string | undefined;
 
-  if (proj.autoWorktree) {
+  if (await loadAutoWorktree(proj.path)) {
     const wt = await createWorktree(proj.path);
     if (wt) {
       folder = wt.path;

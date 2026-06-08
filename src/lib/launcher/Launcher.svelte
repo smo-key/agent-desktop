@@ -20,6 +20,7 @@
   import { projects } from '../projects/projects.svelte';
   import { projectForId } from '../projects/projects';
   import { createWorktree } from './worktree';
+  import { loadAutoWorktree } from '../projects/projectFolderConfig';
   import { toast } from '../ui/toastStore.svelte';
   import ProjectSelect from '../projects/ProjectSelect.svelte';
 
@@ -65,7 +66,7 @@
     let folder = project.path;
     let worktreePath: string | undefined;
     let worktreeBase: string | undefined;
-    if (project.autoWorktree) {
+    if (await loadAutoWorktree(project.path)) {
       const wt = await createWorktree(project.path);
       if (wt) {
         folder = wt.path;
