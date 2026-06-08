@@ -3,7 +3,9 @@
 `workflow-start` and `workflow-quick` write
 `openspec/changes/<name>/workflow.json` so later stages know which tracker task
 to transition without re-asking. It is version-controlled and committed with the
-change's artifacts.
+change's artifacts. (`workflow-define` writes no files at all — it never creates
+`workflow.json`; the developer's `workflow-start` run does, when it materializes
+the change.)
 
 ## Format
 
@@ -34,8 +36,8 @@ change's artifacts.
 
 ## Writing / updating
 
-- Start/Quick create it after the change directory exists.
+- Start/Plan/Quick create it after the change directory exists.
 - On every `set_status(event)`, update `lastEvent` to that event and rewrite the
   file.
-- `workflow-close` / `workflow-quick` leave the final file in the change so it is
+- `workflow-done` / `workflow-quick` leave the final file in the change so it is
   carried into the archive alongside the other artifacts.

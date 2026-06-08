@@ -56,6 +56,19 @@ BASE="<value of jira.baseUrl from .claude/workflow.yaml>"
   ```
   Return `{ ref: <key from response>, url: "$BASE/browse/<key>" }`.
 
+- **set_requirements(ref, text)** — write the requirements brief into the issue.
+  Default target is the description (ADF doc); set the field via PUT:
+  ```bash
+  curl -s $AUTH -X PUT "$BASE/rest/api/3/issue/PROJ-123" \
+    -H "Content-Type: application/json" \
+    -d '{"fields":{"description":{"type":"doc","version":1,"content":[{"type":"paragraph",
+         "content":[{"type":"text","text":"BRIEF"}]}]}}}'
+  ```
+  If `jira.requirementsField` is set in config (e.g. `customfield_10042`), write
+  the brief to that field instead of `description`. `workflow-start` reads it back
+  via `resolve` (description) or by requesting that custom field in the
+  `fields=` query.
+
 ## Verify your setup (dry run)
 
 ```bash

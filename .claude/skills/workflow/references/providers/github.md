@@ -46,6 +46,18 @@ workflow status.
   has a workflow that auto-adds issues, nothing more is needed; otherwise
   `gh project item-add NUMBER --owner OWNER --url <issue-url>`.
 
+- **set_requirements(ref, text)** — write the requirements brief into the issue.
+  Default target is the issue body:
+  ```bash
+  gh issue edit N --repo owner/repo --body "BRIEF"
+  ```
+  If `github.requirementsField` is set in config, write the brief to that
+  Projects (v2) text field instead of the body (resolve project/item/field ids as
+  in `set_status`, then `gh project item-edit --id ITEM_ID --field-id FIELD_ID
+  --project-id PROJECT_ID --text "BRIEF"`). `workflow-start` reads it back from
+  whichever target was used (`resolve` returns the body; for a custom field, read
+  it via `gh project item-list`).
+
 ## Verify your setup (dry run)
 
 ```bash

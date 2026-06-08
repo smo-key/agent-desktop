@@ -12,15 +12,18 @@ branchPerTask: true         # create a git branch when Start/Quick begins (defau
 
 github:                     # required when provider: github
   project: "owner/repo"     # repo for issues; project resolved via `gh project` for that owner
+  requirementsField: ""     # optional: a Projects (v2) text field for the workflow-define brief; default is the issue body
 jira:                       # required when provider: jira
   baseUrl: https://acme.atlassian.net
   projectKey: PROJ
+  requirementsField: ""     # optional: a custom field id (e.g. customfield_10042) for the workflow-define brief; default is the description
   # auth read from env: JIRA_EMAIL, JIRA_API_TOKEN
 
 # Map workflow lifecycle events -> the EXACT provider status name.
 # Omit any event to make that transition a no-op.
 statuses:
   started:      "In Progress"
+  refined:      "Ready for Dev"   # workflow-define: requirements drafted, awaiting a developer
   planned:      "In Progress"
   implementing: "In Progress"
   review:       "In Review"
@@ -34,21 +37,26 @@ statuses:
   change (e.g. `git switch -c <change-name>`) before discovery/implementation.
 - `github.project` — `owner/repo`. Issues are read/created here; the org/user
   Project (v2) board is discovered from that owner for status edits.
+- `github.requirementsField` / `jira.requirementsField` — optional. Where
+  `workflow-define` writes its requirements brief via `set_requirements`. Leave
+  empty to use the item's main body (GitHub issue body / Jira description);
+  set it to target a dedicated field instead.
 - `jira.baseUrl` / `jira.projectKey` — Jira site and project. Credentials come
   from the `JIRA_EMAIL` and `JIRA_API_TOKEN` environment variables, never the file.
 - `statuses` — maps each lifecycle event (see `../providers.md`) to the literal
   status string the provider expects. Trackers with a coarse To Do/Doing/Done
-  flow can omit `planned`/`review`.
+  flow can omit `refined`/`planned`/`review` (those transitions become no-ops).
 
 ## Lifecycle events
 
-| Event          | Emitted by                                     |
-|----------------|------------------------------------------------|
-| `started`      | `workflow-start` / `workflow-quick` at intake  |
-| `planned`      | `workflow-start` once the change is apply-ready |
-| `implementing` | `workflow-build` at start                  |
-| `review`       | `workflow-build` after tasks complete      |
-| `done`         | `workflow-close` / `workflow-quick` after archive |
+| Event          | Emitted by                                          |
+|----------------|-----------------------------------------------------|
+| `started`      | `workflow-start` / `workflow-quick` at intake (including picking up a `refined` item) |
+| `refined`      | `workflow-define` once the requirements brief is emitted |
+| `planned`      | `workflow-start` once the change is apply-ready     |
+| `implementing` | `workflow-build` at start                           |
+| `review`       | `workflow-build` after tasks complete               |
+| `done`         | `workflow-done` / `workflow-quick` after archive    |
 
 ## Default (scaffolded when the file is absent)
 
@@ -57,6 +65,7 @@ provider: local
 branchPerTask: true
 statuses:
   started:      "In Progress"
+  refined:      "Ready for Dev"
   planned:      "In Progress"
   implementing: "In Progress"
   review:       "In Review"
