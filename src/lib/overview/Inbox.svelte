@@ -25,6 +25,7 @@
     groupByLane,
     needsAttention,
     LANE_ORDER,
+    laneForRow,
     type AgentLane,
     type AgentRow,
     type AgentStatus
@@ -62,6 +63,13 @@
   import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
   import TasksLauncher from '$lib/tasks/TasksLauncher.svelte';
   import SpecialistsPanel from '$lib/specialists/SpecialistsPanel.svelte';
+  import { ALL, UNASSIGNED } from '$lib/projects/projectRollup';
+  import {
+    resolveCoordinatorPin,
+    coordinatorStartId,
+    coordinatorStartProject
+  } from './coordinatorPin';
+  import CoordinatorStart from '$lib/orchestration/CoordinatorStart.svelte';
 
   // --- Sessions / Tasks split (Sessions roster on top / Tasks bottom) ----------
   // The `.col-list` column splits into the Sessions roster (top, resizable) and
@@ -174,6 +182,22 @@
   const grouped = $derived(groupByLane(viewRows));
   const queue = $derived(attentionQueue(viewRows));
 
+  // The active project for the coordinator pin: the concrete project chosen in the
+  // project filter (null on All / Unassigned). Only with a concrete project does the
+  // roster pin a coordinator / show the Start affordance (tasks 10.2–10.4).
+  const activeCoordProjectId = $derived(
+    projectFilter.selected === ALL || projectFilter.selected === UNASSIGNED
+      ? null
+      : projectFilter.selected
+  );
+  const activeCoordProject = $derived(projectForId(projects.list, activeCoordProjectId));
+  // Pull the live coordinator out of the lanes (pinned atop the list) and decide
+  // whether to show the not-started "Start coordinator" affordance.
+  const pin = $derived(resolveCoordinatorPin(viewRows, activeCoordProjectId));
+  // Lanes rendered BELOW the rule exclude the pinned coordinator (it never renders
+  // twice). `grouped` (from viewRows) still includes it for keyboard nav / queue.
+  const renderGrouped = $derived(groupByLane(pin.rest));
+
   // Group metadata (label) for the left list, in attn -> flight -> paused -> done
   // order. `done` is the Archived lane (closed sessions); `paused` sits above it.
   const LANES: Record<AgentLane, { title: string }> = {
@@ -240,6 +264,14 @@
   // The focused (shown) agent row.
   const focus = $derived(viewRows.find((r) => r.paneId === shownId) ?? null);
 
+  // When `shownId` is the coordinator-start SENTINEL (not a real pane), the main
+  // pane shows the Start empty-state for that project instead of a terminal (10.4).
+  // Resolved to a concrete project, else null (a stale sentinel falls through to the
+  // normal empty panel).
+  const startProject = $derived(
+    projectForId(projects.list, coordinatorStartProject(shownId))
+  );
+
   // Reconcile the SHOWN agent toward what attention wants (resolveFocus = pin >
   // attention queue, arrival-ordered). First focus / the shown agent being closed
   // switches immediately. While the shown agent ITSELF needs you, we never auto-
@@ -247,6 +279,12 @@
   // input). Once it stops needing you, focus advances to the earliest waiting agent
   // after the grace; if nobody else needs you, the current agent stays.
   $effect(() => {
+    // The coordinator-start sentinel is a deliberate, sticky main-pane selection
+    // (no underlying pane) — never auto-resolve it away to an attention agent.
+    if (coordinatorStartProject(shownId) !== null) {
+      clearAdvance();
+      return;
+    }
     const shownRow = viewRows.find((r) => r.paneId === shownId) ?? null;
     // The agent we're on just LEFT attention (handled / went Working)?
     const sameAgent = shownId !== null && shownId === lastShownId;
@@ -371,6 +409,21 @@
     userSelected = paneId;
     shownId = paneId;
     focusNonce += 1;
+  }
+
+  /** Focus the not-started coordinator affordance: select the start SENTINEL so the
+   *  main pane shows the Start empty-state for `projectId` (task 10.4). It isn't a
+   *  real pane, so we pin it like a selection but don't bump the terminal nonce. */
+  function selectCoordinatorStart(projectId: string) {
+    clearAdvance();
+    userSelected = null;
+    shownId = coordinatorStartId(projectId);
+  }
+
+  /** The coordinator was launched from the main-pane Start state — focus the now-real
+   *  coordinator pane (reuses the normal select path). */
+  function onCoordinatorStarted(paneId: string) {
+    selectAgent(paneId);
   }
 
   /** PREVIEW an archived session: respawn `claude --resume` so its transcript shows
@@ -700,6 +753,64 @@
 
 <svelte:window onkeydown={onNavKey} />
 
+<!-- One roster row — shared by the pinned coordinator (top slot) and the lane lists
+     below the rule, so the markup never diverges. `lane` only drives the row's
+     selection accent class. -->
+{#snippet sessionRow(r: AgentRow, lane: AgentLane)}
+  <button
+    type="button"
+    class="row {lane}"
+    class:sel={focus?.paneId === r.paneId}
+    onclick={() => onRowClick(r)}
+    oncontextmenu={(e) => openAgentMenu(e, r, displayName(r.paneId, r.name))}
+  >
+    <ProjectIcon {...projAvatar(r.projectId)} size={30} />
+    <span class="nm">
+      <span class="t">
+        {titles.titleFor(r.paneId) ?? r.name}
+        {#if r.role === 'coordinator'}
+          <span
+            class="spec-badge coord-badge"
+            use:tooltip={'Project coordinator (orchestrates other agents)'}
+          >
+            <Icon name="bot" size={9} />coordinator
+          </span>
+        {:else if r.coordinatorPaneId}
+          <span
+            class="spec-badge coord-badge"
+            use:tooltip={'Spawned by the project coordinator'}
+          >
+            <Icon name="git-branch" size={9} />coordinated
+          </span>
+        {/if}
+        {#if r.specialist}
+          <span class="spec-badge" use:tooltip={`Spawned as specialist “${r.specialist}”`}>
+            <Icon name="bot" size={9} />{r.specialist}
+          </span>
+        {/if}
+      </span>
+      <span class="s" class:q={needsAttention(r)} use:tooltip={rowSub(r)}>{rowSub(r)}</span>
+      <span class="meta">
+        {#if showMeta(r)}
+          <span class="m ctx" use:tooltip={'Context window used by this agent'}>
+            <span class="ctxbar"><StatusBar pct={r.contextPct} /></span>
+            {ctxLabel(r.contextPct)}
+          </span>
+        {/if}
+        <span class="m" use:tooltip={'Total session cost'}>
+          <Icon name="dollar-sign" size={11} />{costMeta(r.cost)}
+        </span>
+        <span class="m" use:tooltip={'Time since last activity'}>
+          <Icon name="clock" size={11} />{friendlyTime(r.lastTs, nowMs)}
+        </span>
+      </span>
+    </span>
+    {#if needsAttention(r)}
+      <span class="badge {badgeClass(r)} dotonly"><span class="dot"></span></span>
+    {/if}
+  </button>
+{/snippet}
+
 <div class="inbox-shell" class:project-collapsed={projectPaneCollapsed}>
   <ProjectPanel
     rows={allRows}
@@ -726,65 +837,43 @@
           </div>
         {:else}
           <div class="list-scroll">
+            <!-- Coordinator TOP SLOT (tasks 10.2–10.3): the project's live
+                 coordinator pinned above all sessions, OR — when none is running —
+                 a focusable "Start coordinator" affordance. A rule separates it from
+                 the rest. No heading/label, just the row, the rule, then the lanes. -->
+            {#if pin.coordinator}
+              {@render sessionRow(pin.coordinator, laneForRow(pin.coordinator))}
+              <hr class="coord-rule" />
+            {:else if pin.showStart && activeCoordProject}
+              <button
+                type="button"
+                class="row coord-start"
+                class:sel={coordinatorStartProject(shownId) === activeCoordProjectId}
+                onclick={() => selectCoordinatorStart(activeCoordProject.id)}
+              >
+                <ProjectIcon {...projAvatar(activeCoordProject.id)} size={30} />
+                <span class="nm">
+                  <span class="t">
+                    Coordinator
+                    <span class="spec-badge coord-badge">
+                      <Icon name="bot" size={9} />not started
+                    </span>
+                  </span>
+                  <span class="s">Start to orchestrate this project</span>
+                </span>
+                <span class="start-cta"><Icon name="play" size={13} /></span>
+              </button>
+              <hr class="coord-rule" />
+            {/if}
+
             {#each LANE_ORDER as lane (lane)}
-              {@const items = grouped[lane]}
+              {@const items = renderGrouped[lane]}
               {#if items.length > 0}
                 <div class="group-h {lane}">
                   {LANES[lane].title} <span class="gn">· {items.length}</span><span class="rule"></span>
                 </div>
                 {#each items as r (r.paneId)}
-                  <button
-                    type="button"
-                    class="row {lane}"
-                    class:sel={focus?.paneId === r.paneId}
-                    onclick={() => onRowClick(r)}
-                    oncontextmenu={(e) => openAgentMenu(e, r, displayName(r.paneId, r.name))}
-                  >
-                    <ProjectIcon {...projAvatar(r.projectId)} size={30} />
-                    <span class="nm">
-                      <span class="t">
-                        {titles.titleFor(r.paneId) ?? r.name}
-                        {#if r.role === 'coordinator'}
-                          <span
-                            class="spec-badge coord-badge"
-                            use:tooltip={'Project coordinator (orchestrates other agents)'}
-                          >
-                            <Icon name="bot" size={9} />coordinator
-                          </span>
-                        {:else if r.coordinatorPaneId}
-                          <span
-                            class="spec-badge coord-badge"
-                            use:tooltip={'Spawned by the project coordinator'}
-                          >
-                            <Icon name="git-branch" size={9} />coordinated
-                          </span>
-                        {/if}
-                        {#if r.specialist}
-                          <span class="spec-badge" use:tooltip={`Spawned as specialist “${r.specialist}”`}>
-                            <Icon name="bot" size={9} />{r.specialist}
-                          </span>
-                        {/if}
-                      </span>
-                      <span class="s" class:q={needsAttention(r)} use:tooltip={rowSub(r)}>{rowSub(r)}</span>
-                      <span class="meta">
-                        {#if showMeta(r)}
-                          <span class="m ctx" use:tooltip={'Context window used by this agent'}>
-                            <span class="ctxbar"><StatusBar pct={r.contextPct} /></span>
-                            {ctxLabel(r.contextPct)}
-                          </span>
-                        {/if}
-                        <span class="m" use:tooltip={'Total session cost'}>
-                          <Icon name="dollar-sign" size={11} />{costMeta(r.cost)}
-                        </span>
-                        <span class="m" use:tooltip={'Time since last activity'}>
-                          <Icon name="clock" size={11} />{friendlyTime(r.lastTs, nowMs)}
-                        </span>
-                      </span>
-                    </span>
-                    {#if needsAttention(r)}
-                      <span class="badge {badgeClass(r)} dotonly"><span class="dot"></span></span>
-                    {/if}
-                  </button>
+                  {@render sessionRow(r, lane)}
                 {/each}
               {/if}
             {/each}
@@ -807,7 +896,14 @@
 
     <!-- RIGHT: focus pane (header + teleported live TUI / Archived / All clear) -->
     <div class="col-focus">
-      {#if focus && !focus.closed}
+      {#if startProject}
+        <!-- The not-started coordinator affordance is focused: the main pane invites
+             starting the orchestrator (task 10.4). On Start, the now-real coordinator
+             pane is focused via onStarted. -->
+        <CoordinatorStart project={startProject} onStarted={onCoordinatorStarted} />
+        <!-- Slot kept bound (hidden) so the teleport target survives this state. -->
+        <div class="focus-slot hidden" bind:this={focusSlot}></div>
+      {:else if focus && !focus.closed}
         {@const av = projAvatar(focus.projectId)}
         <div class="fhead">
           <ProjectIcon {...av} size={26} />
@@ -925,6 +1021,13 @@
   .row:hover { background: rgba(255,255,255,0.025); }
   .row.sel { background: rgba(61,123,255,0.10); border-left-color: var(--blue-500); }
   .row.attn.sel { background: var(--orange-tint); border-left-color: var(--orange-500); }
+  /* The coordinator top slot: a rule separating the pinned coordinator / Start
+     affordance from the rest of the sessions (tasks 10.2–10.3). */
+  .coord-rule { margin: 4px 16px 2px; border: none; border-top: 1px solid var(--line-default); }
+  /* The not-started "Start coordinator" affordance reuses the row layout with a
+     play-cta on the right; its coordinator badge reads in the orange accent. */
+  .row.coord-start .start-cta { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: var(--r-sm); background: var(--orange-tint); color: var(--orange-200); }
+  .row.coord-start:hover .start-cta { color: var(--orange-300); }
   .row .nm { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .row .nm .t { font-weight: 600; font-size: 13px; color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
   /* Specialist attribution: a compact blue-tinted pill (icon + name) next to the
