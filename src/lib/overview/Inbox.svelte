@@ -903,8 +903,13 @@
             <hr class="coord-rule" />
           {/if}
 
-          {#if rows.length === 0}
-            <!-- No sessions yet — shown BELOW the coordinator + rule (task 10.6). -->
+          {#if pin.rest.length === 0}
+            <!-- No NON-coordinator sessions — shown BELOW the coordinator + rule
+                 (tasks 10.6, 10.10). Gated on `pin.rest` (the lane rows after the
+                 pinned coordinator is removed), NOT the total row count, so the box
+                 still appears when the only session is the pinned coordinator. With
+                 no concrete project (All / Unassigned) the coordinator isn't pinned,
+                 so `pin.rest` is just `rows` and this matches "zero rows" as before. -->
             <div class="empty-list">
               <p>No sessions yet.</p>
               <button type="button" class="btn-primary" onclick={newAgent}>＋ New session</button>

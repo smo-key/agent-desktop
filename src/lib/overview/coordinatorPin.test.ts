@@ -98,6 +98,40 @@ describe('resolveCoordinatorPin (tasks 10.2–10.3)', () => {
     expect(pin.showStart).toBe(false);
   });
 
+  it('rest is empty whenever there are no NON-coordinator sessions (task 10.10)', () => {
+    // The "No sessions yet" empty state keys off `rest` being empty — the lane rows
+    // AFTER the pinned coordinator is removed — NOT the total row count. So it must
+    // be empty when the only session is a RUNNING pinned coordinator, exactly as it
+    // is for the not-started affordance (showStart) and the wholly-empty roster.
+    // running coordinator only → pinned, rest empty (empty box shows below the rule)
+    const running = resolveCoordinatorPin(
+      [row({ paneId: 'coord', projectId: 'P', role: 'coordinator' })],
+      'P'
+    );
+    expect(running.coordinator?.paneId).toBe('coord');
+    expect(running.rest).toEqual([]);
+    // not-started affordance, no sessions → rest empty (empty box shows below)
+    expect(resolveCoordinatorPin([], 'P').rest).toEqual([]);
+    // running coordinator + ANOTHER session → rest non-empty (NO empty box)
+    const withOther = resolveCoordinatorPin(
+      [
+        row({ paneId: 'coord', projectId: 'P', role: 'coordinator' }),
+        row({ paneId: 'a', projectId: 'P' })
+      ],
+      'P'
+    );
+    expect(withOther.rest.map((r) => r.paneId)).toEqual(['a']);
+    // No concrete project (All / Unassigned): coordinator not pinned, so rest === rows
+    // — the empty-state gate (rest empty) still matches "zero rows" as before.
+    expect(
+      resolveCoordinatorPin(
+        [row({ paneId: 'coord', projectId: 'P', role: 'coordinator' })],
+        null
+      ).rest.length
+    ).toBe(1);
+    expect(resolveCoordinatorPin([], null).rest).toEqual([]);
+  });
+
   it('pins only the FIRST coordinator when state momentarily has two', () => {
     const rows = [
       row({ paneId: 'coord1', projectId: 'P', role: 'coordinator' }),
