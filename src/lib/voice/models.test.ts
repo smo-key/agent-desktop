@@ -60,6 +60,17 @@ describe('formatBytes', () => {
   it('handles zero / unknown as a dash', () => {
     expect(formatBytes(0)).toBe('—');
   });
+
+  it('rolls up to GB rather than rendering "1000 MB" near the boundary', () => {
+    expect(formatBytes(999_500_000)).toBe('1.0 GB');
+    expect(formatBytes(1_000_000_000)).toBe('1.0 GB');
+  });
+
+  it('treats non-finite / negative sizes as unknown (dash, never "NaN MB")', () => {
+    expect(formatBytes(Number.NaN)).toBe('—');
+    expect(formatBytes(Number.POSITIVE_INFINITY)).toBe('—');
+    expect(formatBytes(-5)).toBe('—');
+  });
 });
 
 describe('downloadRows', () => {

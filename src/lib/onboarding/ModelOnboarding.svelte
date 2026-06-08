@@ -15,17 +15,31 @@
   // The models to fetch (friendly label + human size) and their summed total.
   const list = $derived(downloadRows(onboarding.missing));
 
-  // While a download is streaming. The error is surfaced once it ends unsuccessfully.
-  const downloading = $derived(modelDownload.active);
+  // Leading-edge in-flight guard. `modelDownload.active` only flips true AFTER the
+  // initial `voice_models_status` IPC inside `ensureModels` resolves, so relying on
+  // it alone would leave the button clickable during that round-trip — a fast
+  // double-click could launch two concurrent downloads against the shared store and
+  // the same files. `starting` is set synchronously on click to close that window.
+  let starting = $state(false);
+
+  // The button is suppressed whenever a download is starting or streaming.
+  const busy = $derived(starting || modelDownload.active);
   const error = $derived(modelDownload.error);
 
   /** Download the required models, then re-check presence so a complete set hides
    *  the gate. `ensureModels` never throws (it records failures into the store), so
-   *  this is safe to await; the re-check leaves the gate up on a partial/failed run. */
+   *  this is safe to await; the re-check leaves the gate up on a partial/failed run.
+   *  Guarded against re-entrancy via `starting`. */
   async function download(): Promise<void> {
-    const { modelTier, polish } = voice.prefs;
-    await ensureModels(modelTier, polish);
-    await onboarding.check(modelTier, polish);
+    if (busy) return;
+    starting = true;
+    try {
+      const { modelTier, polish } = voice.prefs;
+      await ensureModels(modelTier, polish);
+      await onboarding.check(modelTier, polish);
+    } finally {
+      starting = false;
+    }
   }
 
   /** Skip for the current session (the gate returns on next launch if still missing). */
@@ -51,8 +65,10 @@
       <p class="total">Total to download: <strong>{formatBytes(list.totalBytes)}</strong></p>
     {/if}
 
-    {#if downloading}
-      <!-- Active download: a determinate strip driven by the shared progress store. -->
+    {#if busy}
+      <!-- Active download: a determinate strip driven by the shared progress store.
+           Also covers the brief pre-stream window (`starting`) so the button can't be
+           re-triggered before progress begins. -->
       <div class="progress" aria-live="polite">
         <div class="prog-row">
           <span>Downloading…</span>

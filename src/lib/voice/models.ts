@@ -67,11 +67,14 @@ const CATALOG: Record<string, { label: string; approxBytes: number }> = {
  * units to match how the registry's `approx_bytes` and download hosts report sizes.
  */
 export function formatBytes(bytes: number): string {
-  if (bytes <= 0) return '—';
+  if (!Number.isFinite(bytes) || bytes <= 0) return '—';
   const GB = 1_000_000_000;
   const MB = 1_000_000;
-  if (bytes >= GB) return `${(bytes / GB).toFixed(1)} GB`;
-  return `${Math.round(bytes / MB)} MB`;
+  // Round to whole MB first; anything that rounds to >= 1000 MB reads better as GB
+  // (so 999.5 MB shows "1.0 GB", never "1000 MB").
+  const mb = Math.round(bytes / MB);
+  if (mb >= 1000) return `${(bytes / GB).toFixed(1)} GB`;
+  return `${mb} MB`;
 }
 
 /** A single model row for the onboarding gate's download list. */

@@ -75,9 +75,9 @@
     // then check whether the on-device models that selection needs are present. When
     // they're missing, the onboarding store goes `visible` and the full-screen gate
     // (rendered below) prompts a one-time download (model-onboarding spec).
-    void voice.load().then(() => {
-      void onboarding.check(voice.prefs.modelTier, voice.prefs.polish);
-    });
+    void voice.load()
+      .then(() => onboarding.check(voice.prefs.modelTier, voice.prefs.polish))
+      .catch(() => {});
     // Agent-kind tasks open a normal Claude session in the workspace + Agents rail
     // (design D5): wire the store's launcher hook to the same launch path used by
     // the inbox "+" / ⌘N, seeded with the task's prompt. Set BEFORE load() so a
