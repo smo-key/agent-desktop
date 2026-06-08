@@ -76,16 +76,21 @@ describe('footerView', () => {
 });
 
 describe('footerGitProjectId', () => {
-  it('prefers the focused pane project when it has one', () => {
+  // Titles below mirror the `projects` spec scenarios so the scenario-coverage
+  // gate maps each to this resolver — the logic that decides which project's
+  // folder git the footer's left zone shows.
+  // No apostrophe in this title on purpose: the coverage gate's test-title scan
+  // stops at a quote, and the spec scenario's snake strips it to "panes" anyway.
+  it('Footer shows the focused panes project git', () => {
     expect(footerGitProjectId('p1', 'p2')).toBe('p1');
     expect(footerGitProjectId('p1', ALL)).toBe('p1');
   });
 
-  it('falls back to the panel selection when no pane project (overview)', () => {
+  it('Footer falls back to the panel selection in the overview', () => {
     expect(footerGitProjectId(null, 'p2')).toBe('p2');
   });
 
-  it('yields null when the panel selection is a bucket, not a project', () => {
+  it('No project git for a non-project selection', () => {
     expect(footerGitProjectId(null, ALL)).toBeNull();
     expect(footerGitProjectId(null, UNASSIGNED)).toBeNull();
   });

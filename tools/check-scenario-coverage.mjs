@@ -262,6 +262,13 @@ const MANUAL_SCENARIOS = {
     'the_live_surface_is_teleported_into_the_focus_pane_without_respawning',
     'leaving_a_previewing_session_re_archives_it_after_the_grace_period',
   ]),
+  // projects: the footer-git resolver (which project's folder git the footer's
+  // left zone shows: focused pane → panel selection → none) is unit-tested in
+  // footerView.test.ts. The one headless-exempt scenario is the rendered project
+  // row NO LONGER carrying a git line — a DOM-render assertion with no
+  // component-render harness in this repo, confirmed live like the other
+  // DOM-rendered project-panel behaviors.
+  projects: new Set(['project_rows_carry_no_git_line']),
   // activity-events: the live socket end-to-end is covered headlessly by the Rust
   // accept test, so nothing is MANUAL here.
   'activity-events': new Set(),
