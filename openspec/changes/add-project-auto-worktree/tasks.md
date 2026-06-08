@@ -24,14 +24,14 @@
 
 ## 5. Cleanup on session close
 
-- [ ] 5.1 In `workspace.svelte.ts`, hook permanent-close paths (`closeFocused`, `closeWorkspace` — where the registry entry is pruned) to fire `worktree_remove_if_clean(worktreePath, worktreeBase)` best-effort/fire-and-forget when the closing entry has a worktree. Do NOT trigger on `closeAgent` (archive stays resumable).
-- [ ] 5.2 Add tests covering: close of a clean-worktree pane invokes removal; close of a dirty/changed one keeps it; archive does not invoke removal; panes without a worktree are unaffected (Tauri invoke mocked).
+- [x] 5.1 In `workspace.svelte.ts`, hook permanent-close paths (`closeFocused`, `closeWorkspace` — where the registry entry is pruned) to fire `worktree_remove_if_clean(worktreePath, worktreeBase)` best-effort/fire-and-forget when the closing entry has a worktree. Do NOT trigger on `closeAgent` (archive stays resumable).
+- [x] 5.2 Add tests covering: close of a clean-worktree pane invokes removal; close of a dirty/changed one keeps it; archive does not invoke removal; panes without a worktree are unaffected (Tauri invoke mocked).
 
 ## 6. Worktree management UI
 
-- [ ] 6.1 Build a worktree-management surface (reached from the project panel/form) that lists a project's worktrees via `worktree_list` with path, branch, and clean/changed state, including an empty state.
-- [ ] 6.2 Wire "open" (launch a session into an existing worktree path) and "prune" (call `worktree_remove`, requiring explicit confirmation/force when the worktree has changes).
-- [ ] 6.3 Add component tests for list rendering, the dirty-prune confirmation gate, and the open action.
+- [x] 6.1 Build a worktree-management surface (reached from the project panel/form) that lists a project's worktrees via `worktree_list` with path, branch, and clean/changed state, including an empty state.
+- [x] 6.2 Wire "open" (launch a session into an existing worktree path) and "prune" (call `worktree_remove`, requiring explicit confirmation/force when the worktree has changes).
+- [x] 6.3 Add component tests for list rendering, the dirty-prune confirmation gate, and the open action. (Per repo convention — no component-mount harness — the tested logic lives in the `worktreePanel.svelte.ts` view-model with `worktreePanel.svelte.test.ts`.)
 
 ## 7. Validate
 

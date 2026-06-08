@@ -23,7 +23,9 @@
   import Icon from '../icons/Icon.svelte';
   import ProjectIcon from '../icons/ProjectIcon.svelte';
   import ProjectDialog from './ProjectDialog.svelte';
+  import WorktreeDialog from './WorktreeDialog.svelte';
   import ContextMenu, { type MenuItem } from '../ui/ContextMenu.svelte';
+  import { tooltip } from '../ui/tooltip';
   import GitInfo from '../usage/GitInfo.svelte';
   import { projectGit } from './projectGit.svelte';
 
@@ -54,6 +56,13 @@
           onClick: () => {
             creating = false;
             editingId = projectId;
+          }
+        },
+        {
+          label: 'Worktrees…',
+          icon: 'git-branch',
+          onClick: () => {
+            worktreesFor = projectId;
           }
         },
         {
@@ -88,6 +97,13 @@
     editingId ? (projects.list.find((p) => p.id === editingId) ?? null) : null
   );
 
+  /** The id of the project whose worktree-management dialog is open, or null. */
+  let worktreesFor = $state<string | null>(null);
+  /** The resolved project whose worktrees are being managed (or null). */
+  const worktreeProject = $derived(
+    worktreesFor ? (projects.list.find((p) => p.id === worktreesFor) ?? null) : null
+  );
+
   async function saveCreate(draft: Omit<Project, 'id'>) {
     const stored = await projects.add({ id: crypto.randomUUID(), ...draft });
     projectFilter.select(stored.id);
@@ -102,11 +118,17 @@
 
 {#if collapsed}
   <!-- Collapsed: a thin icon rail. Expand button + a clickable icon per filter.
-       Each filter icon carries an instant, styled flyout tooltip (.pp-tip) with
-       its name — no native `title` (those are slow + unstyled). -->
+       Each filter icon carries a styled flyout tooltip (the shared `use:tooltip`
+       action, placed to the right) with its name — no native `title` (those are
+       slow + unstyled). -->
   <aside class="ppanel rail" aria-label="Projects">
-    <button class="pp-rail-btn" onclick={() => onToggle?.()} aria-label="Expand projects">
-      »<span class="pp-tip">Expand projects</span>
+    <button
+      class="pp-rail-btn"
+      onclick={() => onToggle?.()}
+      aria-label="Expand projects"
+      use:tooltip={{ text: 'Expand projects', placement: 'right' }}
+    >
+      »
     </button>
     <button
       type="button"
@@ -114,9 +136,9 @@
       class:active={projectFilter.selected === ALL}
       onclick={() => projectFilter.select(ALL)}
       aria-label="All agents"
+      use:tooltip={{ text: 'All agents', placement: 'right' }}
     >
       <Icon name="layers" size={16} color="var(--fg-4)" />
-      <span class="pp-tip">All agents</span>
     </button>
     {#each counts as c (c.project.id)}
       <button
@@ -125,10 +147,10 @@
         class:active={projectFilter.selected === c.project.id}
         onclick={() => projectFilter.select(c.project.id)}
         aria-label={c.project.name}
+        use:tooltip={{ text: c.project.name, placement: 'right' }}
       >
         <ProjectIcon icon={c.project.icon} color={c.project.color} logo={c.project.logo} size={18} />
         {#if c.attn}<span class="pp-rail-attn" aria-hidden="true"></span>{/if}
-        <span class="pp-tip">{c.project.name}</span>
       </button>
     {/each}
     {#if unassigned > 0}
@@ -138,9 +160,9 @@
         class:active={projectFilter.selected === UNASSIGNED}
         onclick={() => projectFilter.select(UNASSIGNED)}
         aria-label="No project"
+        use:tooltip={{ text: 'No project', placement: 'right' }}
       >
         <Icon name="folder" size={16} color="var(--fg-4)" />
-        <span class="pp-tip">No project</span>
       </button>
     {/if}
   </aside>
@@ -151,7 +173,7 @@
     <button
       class="pp-collapse"
       onclick={() => onToggle?.()}
-      title="Collapse projects"
+      use:tooltip={'Collapse projects'}
       aria-label="Collapse projects"
     >«</button>
   </div>
@@ -176,7 +198,6 @@
       class:active={projectFilter.selected === c.project.id}
       onclick={() => projectFilter.select(c.project.id)}
       oncontextmenu={(e) => openMenu(e, c.project.id, c.project.name)}
-      title={c.project.path}
     >
       <span class="pp-row-main">
         {#if c.project.logo}
@@ -184,8 +205,8 @@
         {:else}
           <Icon name={c.project.icon} size={16} color={c.project.color} />
         {/if}
-        <span class="pp-name">{c.project.name}</span>
-        {#if c.attn}<span class="pp-attn" title="Needs attention"></span>{/if}
+        <span class="pp-name" use:tooltip={c.project.path}>{c.project.name}</span>
+        {#if c.attn}<span class="pp-attn" use:tooltip={'Needs attention'}></span>{/if}
         <span class="pp-ct">{c.count}</span>
       </span>
       <span class="pp-git">
@@ -224,6 +245,16 @@
     initial={editProject}
     onSave={(draft) => saveEdit(editProject.id, draft)}
     onCancel={() => (editingId = null)}
+  />
+{/if}
+
+<!-- Worktree-management dialog for a project, opened from its context menu. -->
+{#if worktreeProject}
+  <WorktreeDialog
+    projectId={worktreeProject.id}
+    projectName={worktreeProject.name}
+    repoPath={worktreeProject.path}
+    onClose={() => (worktreesFor = null)}
   />
 {/if}
 
@@ -443,34 +474,4 @@
     object-fit: cover;
   }
 
-  /* ---- instant collapsed-rail tooltip ---- */
-  .pp-rail-btn {
-    position: relative;
-  }
-  .pp-tip {
-    position: absolute;
-    left: calc(100% + 8px);
-    top: 50%;
-    transform: translateY(-50%);
-    z-index: 70;
-    padding: 4px 9px;
-    white-space: nowrap;
-    background: var(--space-700);
-    border: 1px solid var(--line-default);
-    border-radius: var(--r-sm);
-    box-shadow: var(--shadow-pop);
-    color: var(--fg-1);
-    font-family: var(--font-sans);
-    font-size: 12px;
-    font-weight: 500;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity var(--dur-fast);
-  }
-  .pp-rail-btn:hover .pp-tip,
-  .pp-rail-ic:hover .pp-tip,
-  .pp-rail-btn:focus-visible .pp-tip,
-  .pp-rail-ic:focus-visible .pp-tip {
-    opacity: 1;
-  }
 </style>
