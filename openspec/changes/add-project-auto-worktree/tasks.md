@@ -35,5 +35,5 @@
 
 ## 7. Validate
 
-- [ ] 7.1 Run the frontend test suite and `cargo test` for the Rust changes; ensure green.
-- [ ] 7.2 Run `openspec validate add-project-auto-worktree --strict` and reconcile any drift between code and spec.
+- [x] 7.1 Run the frontend test suite and `cargo test` for the Rust changes; ensure green.
+- [x] 7.2 Run `openspec validate add-project-auto-worktree --strict` and reconcile any drift between code and spec.
