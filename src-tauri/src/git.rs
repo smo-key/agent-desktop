@@ -114,6 +114,12 @@ pub fn status_for_paths(paths: &[String]) -> HashMap<String, GitStatus> {
 /// message either way: `Ok(message)` on a clean exit, `Err(message)` otherwise.
 /// Push/pull write their progress to stderr, so the message prefers stderr when
 /// stdout is empty (and vice-versa on failure). Never panics.
+///
+/// Runs git NON-INTERACTIVELY so a network sync can never hang the async command
+/// waiting on a prompt: `GIT_TERMINAL_PROMPT=0` makes git's own credential prompt
+/// fail fast, and a `BatchMode=yes` ssh (with a bounded connect timeout) makes ssh
+/// refuse rather than block on a passphrase / unknown-host-key prompt. Both turn
+/// an otherwise-infinite wait into a clean `Err` the frontend can toast.
 fn run_git_action(dir: &str, args: &[&str]) -> Result<String, String> {
     if dir.is_empty() {
         return Err("no project folder".to_string());
@@ -122,6 +128,8 @@ fn run_git_action(dir: &str, args: &[&str]) -> Result<String, String> {
         .arg("-C")
         .arg(dir)
         .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=10")
         .output()
         .map_err(|e| format!("failed to run git: {e}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -153,11 +161,14 @@ pub fn push(dir: &str) -> Result<String, String> {
     run_git_action(dir, &["push"])
 }
 
-/// Pull the project's current branch from its remote (`git pull`). Returns git's
-/// message on success, an error message (conflict / no upstream / offline) on
-/// failure.
+/// Pull the project's current branch from its remote, fast-forward ONLY
+/// (`git pull --ff-only`). A clean fast-forward succeeds; a divergent branch
+/// fails cleanly WITHOUT starting a merge, so a user-triggered Pull can never
+/// leave the project's worktree in a half-merged, conflict-marked state. Returns
+/// git's message on success, an error message (diverged / no upstream / offline)
+/// on failure.
 pub fn pull(dir: &str) -> Result<String, String> {
-    run_git_action(dir, &["pull"])
+    run_git_action(dir, &["pull", "--ff-only"])
 }
 
 // ───────────────────────── git worktrees ─────────────────────────
@@ -617,6 +628,50 @@ mod tests {
         let repo = TempRepo::new("pushnorem");
         let res = push(repo.str());
         assert!(res.is_err(), "push with no remote should Err, got {:?}", res);
+    }
+
+    #[test]
+    fn pull_on_a_divergent_branch_fails_without_a_mid_merge_worktree() {
+        // A clone and its origin each commit a DIFFERENT file on main → the
+        // branches diverge. A plain `git pull` would try to merge (and could leave
+        // a conflicted, mid-merge worktree); `--ff-only` must instead refuse
+        // cleanly, leaving the clone's worktree untouched (no MERGE_HEAD).
+        let origin = TempRepo::new("divorigin");
+        let remote = bare_remote("div");
+        run(origin.str(), &["remote", "add", "origin", remote.str()]);
+        run(origin.str(), &["push", "-u", "origin", "main"]);
+
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let clone_dir = std::env::temp_dir().join(format!("agentdesk-divclone-{nanos}"));
+        run(
+            std::env::temp_dir().to_str().unwrap(),
+            &["clone", "-q", remote.str(), clone_dir.to_str().unwrap()],
+        );
+        run(clone_dir.to_str().unwrap(), &["config", "user.email", "t@example.com"]);
+        run(clone_dir.to_str().unwrap(), &["config", "user.name", "Test"]);
+        let clone = TempRepo(clone_dir);
+
+        // Origin advances main and pushes.
+        fs::write(origin.path().join("o.md"), "origin\n").unwrap();
+        run(origin.str(), &["add", "."]);
+        run(origin.str(), &["commit", "-q", "-m", "origin-side"]);
+        run(origin.str(), &["push", "origin", "main"]);
+
+        // The clone makes its OWN divergent commit (not on the remote).
+        fs::write(clone.path().join("c.md"), "clone\n").unwrap();
+        run(clone.str(), &["add", "."]);
+        run(clone.str(), &["commit", "-q", "-m", "clone-side"]);
+
+        let res = pull(clone.str());
+        assert!(res.is_err(), "divergent ff-only pull should fail, got {:?}", res);
+        // The worktree must NOT be left mid-merge.
+        assert!(
+            !clone.path().join(".git").join("MERGE_HEAD").exists(),
+            "ff-only pull must not start a merge"
+        );
     }
 
     #[test]

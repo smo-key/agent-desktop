@@ -1,4 +1,15 @@
-## ADDED Requirements
+# projects Specification
+
+## Purpose
+
+A project is a working folder with a name/color/icon, surfaced as a row in the
+project pane and bound to agent sessions. The project pane lets the user filter
+the fleet by project, see each project's git state, and act on a project via its
+row's right-click context menu. (Broader project-model requirements are defined
+by the `add-agent-desktop` change and fold in when it archives; this spec
+currently captures the context-menu git actions.)
+
+## Requirements
 
 ### Requirement: Push And Pull A Project From Its Context Menu
 

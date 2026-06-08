@@ -11,9 +11,13 @@ belong right on that menu.
 
 - Add **Push** and **Pull** items to a project row's right-click context menu in
   the project pane, between "Worktrees…" and "Delete project".
-- **Push** runs `git push` in the project's folder; **Pull** runs `git pull`.
-  Both are fired against the project's checkout (not a running agent's pane), so
-  they work whether or not a session is open in that project.
+- **Push** runs `git push` in the project's folder; **Pull** runs
+  `git pull --ff-only` (fast-forward only, so a divergent branch fails cleanly
+  rather than leaving the worktree mid-merge). Both are fired against the
+  project's checkout (not a running agent's pane), so they work whether or not a
+  session is open in that project, and both run git NON-INTERACTIVELY
+  (`GIT_TERMINAL_PROMPT=0`, `BatchMode=yes` ssh) so a remote that would otherwise
+  prompt fails fast instead of hanging the command.
 - The outcome is surfaced **non-blockingly via a toast** — a success toast
   echoing git's own message (e.g. "Everything up-to-date") or a failure toast
   carrying git's error (no upstream, rejected, conflict, offline). Neither action
