@@ -3,7 +3,7 @@
 - [x] 1.1 Add a pure display catalog to `src/lib/voice/models.ts`: `formatBytes`
   and `downloadRows(missing)` mapping registry filenames → `{ label, bytes }` rows
   + total, mirroring `models.rs`. Unit-test both.
-- [ ] 1.2 Add `src/lib/onboarding/onboarding.svelte.ts`: a reactive store holding
+- [x] 1.2 Add `src/lib/onboarding/onboarding.svelte.ts`: a reactive store holding
   the model status + `dismissedThisSession`, with a pure
   `shouldShowOnboarding(status, dismissed)` and `init/refresh/dismiss` methods.
   Unit-test the pure gate + store transitions.
