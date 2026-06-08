@@ -2,5 +2,5 @@
   "provider": "local",
   "taskRef": "move-project-git-to-footer",
   "url": "",
-  "lastEvent": "review"
+  "lastEvent": "done"
 }
