@@ -194,6 +194,26 @@ describe('workspace — worktree cleanup on permanent close', () => {
     expect(invokeMock).toHaveBeenCalledTimes(2);
   });
 
+  it('deleteAgent on a multi-pane workspace removes the deleted pane worktree', () => {
+    const store = new WorkspaceStore();
+    // Worktree-backed pane plus a second (plain) pane in the same workspace, so
+    // deleteAgent takes its multi-pane branch (prune the leaf) rather than
+    // delegating to closeWorkspace.
+    store.newWorkspace('claude', '/repo/.worktrees/a', undefined, 'proj-1', '/repo/.worktrees/a', 'baseA');
+    store.split('row'); // second, worktree-less leaf
+    const entry = store.active!;
+    const wtLeaf = leavesInOrder(entry.ws.root).find(
+      (l) => entry.registry[l.paneId]?.worktreePath === '/repo/.worktrees/a'
+    )!;
+
+    store.deleteAgent(wtLeaf.paneId);
+
+    expect(invokeMock).toHaveBeenCalledWith('worktree_remove_if_clean', {
+      worktreePath: '/repo/.worktrees/a',
+      base: 'baseA'
+    });
+  });
+
   it('Archiving does not remove the worktree', () => {
     const { store, paneId } = withWorktreePane();
 

@@ -59,10 +59,12 @@ export interface PaneSession {
   projectId?: string;
   /**
    * OPTIONAL absolute path of the git WORKTREE this pane was launched into (its
-   * `cwd` is this worktree). Recorded verbatim at launch (and PERSISTED) when the
-   * pane's project had `autoWorktree` and worktree creation succeeded, so a later
-   * task can clean the worktree up when the agent ends. Absent for panes launched
-   * in the plain project folder (no autoWorktree, or creation fell back).
+   * `cwd` is this worktree). Recorded verbatim at launch (RUNTIME-ONLY — not
+   * serialized by `persistence.ts`, so the cleanup association is dropped across a
+   * restart; the management UI's prune is the escape hatch for such orphans) when
+   * the pane's project had `autoWorktree` and worktree creation succeeded, so the
+   * permanent-close paths can clean the worktree up when the agent ends. Absent for
+   * panes launched in the plain project folder (no autoWorktree, or creation fell back).
    */
   worktreePath?: string;
   /** OPTIONAL base SHA the worktree's branch forked from (HEAD at creation). Absent
@@ -804,8 +806,9 @@ export class WorkspaceStore {
   /**
    * DELETE the agent in pane `paneId` entirely (used by the Completed context
    * menu's "Delete"). If its workspace has OTHER panes, remove just that leaf (its
-   * TerminalPane unmounts, killing any PTY) and prune its registry entry; if it is
-   * the ONLY pane, close the whole workspace. No-op when the pane is gone.
+   * TerminalPane unmounts, killing any PTY), prune its registry entry, and clean up
+   * its worktree (a permanent close); if it is the ONLY pane, close the whole
+   * workspace (which cleans up too). No-op when the pane is gone.
    */
   deleteAgent(paneId: string): void {
     for (const entry of this.workspaces) {
@@ -813,10 +816,14 @@ export class WorkspaceStore {
       if (!leaf) continue;
       if (leavesInOrder(entry.ws.root).length > 1) {
         // More than one pane here: remove just this leaf + prune its registry entry.
+        const removed = entry.registry[paneId];
         entry.ws = closeLeaf(entry.ws, leaf.id);
         if (!leafByPaneId(entry.ws.root, paneId)) {
           const { [paneId]: _removed, ...rest } = entry.registry;
           entry.registry = rest;
+          // Permanent removal (pane gone, PTY killed): clean up its worktree like
+          // the other close paths. (The single-pane branch routes via closeWorkspace.)
+          cleanupWorktree(removed);
         }
       } else {
         // The only pane in its workspace: close the whole workspace.
