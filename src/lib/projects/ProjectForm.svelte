@@ -43,11 +43,18 @@
   // (default off until it resolves). The submitted draft still carries the flag —
   // the parent routes it to the folder config.
   let autoWorktree = $state(false);
+  // Once the user touches the toggle, a late-resolving load MUST NOT clobber their
+  // choice. The cleanup flag also drops a stale load if the effect re-runs/unmounts.
+  let autoWorktreeTouched = $state(false);
   $effect(() => {
     if (mode === 'edit' && seed?.path) {
+      let live = true;
       void loadAutoWorktree(seed.path).then((v) => {
-        autoWorktree = v;
+        if (live && !autoWorktreeTouched) autoWorktree = v;
       });
+      return () => {
+        live = false;
+      };
     }
   });
 
@@ -248,7 +255,7 @@
       class="pf-toggle-row"
       role="switch"
       aria-checked={autoWorktree}
-      onclick={() => (autoWorktree = !autoWorktree)}
+      onclick={() => ((autoWorktree = !autoWorktree), (autoWorktreeTouched = true))}
     >
       <span class="pf-toggle-text">
         <span class="pf-toggle-label">Auto-worktree</span>

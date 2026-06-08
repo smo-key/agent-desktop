@@ -401,8 +401,14 @@ pub fn worktree_list(repo_path: &str) -> Vec<WorktreeInfo> {
 pub fn worktree_remove(worktree_path: &str, force: bool) -> Result<(), String> {
     // Resolve the branch and owning repo before removal so we can delete the
     // branch from the main repo afterwards (the worktree dir is gone by then).
-    let branch = run_git(worktree_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
     let main_repo = main_repo_dir(worktree_path);
+    // Prefer a direct query; if the worktree dir was already deleted out-of-band,
+    // `git -C <gone>` fails, so fall back to the main repo's worktree listing.
+    let branch = run_git(worktree_path, &["rev-parse", "--abbrev-ref", "HEAD"]).or_else(|| {
+        main_repo
+            .as_deref()
+            .and_then(|repo| branch_for_worktree(repo, worktree_path))
+    });
     remove_worktree(worktree_path, force)?;
     if let (Some(b), Some(repo)) = (branch, main_repo.as_deref()) {
         delete_branch(repo, &b);
@@ -414,25 +420,49 @@ pub fn worktree_remove(worktree_path: &str, force: bool) -> Result<(), String> {
 /// git resolves the owning repo; the explicit path arg keeps the target
 /// unambiguous. `Err` on git failure.
 fn remove_worktree(worktree_path: &str, force: bool) -> Result<(), String> {
+    // Run from the MAIN repo, not the worktree itself: a `git -C <worktree>` call
+    // fails outright once the worktree dir is gone (removed underneath us), which
+    // would make the prune fallback below unreachable. `main_repo_dir` has a
+    // pure-path fallback, so it resolves even for an already-missing worktree dir.
+    let main = main_repo_dir(worktree_path);
+    let run_dir = main.as_deref().unwrap_or(worktree_path);
+
     let mut args = vec!["worktree", "remove"];
     if force {
         args.push("--force");
     }
     args.push(worktree_path);
-    run_git(worktree_path, &args)
-        .or_else(|| {
-            // The worktree dir may already be gone (e.g. removed underneath us);
-            // fall back to a prune from the worktree's parent repo so the branch
-            // delete below still runs against a consistent state.
-            run_git(worktree_path, &["worktree", "prune"])
-        })
-        .map(|_| ())
-        .ok_or_else(|| format!("git worktree remove failed for {worktree_path}"))
+    // Try a clean removal; if it fails, prune stale admin entries (covers a worktree
+    // dir deleted out-of-band). Both run from the main repo.
+    let _ = run_git(run_dir, &args).or_else(|| run_git(run_dir, &["worktree", "prune"]));
+
+    // Only report success when the worktree is ACTUALLY gone. `git worktree prune`
+    // exits 0 without removing a still-present-but-unremovable worktree, so trusting
+    // its exit code would falsely claim removal — and the caller would then delete
+    // the branch out from under a worktree still on disk.
+    if std::path::Path::new(worktree_path).exists() {
+        return Err(format!("git worktree remove failed for {worktree_path}"));
+    }
+    Ok(())
 }
 
-/// Best-effort delete of a now-unused branch. Run from the worktree path (which,
-/// after `worktree remove`, resolves to the owning repo via git's discovery).
-/// Failure is swallowed: a leftover branch is harmless and must not fail close.
+/// Resolve a worktree's branch from the MAIN repo's listing. Works even when the
+/// worktree dir is already gone (git keeps the admin entry until pruned), so it
+/// backstops a direct `rev-parse` that can't run against a missing dir.
+fn branch_for_worktree(main_repo: &str, worktree_path: &str) -> Option<String> {
+    let target = std::fs::canonicalize(worktree_path)
+        .ok()
+        .and_then(|p| p.to_str().map(str::to_string));
+    worktree_list(main_repo)
+        .into_iter()
+        .find(|w| w.path == worktree_path || target.as_deref() == Some(w.path.as_str()))
+        .and_then(|w| w.branch)
+}
+
+/// Best-effort delete of a now-unused branch. `dir` MUST be the main repo dir
+/// (callers resolve it via `main_repo_dir` BEFORE removal, since the worktree dir
+/// is gone by the time this runs). Failure is swallowed: a leftover branch is
+/// harmless and must not fail close.
 fn delete_branch(dir: &str, branch: &str) {
     let _ = run_git(dir, &["branch", "-D", branch]);
 }
@@ -590,6 +620,29 @@ mod tests {
         fs::write(Path::new(&info.path).join("scratch.txt"), "wip\n").unwrap();
         worktree_remove(&info.path, true).expect("force remove should succeed");
         assert!(!Path::new(&info.path).is_dir(), "worktree dir should be gone");
+    }
+
+    #[test]
+    fn pruning_a_worktree_whose_dir_was_deleted_out_of_band() {
+        // Regression: prune must run from the MAIN repo, not the (now-missing)
+        // worktree dir, and the branch must still be deleted afterwards.
+        let repo = TempRepo::new("prune-gone");
+        let info = worktree_create(repo.str()).unwrap();
+        // Simulate the user deleting the worktree folder directly.
+        fs::remove_dir_all(&info.path).unwrap();
+        assert!(!Path::new(&info.path).is_dir());
+
+        worktree_remove(&info.path, false).expect("remove of an already-gone dir should succeed");
+
+        // Admin metadata pruned: the worktree no longer appears in the listing...
+        let listed = worktree_list(repo.str());
+        assert!(
+            !listed.iter().any(|w| w.path == info.path),
+            "stale worktree should be pruned from the listing"
+        );
+        // ...and its branch is gone (deleted from the main repo).
+        let branches = run_git(repo.str(), &["branch", "--list", &info.branch]).unwrap_or_default();
+        assert!(branches.trim().is_empty(), "session branch should be deleted");
     }
 
     /// `git init --bare` a throwaway remote under the temp dir. Returns its path
