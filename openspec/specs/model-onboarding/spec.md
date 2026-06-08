@@ -45,6 +45,35 @@ the gate SHALL surface the error and offer a retry rather than dismissing.
 - **WHEN** a model download from the gate fails
 - **THEN** the gate shows the error and offers a retry, and does not dismiss
 
+### Requirement: Model downloads work behind TLS-inspecting corporate proxies
+
+Model downloads SHALL succeed on corporate networks that perform TLS inspection.
+This has two parts:
+
+1. **Trust.** Downloads SHALL validate TLS against the operating system trust
+   store, so that an internal CA installed in the OS keychain — which re-signs
+   upstream certificates — is honored. The download client SHALL NOT rely solely
+   on a bundled certificate set that ignores OS-installed trust anchors.
+2. **Connection protocol.** The download client SHALL negotiate a connection
+   protocol the proxy reliably supports. Because some inspecting proxies mishandle
+   HTTP/2 and tear the connection down mid-handshake, the client SHALL constrain
+   itself to HTTP/1.1 for model downloads rather than offering HTTP/2 via ALPN.
+
+#### Scenario: Download behind a TLS-inspecting proxy
+
+- **WHEN** the model download runs on a network whose TLS-inspecting proxy
+  re-signs the connection with a CA that is trusted by the OS but not part of any
+  bundled root set
+- **THEN** the TLS handshake succeeds and the download proceeds, rather than
+  failing with an unknown-issuer / invalid-certificate error
+
+#### Scenario: Proxy that mishandles HTTP/2
+
+- **WHEN** the model download runs through an inspecting proxy that closes the
+  connection when the client offers HTTP/2
+- **THEN** the download still completes over HTTP/1.1 rather than failing with an
+  unexpected-EOF / connection-closed error
+
 ### Requirement: Skip defers the download for the session
 
 The gate SHALL offer a secondary action to skip the download and enter the app.

@@ -275,7 +275,16 @@ pub async fn voice_download_models(
     let present = present_filenames(&base);
     let needed = models_needed(Tier::from_str(&tier), polish, &present);
 
-    let client = reqwest::Client::new();
+    // Force HTTP/1.1. reqwest offers h2 via ALPN by default, but some corporate
+    // TLS-inspecting proxies (e.g. Netskope) mishandle the h2 connection and tear
+    // it down mid-handshake — surfacing as rustls "peer closed connection without
+    // sending TLS close_notify (unexpected EOF)" and failing every download. h1
+    // negotiates cleanly through the same proxy. Falls back to a default client if
+    // the builder ever fails (it doesn't, with these options).
+    let client = reqwest::Client::builder()
+        .http1_only()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
     for spec in needed {
         if let Err(message) = download_one(&client, spec, &models_dir, &on_event).await {
             // Best-effort: surface this model's failure and keep going.
