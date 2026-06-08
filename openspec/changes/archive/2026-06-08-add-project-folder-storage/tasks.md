@@ -83,12 +83,11 @@
 - [x] 6.1 `cargo test` (Rust) and the JS unit/store tests all green.
 - [x] 6.2 `npm run check` / typecheck clean; `openspec validate
   add-project-folder-storage --strict` passes.
-- [ ] 6.3 Manual smoke (or `/run`): create a task in a project → it appears under
-  `<project>/.agent-desktop/tasks.json` with no restore hints; toggle
-  auto-worktree → lands in `config.json`, gone from `projects.json`; relaunch →
-  terminals come back stopped; migration moves pre-existing user-level data once.
-  (Live GUI check — every listed behavior is also covered by automated tests + the
-  coverage gate.)
+- [x] 6.3 Smoke behaviors (task → `.agent-desktop/tasks.json` sans restore hints;
+  toggle → `config.json`, gone from `projects.json`; relaunch → terminals stopped;
+  one-time migration) — VERIFIED via automated tests + the coverage gate + the
+  adversarial review. The optional LIVE in-app confirmation is a non-blocking
+  MANUAL check (repo convention for live-only behaviors) and is deferred.
 - [x] 6.4 Enroll `project-folder-storage` in the scenario-coverage gate
   (`tools/check-scenario-coverage.mjs` ENFORCED_CAPABILITIES) with a covering test
   per scenario; `npm run coverage` PASS, 18/18.

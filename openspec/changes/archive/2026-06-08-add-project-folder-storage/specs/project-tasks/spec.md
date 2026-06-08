@@ -26,3 +26,22 @@ serialize the machine-local restore hints `wasRunning` or `lastCommand`.
 #### Scenario: Runtime state not persisted
 - **WHEN** the task store is serialized
 - **THEN** no `paneId`, `running`, or `exitCode` field is written to disk, and no `wasRunning` or `lastCommand` field is written either
+
+### Requirement: Task persistence and migration
+
+The system SHALL persist task definitions PER PROJECT to that project's
+`<project_path>/.agent-desktop/tasks.json` via the Tauri `project_tasks_load` /
+`project_tasks_save` commands, and SHALL fall back to an empty collection on a
+missing or unparseable file. The system SHALL run a one-time migration of any
+former user-level `tasks.json` (and the legacy `terminals.json` fallback) into
+the per-project files, after which the user-level file is removed — the migration
+behavior and its destructive cleanup are specified by the `project-folder-storage`
+capability.
+
+#### Scenario: Round-trip persistence
+- **WHEN** tasks are created in project P and P's per-project file is saved and reloaded
+- **THEN** the same task definitions are restored from `<P>/.agent-desktop/tasks.json`
+
+#### Scenario: Corrupt file falls back to empty
+- **WHEN** a project's `.agent-desktop/tasks.json` contains invalid JSON on load
+- **THEN** that project loads an empty task collection without throwing
