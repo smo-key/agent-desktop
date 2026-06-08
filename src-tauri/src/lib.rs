@@ -4,6 +4,7 @@ pub mod git;
 pub mod models;
 pub mod orchestration;
 pub mod polish;
+pub mod project_store;
 pub mod pty;
 pub mod specialists;
 pub mod subagents;
@@ -482,6 +483,20 @@ fn tasks_save(app: AppHandle, json: String) -> Result<(), String> {
     write_app_data_json(&app, TASKS_FILE, &json)
 }
 
+/// Delete the LEGACY user-level `<app_data_dir>/tasks.json`. Deleting an absent
+/// file is a NO-OP (not an error). Used to clean up the old user-level store after
+/// migrating a project's tasks into its own `.agent-desktop/tasks.json` (see
+/// [`project_store`]).
+#[tauri::command]
+fn tasks_clear(app: AppHandle) -> Result<(), String> {
+    let path = app_data_file(&app, TASKS_FILE)?;
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()), // no-op.
+        Err(e) => Err(format!("remove {path:?}: {e}")),
+    }
+}
+
 /// List a project's SPECIALISTS — the native Claude Code subagent files under
 /// `<projectPath>/.claude/agents/*.md`. Returns one `{ name, content }` per `.md`
 /// file (raw contents; the frontend parses them via `parseSpecialist`), sorted by
@@ -514,6 +529,34 @@ fn specialists_write(project_path: String, name: String, content: String) -> Res
 #[tauri::command]
 fn specialists_delete(project_path: String, name: String) -> Result<(), String> {
     specialists::delete_specialist(Path::new(&project_path), &name)
+}
+
+/// Load a project's `.agent-desktop/tasks.json`, or `None` when it does not exist
+/// yet. See [`project_store::load_tasks`].
+#[tauri::command]
+fn project_tasks_load(project_path: String) -> Result<Option<String>, String> {
+    project_store::load_tasks(Path::new(&project_path))
+}
+
+/// Atomically persist a project's `.agent-desktop/tasks.json` (atomic temp+rename,
+/// creating the dir if needed). See [`project_store::save_tasks`].
+#[tauri::command]
+fn project_tasks_save(project_path: String, json: String) -> Result<(), String> {
+    project_store::save_tasks(Path::new(&project_path), &json)
+}
+
+/// Load a project's `.agent-desktop/config.json`, or `None` when it does not exist
+/// yet. See [`project_store::load_config`].
+#[tauri::command]
+fn project_config_load(project_path: String) -> Result<Option<String>, String> {
+    project_store::load_config(Path::new(&project_path))
+}
+
+/// Atomically persist a project's `.agent-desktop/config.json` (atomic temp+rename,
+/// creating the dir if needed). See [`project_store::save_config`].
+#[tauri::command]
+fn project_config_save(project_path: String, json: String) -> Result<(), String> {
+    project_store::save_config(Path::new(&project_path), &json)
 }
 
 /// Resolve `<app_data_dir>`, creating it if needed.
@@ -1125,10 +1168,15 @@ pub fn run() {
             terminals_save,
             tasks_load,
             tasks_save,
+            tasks_clear,
             specialists_list,
             specialists_read,
             specialists_write,
             specialists_delete,
+            project_tasks_load,
+            project_tasks_save,
+            project_config_load,
+            project_config_save,
             usage_paths,
             usage_snapshots,
             subagents_for,
