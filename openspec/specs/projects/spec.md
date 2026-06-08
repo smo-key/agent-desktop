@@ -30,6 +30,11 @@ output and can act on it (authenticate, resolve a conflict, retry); when no
 terminal surface is available it falls back to a non-blocking failure toast
 carrying git's own error. The action never blocks the UI and never throws.
 
+While a Push or Pull is IN FLIGHT for a project's folder, that folder's sync is
+single-flight: a second Push or Pull on the same folder is ignored, and the
+footer's Push/Pull buttons for that project are disabled until the running sync
+completes (success or failure), so the operation cannot be re-triggered mid-run.
+
 #### Scenario: Push succeeds
 
 - **WHEN** the user picks **Push** on a project whose folder is a git repo with a
@@ -68,6 +73,14 @@ carrying git's own error. The action never blocks the UI and never throws.
   ahead (↑) Push button or the behind (↓) Pull button
 - **THEN** the app runs the same Push / Pull action against that project's folder
   (success toast; interactive terminal on failure).
+
+#### Scenario: Push and pull are blocked while a sync is in progress
+
+- **WHEN** a Push or Pull for a project's folder is already in flight and the user
+  triggers Push or Pull on that same folder again
+- **THEN** the second action is ignored (git is not invoked a second time) and the
+  footer's Push/Pull buttons for that project are disabled until the running sync
+  completes.
 
 #### Scenario: Project has no folder
 
