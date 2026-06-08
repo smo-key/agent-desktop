@@ -37,3 +37,40 @@ describe('shortcuts registry', () => {
     expect(combos).toContain('⌘+/');
   });
 });
+
+// The help modal must show EVERY shortcut a user can actually trigger. This pins
+// each functional binding registered by a handler (the global onKeydown in
+// +page.svelte, the inbox nav in Inbox.svelte, the launcher's keys) so the
+// registry can't silently drift out of sync with them. Inert grid-only bindings
+// (⌘[, ⌘], Alt+Arrow, the grid ⌘W) are excluded on purpose — `if (!view.isGrid)
+// return;` never passes in the inbox view, so they never fire.
+describe('shortcuts registry covers every functional binding', () => {
+  const FUNCTIONAL: Array<{ keys: string[]; where: string }> = [
+    { keys: ['⌘', 'N'], where: 'new session' },
+    { keys: ['⌘', 'T'], where: 'create task' },
+    { keys: ['⌘', 'J'], where: 'toggle terminals panel' },
+    { keys: ['⌘', 'Y'], where: 'new terminal' },
+    { keys: ['⌘', 'Tab'], where: 'cycle focus' },
+    { keys: ['⌘', '/'], where: 'show shortcuts' },
+    { keys: ['?'], where: 'show shortcuts (bare ?)' },
+    { keys: ['Esc'], where: 'close dialog' },
+    { keys: ['⌘', '↓'], where: 'next agent' },
+    { keys: ['⌘', '↑'], where: 'previous agent' },
+    { keys: ['⌘', '⇧', '↓'], where: 'next project filter' },
+    { keys: ['⌘', '⇧', '↑'], where: 'previous project filter' },
+    { keys: ['⌘', 'W'], where: 'archive session' },
+    { keys: ['⌘', '.'], where: 'pause / resume session' },
+    { keys: ['⌘', 'Enter'], where: 'confirm and launch' }
+  ];
+
+  const has = (keys: string[]): boolean =>
+    allItems().some(
+      (s) => s.keys.length === keys.length && s.keys.every((k, i) => k === keys[i])
+    );
+
+  for (const { keys, where } of FUNCTIONAL) {
+    it(`lists ${keys.join('')} (${where})`, () => {
+      expect(has(keys)).toBe(true);
+    });
+  }
+});

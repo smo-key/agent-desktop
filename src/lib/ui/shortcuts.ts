@@ -22,7 +22,12 @@ export const SHORTCUTS: ShortcutGroup[] = [
     title: 'Global',
     items: [
       { keys: ['⌘', 'N'], label: 'New session (launcher)' },
+      { keys: ['⌘', 'T'], label: 'Create task' },
+      { keys: ['⌘', 'J'], label: 'Toggle Terminals panel' },
+      { keys: ['⌘', 'Y'], label: 'New terminal' },
+      { keys: ['⌘', 'Tab'], label: 'Cycle focus (agent / terminals)' },
       { keys: ['⌘', '/'], label: 'Show keyboard shortcuts' },
+      { keys: ['?'], label: 'Show shortcuts (when not typing)' },
       { keys: ['Esc'], label: 'Close dialog / menu' }
     ]
   },
@@ -30,7 +35,9 @@ export const SHORTCUTS: ShortcutGroup[] = [
     title: 'Inbox',
     items: [
       { keys: ['⌘', '↓'], label: 'Next agent' },
-      { keys: ['⌘', '↑'], label: 'Previous agent' }
+      { keys: ['⌘', '↑'], label: 'Previous agent' },
+      { keys: ['⌘', '⇧', '↓'], label: 'Next project filter' },
+      { keys: ['⌘', '⇧', '↑'], label: 'Previous project filter' }
     ]
   },
   {
