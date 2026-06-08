@@ -104,34 +104,10 @@ The system SHALL persist each project's terminal definitions — id, name, comma
 - **WHEN** terminal definitions are saved
 - **THEN** the saved data excludes live process handles, current running status, and exit codes
 
-### Requirement: Selective auto-restart on launch
-
-On app launch the system SHALL auto-start only the terminals that were running at the time of the previous graceful quit, restoring all other terminals as stopped. The system SHALL capture each terminal's running state at quit and SHALL NOT re-run a terminal's command on launch unless that terminal was running when the app quit. For a terminal that was running, the system SHALL also capture the actively-running command (from the live terminal title) at quit and SHALL re-run that command in the restored shell, so a restored terminal returns to what it was doing; if no command was captured, it SHALL restore as a plain interactive shell.
-
-#### Scenario: Running command captured at quit
-
-- **WHEN** the app quits gracefully while a terminal is running a command (reported via its live title)
-- **THEN** that command is persisted as the terminal's last-running command, and is cleared for terminals that were not running
-
-#### Scenario: Restored terminal re-runs its last running command
-
-- **WHEN** a terminal that was running a captured command is auto-restarted on the next launch
-- **THEN** the restored shell re-runs that command (it is delivered as the shell's initial input)
-
-#### Scenario: Previously running terminal auto-restarts
-
-- **WHEN** a terminal was running at the time the app quit
-- **THEN** on the next launch that terminal is automatically started with its persisted command and working directory
-
-#### Scenario: Previously stopped terminal stays stopped
-
-- **WHEN** a terminal was stopped at the time the app quit
-- **THEN** on the next launch that terminal is restored as a stopped entry and its command is not run until the user starts it
-
-#### Scenario: Running state captured at quit
-
-- **WHEN** the app quits gracefully
-- **THEN** the running/stopped state of each terminal is persisted so the next launch can selectively auto-restart
+<!-- NOTE: The former "Selective auto-restart on launch" requirement (persisted
+     wasRunning/lastCommand restore hints) was superseded by
+     add-project-folder-storage: the committed per-project tasks file is
+     sanitized (no machine-local restore hints) and terminals restore stopped. -->
 
 ### Requirement: No orphaned terminal processes on quit
 

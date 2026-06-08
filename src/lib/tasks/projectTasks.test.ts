@@ -11,9 +11,6 @@ import {
   importLegacyTasks,
   tasksForProject,
   taskSpawnSpec,
-  markRunningState,
-  captureRunningState,
-  autoRestartIds,
   serializeProjectTasks,
   parseProjectTasks,
   parseProjectConfig,
@@ -197,64 +194,6 @@ describe('project-terminals — spawn spec', () => {
   it('honors an explicit per-terminal cwd over the project path', () => {
     const spec = taskSpawnSpec(t({ command: null, cwd: '/custom' }), '/proj', '/bin/zsh');
     expect(spec.cwd).toBe('/custom');
-  });
-});
-
-describe('project-terminals — Selective auto-restart on launch', () => {
-  it('Previously running terminal auto-restarts', () => {
-    let map: TasksByProject = {};
-    map = addTask(map, 'p', t({ id: 'a', wasRunning: true }));
-    map = addTask(map, 'p', t({ id: 'b', wasRunning: false }));
-    expect(autoRestartIds(map)).toEqual(['a']);
-  });
-
-  it('Previously stopped terminal stays stopped', () => {
-    let map: TasksByProject = {};
-    map = addTask(map, 'p', t({ id: 'a', wasRunning: false }));
-    map = addTask(map, 'p', t({ id: 'b' })); // wasRunning undefined => not restarted
-    expect(autoRestartIds(map)).toEqual([]);
-  });
-
-  it('Running state captured at quit', () => {
-    let map: TasksByProject = {};
-    map = addTask(map, 'p', t({ id: 'a' }));
-    map = addTask(map, 'p', t({ id: 'b' }));
-    // Capture: 'a' running, 'b' stopped.
-    map = markRunningState(map, new Set(['a']));
-    expect(tasksForProject(map, 'p').find((x) => x.id === 'a')?.wasRunning).toBe(true);
-    expect(tasksForProject(map, 'p').find((x) => x.id === 'b')?.wasRunning).toBe(false);
-    // The captured flags drive the next launch's auto-restart set.
-    expect(autoRestartIds(map)).toEqual(['a']);
-  });
-
-  it('Running command captured at quit', () => {
-    let map: TasksByProject = {};
-    map = addTask(map, 'p', t({ id: 'a' }));
-    map = addTask(map, 'p', t({ id: 'b' }));
-    // 'a' running a command (live title), 'b' stopped.
-    map = captureRunningState(map, {
-      a: { running: true, title: 'npm run dev' },
-      b: { running: false }
-    });
-    const a = tasksForProject(map, 'p').find((x) => x.id === 'a');
-    const b = tasksForProject(map, 'p').find((x) => x.id === 'b');
-    expect(a?.wasRunning).toBe(true);
-    expect(a?.lastCommand).toBe('npm run dev');
-    expect(b?.wasRunning).toBe(false);
-    expect(b?.lastCommand).toBeUndefined();
-  });
-
-  it('clears lastCommand for a terminal that is no longer running', () => {
-    let map = addTask({}, 'p', t({ id: 'a', lastCommand: 'old cmd' }));
-    map = captureRunningState(map, { a: { running: false } });
-    expect(tasksForProject(map, 'p')[0].lastCommand).toBeUndefined();
-  });
-
-  it('round-trips lastCommand through persistence', () => {
-    let map = addTask({}, 'p', t({ id: 'a' }));
-    map = captureRunningState(map, { a: { running: true, title: 'vim x' } });
-    const round = parseTasks(serializeTasks(map));
-    expect(tasksForProject(round, 'p')[0].lastCommand).toBe('vim x');
   });
 });
 

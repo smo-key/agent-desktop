@@ -61,7 +61,12 @@ Persisted as `terminals.json`: `{ version: 1, projects: { [projectId]: TerminalD
 - **Process exit** (child dies on its own): the existing `PtyEvent::Exit` surfaces; the entry flips to stopped with the exit code, not removed.
 This treats a terminal entry as a durable slot whose process may be up or down, which is what dev-server workflows want.
 
-### Decision: Selective auto-restart on launch
+### Decision: Selective auto-restart on launch — SUPERSEDED
+NOTE: This decision was superseded by `add-project-folder-storage`. The committed
+per-project tasks file is sanitized (no persisted `wasRunning`/`lastCommand`
+restore hints), so cross-restart auto-restart is dropped — terminals always
+restore stopped. The original decision is retained below for historical context.
+
 On graceful quit, persist `wasRunning = (entry currently running)` for each terminal. On load, for each project's terminals, **do not** spawn anything eagerly; spawn (start) only those with `wasRunning === true`, and only lazily when that project first becomes visible OR eagerly at boot — to avoid surprising the user, spawn is **eager at boot only for terminals marked running**, all others restored stopped. **Alternative considered:** always auto-restart, or never auto-restart. Both rejected by the product decision; the `wasRunning` flag is the single source of truth and arbitrary commands are never re-run unless they were already running.
 
 ### Decision: Panel visibility independent of process lifecycle

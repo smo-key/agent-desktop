@@ -149,52 +149,6 @@ export function renameTask(
   return mapTasks(map, (t) => (t.id === id ? { ...t, name: clean } : t));
 }
 
-/**
- * Capture each terminal's running state into its `wasRunning` flag, given the set
- * of currently-running terminal ids. Called at graceful quit so the next launch
- * can selectively auto-restart only what was running.
- */
-export function markRunningState(
-  map: TasksByProject,
-  runningIds: ReadonlySet<string>
-): TasksByProject {
-  return mapTasks(map, (t) => ({ ...t, wasRunning: runningIds.has(t.id) }));
-}
-
-/**
- * Capture each terminal's running state AND its actively-running command into the
- * persisted def, given per-terminal runtime info (running flag + live title). Sets
- * `wasRunning` and, for a running terminal with a non-empty title, `lastCommand`
- * (cleared otherwise). Called at graceful quit so the next launch can restore each
- * shell — and re-run what it was doing.
- */
-export function captureRunningState(
-  map: TasksByProject,
-  infoById: Record<string, { running: boolean; title?: string } | undefined>
-): TasksByProject {
-  return mapTasks(map, (t) => {
-    const info = infoById[t.id];
-    const running = info?.running === true;
-    const cmd = running && info?.title ? info.title.trim() : '';
-    const next: TaskDef = { ...t, wasRunning: running };
-    if (cmd) next.lastCommand = cmd;
-    else delete next.lastCommand;
-    return next;
-  });
-}
-
-/**
- * The ids of terminals that should auto-start on launch — exactly those whose
- * persisted `wasRunning` flag is true. All others are restored as stopped.
- */
-export function autoRestartIds(map: TasksByProject): string[] {
-  const ids: string[] = [];
-  for (const list of Object.values(map)) {
-    for (const t of list) if (t.wasRunning) ids.push(t.id);
-  }
-  return ids;
-}
-
 /** Map a transform over every terminal in every project (immutably). */
 function mapTasks(
   map: TasksByProject,
