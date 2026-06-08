@@ -72,6 +72,7 @@ Cover every scenario in `specs/session-launcher/spec.md`.
 - [x] 7.3 Placement: new workspace/tab or split the focused pane. Covers *Placement As New Tab Or Split Of Focused Pane*.
 - [x] 7.4 Guarantee no auto-run of `/workflow:*` or any slash command. Covers *No Auto-Run Of Slash Commands*.
 - [x] 7.5 `npm run check` green for `session-launcher`.
+- [x] 7.6 Gate initial-prompt delivery on TUI readiness: start the settle/quiet window only AFTER the first PTY output byte (never at spawn), with a hard-cap backstop, so a slow-starting session (e.g. a coordinated agent loading the toolkit) can't have its prompt written into a not-yet-rendered terminal and show up blank / needs-input. Covers *Initial prompt is delivered only after the TUI is ready*.
 
 ## 9. Integration, validation, and archive
 

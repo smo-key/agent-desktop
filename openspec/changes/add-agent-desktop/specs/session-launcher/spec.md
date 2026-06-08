@@ -33,6 +33,13 @@ The system SHALL let the user optionally enter an initial prompt that is deliver
 - **WHEN** the user confirms the launch leaving the initial-prompt field empty
 - **THEN** the session is spawned and `claude` starts at an idle interactive prompt awaiting user input, with no synthetic input injected
 
+#### Scenario: Initial prompt is delivered only after the TUI is ready
+
+- **WHEN** a session is launched with a non-empty initial prompt
+- **THEN** the prompt is NOT written until the spawned `claude` has emitted its first PTY output and that output has then settled (the TUI is rendered and accepting input), so the prompt is never written into a terminal that has not started rendering
+- **AND** a slow startup that stays silent past the settle window (e.g. a coordinated agent loading the orchestration toolkit) does NOT cause early delivery — the settle window only begins after the first output byte
+- **AND** if output never settles, a hard-cap backstop delivers the prompt anyway so it never hangs
+
 ### Requirement: Spawn Claude With Wrapper Override And Pane Env
 
 The system SHALL spawn `claude` in the chosen `cwd` with the statusline-wrapper applied via a `--settings` override and the `AGENT_DESKTOP_PANE` and `AGENT_DESKTOP_SNAPSHOT_DIR` environment variables set, so the session joins the usage dashboard.

@@ -72,6 +72,97 @@ export const READY_QUIET_MS = 700;
  */
 export const READY_MAX_MS = 8000;
 
+/** Schedules a callback after `ms` and returns a cancellable handle (the app
+ *  passes `setTimeout`; tests pass a fake clock). */
+export type ScheduleAfter = (run: () => void, ms: number) => ReturnType<typeof setTimeout>;
+/** Cancels a handle from {@link ScheduleAfter} (the app passes `clearTimeout`). */
+export type CancelTimer = (handle: ReturnType<typeof setTimeout>) => void;
+
+/**
+ * Decides WHEN a freshly-spawned `claude` pane is ready to receive its initial
+ * prompt, then invokes `onReady` exactly once.
+ *
+ * `claude` emits a burst of startup/render output and then falls quiet at its
+ * ready input box; we deliver after output has been QUIET for `quietMs`. Two
+ * startup hazards this guards against:
+ *
+ *   1. Delivering BEFORE `claude` has emitted ANYTHING. A slow startup — notably
+ *      a coordinated agent loading the orchestration toolkit / MCP servers — can
+ *      leave the PTY silent for longer than `quietMs`. A quiet timer armed at
+ *      spawn would then fire into a TUI that has not started rendering, writing
+ *      the prompt into the void: the text never lands and the session shows up
+ *      blank / needs-input. The quiet window therefore only starts counting
+ *      AFTER the first output byte (see {@link noteOutput}).
+ *   2. NEVER going quiet (continuous output). A hard cap (`maxMs`) measured from
+ *      when the PTY is wired forces delivery so the prompt still lands.
+ *
+ * Framework-free so the timing rules are unit-tested without a DOM or live PTY:
+ * the app injects `setTimeout`/`clearTimeout`, tests inject a fake clock.
+ */
+export class LaunchPromptReadiness {
+  private sawOutput = false;
+  private fired = false;
+  private quiet: ReturnType<typeof setTimeout> | null = null;
+  private cap: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(
+    private readonly onReady: () => void,
+    private readonly schedule: ScheduleAfter,
+    private readonly cancel: CancelTimer,
+    private readonly quietMs: number = READY_QUIET_MS,
+    private readonly maxMs: number = READY_MAX_MS
+  ) {}
+
+  /** Call once the PTY is wired. Arms the hard cap; if output has ALREADY been
+   *  seen (a byte arrived during the spawn round-trip), also starts the quiet
+   *  window. Does NOT start the quiet window otherwise — that waits for output. */
+  wired(): void {
+    if (this.fired) return;
+    if (this.cap === null) this.cap = this.schedule(() => this.fire(), this.maxMs);
+    if (this.sawOutput) this.armQuiet();
+  }
+
+  /** Call on every output byte: `claude` has begun rendering. (Re)starts the
+   *  quiet window so delivery follows once output settles. */
+  noteOutput(): void {
+    if (this.fired) return;
+    this.sawOutput = true;
+    this.armQuiet();
+  }
+
+  /** Stop all timers (component teardown) so a torn-down pane never delivers. */
+  dispose(): void {
+    if (this.quiet !== null) {
+      this.cancel(this.quiet);
+      this.quiet = null;
+    }
+    if (this.cap !== null) {
+      this.cancel(this.cap);
+      this.cap = null;
+    }
+    this.fired = true;
+  }
+
+  private armQuiet(): void {
+    if (this.quiet !== null) this.cancel(this.quiet);
+    this.quiet = this.schedule(() => this.fire(), this.quietMs);
+  }
+
+  private fire(): void {
+    if (this.fired) return;
+    this.fired = true;
+    if (this.quiet !== null) {
+      this.cancel(this.quiet);
+      this.quiet = null;
+    }
+    if (this.cap !== null) {
+      this.cancel(this.cap);
+      this.cap = null;
+    }
+    this.onReady();
+  }
+}
+
 /** Sink that forwards encoded bytes to the PTY (TerminalPane passes `pty_write`). */
 export type WriteFn = (data: number[]) => void;
 

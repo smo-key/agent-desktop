@@ -78,3 +78,4 @@
 - [x] 10.10 Fix: show the "No sessions yet" box whenever there are no non-coordinator sessions — including when the coordinator IS running (not only when not started)
 - [x] 10.11 Add a coordinator "needs input" tool to the orchestration toolkit (adapter + control socket) the coordinator calls when it needs user input without an AskUserQuestion
 - [x] 10.12 Suppress the default needs-input heuristic for the coordinator (show needs-input only on a pending AskUserQuestion or the needs-input tool); on the tool call, surface the coordinator as needing input and clear it when it resumes; add the instruction to the orchestrator system prompt
+- [x] 10.13 Fix: the focus-pane header for the coordinator reads "Coordinator" (matching its pinned row title) instead of its underlying workspace name ("Session N")

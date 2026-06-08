@@ -7,18 +7,21 @@ TBD - created by syncing change add-first-launch-model-gate. Update Purpose afte
 ### Requirement: First-launch model gate when required models are missing
 
 The app SHALL present a full-screen onboarding gate on launch whenever the
-on-device model files the current voice selection requires are missing from disk,
-before the workspace is usable. The gate SHALL explain the one-time on-device
-download and SHALL list the models to be downloaded with a human-readable size for
-each and a total. When all required models are already present, the app SHALL load
-directly to the workspace with no gate.
+on-device model files the current voice selection requires are missing from disk
+AND the user has not previously seen the gate, before the workspace is usable. The
+gate SHALL explain the one-time on-device download and SHALL list the models to be
+downloaded with a human-readable size for each and a total. When all required models
+are already present, the app SHALL load directly to the workspace with no gate.
 
-Detection SHALL be presence-based: the gate is shown whenever required model files
-are absent and never once they are on disk.
+Detection of missing models SHALL be presence-based. The gate SHALL be shown at most
+ONCE per user: once the user has been presented with and finished interacting with the
+gate (see "Showing the gate only once per user"), it SHALL NOT be shown again on any
+later launch, independent of whether the required model files are present.
 
-#### Scenario: Required models missing on launch
+#### Scenario: Required models missing on launch, gate not yet seen
 
-- **WHEN** the app starts and one or more required model files are not on disk
+- **WHEN** the app starts, one or more required model files are not on disk, and the
+  user has not previously seen the onboarding gate
 - **THEN** the full-screen onboarding gate is shown listing the missing models and
   their total download size before the workspace is usable
 
@@ -77,25 +80,45 @@ bundle (which would make `curl` abort before connecting).
 - **THEN** that model surfaces a download error (and the gate offers retry),
   the partial file is cleaned up, and remaining models are still attempted
 
-### Requirement: Skip defers the download for the session
+### Requirement: Skip enters the app and is permanent
 
 The gate SHALL offer a secondary action to skip the download and enter the app.
 Skipping SHALL leave voice and session-title features gracefully disabled until the
-models are present. A skip SHALL apply only to the current session: the gate is not
-shown again during this session, but is offered again on the next launch while the
-required models remain missing.
+models are present. Skipping SHALL mark the gate as seen so that it is NOT shown
+again on any later launch, even while the required models remain missing.
 
 #### Scenario: User skips the download
 
 - **WHEN** the user activates the skip action in the gate
-- **THEN** the gate dismisses, the workspace loads, and voice/title features remain
-  disabled until the models are downloaded
+- **THEN** the gate dismisses, the workspace loads, voice/title features remain
+  disabled until the models are downloaded, and the gate is not shown again on a
+  later launch
 
-#### Scenario: Skip does not nag within the session
+### Requirement: Showing the gate only once per user
 
-- **WHEN** the user has skipped the gate this session and the required models are
-  still missing
-- **THEN** the gate is not shown again for the remainder of the session
+The onboarding gate SHALL be shown to a given user at most once. The app SHALL
+persist a one-time "seen" flag the moment the user finishes with the gate — either by
+skipping or by completing the download — and SHALL consult that flag on every launch
+before deciding to show the gate. Once the flag is set, the gate SHALL NOT be shown
+again regardless of whether the required model files are present or missing.
+
+#### Scenario: Gate not shown again after it was skipped
+
+- **WHEN** the user skipped the gate on a previous launch and the required models are
+  still missing on a later launch
+- **THEN** the gate is not shown and the workspace loads directly
+
+#### Scenario: Gate not shown again after a completed download
+
+- **WHEN** the user completed the model download on a previous launch
+- **THEN** the gate is not shown on later launches, and it is not shown again even if
+  the model files later become missing
+
+#### Scenario: Returning user sees no flash of the gate
+
+- **WHEN** the app starts for a user who has already seen the gate
+- **THEN** the persisted "seen" flag is consulted before the presence check resolves
+  so the gate is never briefly shown
 
 ### Requirement: Delete downloaded models from Settings
 

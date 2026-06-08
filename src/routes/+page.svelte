@@ -78,11 +78,14 @@
     void openWith.load();
     // Load session-title preferences (the opt-in cloud title fallback).
     void titleSettings.load();
-    // Load voice-input preferences from the shared settings blob (seeds defaults),
-    // then check whether the on-device models that selection needs are present. When
-    // they're missing, the onboarding store goes `visible` and the full-screen gate
-    // (rendered below) prompts a one-time download (model-onboarding spec).
-    void voice.load()
+    // Load the persisted one-time onboarding flag FIRST so a returning user who has
+    // already seen the gate never sees a flash of it, then load voice-input
+    // preferences and check whether the on-device models that selection needs are
+    // present. When they're missing AND the gate has never been seen, the onboarding
+    // store goes `visible` and the full-screen gate (rendered below) prompts a
+    // one-time download (model-onboarding spec).
+    void onboarding.load()
+      .then(() => voice.load())
       .then(() => onboarding.check(voice.prefs.modelTier, voice.prefs.polish))
       .catch(() => {});
     // Agent-kind tasks open a normal Claude session in the workspace + Agents rail

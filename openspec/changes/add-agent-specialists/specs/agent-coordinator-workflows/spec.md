@@ -90,7 +90,9 @@ sessions yet" empty state SHALL render below the coordinator and its rule. When
 the active project has no running coordinator, the top row SHALL be a focusable
 affordance (still labeled "Coordinator"); focusing it SHALL show an empty
 main-pane state inviting the user to click a Start button to launch the
-orchestrator, and clicking Start SHALL launch the coordinator.
+orchestrator, and clicking Start SHALL launch the coordinator. When the
+coordinator is focused, the focus-pane header SHALL also read "Coordinator"
+(matching its pinned row), NOT its underlying workspace name ("Session N").
 
 #### Scenario: Running coordinator is pinned at the top
 - **WHEN** a project has a running coordinator
@@ -106,6 +108,11 @@ orchestrator, and clicking Start SHALL launch the coordinator.
 #### Scenario: Affordance shown when no coordinator
 - **WHEN** the active project has no running coordinator
 - **THEN** a focusable row labeled "Coordinator" appears at the top of the Sessions list
+
+#### Scenario: Focus-pane header reads "Coordinator"
+- **WHEN** the running coordinator is the focused agent
+- **THEN** the focus-pane header title reads "Coordinator"
+- **AND** it does NOT show the coordinator's underlying workspace name ("Session N")
 
 #### Scenario: Focusing the not-started coordinator shows a Start prompt
 - **WHEN** the user focuses the not-started coordinator row

@@ -162,6 +162,25 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
     Some(text)
 }
 
+/// Read the FIRST `max_bytes` of a file as (lossy) UTF-8, dropping a possibly-
+/// truncated LAST line when the file exceeded the window. `None` on any IO error.
+/// The HEAD holds a session's OPENING entries — where the user's first prompt
+/// lives — which the tail loses in a long agent turn.
+fn read_head(path: &Path, max_bytes: u64) -> Option<String> {
+    let mut f = std::fs::File::open(path).ok()?;
+    let size = f.metadata().ok()?.len();
+    let mut buf = vec![0u8; max_bytes.min(size) as usize];
+    f.read_exact(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if size > max_bytes {
+        return Some(match text.rfind('\n') {
+            Some(i) => text[..i].to_string(),
+            None => String::new(),
+        });
+    }
+    Some(text)
+}
+
 /// The pending-question text from an `AskUserQuestion` tool input, or `None`.
 fn extract_question(input: &Value) -> Option<String> {
     let qs = input.get("questions")?.as_array()?;
@@ -401,11 +420,27 @@ pub fn summarize_transcript(path: &Path) -> Activity {
         out.messages = Some(msgs);
     }
 
-    // USER-FOCUS hash: a cheap signal that the user's messages changed, so the
-    // overview regenerates the session title only on a real change. Tail-based
-    // (the newest user message is always in the tail), which is all the change
-    // detector needs.
-    let user_msgs: Vec<String> = entries.iter().filter_map(user_text).collect();
+    // USER-FOCUS hash: a cheap signal that the user's messages changed (so the
+    // overview regenerates the session title only on a real change) AND that the
+    // session has any real user message at all (one with none is EMPTY: its
+    // archive action is a Delete, not a restorable Archive).
+    //
+    // The tail holds the NEWEST user messages, so the hash changes when the user
+    // adds one. But in a long agentic run the last TAIL_BYTES can be ALL
+    // assistant/tool output, with the user's prompts sitting earlier in the file;
+    // a tail-only scan then finds NO user message and would wrongly mark a busy,
+    // content-rich session empty ("Delete"). So when the tail carries none, fall
+    // back to the HEAD — a real session always opens with the user's first prompt.
+    let mut user_msgs: Vec<String> = entries.iter().filter_map(user_text).collect();
+    if user_msgs.is_empty() {
+        if let Some(head) = read_head(path, TAIL_BYTES) {
+            user_msgs = head
+                .lines()
+                .filter_map(|l| serde_json::from_str::<Value>(l.trim()).ok())
+                .filter_map(|v| user_text(&v))
+                .collect();
+        }
+    }
     if !user_msgs.is_empty() {
         out.user_hash = Some(hash_strings(&user_msgs));
     }
@@ -893,5 +928,34 @@ mod tests {
         );
         assert_eq!(user_messages(&real), vec!["Fix the parser bug".to_string()]);
         assert!(summarize_transcript(&real).user_hash.is_some());
+    }
+
+    /// A long, content-rich session whose newest `TAIL_BYTES` are ALL assistant/
+    /// tool output (a single long agent turn) STILL reports a `user_hash`: the
+    /// user's first prompt lives at the HEAD of the transcript, so the session
+    /// reads as Archive — not the empty-session "Delete". Regression: a tail-only
+    /// scan found no user message here and wrongly marked busy sessions empty.
+    #[test]
+    fn long_agent_turn_keeps_user_hash_from_head() {
+        let tmp = TempDir::new("longturn");
+        // The user's real prompt at the HEAD, then > TAIL_BYTES of assistant output
+        // so the last window holds no user entry at all.
+        let big = "x".repeat(70_000);
+        let mut lines = vec![serde_json::json!(
+            {"type":"user","message":{"role":"user","content":"Refactor the auth module"}}
+        )];
+        for _ in 0..6 {
+            lines.push(assistant(serde_json::json!([{"type":"text","text": big}])));
+        }
+        let path = write_transcript(tmp.path(), "proj", "sess-long", &lines);
+        assert!(
+            std::fs::metadata(&path).unwrap().len() > TAIL_BYTES,
+            "fixture must exceed the tail window to exercise the bug"
+        );
+        let act = summarize_transcript(&path);
+        assert!(
+            act.user_hash.is_some(),
+            "a content-rich session must read as Archive (user_hash present), not empty Delete"
+        );
     }
 }

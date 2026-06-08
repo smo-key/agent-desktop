@@ -673,6 +673,14 @@
     return titles.titleFor(paneId) ?? fallback;
   }
 
+  /** Title shown in the focus-pane header. The coordinator always reads
+   *  "Coordinator" — matching its pinned row title — instead of its underlying
+   *  workspace name ("Session N"); everything else uses its generated session
+   *  title, falling back to its name. */
+  function focusTitle(r: AgentRow): string {
+    return isCoordinator(r) ? 'Coordinator' : displayName(r.paneId, r.name);
+  }
+
   /** New session: when a project is already selected, launch straight into it (no
    *  dialog); otherwise open the launcher to pick/create a project. */
   function newAgent() {
@@ -998,7 +1006,7 @@
         {@const av = projAvatar(focus.projectId)}
         <div class="fhead">
           <ProjectIcon {...av} size={26} />
-          <span class="ttl">{titles.titleFor(focus.paneId) ?? focus.name}</span>
+          <span class="ttl">{focusTitle(focus)}</span>
           <span class="spc"></span>
           {#if needsAttention(focus) && queue.length > 1}
             <span class="nav">
@@ -1044,7 +1052,7 @@
         {@const av = projAvatar(focus.projectId)}
         <div class="fhead">
           <ProjectIcon {...av} size={26} />
-          <span class="ttl">{titles.titleFor(focus.paneId) ?? focus.name}</span>
+          <span class="ttl">{focusTitle(focus)}</span>
           <span class="spc"></span>
           <button type="button" class="hbtn" onclick={() => startPreview(focus.paneId)} use:tooltip={'Resume (claude --resume)'}>Resume</button>
           <button

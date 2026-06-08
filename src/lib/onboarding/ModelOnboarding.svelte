@@ -4,9 +4,10 @@
   // on-device models the current voice selection needs are missing. It explains the
   // one-time download, lists what will be fetched (label + size + total), and offers
   // a primary Download (reusing `ensureModels` + the `modelDownload` progress store)
-  // and a secondary "Skip for now" (session-only dismissal). On a successful
-  // download a presence re-check flips `onboarding.visible` false and the route
-  // stops rendering this overlay; a failure surfaces the error with a Retry.
+  // and a secondary "Skip for now". The gate is shown at most once per user: both
+  // Skip and a completed download record a persisted `seen` flag so it never returns.
+  // On a successful download a presence re-check flips `onboarding.visible` false and
+  // the route stops rendering this overlay; a failure surfaces the error with a Retry.
   import { onboarding } from './onboarding.svelte';
   import { voice } from '$lib/settings/voice.svelte';
   import { ensureModels, downloadRows, formatBytes } from '$lib/voice/models';
@@ -29,7 +30,8 @@
   /** Download the required models, then re-check presence so a complete set hides
    *  the gate. `ensureModels` never throws (it records failures into the store), so
    *  this is safe to await; the re-check leaves the gate up on a partial/failed run.
-   *  Guarded against re-entrancy via `starting`. */
+   *  A complete set also records the persisted one-time flag so the gate never
+   *  returns. Guarded against re-entrancy via `starting`. */
   async function download(): Promise<void> {
     if (busy) return;
     starting = true;
@@ -37,12 +39,14 @@
       const { modelTier, polish } = voice.prefs;
       await ensureModels(modelTier, polish);
       await onboarding.check(modelTier, polish);
+      if (onboarding.status?.ready) onboarding.markSeen();
     } finally {
       starting = false;
     }
   }
 
-  /** Skip for the current session (the gate returns on next launch if still missing). */
+  /** Skip the one-time download. Records the persisted `seen` flag so the gate does
+   *  not return on a later launch even while the models remain missing. */
   function skip(): void {
     onboarding.dismiss();
   }

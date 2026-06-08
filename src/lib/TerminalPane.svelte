@@ -11,8 +11,8 @@
   import { buildSpawnOverride } from './usage/spawn';
   import {
     InitialInputSender,
+    LaunchPromptReadiness,
     SUBMIT_DELAY_MS,
-    READY_QUIET_MS,
     READY_MAX_MS
   } from './launcher/initialInput';
   import { LaunchSpinner, spinnerLabel } from './launcher/spinner';
@@ -113,9 +113,9 @@
   // re-renders so the prompt is delivered at most once (guard against
   // double-send). The app never synthesizes a command — only the user's text.
   let initialInputSender: InitialInputSender | undefined;
-  // Initial-prompt delivery timers (component-scoped so teardown can clear them).
-  let quietTimer: ReturnType<typeof setTimeout> | undefined;
-  let maxTimer: ReturnType<typeof setTimeout> | undefined;
+  // Gates initial-prompt delivery on the TUI being ready (output seen, then
+  // quiet). Component-scoped so teardown can cancel its pending timers.
+  let readiness: LaunchPromptReadiness | undefined;
   // Launch-spinner readiness backstop: clears the overlay even if a promptless
   // pane spawns but emits no output and never exits (the prompt-bearing path is
   // already capped by maxTimer). Component-scoped so teardown can clear it.
@@ -431,24 +431,17 @@
     // Initial-prompt delivery waits for claude's startup output to go QUIET — the
     // TUI emits a burst of setup/render output on launch and is NOT yet accepting
     // input during it; writing then left the text garbled and the Enter swallowed
-    // (the "work never starts, shows as needs attention" symptom). We arm a quiet
-    // timer that each output byte resets; once output is quiet for READY_QUIET_MS
-    // (claude is idle at the ready input box) we write the verbatim text, then the
-    // submitting Enter as a SEPARATE write after a settle. A hard cap forces
-    // delivery if output never goes quiet. Delivered at most once.
-    let initialDelivered = false;
-
+    // (the "work never starts, shows as needs attention" symptom). The readiness
+    // gate (constructed below, once the sender is known to carry a prompt) only
+    // begins its quiet window AFTER the first output byte — so a slow startup that
+    // stays silent past the window (e.g. a coordinated agent loading the MCP
+    // toolkit) can't deliver into a TUI that hasn't started rendering. Once output
+    // settles (or a hard cap fires) we write the verbatim text, then the
+    // submitting Enter as a SEPARATE write after a settle. Delivered at most once.
     const deliverInitial = () => {
-      if (initialDelivered) return;
-      // Not wired yet — re-arm and wait (the quiet timer may have fired between
-      // spawn round-trips before ptyId was set).
-      if (ptyId === undefined) {
-        armInitial();
-        return;
-      }
-      initialDelivered = true;
-      if (quietTimer) clearTimeout(quietTimer);
-      if (maxTimer) clearTimeout(maxTimer);
+      // Defensive: the gate only fires after `wired()`, but never write to a PTY
+      // that isn't (or is no longer) live.
+      if (ptyId === undefined) return;
       initialInputSender?.deliver(
         (data) => {
           if (ptyId === undefined) return;
@@ -462,15 +455,13 @@
       loading = spinner?.loading ?? false;
     };
 
-    // (Re)start the quiet window; start the hard cap once. Called when the PTY is
-    // wired and on every output byte (so a fresh byte defers delivery until the
-    // output settles). No-op once delivered or when there is no prompt to send.
-    const armInitial = () => {
-      if (initialDelivered || !initialInputSender?.hasPrompt) return;
-      if (quietTimer) clearTimeout(quietTimer);
-      quietTimer = setTimeout(deliverInitial, READY_QUIET_MS);
-      if (maxTimer === undefined) maxTimer = setTimeout(deliverInitial, READY_MAX_MS);
-    };
+    if (initialInputSender.hasPrompt) {
+      readiness = new LaunchPromptReadiness(
+        deliverInitial,
+        (run, ms) => setTimeout(run, ms),
+        (h) => clearTimeout(h)
+      );
+    }
 
     (async () => {
       // Dynamic-import the heavy/DOM-only modules so SSR + the static build stay
@@ -524,8 +515,9 @@
           // and, on the first byte, deliver any pending initial prompt now that
           // claude's TUI has begun rendering.
           noteOutput(paneId, Date.now());
-          // Defer initial-prompt delivery until output settles (TUI ready).
-          armInitial();
+          // First/each output byte (re)starts the readiness quiet window; the
+          // gate delivers the initial prompt once output settles (TUI ready).
+          readiness?.noteOutput();
           // First output means the TUI is rendering — clear the launch spinner
           // for a promptless/resumed pane (a prompt-bearing pane stays covered
           // until the prompt is injected; see deliverInitial).
@@ -584,10 +576,10 @@
         return;
       }
       ptyId = id;
-      // Arm the initial-prompt quiet timer now the PTY is wired (output may have
-      // already begun arriving while we awaited the spawn round-trip). Delivery
-      // happens once claude's startup output goes quiet.
-      armInitial();
+      // PTY wired: arm the readiness hard-cap backstop now. The quiet window only
+      // starts once output is seen (handled in the data channel above), so a slow
+      // startup that stays silent can't deliver the prompt prematurely.
+      readiness?.wired();
 
       // Expose a Copy/Paste handle for the pane context menu (decoupled from the
       // xterm instance). Unregistered in onDestroy.
@@ -694,8 +686,7 @@
     clearRuntime(paneId);
 
     // Cancel any pending initial-prompt delivery timers and the spinner backstop.
-    if (quietTimer) clearTimeout(quietTimer);
-    if (maxTimer) clearTimeout(maxTimer);
+    readiness?.dispose();
     if (spinnerCapTimer) clearTimeout(spinnerCapTimer);
 
     ro?.disconnect();
