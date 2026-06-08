@@ -67,7 +67,8 @@
   import {
     resolveCoordinatorPin,
     coordinatorStartId,
-    coordinatorStartProject
+    coordinatorStartProject,
+    coordinatorNavOrder
   } from './coordinatorPin';
   import CoordinatorStart from '$lib/orchestration/CoordinatorStart.svelte';
 
@@ -179,7 +180,6 @@
   }
   const viewRows = $derived(reorderByQueue(rows, queueOrder));
 
-  const grouped = $derived(groupByLane(viewRows));
   const queue = $derived(attentionQueue(viewRows));
 
   // The active project for the coordinator pin: the concrete project chosen in the
@@ -195,7 +195,8 @@
   // whether to show the not-started "Start coordinator" affordance.
   const pin = $derived(resolveCoordinatorPin(viewRows, activeCoordProjectId));
   // Lanes rendered BELOW the rule exclude the pinned coordinator (it never renders
-  // twice). `grouped` (from viewRows) still includes it for keyboard nav / queue.
+  // twice). Keyboard nav uses `coordinatorNavOrder` (coordinator/affordance first),
+  // not these render lanes, so the pinned coordinator stays reachable.
   const renderGrouped = $derived(groupByLane(pin.rest));
 
   // Group metadata (label) for the left list, in attn -> flight -> paused -> done
@@ -591,10 +592,19 @@
     previewTimers.clear();
   });
 
+  /** Whether a row is the project COORDINATOR. The coordinator MUST NOT be pausable
+   *  or archivable by the user (it orchestrates the project's agents), but it MUST
+   *  stay deletable. We therefore omit Pause/Archive from its actions everywhere and
+   *  offer only Delete (close permanently) — task 10.9. Normal rows are unaffected. */
+  function isCoordinator(r: AgentRow | null): boolean {
+    return r?.role === 'coordinator';
+  }
+
   /** Right-click a roster row. An Archived agent — closed OR being previewed (it's
    *  still presented as archived until you reply) — offers only Delete; a paused agent
    *  offers Open / Resume / Archive; a live agent offers Open / Pause / Archive. An
-   *  EMPTY live/paused session presents its archive action as Delete instead. */
+   *  EMPTY live/paused session presents its archive action as Delete instead. The
+   *  COORDINATOR never offers Pause/Archive — only Open + Delete (task 10.9). */
   function openAgentMenu(e: MouseEvent, row: AgentRow, name: string) {
     e.preventDefault();
     // The archive action for a live/paused row: an empty session deletes (nothing to
@@ -606,17 +616,23 @@
       ? [
           { label: 'Delete', icon: 'trash-2', danger: true, onClick: () => deleteAgent(row.paneId, name) }
         ]
-      : row.paused
-        ? [
+      : isCoordinator(row)
+        ? // The coordinator: open + DELETE only — never Pause/Archive (task 10.9).
+          [
             { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
-            { label: 'Resume', icon: 'play', onClick: () => resumeAgent(row.paneId) },
-            archiveItem
+            { label: 'Delete', icon: 'trash-2', danger: true, onClick: () => deleteAgent(row.paneId, name) }
           ]
-        : [
-            { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
-            { label: 'Pause', icon: 'pause', onClick: () => pauseAgent(row.paneId) },
-            archiveItem
-          ];
+        : row.paused
+          ? [
+              { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
+              { label: 'Resume', icon: 'play', onClick: () => resumeAgent(row.paneId) },
+              archiveItem
+            ]
+          : [
+              { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
+              { label: 'Pause', icon: 'pause', onClick: () => pauseAgent(row.paneId) },
+              archiveItem
+            ];
     menu = { open: true, x: e.clientX, y: e.clientY, items };
   }
 
@@ -632,8 +648,29 @@
     void startNewSession();
   }
 
-  // Flat roster order (Needs you -> In flight -> Paused -> Archived) for keyboard nav.
-  const orderedRows = $derived(LANE_ORDER.flatMap((lane) => grouped[lane]));
+  // Flat ⌘↑/↓ cycling order: the project's COORDINATOR (its running row, or — when
+  // not started — its Start affordance, a `start` sentinel target) FIRST, then the
+  // rest in lane order. So the coordinator/affordance is always keyboard-reachable,
+  // including when it's the ONLY entry (task 10.8). Built from the same pin decision
+  // the render uses, so nav and render agree.
+  const navTargets = $derived(coordinatorNavOrder(viewRows, activeCoordProjectId));
+
+  /** Focus a nav target: a real pane selects normally (a closed/archived one is then
+   *  auto-previewed by the focus effect, as before); the not-started `start` sentinel
+   *  does exactly what clicking the affordance does (shows the Start empty-state). */
+  function focusNavTarget(t: { kind: 'pane'; paneId: string } | { kind: 'start'; projectId: string }) {
+    if (t.kind === 'start') selectCoordinatorStart(t.projectId);
+    else selectAgent(t.paneId);
+  }
+
+  /** The index of the currently-shown target within `navTargets`: a `start` sentinel
+   *  matches the shown start-project; a `pane` matches `shownId`. -1 when off-list. */
+  function currentNavIndex(): number {
+    const startProj = coordinatorStartProject(shownId);
+    return navTargets.findIndex((t) =>
+      t.kind === 'start' ? t.projectId === startProj : t.paneId === shownId
+    );
+  }
 
   /** Keyboard shortcuts on the inbox, all ⌘-modified so plain keys still reach the
    *  PTY: ⌘↑/↓ step the roster; ⌘W archives the focused session (delete-if-empty);
@@ -663,17 +700,19 @@
     if (!e.metaKey || e.altKey || e.ctrlKey || e.shiftKey) return;
 
     // ⌘W — archive (or delete-if-empty) the focused session. preventDefault also
-    // stops ⌘W from closing the app window via the webview.
+    // stops ⌘W from closing the app window via the webview. The COORDINATOR is never
+    // archivable (task 10.9) — fall through so ⌘W is a no-op on it.
     if (e.key === 'w' || e.key === 'W') {
-      if (!focus || focus.closed) return;
+      if (!focus || focus.closed || isCoordinator(focus)) return;
       e.preventDefault();
       archiveAgent(focus.paneId);
       return;
     }
 
-    // ⌘. — pause the focused session, or resume it if already paused.
+    // ⌘. — pause the focused session, or resume it if already paused. The COORDINATOR
+    // is never pausable (task 10.9) — fall through so ⌘. is a no-op on it.
     if (e.key === '.') {
-      if (!focus || focus.closed) return;
+      if (!focus || focus.closed || isCoordinator(focus)) return;
       e.preventDefault();
       if (focus.paused) resumeAgent(focus.paneId);
       else pauseAgent(focus.paneId);
@@ -681,17 +720,17 @@
     }
 
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-    if (orderedRows.length === 0) return;
+    if (navTargets.length === 0) return;
     e.preventDefault();
     const dir = e.key === 'ArrowDown' ? 1 : -1;
-    const i = orderedRows.findIndex((r) => r.paneId === shownId);
+    const i = currentNavIndex();
     const ni =
       i < 0
         ? dir === 1
           ? 0
-          : orderedRows.length - 1
-        : Math.min(orderedRows.length - 1, Math.max(0, i + dir));
-    selectAgent(orderedRows[ni].paneId);
+          : navTargets.length - 1
+        : Math.min(navTargets.length - 1, Math.max(0, i + dir));
+    focusNavTarget(navTargets[ni]);
   }
 
   // ---- Display helpers ------------------------------------------------------
@@ -928,6 +967,16 @@
               class="hbtn danger"
               onclick={() => deleteAgent(focus.paneId, displayName(focus.paneId, focus.name))}
               use:tooltip={'Delete session'}
+            >Delete</button>
+          {:else if isCoordinator(focus)}
+            <!-- The COORDINATOR is never pausable or archivable (task 10.9) — it
+                 orchestrates the project's agents. It stays DELETABLE (close it
+                 permanently), so only Delete is offered here. -->
+            <button
+              type="button"
+              class="hbtn danger"
+              onclick={() => deleteAgent(focus.paneId, displayName(focus.paneId, focus.name))}
+              use:tooltip={'Delete coordinator'}
             >Delete</button>
           {:else}
             {#if focus.paused}

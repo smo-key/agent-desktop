@@ -9,7 +9,8 @@
 // No Svelte/Tauri/DOM imports, so the load-bearing decisions are unit-tested
 // without a live workspace. The Inbox component is the thin reactive wrapper.
 
-import type { AgentRow } from './roster';
+import type { AgentLane, AgentRow } from './roster';
+import { groupByLane, LANE_ORDER } from './roster';
 
 /** The result of resolving the roster's coordinator top slot for a project. */
 export interface CoordinatorPin {
@@ -95,4 +96,56 @@ export function coordinatorStartProject(focusId: string | null): string | null {
   }
   const id = focusId.slice(START_SENTINEL_PREFIX.length);
   return id.length > 0 ? id : null;
+}
+
+/**
+ * One keyboard-cycling step target for the Sessions roster (task 10.8). Either a
+ * real pane row (`kind: 'pane'`) or the not-started coordinator's Start sentinel
+ * (`kind: 'start'`), so ⌘↑/⌘↓ can step onto the not-started affordance — which has
+ * no backing pane — exactly as if it were clicked.
+ */
+export type CoordinatorNavTarget =
+  | { kind: 'pane'; paneId: string }
+  | { kind: 'start'; projectId: string };
+
+/**
+ * PURE: the ⌘↑/⌘↓ cycling order for the Sessions roster, with the project's
+ * COORDINATOR (or, when not started, its Start affordance) FIRST, then the rest in
+ * lane order — mirroring the visual order (pinned coordinator/affordance atop the
+ * rule, lanes below). This guarantees the coordinator (running OR not-started) is
+ * always reachable by keyboard, INCLUDING when it is the only entry in the list.
+ *
+ * Built from the SAME `resolveCoordinatorPin` decision the render uses, so nav and
+ * render never diverge:
+ *   - a live pinned coordinator → a `pane` target first, then `pin.rest` by lane.
+ *   - a not-started coordinator (concrete active project, no live coordinator) → a
+ *     `start` sentinel target first, then all rows by lane.
+ *   - no concrete active project (null/empty) → no coordinator slot; just the rows
+ *     by lane (the coordinator, if any, stays inline in its lane and is reachable
+ *     as a normal `pane` target).
+ *
+ * `lanes(rows)` flattens rows into the LANE_ORDER the roster renders. Never throws.
+ */
+export function coordinatorNavOrder(
+  rows: AgentRow[],
+  activeProjectId: string | null
+): CoordinatorNavTarget[] {
+  const lanes = (list: AgentRow[]): CoordinatorNavTarget[] => {
+    const grouped: Record<AgentLane, AgentRow[]> = groupByLane(list);
+    return LANE_ORDER.flatMap((lane) =>
+      grouped[lane].map((r) => ({ kind: 'pane', paneId: r.paneId }) as CoordinatorNavTarget)
+    );
+  };
+  const pin = resolveCoordinatorPin(rows, activeProjectId);
+  if (pin.coordinator) {
+    return [{ kind: 'pane', paneId: pin.coordinator.paneId }, ...lanes(pin.rest)];
+  }
+  if (
+    pin.showStart &&
+    typeof activeProjectId === 'string' &&
+    activeProjectId.trim() !== ''
+  ) {
+    return [{ kind: 'start', projectId: activeProjectId }, ...lanes(pin.rest)];
+  }
+  return lanes(rows);
 }

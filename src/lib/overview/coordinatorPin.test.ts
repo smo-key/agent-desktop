@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   resolveCoordinatorPin,
   coordinatorStartId,
-  coordinatorStartProject
+  coordinatorStartProject,
+  coordinatorNavOrder
 } from './coordinatorPin';
 import type { AgentRow } from './roster';
 
@@ -106,6 +107,70 @@ describe('resolveCoordinatorPin (tasks 10.2–10.3)', () => {
     expect(pin.coordinator?.paneId).toBe('coord1');
     // The stray second coordinator stays in the rest (rendered in its lane).
     expect(pin.rest.map((r) => r.paneId)).toEqual(['coord2']);
+  });
+});
+
+describe('coordinatorNavOrder — ⌘↑/↓ cycling with the coordinator (task 10.8)', () => {
+  it('puts the LIVE pinned coordinator FIRST, then the rest in lane order', () => {
+    const rows = [
+      row({ paneId: 'a', projectId: 'P' }), // flight
+      row({ paneId: 'coord', projectId: 'P', role: 'coordinator' }), // pinned first
+      row({ paneId: 'w', projectId: 'P', status: 'waiting' }) // attn lane (before flight)
+    ];
+    const order = coordinatorNavOrder(rows, 'P');
+    expect(order).toEqual([
+      { kind: 'pane', paneId: 'coord' },
+      { kind: 'pane', paneId: 'w' }, // attn lane first among the rest
+      { kind: 'pane', paneId: 'a' } // flight lane after
+    ]);
+  });
+
+  it('puts the not-started START SENTINEL first when no live coordinator', () => {
+    const rows = [row({ paneId: 'a', projectId: 'P' })];
+    const order = coordinatorNavOrder(rows, 'P');
+    expect(order).toEqual([
+      { kind: 'start', projectId: 'P' },
+      { kind: 'pane', paneId: 'a' }
+    ]);
+  });
+
+  it('reaches the LIVE coordinator when it is the ONLY entry', () => {
+    const rows = [row({ paneId: 'coord', projectId: 'P', role: 'coordinator' })];
+    expect(coordinatorNavOrder(rows, 'P')).toEqual([{ kind: 'pane', paneId: 'coord' }]);
+  });
+
+  it('reaches the not-started SENTINEL when it is the ONLY entry (empty roster)', () => {
+    // No sessions at all for a concrete project → the sole step target is the Start
+    // sentinel, so ⌘↑/↓ still lands on the not-started affordance.
+    expect(coordinatorNavOrder([], 'P')).toEqual([{ kind: 'start', projectId: 'P' }]);
+  });
+
+  it('with NO concrete active project, the coordinator stays inline (no sentinel)', () => {
+    const rows = [
+      row({ paneId: 'coord', projectId: 'P', role: 'coordinator' }),
+      row({ paneId: 'a', projectId: 'P' })
+    ];
+    for (const none of [null, '', '   ']) {
+      const order = coordinatorNavOrder(rows, none as string | null);
+      // No `start` target; both rows are reachable as plain panes in lane order.
+      expect(order.every((t) => t.kind === 'pane')).toBe(true);
+      expect(order).toEqual([
+        { kind: 'pane', paneId: 'coord' },
+        { kind: 'pane', paneId: 'a' }
+      ]);
+    }
+  });
+
+  it('does not pin a CLOSED coordinator — offers the Start sentinel instead', () => {
+    const rows = [row({ paneId: 'coord', projectId: 'P', role: 'coordinator', closed: true })];
+    const order = coordinatorNavOrder(rows, 'P');
+    // The closed coordinator rosters in its lane (done); the sentinel leads.
+    expect(order[0]).toEqual({ kind: 'start', projectId: 'P' });
+    expect(order).toContainEqual({ kind: 'pane', paneId: 'coord' });
+  });
+
+  it('an empty roster with NO concrete project yields no targets', () => {
+    expect(coordinatorNavOrder([], null)).toEqual([]);
   });
 });
 
