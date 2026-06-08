@@ -7,10 +7,10 @@
   the model status + `dismissedThisSession`, with a pure
   `shouldShowOnboarding(status, dismissed)` and `init/refresh/dismiss` methods.
   Unit-test the pure gate + store transitions.
-- [ ] 1.3 Add `src/lib/onboarding/ModelOnboarding.svelte`: the full-screen overlay
+- [x] 1.3 Add `src/lib/onboarding/ModelOnboarding.svelte`: the full-screen overlay
   rendering the model list/total, a Download primary action (reusing
   `ensureModels` + the `modelDownload` progress store), a Skip secondary action,
   and an error+retry state.
-- [ ] 1.4 Wire `src/routes/+page.svelte`: after `voice.load()` resolves, initialize
+- [x] 1.4 Wire `src/routes/+page.svelte`: after `voice.load()` resolves, initialize
   the onboarding check; render `<ModelOnboarding />` when the store says visible.
-- [ ] 1.5 Run the vitest suite + svelte-check; confirm green.
+- [x] 1.5 Run the vitest suite + svelte-check; confirm green.

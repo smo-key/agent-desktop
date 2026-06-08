@@ -12,6 +12,8 @@
   import { openWith } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
   import VoicePanel from '$lib/voice/VoicePanel.svelte';
+  import ModelOnboarding from '$lib/onboarding/ModelOnboarding.svelte';
+  import { onboarding } from '$lib/onboarding/onboarding.svelte';
   import { initVoiceActivation } from '$lib/voice/activation';
   import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
@@ -69,8 +71,13 @@
   onMount(() => {
     // Load the user's open-with preferences (seeds defaults on first run).
     void openWith.load();
-    // Load voice-input preferences from the shared settings blob (seeds defaults).
-    void voice.load();
+    // Load voice-input preferences from the shared settings blob (seeds defaults),
+    // then check whether the on-device models that selection needs are present. When
+    // they're missing, the onboarding store goes `visible` and the full-screen gate
+    // (rendered below) prompts a one-time download (model-onboarding spec).
+    void voice.load().then(() => {
+      void onboarding.check(voice.prefs.modelTier, voice.prefs.polish);
+    });
     // Agent-kind tasks open a normal Claude session in the workspace + Agents rail
     // (design D5): wire the store's launcher hook to the same launch path used by
     // the inbox "+" / ⌘N, seeded with the task's prompt. Set BEFORE load() so a
@@ -656,6 +663,12 @@
 <HelpModal />
 <SettingsModal />
 <VoicePanel />
+<!-- First-launch model download gate: a full-screen takeover shown only while the
+     on-device models the current voice selection needs are missing (and not skipped
+     this session). Rendered last so it overlays the workspace. -->
+{#if onboarding.visible}
+  <ModelOnboarding />
+{/if}
 
 <style>
   .app {
