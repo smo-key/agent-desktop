@@ -1,0 +1,84 @@
+// Orchestration MCP adapter tests (add-agent-specialists, task 3.5).
+//
+// Covers the PURE request encoding / response decoding required directly from the
+// production .cjs and asserted in-process — NO live socket needed. (The live
+// round-trip + JSON-RPC loop are exercised end-to-end by the executor tasks.)
+//
+// Mirrors `event-hook.test.ts`: requires the .cjs via createRequire and asserts
+// its exported pure core.
+
+import { createRequire } from 'node:module';
+import { describe, expect, it } from 'vitest';
+
+const require = createRequire(import.meta.url);
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const mcp = require('./orchestration-mcp.cjs') as typeof import('./orchestration-mcp.cjs');
+
+describe('orchestration-mcp pure core', () => {
+  it('encodes a tool call into one {op,args} request line', () => {
+    const line = mcp.encodeRequest('message_agent', { paneId: 'p1', text: 'go' });
+    // Exactly one newline-terminated JSON line.
+    expect(line.endsWith('\n')).toBe(true);
+    expect(line.trimEnd().split('\n')).toHaveLength(1);
+    // No id is sent — Rust assigns it. Args are forwarded verbatim.
+    const parsed = JSON.parse(line);
+    expect(parsed).toEqual({ op: 'message_agent', args: { paneId: 'p1', text: 'go' } });
+    expect('id' in parsed).toBe(false);
+  });
+
+  it('defaults missing/invalid args to an empty object', () => {
+    expect(JSON.parse(mcp.encodeRequest('list_agents'))).toEqual({ op: 'list_agents', args: {} });
+    expect(JSON.parse(mcp.encodeRequest('list_agents', null))).toEqual({
+      op: 'list_agents',
+      args: {}
+    });
+  });
+
+  it('decodes a success response line into an ok result', () => {
+    const out = mcp.decodeResponse(JSON.stringify({ id: 7, result: { paneId: 'new-1' } }));
+    expect(out).toEqual({ ok: true, result: { paneId: 'new-1' } });
+    // A null result is still a success (distinct from an error).
+    expect(mcp.decodeResponse(JSON.stringify({ id: 1, result: null }))).toEqual({
+      ok: true,
+      result: null
+    });
+  });
+
+  it('decodes an error / timeout response line into an error outcome', () => {
+    expect(mcp.decodeResponse(JSON.stringify({ id: 7, error: 'no such pane' }))).toEqual({
+      ok: false,
+      error: 'no such pane'
+    });
+    expect(mcp.decodeResponse(JSON.stringify({ id: 8, error: 'timeout' }))).toEqual({
+      ok: false,
+      error: 'timeout'
+    });
+  });
+
+  it('decodes a malformed or incomplete line into an error outcome (never throws)', () => {
+    expect(mcp.decodeResponse('not json').ok).toBe(false);
+    expect(mcp.decodeResponse('').ok).toBe(false);
+    expect(mcp.decodeResponse(JSON.stringify({ id: 1 })).ok).toBe(false);
+  });
+
+  it('exposes exactly the seven toolkit tools with arg schemas', () => {
+    const names = mcp.TOOLS.map((t) => t.name).sort();
+    expect(names).toEqual(
+      [
+        'archive_agent',
+        'inspect_agent',
+        'list_agents',
+        'message_agent',
+        'read_agent',
+        'spawn_agent',
+        'unarchive_agent'
+      ].sort()
+    );
+    // No governance tool leaks into the runtime toolkit.
+    expect(names).not.toContain('answer_question');
+    // Each tool advertises an object input schema.
+    for (const t of mcp.TOOLS) {
+      expect(t.inputSchema.type).toBe('object');
+    }
+  });
+});

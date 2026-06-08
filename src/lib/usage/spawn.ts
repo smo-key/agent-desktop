@@ -190,3 +190,59 @@ export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
 
   return { args: [...injected, ...args], env };
 }
+
+/**
+ * The `--mcp-config` JSON that attaches the bundled orchestration toolkit to a
+ * launched coordinator session. A single stdio MCP server (`orchestration`) runs
+ * the bundled adapter via `node <adapterPath>` with the control-socket path in its
+ * env, so the adapter forwards each tool call to the Rust control socket.
+ *
+ * Shape matches Claude's `--mcp-config` stdio-server schema:
+ *   { "mcpServers": { "<name>": { "command", "args", "env" } } }
+ */
+export interface McpToolkitConfig {
+  mcpServers: {
+    orchestration: {
+      command: string;
+      args: string[];
+      env: { AGENT_DESKTOP_CONTROL_SOCKET: string };
+    };
+  };
+}
+
+/**
+ * The MCP server name the toolkit is registered under. Tools therefore surface to
+ * the coordinator as `mcp__orchestration__<tool>` (e.g. `mcp__orchestration__spawn_agent`).
+ */
+export const ORCHESTRATION_MCP_SERVER = 'orchestration';
+
+/**
+ * The env var the bundled adapter reads to find the control socket — must match the
+ * Rust `orchestration::CONTROL_SOCKET_ENV` constant.
+ */
+export const CONTROL_SOCKET_ENV = 'AGENT_DESKTOP_CONTROL_SOCKET';
+
+/**
+ * Build the per-session `--mcp-config` content (task 3.6) that attaches the
+ * orchestration toolkit to a coordinator `claude` launch. The coordinator-launch
+ * task (6.2) passes the returned object (typically `JSON.stringify`-ed, or written
+ * to a temp file) as `--mcp-config`.
+ *
+ *  - `adapterPath` — absolute path to the installed `orchestration-mcp.cjs`
+ *    (resolved the same way as the wrapper / event-hook resources).
+ *  - `socketPath`  — absolute path to the Rust control socket
+ *    (`orchestration::CONTROL_SOCKET_ENV` value).
+ *
+ * Pure: depends only on its inputs.
+ */
+export function buildMcpToolkitConfig(adapterPath: string, socketPath: string): McpToolkitConfig {
+  return {
+    mcpServers: {
+      [ORCHESTRATION_MCP_SERVER]: {
+        command: 'node',
+        args: [adapterPath],
+        env: { [CONTROL_SOCKET_ENV]: socketPath }
+      }
+    }
+  } as McpToolkitConfig;
+}

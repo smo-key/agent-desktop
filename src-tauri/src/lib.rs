@@ -87,6 +87,17 @@ const SOCKET_FILE: &str = "events.sock";
 /// is conveyed to a launched coordinator session via `orchestration::CONTROL_SOCKET_ENV`.
 const CONTROL_SOCKET_FILE: &str = "control.sock";
 
+/// `AGENT_DESKTOP_PANE` value for the hidden usage-bootstrap session (see
+/// [`start_usage_bootstrap`]). A stable, recognizable id keeps its throwaway
+/// snapshot file (`snapshots/usage-bootstrap.json`) identifiable; it is not a
+/// real app pane, so the frontend never tracks it as a session.
+const USAGE_BOOTSTRAP_PANE: &str = "usage-bootstrap";
+
+/// How long the hidden usage-bootstrap session is allowed to live. Long enough
+/// for `claude` to start its TUI and render the statusline (which carries the
+/// account `rate_limits` the wrapper snapshots) at least once, then it is killed.
+const USAGE_BOOTSTRAP_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Absolute paths the frontend needs to launch sessions wired into the usage
 /// dashboard. Serialized camelCase for the JS side.
 #[derive(Debug, Clone, Serialize)]
@@ -675,6 +686,102 @@ fn start_usage_watcher(app: &AppHandle) -> Result<SnapshotWatcher, String> {
     })
 }
 
+/// Shell-quote a path for embedding in a `claude --settings` command string.
+/// `claude` runs the statusline command through a shell, and the wrapper lives
+/// under a spaced app-data path, so it must be double-quoted with the shell's
+/// in-quote metacharacters (`"`, `\`, `$`, `` ` ``) backslash-escaped. Mirrors
+/// the frontend's `quoteCommand` (src/lib/usage/spawn.ts) so a backend-launched
+/// session quotes identically to a frontend-launched one.
+fn shell_quote_command(path: &str) -> String {
+    let mut out = String::with_capacity(path.len() + 2);
+    out.push('"');
+    for ch in path.chars() {
+        if matches!(ch, '"' | '\\' | '$' | '`') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out.push('"');
+    out
+}
+
+/// Build the [`SpawnConfig`] for the hidden usage-bootstrap session: an
+/// interactive `claude` TUI wired ONLY into the usage-snapshot pipeline (the
+/// statusline wrapper + snapshot dir env), so its first statusline render
+/// captures the account `rate_limits` for the dashboard. It deliberately omits
+/// the event-hook wiring a real pane gets — this is a throwaway probe that must
+/// not appear in the overview's event timeline or subagents.
+fn usage_bootstrap_config(paths: &UsagePaths) -> SpawnConfig {
+    // Minimal per-session settings: keep the session LOCAL (no cloud bridge,
+    // like a real pane) and point the statusline at the app's wrapper.
+    let settings = serde_json::json!({
+        "remoteControlAtStartup": false,
+        "statusLine": {
+            "type": "command",
+            "command": shell_quote_command(&paths.wrapper_path),
+        },
+    });
+    SpawnConfig {
+        program: "claude".to_string(),
+        args: vec!["--settings".to_string(), settings.to_string()],
+        cwd: None,
+        // A sized TUI so claude paints and renders its statusline at least once.
+        cols: 80,
+        rows: 24,
+        env: vec![
+            (
+                "AGENT_DESKTOP_PANE".to_string(),
+                USAGE_BOOTSTRAP_PANE.to_string(),
+            ),
+            (
+                "AGENT_DESKTOP_SNAPSHOT_DIR".to_string(),
+                paths.snapshot_dir.clone(),
+            ),
+        ],
+    }
+}
+
+/// At startup, spawn a hidden `claude` TUI purely to populate the usage
+/// dashboard's `rate_limits` (only present in a live session's statusline
+/// snapshot), then kill it after [`USAGE_BOOTSTRAP_TTL`]. The session's output is
+/// discarded (it has no UI pane); the wrapper writes its snapshot to disk, the
+/// `SnapshotWatcher` emits it, and the kill timer reaps the throwaway process.
+///
+/// Best-effort: a failure to resolve the usage paths or spawn is logged and
+/// ignored — the dashboard simply stays empty until the user opens a session.
+fn start_usage_bootstrap(app: &AppHandle) {
+    let paths = match install_usage_assets(app) {
+        Ok(p) => p,
+        Err(e) => {
+            log::warn!("usage bootstrap: resolve paths failed: {e}");
+            return;
+        }
+    };
+    let manager = app.state::<Arc<PtyManager>>().inner().clone();
+    let cfg = usage_bootstrap_config(&paths);
+    // Discard sink: returning Ok keeps the read loop alive (we don't render the
+    // output anywhere) until the child exits or the kill timer fires.
+    let pane = match manager.spawn_with_sink(cfg, |_ev| Ok(())) {
+        Ok(id) => id,
+        Err(e) => {
+            log::warn!("usage bootstrap: spawn failed: {e}");
+            return;
+        }
+    };
+    // Kill the probe after the TTL on a throwaway thread (kill is idempotent, so
+    // a child that already exited is a no-op). Killing also drops the pane from
+    // the registry, so it is not double-killed by `kill_all` on quit.
+    std::thread::Builder::new()
+        .name("usage-bootstrap-timer".into())
+        .spawn(move || {
+            std::thread::sleep(USAGE_BOOTSTRAP_TTL);
+            if let Err(e) = manager.kill(pane) {
+                log::warn!("usage bootstrap: kill failed: {e}");
+            }
+        })
+        .ok();
+}
+
 /// The shared set of sessions the subagents watcher recomputes for, held in
 /// Tauri-managed state. The frontend keeps it current via the `subagents_for`
 /// command (passing its app-launched panes' `{sessionId, cwd}`); the watcher reads
@@ -752,6 +859,24 @@ fn activity_for(panes: Vec<PaneRef>) -> Result<HashMap<String, Activity>, String
 #[tauri::command(async)]
 fn git_status_for(paths: Vec<String>) -> Result<HashMap<String, git::GitStatus>, String> {
     Ok(git::status_for_paths(&paths))
+}
+
+/// Push the project's current branch to its remote (`git push` in `repo_path`),
+/// fired from the project row's context menu. Returns git's own message on
+/// success; `Err(message)` on failure (no upstream / rejected / offline) so the
+/// frontend can surface it in a toast.
+#[tauri::command(async)]
+fn git_push(repo_path: String) -> Result<String, String> {
+    git::push(&repo_path)
+}
+
+/// Pull the project's current branch from its remote (`git pull` in `repo_path`),
+/// fired from the project row's context menu. Returns git's own message on
+/// success; `Err(message)` on failure (conflict / no upstream / offline) so the
+/// frontend can surface it in a toast.
+#[tauri::command(async)]
+fn git_pull(repo_path: String) -> Result<String, String> {
+    git::pull(&repo_path)
 }
 
 /// Create a fresh session worktree off `repo_path`'s HEAD (auto-worktree
@@ -881,6 +1006,10 @@ pub fn run() {
                 }
                 Err(e) => log::warn!("start_usage_watcher failed: {e}"),
             }
+            // Spawn a hidden `claude` TUI purely to populate the usage dashboard's
+            // rate_limits (only present in a live session's statusline snapshot),
+            // killed after a short TTL. Best-effort; failures are logged inside.
+            start_usage_bootstrap(app.handle());
             // Start the subagents watcher over ~/.claude/projects/, sharing the
             // watched-session set with the `subagents_for` command so a session
             // launched after startup begins surfacing its subagents. Held in
@@ -991,6 +1120,8 @@ pub fn run() {
             subagents_for,
             activity_for,
             git_status_for,
+            git_push,
+            git_pull,
             worktree_create,
             worktree_remove_if_clean,
             worktree_list,
@@ -1176,6 +1307,68 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&second.wrapper_path).unwrap(),
             STATUSLINE_WRAPPER_SRC
+        );
+    }
+
+    #[test]
+    fn shell_quote_command_wraps_and_escapes_specials() {
+        // Plain path: just double-quoted.
+        assert_eq!(shell_quote_command("/a/b.js"), "\"/a/b.js\"");
+        // `$` and backticks (shell expansion) are backslash-escaped inside the quotes.
+        assert_eq!(
+            shell_quote_command("/a $x/`b`.js"),
+            "\"/a \\$x/\\`b\\`.js\""
+        );
+        // Embedded quote and backslash are escaped too.
+        assert_eq!(shell_quote_command("/a\"q\\z.js"), "\"/a\\\"q\\\\z.js\"");
+    }
+
+    #[test]
+    fn usage_bootstrap_config_wires_statusline_and_snapshot_env() {
+        // A spaced app-data path exercises the shell-quoting of the statusline command.
+        let paths = UsagePaths {
+            wrapper_path: "/Apps/My App/bin/statusline-wrapper.js".into(),
+            snapshot_dir: "/Apps/My App/snapshots".into(),
+            event_hook_path: "/Apps/My App/bin/event-hook.js".into(),
+            socket_path: "/Apps/My App/events.sock".into(),
+        };
+        let cfg = usage_bootstrap_config(&paths);
+
+        assert_eq!(cfg.program, "claude");
+        // Non-zero TUI size so claude paints (and renders its statusline at least once).
+        assert!(cfg.cols > 0 && cfg.rows > 0, "must be a sized TUI");
+
+        // `--settings <json>` is present and carries the statusline wrapper.
+        let idx = cfg
+            .args
+            .iter()
+            .position(|a| a == "--settings")
+            .expect("config must pass --settings");
+        let settings: serde_json::Value = serde_json::from_str(&cfg.args[idx + 1]).unwrap();
+        // Keep the throwaway session LOCAL (no cloud bridge), like a real pane.
+        assert_eq!(settings["remoteControlAtStartup"], serde_json::json!(false));
+        assert_eq!(settings["statusLine"]["type"], "command");
+        // The wrapper command is shell-quoted (path has a space).
+        assert_eq!(
+            settings["statusLine"]["command"],
+            "\"/Apps/My App/bin/statusline-wrapper.js\""
+        );
+        // A throwaway usage probe must NOT wire the event hook — it should never
+        // pollute the overview's event timeline / subagents.
+        assert!(settings.get("hooks").is_none(), "must not wire event hooks");
+
+        // The snapshot env points the wrapper at the watched dir under a stable
+        // bootstrap pane id; no socket env (no hooks).
+        assert!(cfg
+            .env
+            .contains(&("AGENT_DESKTOP_PANE".to_string(), USAGE_BOOTSTRAP_PANE.to_string())));
+        assert!(cfg.env.contains(&(
+            "AGENT_DESKTOP_SNAPSHOT_DIR".to_string(),
+            paths.snapshot_dir.clone()
+        )));
+        assert!(
+            !cfg.env.iter().any(|(k, _)| k == "AGENT_DESKTOP_SOCKET_PATH"),
+            "no socket env without hooks"
         );
     }
 }

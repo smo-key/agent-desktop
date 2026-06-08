@@ -103,6 +103,63 @@ pub fn status_for_paths(paths: &[String]) -> HashMap<String, GitStatus> {
     map
 }
 
+// ───────────────────────── push / pull ─────────────────────────
+//
+// User-initiated sync actions for a project, fired from the project row's
+// context menu. Unlike the silent `run_git` status probes, these surface git's
+// own message on BOTH success and failure (a push/pull is an explicit action the
+// user wants feedback on), so the frontend can show it in a toast.
+
+/// Run `git -C <dir> <args...>` as a user-initiated action, returning git's own
+/// message either way: `Ok(message)` on a clean exit, `Err(message)` otherwise.
+/// Push/pull write their progress to stderr, so the message prefers stderr when
+/// stdout is empty (and vice-versa on failure). Never panics.
+fn run_git_action(dir: &str, args: &[&str]) -> Result<String, String> {
+    if dir.is_empty() {
+        return Err("no project folder".to_string());
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    // git push/pull report status on stderr; pick whichever stream spoke.
+    let message = |primary: String, fallback: String| {
+        if !primary.is_empty() {
+            primary
+        } else {
+            fallback
+        }
+    };
+    if output.status.success() {
+        Ok(message(stderr, stdout))
+    } else {
+        let msg = message(stderr, stdout);
+        Err(if msg.is_empty() {
+            "git command failed".to_string()
+        } else {
+            msg
+        })
+    }
+}
+
+/// Push the project's current branch to its remote (`git push`). Returns git's
+/// message on success, an error message (no upstream / rejected / offline) on
+/// failure.
+pub fn push(dir: &str) -> Result<String, String> {
+    run_git_action(dir, &["push"])
+}
+
+/// Pull the project's current branch from its remote (`git pull`). Returns git's
+/// message on success, an error message (conflict / no upstream / offline) on
+/// failure.
+pub fn pull(dir: &str) -> Result<String, String> {
+    run_git_action(dir, &["pull"])
+}
+
 // ───────────────────────── git worktrees ─────────────────────────
 //
 // Auto-worktree projects launch each agent session into an isolated git
@@ -522,6 +579,78 @@ mod tests {
         fs::write(Path::new(&info.path).join("scratch.txt"), "wip\n").unwrap();
         worktree_remove(&info.path, true).expect("force remove should succeed");
         assert!(!Path::new(&info.path).is_dir(), "worktree dir should be gone");
+    }
+
+    /// `git init --bare` a throwaway remote under the temp dir. Returns its path
+    /// holder (removed on drop) — a stand-in `origin` for push/pull tests.
+    fn bare_remote(tag: &str) -> TempRepo {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("agentdesk-bare-{tag}-{nanos}.git"));
+        fs::create_dir_all(&dir).unwrap();
+        run(dir.to_str().unwrap(), &["init", "--bare", "-q"]);
+        TempRepo(dir)
+    }
+
+    #[test]
+    fn push_sends_commits_to_a_configured_remote() {
+        let repo = TempRepo::new("push");
+        let remote = bare_remote("push");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+        // A new local commit not yet on the remote.
+        fs::write(repo.path().join("more.md"), "more\n").unwrap();
+        run(repo.str(), &["add", "."]);
+        run(repo.str(), &["commit", "-q", "-m", "more"]);
+
+        push(repo.str()).expect("push to a configured remote should succeed");
+
+        // The remote now has 2 commits on main.
+        let count = run_git(remote.str(), &["rev-list", "main", "--count"]).unwrap();
+        assert_eq!(count, "2", "remote should have received the pushed commit");
+    }
+
+    #[test]
+    fn push_without_a_remote_errors() {
+        let repo = TempRepo::new("pushnorem");
+        let res = push(repo.str());
+        assert!(res.is_err(), "push with no remote should Err, got {:?}", res);
+    }
+
+    #[test]
+    fn pull_fast_forwards_from_the_remote() {
+        // A bare remote seeded from one clone; a second clone pulls the new commit.
+        let origin = TempRepo::new("pullorigin");
+        let remote = bare_remote("pull");
+        run(origin.str(), &["remote", "add", "origin", remote.str()]);
+        run(origin.str(), &["push", "-u", "origin", "main"]);
+
+        // Clone the remote into a fresh working dir.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let clone_dir = std::env::temp_dir().join(format!("agentdesk-clone-{nanos}"));
+        run(
+            std::env::temp_dir().to_str().unwrap(),
+            &["clone", "-q", remote.str(), clone_dir.to_str().unwrap()],
+        );
+        let clone = TempRepo(clone_dir);
+
+        // Origin commits + pushes a new file; the clone should pull it.
+        fs::write(origin.path().join("fresh.md"), "fresh\n").unwrap();
+        run(origin.str(), &["add", "."]);
+        run(origin.str(), &["commit", "-q", "-m", "fresh"]);
+        run(origin.str(), &["push", "origin", "main"]);
+
+        pull(clone.str()).expect("pull from the remote should succeed");
+
+        assert!(
+            clone.path().join("fresh.md").exists(),
+            "pull should have brought the new file into the clone"
+        );
     }
 
     #[test]

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildSpawnOverride, quoteCommand, type UsagePaths } from './spawn';
+import {
+  buildMcpToolkitConfig,
+  buildSpawnOverride,
+  quoteCommand,
+  type UsagePaths
+} from './spawn';
 
 // Tests for the PURE spawn-override helper that wires `claude` panes THROUGH the
 // app-managed statusline wrapper without ever touching the user's global
@@ -254,5 +259,29 @@ describe('buildSpawnOverride', () => {
     });
     expect(noId.args).not.toContain('--resume');
     expect(noId.args).not.toContain('--session-id');
+  });
+});
+
+describe('buildMcpToolkitConfig', () => {
+  // Task 3.6: the per-session --mcp-config the coordinator launch (task 6.2) consumes.
+  it('builds an mcp-config naming the bundled adapter run via node with the socket env', () => {
+    const cfg = buildMcpToolkitConfig(
+      '/Users/me/Library/Application Support/agent-desktop/bin/orchestration-mcp.js',
+      '/Users/me/Library/Application Support/agent-desktop/control.sock'
+    );
+    expect(cfg).toEqual({
+      mcpServers: {
+        orchestration: {
+          command: 'node',
+          args: ['/Users/me/Library/Application Support/agent-desktop/bin/orchestration-mcp.js'],
+          env: {
+            AGENT_DESKTOP_CONTROL_SOCKET:
+              '/Users/me/Library/Application Support/agent-desktop/control.sock'
+          }
+        }
+      }
+    });
+    // Round-trips through JSON (it is passed as --mcp-config content).
+    expect(JSON.parse(JSON.stringify(cfg))).toEqual(cfg);
   });
 });

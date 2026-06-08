@@ -28,6 +28,7 @@
   import { tooltip } from '../ui/tooltip';
   import GitInfo from '../usage/GitInfo.svelte';
   import { projectGit } from './projectGit.svelte';
+  import { pushProject, pullProject } from './projectGitActions';
 
   let {
     rows,
@@ -43,8 +44,9 @@
     items: []
   });
 
-  function openMenu(e: MouseEvent, projectId: string, name: string) {
+  function openMenu(e: MouseEvent, project: Project) {
     e.preventDefault();
+    const { id: projectId, name, path } = project;
     menu = {
       open: true,
       x: e.clientX,
@@ -64,6 +66,16 @@
           onClick: () => {
             worktreesFor = projectId;
           }
+        },
+        {
+          label: 'Push',
+          icon: 'arrow-up',
+          onClick: () => void pushProject(path, name)
+        },
+        {
+          label: 'Pull',
+          icon: 'arrow-down',
+          onClick: () => void pullProject(path, name)
         },
         {
           label: 'Delete project',
@@ -197,7 +209,7 @@
       class="pp-item pp-project"
       class:active={projectFilter.selected === c.project.id}
       onclick={() => projectFilter.select(c.project.id)}
-      oncontextmenu={(e) => openMenu(e, c.project.id, c.project.name)}
+      oncontextmenu={(e) => openMenu(e, c.project)}
     >
       <span class="pp-row-main">
         {#if c.project.logo}

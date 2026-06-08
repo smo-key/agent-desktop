@@ -35,7 +35,8 @@
       "binaries/llama-server"
     ],
     "resources": [
-      "models/ggml-tiny.bin"
+      "models/ggml-tiny.bin",
+      "resources/orchestration-mcp.cjs"
     ],
     "icon": [
       "icons/32x32.png",
