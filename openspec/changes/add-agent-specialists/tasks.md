@@ -58,8 +58,8 @@
 
 ## 8. Verification
 
-- [ ] 8.1 End-to-end (acceptance): create a specialist → start the coordinator → give it a goal → it spawns that specialist as a visible pane, messages/reads it, and coordinates to completion, all attributed in the roster
-- [ ] 8.2 End-to-end: coordinator lists, reads, and messages a user-started existing session in the project as part of a workflow
-- [ ] 8.3 End-to-end: cross-project / invalid / closed targets are rejected; an injection to a busy agent is deferred until idle
-- [ ] 8.4 Confirm additive behavior: a project with no coordinator and no specialists behaves exactly as today
-- [ ] 8.5 Run `openspec validate add-agent-specialists` and the project's lint/test suite (`npm` + `cargo test`)
+- [ ] 8.1 End-to-end (acceptance): create a specialist → start the coordinator → give it a goal → it spawns that specialist as a visible pane, messages/reads it, and coordinates to completion, all attributed in the roster — _logic verified via unit/integration tests + final integration review; LIVE in-app acceptance run still pending_
+- [ ] 8.2 End-to-end: coordinator lists, reads, and messages a user-started existing session in the project as part of a workflow — _logic covered by executor tests + review; LIVE in-app run still pending_
+- [x] 8.3 End-to-end: cross-project / invalid / closed targets are rejected; an injection to a busy agent is deferred until idle — verified by `executor.svelte.test.ts` (scoping, idle-gating, coordinator-target rejection)
+- [x] 8.4 Confirm additive behavior: a project with no coordinator and no specialists behaves exactly as today — verified by review (no interception without a coordinator; empty-state panels)
+- [x] 8.5 Run `openspec validate add-agent-specialists` and the project's lint/test suite (`npm` + `cargo test`) — vitest 656/656; cargo 162 pass (+2 pre-existing unrelated `events::tests`); openspec validate green

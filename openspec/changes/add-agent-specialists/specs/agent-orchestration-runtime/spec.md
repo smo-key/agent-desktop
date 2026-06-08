@@ -72,6 +72,10 @@ and the user's manually-started sessions.
 - **WHEN** the orchestrator calls `inspect_agent` for an agent in its project
 - **THEN** that agent's identity and current state are returned
 
+#### Scenario: Coordinator panes are excluded from listing
+- **WHEN** the orchestrator calls `list_agents` in a project that has a coordinator pane
+- **THEN** the coordinator pane is not included in the result
+
 ### Requirement: Archive and unarchive project agents
 The toolkit SHALL let the orchestrator archive (`archive_agent`) and unarchive
 (`unarchive_agent`) an agent pane within its project, using the app's existing
@@ -96,6 +100,10 @@ SHALL be rejected without performing the action.
 
 #### Scenario: Nonexistent or closed target is rejected
 - **WHEN** the orchestrator targets a pane id that does not exist or is closed
+- **THEN** the operation is rejected with an error and no action is performed
+
+#### Scenario: Targeting a coordinator pane is rejected
+- **WHEN** the orchestrator targets a pane whose role is coordinator (including its own pane)
 - **THEN** the operation is rejected with an error and no action is performed
 
 ### Requirement: Injections into one agent are serialized
