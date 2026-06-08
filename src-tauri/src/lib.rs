@@ -2,6 +2,7 @@ pub mod activity;
 pub mod events;
 pub mod git;
 pub mod models;
+pub mod orchestration;
 pub mod polish;
 pub mod pty;
 pub mod specialists;
@@ -80,6 +81,11 @@ const SNAPSHOT_DIR: &str = "snapshots";
 const EVENTS_DIR: &str = "events";
 /// Basename (under app-data) of the Unix-domain socket the event hook delivers to.
 const SOCKET_FILE: &str = "events.sock";
+/// Basename (under app-data) of the orchestration CONTROL socket — the bundled MCP
+/// toolkit adapter connects here to round-trip toolkit ops through the frontend
+/// executor (see `orchestration.rs`). Sibling of `events.sock`; its absolute path
+/// is conveyed to a launched coordinator session via `orchestration::CONTROL_SOCKET_ENV`.
+const CONTROL_SOCKET_FILE: &str = "control.sock";
 
 /// Absolute paths the frontend needs to launch sessions wired into the usage
 /// dashboard. Serialized camelCase for the JS side.
@@ -815,6 +821,27 @@ fn events_for(
     Ok(map)
 }
 
+/// Route the frontend executor's reply for an orchestration request back to the
+/// in-flight control-socket request awaiting `id`. The frontend supplies exactly
+/// one of `result` (success JSON) or `error` (a message); `error` wins if both are
+/// somehow present. A reply for an unknown / already-timed-out id is a no-op (the
+/// originating socket request already gave up), so it never errors. See
+/// [`orchestration`].
+#[tauri::command]
+fn orchestration_reply(
+    server: State<'_, Arc<orchestration::ControlServer>>,
+    id: u64,
+    result: Option<serde_json::Value>,
+    error: Option<String>,
+) -> Result<(), String> {
+    let outcome = match error {
+        Some(e) => orchestration::ReplyOutcome::Error(e),
+        None => orchestration::ReplyOutcome::Result(result.unwrap_or(serde_json::Value::Null)),
+    };
+    server.pending().complete(id, outcome);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -891,6 +918,33 @@ pub fn run() {
                     Err(e) => log::warn!("start_event_server failed: {e}"),
                 }
             }
+            // Orchestration control socket: the transport the bundled MCP toolkit
+            // adapter uses to round-trip toolkit ops through the frontend executor.
+            // Each inbound request is emitted to the frontend over
+            // `orchestration://request`; the frontend replies via the
+            // `orchestration_reply` command, routed back through the server's pending
+            // registry. Held in managed state (so `orchestration_reply` can reach the
+            // registry and the listener lives for the app's lifetime). A bind failure
+            // is logged but non-fatal — the orchestration toolkit simply won't work.
+            if let Ok(base) = app_data_dir(app.handle()) {
+                let handle = app.handle().clone();
+                match orchestration::start_control_server(
+                    &base.join(CONTROL_SOCKET_FILE),
+                    move |id, req| {
+                        if let Err(e) = handle.emit(
+                            orchestration::REQUEST_EVENT,
+                            serde_json::json!({ "id": id, "op": req.op, "args": req.args }),
+                        ) {
+                            log::warn!("emit {} failed: {e}", orchestration::REQUEST_EVENT);
+                        }
+                    },
+                ) {
+                    Ok(server) => {
+                        app.manage(Arc::new(server));
+                    }
+                    Err(e) => log::warn!("start_control_server failed: {e}"),
+                }
+            }
             // Install the native double-tap-right-Command monitor that emits
             // `voice://activate` for the voice panel. Best-effort and macOS-only;
             // a failure is logged inside `start` (the mic button is the fallback).
@@ -942,6 +996,7 @@ pub fn run() {
             worktree_list,
             worktree_remove,
             events_for,
+            orchestration_reply,
             transcribe::voice_transcribe_final,
             transcribe::voice_transcribe_stream,
             models::voice_download_models,
