@@ -57,6 +57,7 @@
   import ProjectIcon from '$lib/icons/ProjectIcon.svelte';
   import Icon from '$lib/icons/Icon.svelte';
   import StatusBar from '$lib/usage/StatusBar.svelte';
+  import { tooltip } from '$lib/ui/tooltip';
   import { friendlyTime } from './friendlyTime';
   import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
   import TasksLauncher from '$lib/tasks/TasksLauncher.svelte';
@@ -459,6 +460,22 @@
     }
   });
 
+  // Auto-preview a focused archived session: whenever the SHOWN agent is still
+  // closed (Archived), resume it for preview so its actual transcript renders in the
+  // panel — never the "Session archived" placeholder. Clicking a row previews
+  // synchronously via `onRowClick`; this covers every OTHER path that lands focus on
+  // a closed session (keyboard ⌘↑/↓, the queue stepper, a restored layout, or
+  // returning to a session the grace timer just re-archived). The session stays
+  // presented as Archived until the user replies (the auto-unarchive effect below
+  // commits it). `previewArchived` is a no-op for a non-resumable pane (no session
+  // id) — those rare cases still fall back to the placeholder.
+  $effect(() => {
+    const f = focus;
+    if (f?.closed) {
+      workspace.previewArchived(f.paneId, activity.forPane(f.paneId).userHash ?? null);
+    }
+  });
+
   // Auto-resume / auto-unarchive: a PAUSED agent returns to its live status, and a
   // PREVIEWING (resumed-from-Archived) agent unarchives, the moment the user sends a
   // new message — detected when the live user-message hash differs from the baseline
@@ -548,7 +565,7 @@
     menu = { open: true, x: e.clientX, y: e.clientY, items };
   }
 
-  /** The agent's display title (Haiku title or its fallback name). */
+  /** The agent's display title (generated session title or its fallback name). */
   function displayName(paneId: string, fallback: string): string {
     return titles.titleFor(paneId) ?? fallback;
   }
@@ -556,7 +573,8 @@
   /** New session: when a project is already selected, launch straight into it (no
    *  dialog); otherwise open the launcher to pick/create a project. */
   function newAgent() {
-    startNewSession();
+    // Fire-and-forget: startNewSession is async (it may create a worktree first).
+    void startNewSession();
   }
 
   // Flat roster order (Needs you -> In flight -> Paused -> Archived) for keyboard nav.
@@ -693,7 +711,7 @@
       <div class="lh">
         <img class="logo" src="/logomark.svg" alt="" aria-hidden="true" />
         <h1>Agents <span class="count">{rows.length}</span></h1>
-        <button type="button" class="launch" onclick={newAgent} title="New session (⌘N)">＋</button>
+        <button type="button" class="launch" onclick={newAgent} aria-label="New session" use:tooltip={'New session (⌘N)'}>＋</button>
       </div>
 
       <!-- Middle region: the agent roster (or its empty state). Flexes to fill
@@ -723,18 +741,18 @@
                     <ProjectIcon {...projAvatar(r.projectId)} size={30} />
                     <span class="nm">
                       <span class="t">{titles.titleFor(r.paneId) ?? r.name}</span>
-                      <span class="s" class:q={needsAttention(r)} title={rowSub(r)}>{rowSub(r)}</span>
+                      <span class="s" class:q={needsAttention(r)} use:tooltip={rowSub(r)}>{rowSub(r)}</span>
                       <span class="meta">
                         {#if showMeta(r)}
-                          <span class="m ctx" title="Context window used">
+                          <span class="m ctx" use:tooltip={'Context window used by this agent'}>
                             <span class="ctxbar"><StatusBar pct={r.contextPct} /></span>
                             {ctxLabel(r.contextPct)}
                           </span>
                         {/if}
-                        <span class="m" title="Total session cost">
+                        <span class="m" use:tooltip={'Total session cost'}>
                           <Icon name="dollar-sign" size={11} />{costMeta(r.cost)}
                         </span>
-                        <span class="m" title="Last activity">
+                        <span class="m" use:tooltip={'Time since last activity'}>
                           <Icon name="clock" size={11} />{friendlyTime(r.lastTs, nowMs)}
                         </span>
                       </span>
@@ -752,7 +770,7 @@
 
       <!-- Draggable splitter between the agent roster (top) and Tasks (bottom). -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="tasks-gutter" onpointerdown={startTasksResize} title="Drag to resize"></div>
+      <div class="tasks-gutter" onpointerdown={startTasksResize} use:tooltip={'Drag to resize'}></div>
 
       <!-- Bottom region: the Tasks launcher, sized to a persisted fraction. -->
       <div class="tasks-region" style="flex: 0 0 {tasksFrac * 100}%">
@@ -770,8 +788,8 @@
           <span class="spc"></span>
           {#if needsAttention(focus) && queue.length > 1}
             <span class="nav">
-              <button type="button" onclick={() => stepQueue(-1)} title="Previous">↑</button>
-              <button type="button" onclick={() => stepQueue(1)} title="Next">↓</button>
+              <button type="button" onclick={() => stepQueue(-1)} aria-label="Previous" use:tooltip={'Previous needs-attention agent'}>↑</button>
+              <button type="button" onclick={() => stepQueue(1)} aria-label="Next" use:tooltip={'Next needs-attention agent'}>↓</button>
             </span>
           {/if}
           {#if focus.preview}
@@ -781,18 +799,18 @@
               type="button"
               class="hbtn danger"
               onclick={() => deleteAgent(focus.paneId, displayName(focus.paneId, focus.name))}
-              title="Delete session"
+              use:tooltip={'Delete session'}
             >Delete</button>
           {:else}
             {#if focus.paused}
-              <button type="button" class="hbtn" onclick={() => resumeAgent(focus.paneId)} title="Resume (⌘.)">Resume</button>
+              <button type="button" class="hbtn" onclick={() => resumeAgent(focus.paneId)} use:tooltip={'Resume (⌘.)'}>Resume</button>
             {:else}
-              <button type="button" class="hbtn" onclick={() => pauseAgent(focus.paneId)} title="Pause / defer for later (⌘.)">Pause</button>
+              <button type="button" class="hbtn" onclick={() => pauseAgent(focus.paneId)} use:tooltip={'Pause / defer for later (⌘.)'}>Pause</button>
             {/if}
             {#if isEmptySession(focus.paneId)}
-              <button type="button" class="hbtn danger" onclick={() => archiveAgent(focus.paneId)} title="Delete empty session (⌘W)">Delete</button>
+              <button type="button" class="hbtn danger" onclick={() => archiveAgent(focus.paneId)} use:tooltip={'Delete empty session (⌘W)'}>Delete</button>
             {:else}
-              <button type="button" class="hbtn danger" onclick={() => archiveAgent(focus.paneId)} title="Archive session (⌘W)">Archive</button>
+              <button type="button" class="hbtn danger" onclick={() => archiveAgent(focus.paneId)} use:tooltip={'Archive session (⌘W)'}>Archive</button>
             {/if}
           {/if}
         </div>
@@ -804,12 +822,12 @@
           <ProjectIcon {...av} size={26} />
           <span class="ttl">{titles.titleFor(focus.paneId) ?? focus.name}</span>
           <span class="spc"></span>
-          <button type="button" class="hbtn" onclick={() => startPreview(focus.paneId)} title="Resume (claude --resume)">Resume</button>
+          <button type="button" class="hbtn" onclick={() => startPreview(focus.paneId)} use:tooltip={'Resume (claude --resume)'}>Resume</button>
           <button
             type="button"
             class="hbtn danger"
             onclick={() => deleteAgent(focus.paneId, displayName(focus.paneId, focus.name))}
-            title="Delete session"
+            use:tooltip={'Delete session'}
           >Delete</button>
         </div>
         <div class="empty">

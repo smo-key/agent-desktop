@@ -57,6 +57,17 @@ export interface PaneSession {
    */
   projectId?: string;
   /**
+   * OPTIONAL absolute path of the git WORKTREE this pane was launched into (its
+   * `cwd` is this worktree). Recorded verbatim at launch (and PERSISTED) when the
+   * pane's project had `autoWorktree` and worktree creation succeeded, so a later
+   * task can clean the worktree up when the agent ends. Absent for panes launched
+   * in the plain project folder (no autoWorktree, or creation fell back).
+   */
+  worktreePath?: string;
+  /** OPTIONAL base SHA the worktree's branch forked from (HEAD at creation). Absent
+   *  for panes without a worktree. Recorded alongside `worktreePath`. */
+  worktreeBase?: string;
+  /**
    * The APP-OWNED Claude session id for a `claude` pane (a uuid generated when the
    * pane is created, or carried over from a persisted save). Passed to claude as
    * `--session-id` (fresh) or `--resume` (restored with resume:true) and used by
@@ -173,14 +184,24 @@ function makeEntry(
   cwd: string | null,
   paneId: string = nextPaneId(),
   initialInput?: string,
-  projectId?: string
+  projectId?: string,
+  worktreePath?: string,
+  worktreeBase?: string
 ): WorkspaceEntry {
   return {
     id: nextWorkspaceId(),
     name,
     ws: freshWorkspace(paneId, nextNodeId),
     registry: {
-      [paneId]: { program, cwd, initialInput, projectId, sessionId: claudeSessionId(program) }
+      [paneId]: {
+        program,
+        cwd,
+        initialInput,
+        projectId,
+        worktreePath,
+        worktreeBase,
+        sessionId: claudeSessionId(program)
+      }
     }
   };
 }
@@ -297,10 +318,21 @@ export class WorkspaceStore {
     program: string = 'claude',
     cwd: string | null = this.activeCwd(),
     initialInput?: string,
-    projectId?: string
+    projectId?: string,
+    worktreePath?: string,
+    worktreeBase?: string
   ): string {
     const name = this.nextSessionName();
-    const entry = makeEntry(name, program, cwd, nextPaneId(), initialInput, projectId);
+    const entry = makeEntry(
+      name,
+      program,
+      cwd,
+      nextPaneId(),
+      initialInput,
+      projectId,
+      worktreePath,
+      worktreeBase
+    );
     this.workspaces = [...this.workspaces, entry];
     this.activeWorkspaceId = entry.id;
     return entry.id;
@@ -357,13 +389,23 @@ export class WorkspaceStore {
     program: string = loginShell(),
     cwd: string | null = null,
     initialInput?: string,
-    projectId?: string
+    projectId?: string,
+    worktreePath?: string,
+    worktreeBase?: string
   ): string {
     const entry = this.requireActive();
     const id = nextPaneId();
     entry.registry = {
       ...entry.registry,
-      [id]: { program, cwd, initialInput, projectId, sessionId: claudeSessionId(program) }
+      [id]: {
+        program,
+        cwd,
+        initialInput,
+        projectId,
+        worktreePath,
+        worktreeBase,
+        sessionId: claudeSessionId(program)
+      }
     };
     return id;
   }
@@ -413,12 +455,21 @@ export class WorkspaceStore {
     cwd: string | null,
     initialInput?: string,
     where: SplitWhere = 'after',
-    projectId?: string
+    projectId?: string,
+    worktreePath?: string,
+    worktreeBase?: string
   ): string | null {
     const entry = this.active;
     if (!entry) return null;
     if (!findLeaf(entry.ws.root, entry.ws.focusedId)) return null;
-    const newPaneId = this.spawnPaneId(program, cwd, initialInput, projectId);
+    const newPaneId = this.spawnPaneId(
+      program,
+      cwd,
+      initialInput,
+      projectId,
+      worktreePath,
+      worktreeBase
+    );
 
     const root = splitLeaf(
       entry.ws.root,
@@ -459,15 +510,17 @@ export class WorkspaceStore {
     placement: 'tab' | 'split-right' | 'split-down';
     initialInput?: string;
     projectId?: string;
+    worktreePath?: string;
+    worktreeBase?: string;
   }): string {
-    const { program, cwd, initialInput, projectId } = plan;
+    const { program, cwd, initialInput, projectId, worktreePath, worktreeBase } = plan;
     // A split needs a focused leaf in the active workspace; otherwise open a tab.
     const canSplit = this.focusedPaneId !== null;
     const placement =
       plan.placement !== 'tab' && !canSplit ? 'tab' : plan.placement;
 
     if (placement === 'tab') {
-      this.newWorkspace(program, cwd, initialInput, projectId);
+      this.newWorkspace(program, cwd, initialInput, projectId, worktreePath, worktreeBase);
       const id = this.focusedPaneId ?? '';
       this.lastLaunchedId = id || null;
       return id;
@@ -480,7 +533,9 @@ export class WorkspaceStore {
       cwd,
       initialInput,
       'after',
-      projectId
+      projectId,
+      worktreePath,
+      worktreeBase
     );
     this.lastLaunchedId = newPaneId ?? null;
     return newPaneId ?? '';
