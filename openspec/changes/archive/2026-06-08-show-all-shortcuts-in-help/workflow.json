@@ -2,7 +2,7 @@
   "provider": "local",
   "taskRef": "show-all-shortcuts-in-help",
   "url": "",
-  "lastEvent": "started",
+  "lastEvent": "done",
   "baseBranch": "add-whisper-server-partials",
   "worktreePath": "/Users/arthur/git/agent-desktop-worktrees/show-all-shortcuts-in-help"
 }
