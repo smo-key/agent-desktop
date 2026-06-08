@@ -112,4 +112,15 @@ describe('ORCHESTRATOR_SYSTEM_PROMPT (task 6.4)', () => {
     // Must not use the Task tool.
     expect(ORCHESTRATOR_SYSTEM_PROMPT).toMatch(/Task tool/);
   });
+
+  it('instructs the coordinator to call request_user_input when it needs you (tasks 10.11–10.12)', () => {
+    // Names the explicit needs-input tool + how it surfaces.
+    expect(ORCHESTRATOR_SYSTEM_PROMPT).toMatch(/request_user_input/);
+    expect(ORCHESTRATOR_SYSTEM_PROMPT).toMatch(/mcp__orchestration__request_user_input/);
+    // It's a MUST, and references the AskUserQuestion alternative.
+    expect(ORCHESTRATOR_SYSTEM_PROMPT).toMatch(/MUST/);
+    expect(ORCHESTRATOR_SYSTEM_PROMPT).toMatch(/AskUserQuestion/);
+    // It should not sit idle expecting attention — keep working/delegating.
+    expect(ORCHESTRATOR_SYSTEM_PROMPT).toMatch(/idle/i);
+  });
 });

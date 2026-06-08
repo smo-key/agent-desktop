@@ -69,6 +69,27 @@ export function laneForRow(row: AgentRow): AgentLane {
 }
 
 /**
+ * PURE: whether a COORDINATOR genuinely needs the user's input. The coordinator is
+ * an orchestrator expected to keep working/delegating, so the DEFAULT idle/waiting
+ * heuristic (a quiet PTY / a `Stop`/`SessionStart` event) must NOT flag it as
+ * needing you. It needs you ONLY when:
+ *   (a) it asks a question via the built-in AskUserQuestion tool — detected from the
+ *       row's pending question(s) (`question`/`questions`, event-sourced), OR
+ *   (b) it explicitly called the `request_user_input` orchestration tool — the
+ *       `flag` argument (the reactive coordinatorNeedsInput store, read by the caller).
+ *
+ * Non-coordinator rows never reach this — their needs-input is the normal status
+ * heuristic. Pure: depends only on its inputs.
+ */
+export function coordinatorNeedsInput(
+  row: Pick<AgentRow, 'question' | 'questions'>,
+  flag: boolean
+): boolean {
+  const hasQuestion = !!row.question || (Array.isArray(row.questions) && row.questions.length > 0);
+  return hasQuestion || flag === true;
+}
+
+/**
  * PURE: whether a row is actively waiting on YOU — waiting/errored AND neither
  * paused (deferred) nor archived (closed). The inbox's attention queue + focus
  * advance use this so a paused/archived agent never nags or steals focus.
@@ -332,7 +353,8 @@ function rowFor(
   activity: RowActivity | undefined,
   event: EventActivity | undefined,
   nowMs: number,
-  workingWindowMs: number
+  workingWindowMs: number,
+  coordFlag: boolean
 ): AgentRow {
   // Status precedence: a process exit is AUTHORITATIVE (a dead process is never
   // "working"); otherwise the event-sourced status wins; the PTY-byte heuristic is
@@ -341,7 +363,22 @@ function rowFor(
   // A CLOSED (Completed) agent is always `finished` (Completed lane), regardless of
   // how its PTY exited — overrides the exit-code/event-derived status.
   const closed = pane.closed === true;
-  const status = closed ? 'finished' : runtime?.exited ? ptyStatus : event?.status ?? ptyStatus;
+  const question = event?.question ?? activity?.question ?? null;
+  const questions = event?.questions ?? activity?.questions ?? null;
+  let status: AgentStatus = closed
+    ? 'finished'
+    : runtime?.exited
+      ? ptyStatus
+      : event?.status ?? ptyStatus;
+  // COORDINATOR needs-input suppression (tasks 10.11–10.12): a LIVE coordinator must
+  // NOT inherit the default idle/waiting heuristic — it needs you ONLY when it asks
+  // an AskUserQuestion (its pending question(s)) OR it called `request_user_input`
+  // (the `coordFlag`). When it does, force `waiting` (→ the Needs-you lane); when it
+  // doesn't, force `working` so a quiet coordinator stays out of attention. A closed/
+  // exited coordinator keeps its derived (finished/error) status — it's not "live".
+  if (pane.role === 'coordinator' && !closed && !runtime?.exited) {
+    status = coordinatorNeedsInput({ question, questions }, coordFlag) ? 'waiting' : 'working';
+  }
   return {
     paneId: pane.paneId,
     workspaceId,
@@ -352,8 +389,8 @@ function rowFor(
     summary: activity?.summary ?? null,
     // The pending question is event-sourced (it rides the PreToolUse event); the
     // transcript sidecar is a fallback for sessions with no event pipeline.
-    question: event?.question ?? activity?.question ?? null,
-    questions: event?.questions ?? activity?.questions ?? null,
+    question,
+    questions,
     currentAction: event?.currentAction ?? null,
     // Context % comes from the statusline snapshot — Claude Code computes it
     // against the REAL context window (incl. the 1M variants) and the auto-compact
@@ -392,6 +429,10 @@ function rowFor(
  * @param nowMs       "now" in epoch ms, for the output-activity window
  * @param activity    the live session_id -> transcript activity map (summary/question)
  * @param workingWindowMs  activity window in ms (default WORKING_WINDOW_MS)
+ * @param eventActivity  the live pane_id -> event-sourced activity map (status/question)
+ * @param coordNeedsInput  set of coordinator paneIds that explicitly called
+ *   `request_user_input` (tasks 10.11–10.12); a coordinator in this set needs you
+ *   even with no pending AskUserQuestion. Default empty (no explicit signals).
  */
 export function buildRoster(
   map: SnapshotMap,
@@ -400,7 +441,8 @@ export function buildRoster(
   nowMs: number,
   activity: ActivityMap = {},
   workingWindowMs: number = WORKING_WINDOW_MS,
-  eventActivity: Record<string, EventActivity> = {}
+  eventActivity: Record<string, EventActivity> = {},
+  coordNeedsInput: ReadonlySet<string> = new Set()
 ): AgentRow[] {
   const rows: AgentRow[] = [];
   for (const ws of workspaces) {
@@ -419,7 +461,8 @@ export function buildRoster(
           act,
           eventActivity[pane.paneId],
           nowMs,
-          workingWindowMs
+          workingWindowMs,
+          coordNeedsInput.has(pane.paneId)
         )
       );
     }

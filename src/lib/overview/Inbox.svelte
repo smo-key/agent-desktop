@@ -71,6 +71,7 @@
     coordinatorNavOrder
   } from './coordinatorPin';
   import CoordinatorStart from '$lib/orchestration/CoordinatorStart.svelte';
+  import { coordinatorNeedsInput } from '$lib/orchestration/coordinatorNeedsInput.svelte';
 
   // --- Sessions / Tasks split (Sessions roster on top / Tasks bottom) ----------
   // The `.col-list` column splits into the Sessions roster (top, resizable) and
@@ -136,6 +137,10 @@
   const rosterWorkspaces = $derived(toRosterWorkspaces(workspace.workspaces));
   const navWorkspaces = $derived(toNavWorkspaces(workspace.workspaces));
 
+  // The set of coordinator paneIds that explicitly called `request_user_input`
+  // (tasks 10.11–10.12). A coordinator in this set surfaces "needs you" even with no
+  // pending AskUserQuestion; the default keep-working heuristic never flags it.
+  const coordNeedsInputSet = $derived(new Set(Object.keys(coordinatorNeedsInput.all())));
   const allRows = $derived(
     buildRoster(
       snapshots.byPane,
@@ -144,9 +149,21 @@
       nowMs,
       activity.bySession,
       undefined,
-      events.activityMap()
+      events.activityMap(),
+      coordNeedsInputSet
     )
   );
+
+  // CLEAR the explicit coordinator needs-input flag once the coordinator RESUMES (its
+  // effective status is `working` again) — the documented clear trigger: the user
+  // delivered input and the coordinator is back to work. Runs off the same per-second
+  // roster recompute. `coordinatorNeedsInput` is the orchestration store (read above),
+  // not the roster's pure `coordinatorNeedsInput` helper.
+  $effect(() => {
+    for (const r of allRows) {
+      if (r.role === 'coordinator') coordinatorNeedsInput.clearOnWorking(r.paneId, r.status);
+    }
+  });
   const rows = $derived(filterRowsByProject(allRows, projectFilter.selected));
 
   // Arrival order for the "Needs you" lane: paneIds in the order they STARTED

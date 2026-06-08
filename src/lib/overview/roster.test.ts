@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildRoster,
+  coordinatorNeedsInput,
   deriveStatus,
   laneOf,
   laneForRow,
@@ -441,5 +442,87 @@ describe('roster — event-sourced status', () => {
     expect(row.model).toBe('claude-opus');
     expect(row.cost).toBe(2.5);
     expect(row.status).toBe('waiting');
+  });
+});
+
+// Coordinator needs-input suppression (tasks 10.11–10.12): a live coordinator must
+// surface "needs you" ONLY for a pending AskUserQuestion OR the explicit
+// request_user_input flag — NEVER the default idle/waiting heuristic.
+describe('roster — coordinator needs-input suppression', () => {
+  const now = 1_000_000;
+  /** A single-pane coordinator workspace. */
+  const coordWs: RosterWorkspace = {
+    id: 'w1',
+    name: 'W',
+    panes: [{ paneId: 'coord', cwd: '/x', isApp: true, role: 'coordinator', projectId: 'A' }]
+  };
+  const evAct = (over: Partial<EventActivity> = {}): Record<string, EventActivity> => ({
+    coord: { status: null, currentAction: null, question: null, questions: null, ...over }
+  });
+
+  it('coordinatorNeedsInput pure helper: true on a pending question OR the flag', () => {
+    expect(coordinatorNeedsInput({ question: null, questions: null }, false)).toBe(false);
+    expect(coordinatorNeedsInput({ question: 'pick one?', questions: null }, false)).toBe(true);
+    expect(
+      coordinatorNeedsInput(
+        { question: null, questions: [{ header: '', question: 'q?', multiSelect: false, options: [] }] },
+        false
+      )
+    ).toBe(true);
+    expect(coordinatorNeedsInput({ question: null, questions: null }, true)).toBe(true);
+  });
+
+  it('a quiet coordinator (idle/waiting heuristic) does NOT need attention', () => {
+    // PTY says "waiting" (long silence) and the event status is the stable idle
+    // `waiting` — but with no question and no flag, the coordinator stays `working`.
+    const runtime = runtimeOf(rt('coord', { lastOutputAt: now - 999_999 }));
+    const [row] = buildRoster({}, [coordWs], runtime, now, {}, WORKING_WINDOW_MS, evAct({ status: 'waiting' }));
+    expect(row.status).toBe('working');
+    expect(needsAttention(row)).toBe(false);
+  });
+
+  it('a coordinator with a pending AskUserQuestion DOES need attention', () => {
+    const runtime = runtimeOf(rt('coord', { lastOutputAt: now }));
+    const [row] = buildRoster(
+      {},
+      [coordWs],
+      runtime,
+      now,
+      {},
+      WORKING_WINDOW_MS,
+      evAct({ status: 'waiting', question: 'which approach?' })
+    );
+    expect(row.status).toBe('waiting');
+    expect(needsAttention(row)).toBe(true);
+  });
+
+  it('a coordinator with the explicit request_user_input flag DOES need attention', () => {
+    const runtime = runtimeOf(rt('coord', { lastOutputAt: now }));
+    const [row] = buildRoster(
+      {},
+      [coordWs],
+      runtime,
+      now,
+      {},
+      WORKING_WINDOW_MS,
+      evAct({ status: 'working' }),
+      new Set(['coord'])
+    );
+    expect(row.status).toBe('waiting');
+    expect(needsAttention(row)).toBe(true);
+  });
+
+  it('a NON-coordinator pane is unaffected by the suppression (default heuristic applies)', () => {
+    const normalWs: RosterWorkspace = {
+      id: 'w2',
+      name: 'N',
+      panes: [{ paneId: 'agent', cwd: '/y', isApp: true, projectId: 'A' }]
+    };
+    const runtime = runtimeOf(rt('agent', { lastOutputAt: now - 999_999 }));
+    const [row] = buildRoster({}, [normalWs], runtime, now, {}, WORKING_WINDOW_MS, {
+      agent: { status: 'waiting', currentAction: null, question: null, questions: null }
+    });
+    expect(row.status).toBe('waiting');
+    expect(needsAttention(row)).toBe(true);
   });
 });

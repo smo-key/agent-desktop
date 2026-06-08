@@ -86,7 +86,7 @@ describe('orchestration-mcp pure core', () => {
     expect(input).toEqual({ paneId: 'p1' });
   });
 
-  it('exposes exactly the seven toolkit tools with arg schemas', () => {
+  it('exposes the toolkit tools (incl. request_user_input) with arg schemas', () => {
     const names = mcp.TOOLS.map((t) => t.name).sort();
     expect(names).toEqual(
       [
@@ -95,6 +95,7 @@ describe('orchestration-mcp pure core', () => {
         'list_agents',
         'message_agent',
         'read_agent',
+        'request_user_input',
         'spawn_agent',
         'unarchive_agent'
       ].sort()
@@ -105,5 +106,20 @@ describe('orchestration-mcp pure core', () => {
     for (const t of mcp.TOOLS) {
       expect(t.inputSchema.type).toBe('object');
     }
+  });
+
+  it('exposes request_user_input with an optional message arg', () => {
+    const tool = mcp.TOOLS.find((t) => t.name === 'request_user_input');
+    expect(tool).toBeDefined();
+    expect(tool!.inputSchema.properties).toHaveProperty('message');
+    // `message` is optional — the coordinator may notify with no reason text.
+    expect(tool!.inputSchema.required ?? []).not.toContain('message');
+  });
+
+  it('encodes request_user_input into one {op,args} request line', () => {
+    const line = mcp.encodeRequest('request_user_input', { message: 'need a decision' });
+    const parsed = JSON.parse(line);
+    expect(parsed).toEqual({ op: 'request_user_input', args: { message: 'need a decision' } });
+    expect(line.endsWith('\n')).toBe(true);
   });
 });

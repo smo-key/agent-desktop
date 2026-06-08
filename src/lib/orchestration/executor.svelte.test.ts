@@ -40,6 +40,7 @@ function makeDeps(over: Partial<ExecutorDeps> = {}) {
   const sent: Array<{ paneId: string; text: string }> = [];
   const archived: string[] = [];
   const unarchived: string[] = [];
+  const coordNeeds: Array<{ paneId: string; message: string | null }> = [];
   const deps: ExecutorDeps = {
     reply: (id, outcome) => {
       replies.push({ id, outcome });
@@ -62,9 +63,10 @@ function makeDeps(over: Partial<ExecutorDeps> = {}) {
     archive: (paneId) => archived.push(paneId),
     unarchive: (paneId) => unarchived.push(paneId),
     schedule: (run) => run(), // run synchronously for deterministic tests
+    setCoordinatorNeedsInput: (paneId, message) => coordNeeds.push({ paneId, message }),
     ...over
   };
-  return { deps, replies, launched, sent, archived, unarchived };
+  return { deps, replies, launched, sent, archived, unarchived, coordNeeds };
 }
 
 describe('OrchestrationExecutor — scoping & safety (4.6)', () => {
@@ -313,5 +315,42 @@ describe('OrchestrationExecutor — archive / unarchive (4.5)', () => {
     await ex.onRequest({ id: 1, op: 'unarchive_agent', args: { projectId: PROJ, paneId: 'p1' } });
     expect(unarchived).toEqual([]);
     expect(replies[0].outcome.error).toMatch(/outside/);
+  });
+});
+
+describe('OrchestrationExecutor — request_user_input (tasks 10.11–10.12)', () => {
+  it('sets the project coordinator needs-input flag with the message and replies ok', async () => {
+    const { deps, replies, coordNeeds } = makeDeps({ coordinatorFor: () => 'coord-pane' });
+    const ex = new OrchestrationExecutor(deps);
+    await ex.onRequest({
+      id: 1,
+      op: 'request_user_input',
+      args: { projectId: PROJ, message: 'need a decision' }
+    });
+    expect(coordNeeds).toEqual([{ paneId: 'coord-pane', message: 'need a decision' }]);
+    expect(replies[0].outcome.result).toMatchObject({ notified: true, paneId: 'coord-pane' });
+  });
+
+  it('sets the flag with a null message when none is given', async () => {
+    const { deps, coordNeeds } = makeDeps({ coordinatorFor: () => 'coord-pane' });
+    const ex = new OrchestrationExecutor(deps);
+    await ex.onRequest({ id: 1, op: 'request_user_input', args: { projectId: PROJ } });
+    expect(coordNeeds).toEqual([{ paneId: 'coord-pane', message: null }]);
+  });
+
+  it('errors (no flag) when the project has no live coordinator pane', async () => {
+    const { deps, replies, coordNeeds } = makeDeps({ coordinatorFor: () => null });
+    const ex = new OrchestrationExecutor(deps);
+    await ex.onRequest({ id: 1, op: 'request_user_input', args: { projectId: PROJ } });
+    expect(coordNeeds).toEqual([]);
+    expect(replies[0].outcome.error).toMatch(/no live coordinator/);
+  });
+
+  it('rejects with no orchestrator projectId in args', async () => {
+    const { deps, replies, coordNeeds } = makeDeps({ coordinatorFor: () => 'coord-pane' });
+    const ex = new OrchestrationExecutor(deps);
+    await ex.onRequest({ id: 1, op: 'request_user_input', args: {} });
+    expect(coordNeeds).toEqual([]);
+    expect(replies[0].outcome.error).toMatch(/projectId/);
   });
 });

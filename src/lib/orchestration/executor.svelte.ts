@@ -43,6 +43,7 @@ import { parseSpecialist } from '../specialists/specialists';
 import { specialistLaunchArgs } from './launchArgs';
 import { buildLaunchPlan } from '../launcher/plan';
 import { findCoordinatorPane, type CoordinatorPaneView } from './coordinator';
+import { coordinatorNeedsInput } from './coordinatorNeedsInput.svelte';
 
 /** The Tauri event name the Rust control server emits each request on. */
 export const REQUEST_EVENT = 'orchestration://request';
@@ -117,6 +118,10 @@ export interface ExecutorDeps {
   unarchive: (paneId: string) => void;
   /** Schedule `run` after `ms` (setTimeout in prod; tests inject a controllable one). */
   schedule: (run: () => void, ms: number) => void;
+  /** SET the project coordinator's explicit "needs input" flag (tasks 10.11–10.12),
+   *  with an optional short reason/prompt — surfaced in the roster so the user is
+   *  notified the coordinator needs them (vs. its default keep-working heuristic). */
+  setCoordinatorNeedsInput: (paneId: string, message: string | null) => void;
 }
 
 /** How long to keep retrying a busy `message_agent` target before erroring (ms). */
@@ -189,6 +194,8 @@ export class OrchestrationExecutor {
         return this.archiveAgent(args);
       case 'unarchive_agent':
         return this.unarchiveAgent(args);
+      case 'request_user_input':
+        return this.requestUserInput(args);
       default:
         return { error: `unknown op: ${op}` };
     }
@@ -381,6 +388,26 @@ export class OrchestrationExecutor {
     return { result: { unarchived: true } };
   }
 
+  /**
+   * `request_user_input({ message?, projectId })`: the COORDINATOR explicitly signals
+   * it needs the user (tasks 10.11–10.12). Resolve the project's live coordinator pane
+   * and SET its reactive "needs input" flag (with the optional `message`) so the
+   * roster surfaces it in the Needs-you lane — bypassing the coordinator's default
+   * keep-working heuristic. Errors when the project has no live coordinator pane.
+   */
+  private requestUserInput(args: Record<string, unknown>): OpResult {
+    const projectId = this.orchestratorProject(args);
+    if (!projectId) return { error: 'missing orchestrator projectId in args (scope required)' };
+    const coordinatorPaneId = this.deps.coordinatorFor(projectId);
+    if (!coordinatorPaneId) {
+      return { error: `no live coordinator pane for project: ${projectId}` };
+    }
+    const message =
+      typeof args.message === 'string' && args.message.trim() !== '' ? args.message.trim() : null;
+    this.deps.setCoordinatorNeedsInput(coordinatorPaneId, message);
+    return { result: { notified: true, paneId: coordinatorPaneId } };
+  }
+
   /** Build the `AgentInfo` for a located pane. */
   private infoFor(pane: LocatedPane): AgentInfo {
     return {
@@ -516,7 +543,8 @@ function realDeps(): ExecutorDeps {
     unarchive: (paneId) => workspace.restoreAgent(paneId),
     schedule: (run, ms) => {
       setTimeout(run, ms);
-    }
+    },
+    setCoordinatorNeedsInput: (paneId, message) => coordinatorNeedsInput.set(paneId, message)
   };
 }
 

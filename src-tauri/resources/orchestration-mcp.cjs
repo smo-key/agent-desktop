@@ -46,9 +46,9 @@ const PROTOCOL_VERSION = '2024-11-05';
 const PROJECT_ID_ENV = 'AGENT_DESKTOP_PROJECT_ID';
 
 /**
- * The seven toolkit tools, each with the MCP input schema for the args its op
- * needs. Args are forwarded VERBATIM to the control socket — the executor (and the
- * spec) own validation/scoping; the adapter is a thin translation layer.
+ * The toolkit tools, each with the MCP input schema for the args its op needs. Args
+ * are forwarded VERBATIM to the control socket — the executor (and the spec) own
+ * validation/scoping; the adapter is a thin translation layer.
  */
 const TOOLS = [
   {
@@ -120,6 +120,20 @@ const TOOLS = [
       type: 'object',
       properties: { paneId: { type: 'string', description: 'Target agent pane id.' } },
       required: ['paneId']
+    }
+  },
+  {
+    name: 'request_user_input',
+    description:
+      "Notify the user that you (the coordinator) need their input — call this whenever you need a decision/answer from the user but are NOT asking via the AskUserQuestion tool. Surfaces the coordinator in the user's Needs-you lane. Otherwise keep working and delegating; do not sit idle expecting attention.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message: {
+          type: 'string',
+          description: 'Optional short reason/prompt describing what you need from the user.'
+        }
+      }
     }
   }
 ];

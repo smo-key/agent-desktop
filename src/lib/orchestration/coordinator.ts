@@ -33,6 +33,9 @@ Available toolkit:
 - \`spawn_agent({ prompt, specialist?, cwd? })\` — launch a new agent with a goal; pass a \`specialist\` name to give it a persona (\`.claude/agents/<name>.md\`).
 - \`message_agent({ paneId, text })\` — send instructions/feedback to a running agent (delivered when it is idle).
 - \`archive_agent\` / \`unarchive_agent\` — close out or reopen an agent.
+- \`request_user_input({ message? })\` — NOTIFY the user that you need them (see below).
+
+Getting the user's attention: you will NOT be flagged as "needs input" just for being idle — you are expected to keep planning, spawning, and coordinating. When you genuinely need a decision or answer from the user and you are NOT already asking via the AskUserQuestion tool, you MUST call \`request_user_input\` (it surfaces as \`mcp__orchestration__request_user_input\`, with a short \`message\` describing what you need) so the user is actually notified. If you are asking a multiple-choice question, prefer the AskUserQuestion tool instead. Otherwise, do not sit idle waiting for attention — keep working and delegating.
 
 How to work:
 1. Restate the goal and outline a short plan (which agents/specialists, in what order, what each owns).
