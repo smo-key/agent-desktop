@@ -90,12 +90,18 @@ sessions, not only ones it spawns.
 
 ### D4. `spawn_agent(specialist)` composes the launch from the specialist file
 When `spawn_agent` is given a specialist, the executor resolves
-`.claude/agents/<name>.md` and composes the `claude` launch from it: the body as
-the system prompt, plus the file's model/tools. **Key technical unknown:** the
-exact `claude` CLI surface. Candidates: `--append-system-prompt "<body>"`,
-`--model <model>`, `--allowedTools <...>`, `--mcp-config <...>`. A spike confirms
-which flags exist and behave; if direct system-prompt injection is unavailable,
-the fallback is to deliver the persona as the pane's `initialInput` preamble.
+`.claude/agents/<name>.md` and composes the `claude` launch from it. **Spike
+resolved (claude 2.1.168):** the CLI exposes `--append-system-prompt <prompt>`,
+`--system-prompt <prompt>`, `--model <model>`, `--allowedTools <tools...>`,
+`--disallowedTools <tools...>`, `--mcp-config`, and `--settings` — so direct
+composition works and the `initialInput` persona-preamble fallback is **not
+needed**. The chosen mapping (specialist file → launch args), a pure helper:
+
+- body → `--append-system-prompt "<body>"` (append the persona to Claude Code's
+  default prompt rather than `--system-prompt`, so base tool behavior is kept)
+- frontmatter `model` (when present) → `--model <model>`
+- frontmatter `tools` (when present) → `--allowedTools <tools...>`
+
 The spawned pane records its specialist so the roster can badge it.
 *Why:* keeps the `.md` file the single source of truth while still producing a
 real, visible, standalone pane (not an invisible Task subagent).
@@ -168,6 +174,8 @@ inert to the rest of the app.
 
 ## Open Questions
 
-- Exact `claude` CLI flags for specialist composition (D4) — resolved by the spike.
+- ~~Exact `claude` CLI flags for specialist composition (D4)~~ — **resolved**
+  (claude 2.1.168): `--append-system-prompt` + `--model` + `--allowedTools`; no
+  fallback needed. See D4.
 - Idle-detection signal precise enough to gate injections (D-risk) — reuse
   activity/events "needs input / running" state; confirm during build.

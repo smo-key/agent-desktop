@@ -1,8 +1,8 @@
 ## 1. Spike: spawn a claude pane as a specialist
 
-- [ ] 1.1 Spike the `claude` CLI surface for composing a session from a specialist: confirm which of `--append-system-prompt`, `--model`, `--allowedTools`, `--mcp-config` exist and behave (system prompt actually applied, model/tools honored)
-- [ ] 1.2 Decide the composition path and record it in design.md (Open Questions → Decisions); if direct system-prompt injection is unavailable, confirm the `initialInput` persona-preamble fallback
-- [ ] 1.3 Capture the chosen launch-args shape as a small pure helper signature (specialist file → launch args) to be implemented in task 3
+- [x] 1.1 Spike the `claude` CLI surface for composing a session from a specialist: confirm which of `--append-system-prompt`, `--model`, `--allowedTools`, `--mcp-config` exist and behave (system prompt actually applied, model/tools honored)
+- [x] 1.2 Decide the composition path and record it in design.md (Open Questions → Decisions); if direct system-prompt injection is unavailable, confirm the `initialInput` persona-preamble fallback
+- [x] 1.3 Capture the chosen launch-args shape as a small pure helper signature (specialist file → launch args) to be implemented in task 3
 
 ## 2. Specialist model + persistence
 
