@@ -12,7 +12,8 @@
     "coverage": "node tools/check-scenario-coverage.mjs",
     "check:gate": "npm run check && npm run test && npm run coverage",
     "tauri": "tauri",
-    "package:mac": "tauri build"
+    "package:mac": "tauri build",
+    "package:mac:signed": "bash scripts/package-mac-signed.sh"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "3.0.10",
