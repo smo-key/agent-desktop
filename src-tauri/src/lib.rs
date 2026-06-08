@@ -4,6 +4,7 @@ pub mod git;
 pub mod models;
 pub mod polish;
 pub mod pty;
+pub mod specialists;
 pub mod subagents;
 pub mod task;
 pub mod transcribe;
@@ -13,7 +14,7 @@ pub mod voice_activation;
 pub mod whisper_server;
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -464,6 +465,40 @@ fn tasks_save(app: AppHandle, json: String) -> Result<(), String> {
     write_app_data_json(&app, TASKS_FILE, &json)
 }
 
+/// List a project's SPECIALISTS — the native Claude Code subagent files under
+/// `<projectPath>/.claude/agents/*.md`. Returns one `{ name, content }` per `.md`
+/// file (raw contents; the frontend parses them via `parseSpecialist`), sorted by
+/// name. A missing `.claude/agents/` dir yields an empty list, not an error. See
+/// [`specialists::list_specialists`].
+#[tauri::command]
+fn specialists_list(project_path: String) -> Result<Vec<specialists::SpecialistFile>, String> {
+    Ok(specialists::list_specialists(Path::new(&project_path)))
+}
+
+/// Read the raw `.md` contents of `<projectPath>/.claude/agents/<name>.md`. Errors
+/// when `name` is unsafe or the file can't be read. See
+/// [`specialists::read_specialist`].
+#[tauri::command]
+fn specialists_read(project_path: String, name: String) -> Result<String, String> {
+    specialists::read_specialist(Path::new(&project_path), &name)
+}
+
+/// Create/overwrite `<projectPath>/.claude/agents/<name>.md` with `content`
+/// (atomic temp+rename, creating the dir if needed). Errors when `name` is unsafe.
+/// See [`specialists::write_specialist`].
+#[tauri::command]
+fn specialists_write(project_path: String, name: String, content: String) -> Result<(), String> {
+    specialists::write_specialist(Path::new(&project_path), &name, &content)
+}
+
+/// Delete `<projectPath>/.claude/agents/<name>.md`. Deleting a nonexistent file is
+/// a no-op (not an error). Errors when `name` is unsafe. See
+/// [`specialists::delete_specialist`].
+#[tauri::command]
+fn specialists_delete(project_path: String, name: String) -> Result<(), String> {
+    specialists::delete_specialist(Path::new(&project_path), &name)
+}
+
 /// Resolve `<app_data_dir>`, creating it if needed.
 fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
@@ -893,6 +928,10 @@ pub fn run() {
             terminals_save,
             tasks_load,
             tasks_save,
+            specialists_list,
+            specialists_read,
+            specialists_write,
+            specialists_delete,
             usage_paths,
             usage_snapshots,
             subagents_for,
