@@ -6,10 +6,10 @@
 
 ## 2. Specialist model + persistence
 
-- [ ] 2.1 Add a pure `src/lib/specialists/specialists.ts`: a `Specialist` type and pure (de)serialize between `.claude/agents/<name>.md` (YAML frontmatter + body) and the model; unit-test round-trip + malformed-frontmatter handling
-- [ ] 2.2 Add name validation (unique within project, filename-safe) as a pure function; unit-test duplicates and unsafe names
-- [ ] 2.3 Add Tauri commands in `src-tauri/src/` to list / read / write / delete `<project>/.claude/agents/*.md`; mirror the app-data JSON read/write helpers in `lib.rs`; unit-test the list/read/write/delete IO in a temp dir
-- [ ] 2.4 Add a reactive `src/lib/specialists/specialists.svelte.ts` store wrapping the commands (load by active project, create/edit/delete), tolerant of malformed entries (surface as read errors, never throw)
+- [x] 2.1 Add a pure `src/lib/specialists/specialists.ts`: a `Specialist` type and pure (de)serialize between `.claude/agents/<name>.md` (YAML frontmatter + body) and the model; unit-test round-trip + malformed-frontmatter handling
+- [x] 2.2 Add name validation (unique within project, filename-safe) as a pure function; unit-test duplicates and unsafe names
+- [x] 2.3 Add Tauri commands in `src-tauri/src/` to list / read / write / delete `<project>/.claude/agents/*.md`; mirror the app-data JSON read/write helpers in `lib.rs`; unit-test the list/read/write/delete IO in a temp dir
+- [x] 2.4 Add a reactive `src/lib/specialists/specialists.svelte.ts` store wrapping the commands (load by active project, create/edit/delete), tolerant of malformed entries (surface as read errors, never throw)
 
 ## 3. Orchestration runtime — transport + executor
 
