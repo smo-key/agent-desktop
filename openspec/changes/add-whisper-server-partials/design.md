@@ -111,6 +111,22 @@ discards the panel. Only active while open, so Escape behaves normally otherwise
 This makes the existing `voice-dictation` "Escape cancels" behavior actually hold
 over a focused terminal — captured as a MODIFIED delta to that capability here.
 
+### D7 — No click-outside dismissal (remove the scrim)
+The panel originally rendered a transparent full-screen `.voice-scrim` button
+behind it whose only jobs were (a) catch a click-outside → `discard()` and (b)
+incidentally block those clicks from reaching the app. Both are wrong for a
+non-modal dictation overlay: a stray click while dictating (e.g. refocusing a
+terminal) would silently cancel, and the scrim made the whole app inert behind
+the panel. Fix: **remove the scrim entirely.** Clicking outside the panel now
+does nothing to it and the click passes through to the app, which stays
+interactive while dictating. Dismissal is explicit only — the × cancel, Escape
+(D6 capture), or the ✓ confirm. Captured as a MODIFIED delta to the
+`voice-dictation` "Open and close the voice panel" requirement (dropping
+"click outside the panel" from the dismissal list + a new scenario that an
+outside click keeps the panel open and reaches the app).
+*Alternative (rejected):* keep the scrim but make its onclick a no-op — still
+blocks clicks to the app for no benefit; removing it is simpler and correct.
+
 ## Risks / Trade-offs
 
 - **Whisper-server `/inference` API shape differs across versions** → keep the

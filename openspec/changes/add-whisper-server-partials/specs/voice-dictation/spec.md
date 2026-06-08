@@ -7,11 +7,13 @@ dictate. The panel SHALL be openable via an on-screen mic button (a small
 footer-centered launcher) and via a solo tap of the right Command key (pressed
 and released with no other key in between, so it never fires on a right-Command
 shortcut). At most one voice panel SHALL be open at a time. The panel SHALL be
-dismissable via the Escape key, a click outside the panel, and an explicit
-stop/close control. While the panel is open, the Escape key SHALL cancel it even
-when a terminal/TUI is focused — the panel SHALL intercept Escape before the
-focused terminal receives it, so a single Escape always cancels dictation rather
-than reaching the underlying app.
+dismissable via the Escape key and an explicit stop/close control. The panel is
+a non-modal floating overlay: clicking outside it SHALL NOT close or cancel the
+panel, and the application behind SHALL remain interactive while the panel is
+open (no click-catching scrim). While the panel is open, the Escape key SHALL
+cancel it even when a terminal/TUI is focused — the panel SHALL intercept Escape
+before the focused terminal receives it, so a single Escape always cancels
+dictation rather than reaching the underlying app.
 
 #### Scenario: Open via mic button
 
@@ -37,8 +39,15 @@ than reaching the underlying app.
 #### Scenario: Dismiss the panel
 
 - **WHEN** the voice panel is open
-- **AND** the user presses Escape, clicks outside the panel, or activates the stop control
+- **AND** the user presses Escape or activates the stop control
 - **THEN** the panel closes and recording stops without inserting (discard)
+
+#### Scenario: Clicking outside the panel does not close it
+
+- **WHEN** the voice panel is open
+- **AND** the user clicks outside the panel (in the app behind it)
+- **THEN** the panel stays open, recording continues, nothing is discarded
+- **AND** the click reaches the application behind (the panel does not block it)
 
 #### Scenario: Right Command tap while recording finalizes
 

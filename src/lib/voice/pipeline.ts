@@ -11,8 +11,9 @@
 //     utterance (final whisper pass → polish → verbatim insert into the focused
 //     terminal), then closes the panel. The user reviews/edits the text IN THE
 //     TERMINAL (no auto-submit), per spec — not in this panel.
-//   - cancel(): the × button, Escape, or a click on the scrim. DISCARDS the
-//     utterance: stop capture + release the mic, NO transcription, NO insert.
+//   - cancel(): the × button or Escape. DISCARDS the utterance: stop capture +
+//     release the mic, NO transcription, NO insert. (Clicking outside the panel
+//     does NOT cancel — the panel is a non-modal overlay with no scrim.)
 //
 // Pure/testable bits live in small exported functions (model-path resolution, the
 // partial-event reducer); `invoke`, `Channel`, `MicCapture`, and the DOM stay in
@@ -341,7 +342,7 @@ export class DictationPipeline {
 
   /**
    * Discard the utterance: stop capture + release the mic, NO transcription, NO
-   * insert. This is the × / Escape / click-outside path. Idempotent.
+   * insert. This is the × / Escape path. Idempotent.
    */
   cancel(): void {
     if (this.#finished) return;

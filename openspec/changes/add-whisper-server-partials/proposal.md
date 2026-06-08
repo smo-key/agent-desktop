@@ -44,7 +44,9 @@ each partial is just inference (tens of ms) over the loaded tiny model.
 ### Modified Capabilities
 - `voice-dictation`: the **Open and close the voice panel** requirement is
   strengthened so Escape cancels the panel even when a terminal/TUI is focused
-  (intercepted before the focused terminal sees it).
+  (intercepted before the focused terminal sees it), and clicking outside the
+  panel no longer closes or cancels it — the panel is a non-modal floating
+  overlay with no click-catching scrim, so the app behind stays interactive.
 - `local-transcription`: the **Live partial transcription** requirement changes
   its mechanism — partials are produced by a persistent in-memory whisper-server
   (model loaded once) rather than a per-call CLI that reloads the model, to meet

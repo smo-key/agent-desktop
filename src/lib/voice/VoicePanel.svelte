@@ -3,10 +3,11 @@
   // reflects the shared `voiceStore` phase and live transcript. Mounted
   // unconditionally in +page.svelte and gates on `voiceStore.open` (mirroring the
   // Launcher/HelpModal/SettingsModal pattern). Unlike the launcher this is NOT a
-  // dimming modal: it floats over the app with a TRANSPARENT click-outside layer
-  // behind it. Dismissal: the × stop button, Escape (window-level, since nothing is
-  // focused by default), and a click on the transparent layer — all call
-  // voiceStore.close(). Single instance is enforced by the store's show() no-op.
+  // dimming modal: it floats over the app and does NOT capture clicks outside it —
+  // there is no scrim, so the app behind stays interactive while dictating and a
+  // click outside neither closes nor cancels the panel. Dismissal is explicit only:
+  // the × cancel button, Escape (window-level capture, even over a focused TUI), and
+  // the ✓ confirm. Single instance is enforced by the store's show() no-op.
   //
   // This slice renders state only; capture + transcription land in later slices and
   // drive the store via setState/setPartial/setFinal/setError.
@@ -90,9 +91,10 @@
     void pipeline?.stopAndInsert();
   }
 
-  // DISCARD: × / Escape / click-outside. Stops capture + releases the mic without
-  // transcribing or inserting (the $effect cleanup's cancel() does the work). We
-  // call close() which tears the panel down and triggers that cleanup.
+  // DISCARD: × / Escape. Stops capture + releases the mic without transcribing or
+  // inserting (the $effect cleanup's cancel() does the work). We call close() which
+  // tears the panel down and triggers that cleanup. (Clicking outside the panel is
+  // deliberately NOT a discard — there is no scrim.)
   function discard() {
     voiceStore.close();
   }
@@ -199,18 +201,8 @@
 {/if}
 
 {#if voiceStore.open}
-  <!-- Transparent click-outside layer (no dimming) behind the floating panel; a
-       <button> so it's natively keyboard/focus accessible. Esc is also handled at
-       the window level above. -->
-  <button
-    type="button"
-    class="voice-scrim"
-    aria-label="Dismiss voice input"
-    onclick={() => discard()}
-  ></button>
-
-  <!-- The floating panel. It's a sibling of the scrim (not nested), so a click on
-       it never reaches the scrim — no stopPropagation needed. -->
+  <!-- The floating panel. No scrim sits behind it: a click outside the panel does
+       NOT close or cancel dictation, and the app behind stays interactive. -->
   <div
     class="voice-panel"
     role="dialog"
@@ -278,19 +270,6 @@
 {/if}
 
 <style>
-  /* Transparent full-screen layer: catches a click-outside to dismiss WITHOUT
-     dimming the app (this is a floating, non-modal panel). Below the panel. */
-  .voice-scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 1999;
-    margin: 0;
-    padding: 0;
-    border: none;
-    background: transparent;
-    cursor: default;
-  }
-
   /* Footer launcher: a small, pill-shaped overlay panel centered in the footer,
      shown only while the full panel is closed. Sits below the open panel's z-index
      (it's hidden when the panel is open) but above the app chrome. */
