@@ -163,26 +163,33 @@ impl WhisperServer {
         }
     }
 
-    /// Poll `GET /health` with the [`health_backoff_schedule`] until it returns a
-    /// success status, or `Err` after the schedule is exhausted. Probes FIRST (so a
-    /// warm/already-healthy server returns with no added latency), sleeping only
+    /// Poll the server's readiness with the [`health_backoff_schedule`] until it
+    /// answers, or `Err` after the schedule is exhausted. Probes FIRST (so a
+    /// warm/already-ready server returns with no added latency), sleeping only
     /// BETWEEN retries. Each probe has a short timeout so a wedged socket can't hang.
+    ///
+    /// NOTE: whisper.cpp's `whisper-server` does NOT expose `/health` (that's a
+    /// llama-server endpoint) — it 404s. It loads the model BEFORE it begins
+    /// listening, so once the root path answers at all (200 from the public folder,
+    /// or any HTTP response) the server is bound and the model is resident. We treat
+    /// any HTTP response (not just 2xx) as ready.
     async fn wait_healthy(&self) -> Result<(), String> {
         let client = http_client(std::time::Duration::from_secs(2));
-        let url = format!("{}/health", server_base(WHISPER_PORT));
+        let url = format!("{}/", server_base(WHISPER_PORT));
         let schedule = health_backoff_schedule(HEALTH_MAX_ATTEMPTS, HEALTH_BASE_MS);
         for (i, delay) in schedule.iter().enumerate() {
-            if let Ok(resp) = client.get(&url).send().await {
-                if resp.status().is_success() {
-                    return Ok(());
-                }
+            // ANY HTTP response means the server is bound + listening (model loaded
+            // before it listens). whisper-server has no /health, so a 404 on `/` is
+            // still "ready". Only a connection error means not-up-yet.
+            if client.get(&url).send().await.is_ok() {
+                return Ok(());
             }
             if i + 1 < schedule.len() {
                 tokio::time::sleep(std::time::Duration::from_millis(*delay)).await;
             }
         }
         Err(format!(
-            "whisper-server did not become healthy after {} attempts",
+            "whisper-server did not become ready after {} attempts",
             schedule.len()
         ))
     }
