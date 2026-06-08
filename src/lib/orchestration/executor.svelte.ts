@@ -42,6 +42,7 @@ import { specialists } from '../specialists/specialists.svelte';
 import { parseSpecialist } from '../specialists/specialists';
 import { specialistLaunchArgs } from './launchArgs';
 import { buildLaunchPlan } from '../launcher/plan';
+import { findCoordinatorPane, type CoordinatorPaneView } from './coordinator';
 
 /** The Tauri event name the Rust control server emits each request on. */
 export const REQUEST_EVENT = 'orchestration://request';
@@ -108,6 +109,9 @@ export interface ExecutorDeps {
   loadSpecialist: (projectPath: string, name: string) => Promise<import('../specialists/specialists').Specialist>;
   /** Launch a new claude pane; returns the new pane id. */
   launch: (plan: Parameters<typeof workspace.launch>[0]) => string;
+  /** The paneId of the project's live coordinator, or null — so a coordinator-driven
+   *  spawn is attributed to it in the roster/overview (task 6.5). */
+  coordinatorFor: (projectId: string) => string | null;
   /** Archive (close) / unarchive (restore) a pane. */
   archive: (paneId: string) => void;
   unarchive: (paneId: string) => void;
@@ -255,8 +259,17 @@ export class OrchestrationExecutor {
       extraArgs = specialistLaunchArgs(spec);
     }
 
+    // Attribute the spawned agent to the project's coordinator (task 6.5) when one
+    // is driving the orchestration, so the roster shows it belongs to the coordinator.
+    const coordinatorPaneId = this.deps.coordinatorFor(projectId) ?? undefined;
+
     const plan = buildLaunchPlan({ folder: cwdArg, prompt, placement: 'tab', projectId });
-    const paneId = this.deps.launch({ ...plan, specialist: specialistName, extraArgs });
+    const paneId = this.deps.launch({
+      ...plan,
+      specialist: specialistName,
+      extraArgs,
+      coordinatorPaneId
+    });
     if (!paneId) return { error: 'failed to launch agent' };
     return { result: { paneId, specialist: specialistName ?? null } };
   }
@@ -443,6 +456,26 @@ function projectPathReal(projectId: string): string | null {
   return projectForId(projects.list, projectId)?.path ?? null;
 }
 
+/** The paneId of the project's LIVE coordinator (role:'coordinator', not closed), or
+ *  null — so a coordinator-driven spawn is attributed to it in the roster (task 6.5). */
+function coordinatorForReal(projectId: string): string | null {
+  const panes: CoordinatorPaneView[] = [];
+  for (const entry of workspace.workspaces) {
+    for (const leaf of leavesInOrder(entry.ws.root)) {
+      const s = entry.registry[leaf.paneId];
+      if (!s) continue;
+      panes.push({
+        paneId: leaf.paneId,
+        program: s.program,
+        projectId: s.projectId ?? null,
+        role: s.role,
+        closed: s.closed
+      });
+    }
+  }
+  return findCoordinatorPane(panes, projectId)?.paneId ?? null;
+}
+
 /** Load + parse a specialist `.md` by name within a project path. */
 async function loadSpecialistReal(projectPath: string, name: string) {
   const raw = await invoke<string>('specialists_read', { projectPath, name });
@@ -467,6 +500,7 @@ function realDeps(): ExecutorDeps {
     projectPath: projectPathReal,
     loadSpecialist: loadSpecialistReal,
     launch: (plan) => workspace.launch(plan),
+    coordinatorFor: coordinatorForReal,
     archive: (paneId) => workspace.closeAgent(paneId),
     unarchive: (paneId) => workspace.restoreAgent(paneId),
     schedule: (run, ms) => {

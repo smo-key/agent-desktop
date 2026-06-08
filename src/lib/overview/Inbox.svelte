@@ -743,6 +743,21 @@
                     <span class="nm">
                       <span class="t">
                         {titles.titleFor(r.paneId) ?? r.name}
+                        {#if r.role === 'coordinator'}
+                          <span
+                            class="spec-badge coord-badge"
+                            use:tooltip={'Project coordinator (orchestrates other agents)'}
+                          >
+                            <Icon name="bot" size={9} />coordinator
+                          </span>
+                        {:else if r.coordinatorPaneId}
+                          <span
+                            class="spec-badge coord-badge"
+                            use:tooltip={'Spawned by the project coordinator'}
+                          >
+                            <Icon name="git-branch" size={9} />coordinated
+                          </span>
+                        {/if}
                         {#if r.specialist}
                           <span class="spec-badge" use:tooltip={`Spawned as specialist “${r.specialist}”`}>
                             <Icon name="bot" size={9} />{r.specialist}
@@ -914,6 +929,9 @@
      agent's title, marking a pane spawned AS a specialist (task 5.4). */
   .row .nm .t .spec-badge { flex: none; display: inline-flex; align-items: center; gap: 3px; max-width: 120px; padding: 1px 6px 1px 5px; border-radius: var(--r-full); background: var(--blue-tint); color: var(--blue-200); font-family: var(--font-mono); font-size: 9.5px; font-weight: 500; letter-spacing: 0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row .nm .t .spec-badge :global(.mc-icon) { opacity: 0.85; }
+  /* Coordinator badges (the coordinator itself, and its coordinated agents) use a
+     distinct orange tint so an orchestration is visible at a glance (task 6.5). */
+  .row .nm .t .coord-badge { background: var(--orange-tint); color: var(--orange-200); max-width: 130px; }
   .row .nm .s { font-size: 11px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
   .row .nm .s.q { color: var(--orange-300); }
   /* The tiny third row: context · cost · last activity, each an icon + value. */

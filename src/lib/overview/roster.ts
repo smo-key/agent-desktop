@@ -166,6 +166,13 @@ export interface RosterPane {
    *  spawned AS by the orchestration toolkit — used to badge/attribute the agent
    *  in the roster. Absent for panes not spawned as a specialist. */
   specialist?: string | null;
+  /** OPTIONAL role marker — `'coordinator'` for the per-project coordinator pane.
+   *  Used to badge the coordinator in the roster (task 6.5). Absent for ordinary agents. */
+  role?: 'coordinator' | null;
+  /** OPTIONAL paneId of the COORDINATOR that spawned/drives this agent — so the
+   *  roster can attribute the agent to its coordinator's orchestration (task 6.5).
+   *  Absent for user-started agents and coordinator panes themselves. */
+  coordinatorPaneId?: string | null;
   /** Whether this agent's session is CLOSED (Archived) — its PTY is terminated
    *  and it is retained only for restore/delete. */
   closed?: boolean;
@@ -234,6 +241,14 @@ export interface AgentRow {
    *  coordinator-spawned specialist agent is visibly attributed (task 5.4).
    *  Optional: `rowFor` always sets it, but roster fixtures may omit it. */
   specialist?: string | null;
+  /** The role marker — `'coordinator'` for the per-project coordinator pane, else
+   *  null. Surfaced so the overview can badge the coordinator (task 6.5). Optional:
+   *  `rowFor` always sets it, but roster fixtures may omit it. */
+  role?: 'coordinator' | null;
+  /** The paneId of the COORDINATOR that spawned/drives this agent, or null. Surfaced
+   *  so the roster can attribute the agent to its coordinator's orchestration
+   *  (task 6.5). Optional: `rowFor` always sets it, but fixtures may omit it. */
+  coordinatorPaneId?: string | null;
   /** Whether the agent's session is CLOSED (Completed): PTY terminated, retained
    *  only for restore (`claude --resume`) or delete. Forces the `finished` status
    *  so a closed agent always sits in the Completed lane. Optional: `rowFor` always
@@ -353,6 +368,8 @@ function rowFor(
     status,
     projectId: pane.projectId ?? null,
     specialist: pane.specialist ?? null,
+    role: pane.role ?? null,
+    coordinatorPaneId: pane.coordinatorPaneId ?? null,
     closed,
     paused: pane.paused === true,
     pausedHash: pane.pausedHash ?? null,

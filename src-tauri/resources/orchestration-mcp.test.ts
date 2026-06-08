@@ -61,6 +61,31 @@ describe('orchestration-mcp pure core', () => {
     expect(mcp.decodeResponse(JSON.stringify({ id: 1 })).ok).toBe(false);
   });
 
+  it('merges the coordinator projectId into args (caller cannot override)', () => {
+    // The coordinator's own projectId is stamped into every tool call's args so the
+    // executor can scope the op. The injected id ALWAYS wins.
+    expect(mcp.mergeProjectId({ paneId: 'p1', text: 'go' }, 'proj-A')).toEqual({
+      paneId: 'p1',
+      text: 'go',
+      projectId: 'proj-A'
+    });
+    // A caller-supplied projectId is OVERRIDDEN by the coordinator's own (no escape).
+    expect(mcp.mergeProjectId({ projectId: 'proj-OTHER', x: 1 }, 'proj-A')).toEqual({
+      projectId: 'proj-A',
+      x: 1
+    });
+    // Missing/blank projectId leaves args untouched (executor will reject the op).
+    expect(mcp.mergeProjectId({ paneId: 'p1' }, '')).toEqual({ paneId: 'p1' });
+    expect(mcp.mergeProjectId({ paneId: 'p1' }, '   ')).toEqual({ paneId: 'p1' });
+    // Non-object args (null/array) default to a fresh object carrying just the id.
+    expect(mcp.mergeProjectId(null, 'proj-A')).toEqual({ projectId: 'proj-A' });
+    expect(mcp.mergeProjectId(undefined, 'proj-A')).toEqual({ projectId: 'proj-A' });
+    // Never mutates the input args object.
+    const input = { paneId: 'p1' };
+    mcp.mergeProjectId(input, 'proj-A');
+    expect(input).toEqual({ paneId: 'p1' });
+  });
+
   it('exposes exactly the seven toolkit tools with arg schemas', () => {
     const names = mcp.TOOLS.map((t) => t.name).sort();
     expect(names).toEqual(

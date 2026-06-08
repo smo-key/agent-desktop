@@ -18,6 +18,14 @@
 //   - Send (us → Rust): `{"op": string, "args": object}\n` (no id — Rust assigns it).
 //   - Receive (Rust → us): one line — success `{"id", "result": <JSON>}`,
 //     failure `{"id", "error": string}`, timeout `{"id", "error": "timeout"}`.
+//
+// PROJECT-SCOPING (add-agent-specialists, task 6.2): the frontend executor scopes
+// EVERY op on `args.projectId` and REJECTS any op whose args lack it (the singleton
+// executor may face several coordinators, one per project, so it never guesses). The
+// coordinator LLM cannot be relied on to pass its own projectId, so the COORDINATOR
+// LAUNCH stamps it into this adapter's env as `AGENT_DESKTOP_PROJECT_ID` and we MERGE
+// it into the args of every forwarded tool call here. The injected id ALWAYS wins —
+// a caller can never override the coordinator's own project scope.
 
 'use strict';
 
@@ -28,6 +36,14 @@ const REQUEST_TIMEOUT_MS = 35000;
 
 /** MCP protocol version we advertise in `initialize`. */
 const PROTOCOL_VERSION = '2024-11-05';
+
+/**
+ * Env var carrying the COORDINATOR's own project id into this adapter (stamped by
+ * the coordinator launch). Merged into every forwarded tool call's args as
+ * `projectId` so the frontend executor can scope the op (it rejects ops without it).
+ * Must match `buildMcpToolkitConfig` / the executor's `args.projectId` contract.
+ */
+const PROJECT_ID_ENV = 'AGENT_DESKTOP_PROJECT_ID';
 
 /**
  * The seven toolkit tools, each with the MCP input schema for the args its op
@@ -119,6 +135,20 @@ const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
 function encodeRequest(op, args) {
   const payload = { op, args: args && typeof args === 'object' ? args : {} };
   return `${JSON.stringify(payload)}\n`;
+}
+
+/**
+ * PURE: merge the coordinator's `projectId` into a tool call's `args` so the
+ * frontend executor can scope the op. The injected id ALWAYS wins (spread LAST) —
+ * a caller can never override the coordinator's own project scope. A blank/missing
+ * `projectId` is left untouched (the executor will reject the op, surfacing a clear
+ * "missing projectId" error rather than silently running unscoped). Never mutates
+ * the input args. Exported for unit-testing.
+ */
+function mergeProjectId(args, projectId) {
+  const base = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+  if (typeof projectId !== 'string' || projectId.trim() === '') return { ...base };
+  return { ...base, projectId };
 }
 
 /**
@@ -219,7 +249,7 @@ function rpcError(id, code, message) {
  * control socket and shapes the outcome into MCP `content` (success) or
  * `isError: true` (failure), per the MCP tool-result convention.
  */
-async function handle(req, socketPath) {
+async function handle(req, socketPath, projectId) {
   const { id, method, params } = req || {};
 
   switch (method) {
@@ -244,7 +274,10 @@ async function handle(req, socketPath) {
       if (!TOOL_NAMES.has(name)) {
         return rpcError(id, -32602, `unknown tool: ${name}`);
       }
-      const outcome = await callControlSocket(socketPath, name, args);
+      // Stamp the coordinator's own projectId into the args (caller can't override)
+      // so the executor can scope this op to the coordinator's project.
+      const scopedArgs = mergeProjectId(args, projectId);
+      const outcome = await callControlSocket(socketPath, name, scopedArgs);
       if (outcome.ok) {
         // Surface the socket result as MCP tool content (JSON text block).
         return rpcResult(id, {
@@ -269,6 +302,9 @@ function main() {
   // The Rust control-socket path (orchestration::CONTROL_SOCKET_ENV). Stamped into
   // the session env by the coordinator launch (task 6.2) via the --mcp-config server's env.
   const socketPath = process.env.AGENT_DESKTOP_CONTROL_SOCKET || '';
+  // The coordinator's own project id (stamped by the coordinator launch). Merged
+  // into every tool call's args so the executor can scope the op to this project.
+  const projectId = process.env[PROJECT_ID_ENV] || '';
   let buf = '';
 
   process.stdin.setEncoding('utf8');
@@ -288,7 +324,7 @@ function main() {
         continue;
       }
       // Serialize handling per line (await) so responses are emitted in order.
-      handle(req, socketPath).then((res) => {
+      handle(req, socketPath, projectId).then((res) => {
         if (res) send(res);
       });
     }
@@ -300,4 +336,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { encodeRequest, decodeResponse, TOOLS };
+module.exports = { encodeRequest, decodeResponse, mergeProjectId, TOOLS };

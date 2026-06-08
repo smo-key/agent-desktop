@@ -133,6 +133,22 @@ export interface PaneSession {
    * keeps its persona across a restart. Absent for panes spawned without a specialist.
    */
   extraArgs?: string[];
+  /**
+   * OPTIONAL role marker. `'coordinator'` marks the per-project COORDINATOR pane —
+   * a single `claude` session launched with the orchestration MCP toolkit + the
+   * orchestrator system prompt, so it can spawn/coordinate specialists and existing
+   * project sessions (task 6.x). PERSISTED so the coordinator is re-identified after
+   * navigation / restart (a project keeps at most one). Absent for ordinary agents.
+   */
+  role?: 'coordinator';
+  /**
+   * OPTIONAL paneId of the COORDINATOR that spawned/drives this agent (task 6.5):
+   * set on a pane spawned via the orchestration toolkit when the spawning project
+   * has a live coordinator, so the roster/overview can attribute the agent to its
+   * coordinator's orchestration. PERSISTED so the attribution survives a restart.
+   * Absent for user-started agents and coordinator panes themselves.
+   */
+  coordinatorPaneId?: string;
 }
 
 /** A fresh Claude session id for a `claude` pane (so the app owns it and can find
@@ -207,7 +223,9 @@ function makeEntry(
   worktreePath?: string,
   worktreeBase?: string,
   specialist?: string,
-  extraArgs?: string[]
+  extraArgs?: string[],
+  role?: 'coordinator',
+  coordinatorPaneId?: string
 ): WorkspaceEntry {
   return {
     id: nextWorkspaceId(),
@@ -223,6 +241,8 @@ function makeEntry(
         worktreeBase,
         specialist,
         extraArgs,
+        role,
+        coordinatorPaneId,
         sessionId: claudeSessionId(program)
       }
     }
@@ -345,7 +365,9 @@ export class WorkspaceStore {
     worktreePath?: string,
     worktreeBase?: string,
     specialist?: string,
-    extraArgs?: string[]
+    extraArgs?: string[],
+    role?: 'coordinator',
+    coordinatorPaneId?: string
   ): string {
     const name = this.nextSessionName();
     const entry = makeEntry(
@@ -358,7 +380,9 @@ export class WorkspaceStore {
       worktreePath,
       worktreeBase,
       specialist,
-      extraArgs
+      extraArgs,
+      role,
+      coordinatorPaneId
     );
     this.workspaces = [...this.workspaces, entry];
     this.activeWorkspaceId = entry.id;
@@ -427,7 +451,9 @@ export class WorkspaceStore {
     worktreePath?: string,
     worktreeBase?: string,
     specialist?: string,
-    extraArgs?: string[]
+    extraArgs?: string[],
+    role?: 'coordinator',
+    coordinatorPaneId?: string
   ): string {
     const entry = this.requireActive();
     const id = nextPaneId();
@@ -442,6 +468,8 @@ export class WorkspaceStore {
         worktreeBase,
         specialist,
         extraArgs,
+        role,
+        coordinatorPaneId,
         sessionId: claudeSessionId(program)
       }
     };
@@ -497,7 +525,9 @@ export class WorkspaceStore {
     worktreePath?: string,
     worktreeBase?: string,
     specialist?: string,
-    extraArgs?: string[]
+    extraArgs?: string[],
+    role?: 'coordinator',
+    coordinatorPaneId?: string
   ): string | null {
     const entry = this.active;
     if (!entry) return null;
@@ -510,7 +540,9 @@ export class WorkspaceStore {
       worktreePath,
       worktreeBase,
       specialist,
-      extraArgs
+      extraArgs,
+      role,
+      coordinatorPaneId
     );
 
     const root = splitLeaf(
@@ -556,11 +588,26 @@ export class WorkspaceStore {
     worktreeBase?: string;
     /** OPTIONAL specialist name this pane is spawned AS (orchestration spawn_agent). */
     specialist?: string;
-    /** OPTIONAL extra claude CLI args (specialist persona/model/tool flags). */
+    /** OPTIONAL extra claude CLI args (specialist persona/model/tool flags, OR the
+     *  coordinator's `--append-system-prompt` + `--mcp-config`). */
     extraArgs?: string[];
+    /** OPTIONAL role marker — `'coordinator'` for the per-project coordinator pane. */
+    role?: 'coordinator';
+    /** OPTIONAL paneId of the coordinator that spawned this agent (task 6.5). */
+    coordinatorPaneId?: string;
   }): string {
-    const { program, cwd, initialInput, projectId, worktreePath, worktreeBase, specialist, extraArgs } =
-      plan;
+    const {
+      program,
+      cwd,
+      initialInput,
+      projectId,
+      worktreePath,
+      worktreeBase,
+      specialist,
+      extraArgs,
+      role,
+      coordinatorPaneId
+    } = plan;
     // A split needs a focused leaf in the active workspace; otherwise open a tab.
     const canSplit = this.focusedPaneId !== null;
     const placement =
@@ -575,7 +622,9 @@ export class WorkspaceStore {
         worktreePath,
         worktreeBase,
         specialist,
-        extraArgs
+        extraArgs,
+        role,
+        coordinatorPaneId
       );
       const id = this.focusedPaneId ?? '';
       this.lastLaunchedId = id || null;
@@ -593,7 +642,9 @@ export class WorkspaceStore {
       worktreePath,
       worktreeBase,
       specialist,
-      extraArgs
+      extraArgs,
+      role,
+      coordinatorPaneId
     );
     this.lastLaunchedId = newPaneId ?? null;
     return newPaneId ?? '';

@@ -66,6 +66,13 @@ const STATUSLINE_WRAPPER_SRC: &str = include_str!("../resources/statusline-wrapp
 /// timeline (see `events.rs`).
 const EVENT_HOOK_SRC: &str = include_str!("../resources/event-hook.cjs");
 
+/// The baked orchestration MCP ADAPTER source (installed beside the wrapper). It is
+/// the dependency-free stdio MCP server attached to a launched COORDINATOR session
+/// (`--mcp-config`); it forwards each toolkit tool call over the Rust control socket
+/// to the frontend executor. Authored as CommonJS so it runs standalone under the
+/// `node` shebang. See `resources/orchestration-mcp.cjs`.
+const ORCHESTRATION_MCP_SRC: &str = include_str!("../resources/orchestration-mcp.cjs");
+
 /// Subdir (under app-data) holding the installed wrapper executable.
 const BIN_DIR: &str = "bin";
 /// Installed wrapper basename. Kept as `.js` (the name the spec/`--settings`
@@ -74,6 +81,9 @@ const BIN_DIR: &str = "bin";
 const WRAPPER_FILE: &str = "statusline-wrapper.js";
 /// Installed event-hook basename (a standalone `.js`, run via its shebang).
 const EVENT_HOOK_FILE: &str = "event-hook.js";
+/// Installed orchestration MCP adapter basename (a standalone `.js`, run via `node`
+/// in the coordinator's `--mcp-config` server).
+const ORCHESTRATION_MCP_FILE: &str = "orchestration-mcp.js";
 /// Subdir (under app-data) the wrapper writes per-pane snapshots into and the
 /// `SnapshotWatcher` watches.
 const SNAPSHOT_DIR: &str = "snapshots";
@@ -117,6 +127,13 @@ pub struct UsagePaths {
     /// Absolute path to the app-hosted Unix socket the event hook delivers to —
     /// passed as `AGENT_DESKTOP_SOCKET_PATH` in the spawned process env.
     pub socket_path: String,
+    /// Absolute path to the installed orchestration MCP adapter — `node <this>` is
+    /// the coordinator launch's `--mcp-config` server command (`buildMcpToolkitConfig`).
+    pub adapter_path: String,
+    /// Absolute path to the Rust orchestration CONTROL socket (sibling of
+    /// `socket_path`) — goes into the coordinator's `--mcp-config` server env as
+    /// `AGENT_DESKTOP_CONTROL_SOCKET` so the adapter can reach the executor.
+    pub control_socket_path: String,
 }
 
 /// Spawn a PTY-backed process for a pane. Output is streamed to the frontend
@@ -643,9 +660,10 @@ pub fn install_usage_assets_in(base: &std::path::Path) -> Result<UsagePaths, Str
     let bin = base.join(BIN_DIR);
     fs::create_dir_all(&bin).map_err(|e| format!("create_dir_all {bin:?}: {e}"))?;
 
-    // Install both baked scripts atomically (sibling `.tmp` + rename, mode 0755).
+    // Install the baked scripts atomically (sibling `.tmp` + rename, mode 0755).
     let wrapper = install_executable(&bin, WRAPPER_FILE, STATUSLINE_WRAPPER_SRC)?;
     let event_hook = install_executable(&bin, EVENT_HOOK_FILE, EVENT_HOOK_SRC)?;
+    let adapter = install_executable(&bin, ORCHESTRATION_MCP_FILE, ORCHESTRATION_MCP_SRC)?;
 
     let snapshots = base.join(SNAPSHOT_DIR);
     fs::create_dir_all(&snapshots).map_err(|e| format!("create_dir_all {snapshots:?}: {e}"))?;
@@ -659,6 +677,8 @@ pub fn install_usage_assets_in(base: &std::path::Path) -> Result<UsagePaths, Str
         snapshot_dir: snapshots.to_string_lossy().into_owned(),
         event_hook_path: event_hook.to_string_lossy().into_owned(),
         socket_path: base.join(SOCKET_FILE).to_string_lossy().into_owned(),
+        adapter_path: adapter.to_string_lossy().into_owned(),
+        control_socket_path: base.join(CONTROL_SOCKET_FILE).to_string_lossy().into_owned(),
     })
 }
 
@@ -1353,6 +1373,26 @@ mod tests {
             tmp.path().join(EVENTS_DIR).is_dir(),
             "events dir must exist"
         );
+
+        // The orchestration MCP adapter is installed beside the wrapper (same baked
+        // source + shebang + 0755 contract) and the control socket path (sibling of
+        // the events socket) is returned for the coordinator's --mcp-config server.
+        let adapter = PathBuf::from(&paths.adapter_path);
+        assert_eq!(adapter, tmp.path().join(BIN_DIR).join(ORCHESTRATION_MCP_FILE));
+        assert!(adapter.is_file(), "orchestration adapter must exist");
+        let adapter_src = fs::read_to_string(&adapter).unwrap();
+        assert_eq!(adapter_src, ORCHESTRATION_MCP_SRC);
+        assert!(adapter_src.starts_with("#!/usr/bin/env node"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&adapter).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o755, "adapter must be mode 0755");
+        }
+        assert_eq!(
+            PathBuf::from(&paths.control_socket_path),
+            tmp.path().join(CONTROL_SOCKET_FILE)
+        );
     }
 
     #[test]
@@ -1393,6 +1433,8 @@ mod tests {
             snapshot_dir: "/Apps/My App/snapshots".into(),
             event_hook_path: "/Apps/My App/bin/event-hook.js".into(),
             socket_path: "/Apps/My App/events.sock".into(),
+            adapter_path: "/Apps/My App/bin/orchestration-mcp.js".into(),
+            control_socket_path: "/Apps/My App/control.sock".into(),
         };
         let cfg = usage_bootstrap_config(&paths);
 
@@ -1445,6 +1487,8 @@ mod tests {
             snapshot_dir: "/snapshots".into(),
             event_hook_path: "/bin/event-hook.js".into(),
             socket_path: "/events.sock".into(),
+            adapter_path: "/bin/orchestration-mcp.js".into(),
+            control_socket_path: "/control.sock".into(),
         };
         let cfg = usage_bootstrap_config(&paths);
         let idx = cfg.args.iter().position(|a| a == "--settings").unwrap();

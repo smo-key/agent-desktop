@@ -57,6 +57,7 @@ function makeDeps(over: Partial<ExecutorDeps> = {}) {
       launched.push(plan);
       return 'pane-new';
     },
+    coordinatorFor: () => null,
     archive: (paneId) => archived.push(paneId),
     unarchive: (paneId) => unarchived.push(paneId),
     schedule: (run) => run(), // run synchronously for deterministic tests
@@ -203,7 +204,16 @@ describe('OrchestrationExecutor — spawn_agent (4.2)', () => {
     await ex.onRequest({ id: 1, op: 'spawn_agent', args: { projectId: PROJ, prompt: 'build it' } });
     expect(launched[0]).toMatchObject({ program: 'claude', cwd: '/repo', initialInput: 'build it', projectId: PROJ });
     expect(launched[0].specialist).toBeUndefined();
+    // No coordinator for the project → no attribution back-reference.
+    expect(launched[0].coordinatorPaneId).toBeUndefined();
     expect(replies[0].outcome.result).toEqual({ paneId: 'pane-new', specialist: null });
+  });
+
+  it('attributes the spawned agent to the project coordinator (task 6.5)', async () => {
+    const { deps, launched } = makeDeps({ coordinatorFor: () => 'coord-pane' });
+    const ex = new OrchestrationExecutor(deps);
+    await ex.onRequest({ id: 1, op: 'spawn_agent', args: { projectId: PROJ, prompt: 'go' } });
+    expect(launched[0].coordinatorPaneId).toBe('coord-pane');
   });
 
   it('composes a specialist launch and records the specialist on the pane', async () => {

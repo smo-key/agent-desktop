@@ -33,6 +33,17 @@ export interface Project {
    *  Additive + optional — absent (≡ `false`) for projects created before the
    *  setting existed. */
   autoWorktree?: boolean;
+  /**
+   * OPTIONAL paneId of this project's COORDINATOR pane (task 6.1). A project has at
+   * most one coordinator: a single `claude` session launched with the orchestration
+   * toolkit + orchestrator prompt. Recorded so the "Start coordinator" affordance
+   * can reuse/focus the existing coordinator instead of launching a second, and
+   * re-identify it after navigation. Additive + optional — absent until a coordinator
+   * is started. The AUTHORITATIVE re-identification is the pane's persisted
+   * `role:'coordinator'` marker (layout.json); this is a convenience back-reference,
+   * reconciled against the live panes (a stale id whose pane is gone is ignored).
+   */
+  coordinatorPaneId?: string;
 }
 
 /** The top-level persisted envelope written to `projects.json`. */
@@ -202,6 +213,8 @@ function normalize(arr: ReadonlyArray<unknown>): Project[] {
     const clean: Project = { ...item, path };
     if (typeof clean.logo !== 'string') delete clean.logo; // drop a malformed logo
     if (typeof clean.autoWorktree !== 'boolean') delete clean.autoWorktree; // additive optional
+    if (typeof clean.coordinatorPaneId !== 'string' || clean.coordinatorPaneId === '')
+      delete clean.coordinatorPaneId; // additive optional back-reference
     out.push(clean);
   }
   return out;

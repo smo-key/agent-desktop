@@ -16,7 +16,9 @@ const PATHS: UsagePaths = {
   wrapperPath: '/Users/me/Library/Application Support/agent-desktop/bin/statusline-wrapper.js',
   snapshotDir: '/Users/me/Library/Application Support/agent-desktop/snapshots',
   eventHookPath: '/Users/me/Library/Application Support/agent-desktop/bin/event-hook.js',
-  socketPath: '/Users/me/Library/Application Support/agent-desktop/events.sock'
+  socketPath: '/Users/me/Library/Application Support/agent-desktop/events.sock',
+  adapterPath: '/Users/me/Library/Application Support/agent-desktop/bin/orchestration-mcp.js',
+  controlSocketPath: '/Users/me/Library/Application Support/agent-desktop/control.sock'
 };
 
 /** The full hook event set the event hook is wired into, with Pre/Post matching all tools. */
@@ -264,10 +266,11 @@ describe('buildSpawnOverride', () => {
 
 describe('buildMcpToolkitConfig', () => {
   // Task 3.6: the per-session --mcp-config the coordinator launch (task 6.2) consumes.
-  it('builds an mcp-config naming the bundled adapter run via node with the socket env', () => {
+  it('builds an mcp-config naming the bundled adapter run via node with the socket + projectId env', () => {
     const cfg = buildMcpToolkitConfig(
       '/Users/me/Library/Application Support/agent-desktop/bin/orchestration-mcp.js',
-      '/Users/me/Library/Application Support/agent-desktop/control.sock'
+      '/Users/me/Library/Application Support/agent-desktop/control.sock',
+      'proj-coord-1'
     );
     expect(cfg).toEqual({
       mcpServers: {
@@ -276,7 +279,10 @@ describe('buildMcpToolkitConfig', () => {
           args: ['/Users/me/Library/Application Support/agent-desktop/bin/orchestration-mcp.js'],
           env: {
             AGENT_DESKTOP_CONTROL_SOCKET:
-              '/Users/me/Library/Application Support/agent-desktop/control.sock'
+              '/Users/me/Library/Application Support/agent-desktop/control.sock',
+            // The coordinator's own project id rides into the adapter so it can stamp
+            // it into every forwarded tool call's args (the executor scopes on it).
+            AGENT_DESKTOP_PROJECT_ID: 'proj-coord-1'
           }
         }
       }

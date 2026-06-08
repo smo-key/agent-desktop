@@ -97,11 +97,22 @@ export interface PersistedSession {
    */
   specialist?: string;
   /**
-   * OPTIONAL extra `claude` CLI args (specialist persona/model/tool flags). Persisted
-   * so a resumed specialist pane re-applies its persona on restart. Absent for panes
-   * spawned without a specialist.
+   * OPTIONAL extra `claude` CLI args (specialist persona/model/tool flags, OR the
+   * coordinator's `--append-system-prompt` + `--mcp-config`). Persisted so a resumed
+   * pane re-applies them on restart. Absent for panes spawned without extra args.
    */
   extraArgs?: string[];
+  /**
+   * OPTIONAL role marker (`'coordinator'`). Persisted so the per-project coordinator
+   * pane is re-identified after a restart. Absent for ordinary agents.
+   */
+  role?: 'coordinator';
+  /**
+   * OPTIONAL paneId of the coordinator that spawned/drives this agent (task 6.5).
+   * Persisted so the roster attribution survives a restart. Absent for user-started
+   * agents and coordinator panes themselves.
+   */
+  coordinatorPaneId?: string;
 }
 
 /** One serialized workspace: identity + name + its pane tree + its registry. */
@@ -210,7 +221,11 @@ function projectRegistry(
       ...(src?.specialist ? { specialist: src.specialist } : {}),
       ...(Array.isArray(src?.extraArgs) && src.extraArgs.length > 0
         ? { extraArgs: src.extraArgs }
-        : {})
+        : {}),
+      // Persist the coordinator role marker + (for spawned agents) the back-reference
+      // to the coordinator that drives them, so both survive a restart.
+      ...(src?.role === 'coordinator' ? { role: 'coordinator' as const } : {}),
+      ...(src?.coordinatorPaneId ? { coordinatorPaneId: src.coordinatorPaneId } : {})
     };
   }
   return out;
@@ -335,6 +350,12 @@ function sanitizeRegistry(
         raw.extraArgs.every((a) => typeof a === 'string') &&
         raw.extraArgs.length > 0
           ? { extraArgs: raw.extraArgs as string[] }
+          : {}),
+        // Restore the coordinator role marker + the spawned-agent back-reference so
+        // the coordinator is re-identified and attribution is preserved on restart.
+        ...(raw.role === 'coordinator' ? { role: 'coordinator' as const } : {}),
+        ...(typeof raw.coordinatorPaneId === 'string' && raw.coordinatorPaneId
+          ? { coordinatorPaneId: raw.coordinatorPaneId }
           : {})
       };
     } else {

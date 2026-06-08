@@ -29,6 +29,7 @@
   import GitInfo from '../usage/GitInfo.svelte';
   import { projectGit } from './projectGit.svelte';
   import { pushProject, pullProject } from './projectGitActions';
+  import { startCoordinator, liveCoordinator } from '../orchestration/coordinator.svelte';
 
   let {
     rows,
@@ -47,11 +48,19 @@
   function openMenu(e: MouseEvent, project: Project) {
     e.preventDefault();
     const { id: projectId, name, path } = project;
+    // A live coordinator already running for this project → the action focuses it
+    // (single-coordinator gate); otherwise it starts one.
+    const hasCoordinator = liveCoordinator(projectId) !== null;
     menu = {
       open: true,
       x: e.clientX,
       y: e.clientY,
       items: [
+        {
+          label: hasCoordinator ? 'Focus coordinator' : 'Start coordinator',
+          icon: 'bot',
+          onClick: () => void startCoordinator(project)
+        },
         {
           label: 'Edit project…',
           icon: 'pencil',

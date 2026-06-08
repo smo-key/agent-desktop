@@ -32,6 +32,17 @@ export interface UsagePaths {
    * to (passed to the spawned process as `AGENT_DESKTOP_SOCKET_PATH`).
    */
   socketPath: string;
+  /**
+   * Absolute path to the installed orchestration MCP adapter — `node <this>` is the
+   * coordinator launch's `--mcp-config` server command (see `buildMcpToolkitConfig`).
+   */
+  adapterPath: string;
+  /**
+   * Absolute path to the Rust orchestration CONTROL socket (sibling of `socketPath`)
+   * — goes into the coordinator's `--mcp-config` server env as
+   * `AGENT_DESKTOP_CONTROL_SOCKET` so the adapter can reach the executor.
+   */
+  controlSocketPath: string;
 }
 
 /** Inputs for building a pane's spawn override. */
@@ -205,7 +216,14 @@ export interface McpToolkitConfig {
     orchestration: {
       command: string;
       args: string[];
-      env: { AGENT_DESKTOP_CONTROL_SOCKET: string };
+      env: {
+        AGENT_DESKTOP_CONTROL_SOCKET: string;
+        /** The COORDINATOR's own project id — the adapter merges it into every
+         *  forwarded tool call's `args` so the executor can scope the op (it
+         *  rejects ops without `args.projectId`; the coordinator LLM can't be
+         *  relied on to pass it). See `orchestration-mcp.cjs` / `PROJECT_ID_ENV`. */
+        AGENT_DESKTOP_PROJECT_ID: string;
+      };
     };
   };
 }
@@ -223,6 +241,15 @@ export const ORCHESTRATION_MCP_SERVER = 'orchestration';
 export const CONTROL_SOCKET_ENV = 'AGENT_DESKTOP_CONTROL_SOCKET';
 
 /**
+ * The env var the bundled adapter reads for the COORDINATOR's own project id, which
+ * it merges into every forwarded tool call's `args.projectId` — must match the
+ * adapter's `PROJECT_ID_ENV` constant. The executor scopes every op on
+ * `args.projectId` and rejects ops without it, so this is REQUIRED for the toolkit
+ * to work.
+ */
+export const PROJECT_ID_ENV = 'AGENT_DESKTOP_PROJECT_ID';
+
+/**
  * Build the per-session `--mcp-config` content (task 3.6) that attaches the
  * orchestration toolkit to a coordinator `claude` launch. The coordinator-launch
  * task (6.2) passes the returned object (typically `JSON.stringify`-ed, or written
@@ -232,16 +259,24 @@ export const CONTROL_SOCKET_ENV = 'AGENT_DESKTOP_CONTROL_SOCKET';
  *    (resolved the same way as the wrapper / event-hook resources).
  *  - `socketPath`  — absolute path to the Rust control socket
  *    (`orchestration::CONTROL_SOCKET_ENV` value).
+ *  - `projectId`   — the COORDINATOR's own project id. Placed in the server `env`
+ *    as `AGENT_DESKTOP_PROJECT_ID` so the adapter merges it into every forwarded
+ *    tool call's `args.projectId`; the executor scopes every op on it and rejects
+ *    ops without it (the coordinator LLM can't be relied on to pass it).
  *
  * Pure: depends only on its inputs.
  */
-export function buildMcpToolkitConfig(adapterPath: string, socketPath: string): McpToolkitConfig {
+export function buildMcpToolkitConfig(
+  adapterPath: string,
+  socketPath: string,
+  projectId: string
+): McpToolkitConfig {
   return {
     mcpServers: {
       [ORCHESTRATION_MCP_SERVER]: {
         command: 'node',
         args: [adapterPath],
-        env: { [CONTROL_SOCKET_ENV]: socketPath }
+        env: { [CONTROL_SOCKET_ENV]: socketPath, [PROJECT_ID_ENV]: projectId }
       }
     }
   } as McpToolkitConfig;
