@@ -107,14 +107,19 @@ export async function migrateToProjectFolders(): Promise<void> {
       const tasks = byProject[id];
       if (tasks && tasks.length > 0) {
         let existing: string | null = null;
+        let loadOk = true;
         try {
           existing = await invoke<string | null>('project_tasks_load', { projectPath: path });
         } catch (err) {
+          // An existing-but-unreadable file surfaces as Err (not null). Do NOT
+          // fall through to a save that could clobber it — leave the project
+          // unsecured so the user-level source is retained for a later run.
+          loadOk = false;
           console.error('migrate: project_tasks_load failed', id, err);
         }
         if (existing != null) {
           securedTasks.add(id); // already migrated — do NOT clobber newer data.
-        } else {
+        } else if (loadOk) {
           try {
             await invoke('project_tasks_save', {
               projectPath: path,

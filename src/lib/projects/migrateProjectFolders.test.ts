@@ -154,6 +154,26 @@ describe('project-folder-storage — migration', () => {
     expect(call('tasks_clear')).toHaveLength(1);
   });
 
+  it('does not clobber an unreadable per-project file', async () => {
+    // If project_tasks_load THROWS (existing-but-unreadable file), the migration
+    // must NOT fall through to a save that overwrites it; the source is retained.
+    const tasks: Record<string, TaskDef[]> = {
+      p: [{ id: 'a', name: 'dev', kind: 'terminal', command: 'x', cwd: null }]
+    };
+    invokeMock.mockImplementation(async (cmd: unknown) => {
+      if (cmd === 'tasks_load') return userTasks(tasks);
+      if (cmd === 'projects_load') return projectsJson([{ id: 'p', path: '/p', name: 'P' }]);
+      if (cmd === 'project_tasks_load') throw new Error('permission denied');
+      return null;
+    });
+
+    await migrateToProjectFolders();
+
+    expect(call('project_tasks_save')).toHaveLength(0); // no clobbering write
+    expect(call('tasks_clear')).toHaveLength(0); // source retained for retry
+    expect(call('terminals_clear')).toHaveLength(0);
+  });
+
   it('Corrupt registry preserves task data', async () => {
     // If projects.json fails to load / parse (returns null or garbage), every
     // user-level task is "orphaned" — the migration must NOT delete the sources,
