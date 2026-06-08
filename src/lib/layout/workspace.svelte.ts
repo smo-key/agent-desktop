@@ -17,6 +17,7 @@
 // parameters that are NOT part of the topology (program + cwd). Persistence
 // (task 4.x) serializes exactly `{ workspaces: [...], activeWorkspaceId }`.
 
+import { invoke } from '@tauri-apps/api/core';
 import {
   freshWorkspace,
   splitLeaf,
@@ -352,8 +353,15 @@ export class WorkspaceStore {
     if (idx < 0) return;
 
     const wasActive = this.activeWorkspaceId === id;
+    const closing = this.workspaces[idx];
     const next = this.workspaces.filter((w) => w.id !== id);
     this.workspaces = next;
+
+    // PERMANENT close: a workspace can hold SEVERAL panes — best-effort remove the
+    // auto-created worktree of each closing pane (only if clean; delegated to Rust).
+    for (const session of Object.values(closing.registry)) {
+      cleanupWorktree(session);
+    }
 
     if (wasActive) {
       // Activate the entry that now occupies the closed slot, else the new last,
@@ -557,8 +565,11 @@ export class WorkspaceStore {
     // references its paneId (the only-leaf close is a no-op, so the pane
     // survives and we correctly skip pruning). paneIds are unique per leaf.
     if (closing && !leafByPaneId(nextWs.root, closing.paneId)) {
+      const removed = entry.registry[closing.paneId];
       const { [closing.paneId]: _removed, ...rest } = entry.registry;
       entry.registry = rest;
+      // PERMANENT close: best-effort remove the auto-created worktree if clean.
+      cleanupWorktree(removed);
     }
   }
 
@@ -871,6 +882,23 @@ export class WorkspaceStore {
       ? activeWorkspaceId
       : entries[0].id;
   }
+}
+
+/**
+ * Best-effort, FIRE-AND-FORGET cleanup of a permanently-closed pane's auto-created
+ * git worktree: when the closing registry entry carries a `worktreePath` (and its
+ * `worktreeBase`), ask Rust to remove the worktree ONLY IF it is clean (the
+ * clean-vs-dirty decision lives in `worktree_remove_if_clean`). Never blocks the
+ * close path and never throws — a rejected invoke is swallowed. Called from the
+ * PERMANENT-close paths (`closeFocused`, `closeWorkspace`) only; archiving
+ * (`closeAgent`) keeps the session resumable and must KEEP its worktree.
+ */
+function cleanupWorktree(entry: PaneSession | undefined): void {
+  if (!entry?.worktreePath || !entry.worktreeBase) return;
+  void invoke('worktree_remove_if_clean', {
+    worktreePath: entry.worktreePath,
+    base: entry.worktreeBase
+  }).catch(() => {});
 }
 
 /** Find a leaf by its `paneId` (the tree helpers key on `id`, not `paneId`). */

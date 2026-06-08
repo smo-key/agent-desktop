@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { WorkspaceStore } from './workspace.svelte';
 import { leavesInOrder } from './tree';
+
+// `invoke` is mocked so the worktree-cleanup wiring (fired fire-and-forget on a
+// PERMANENT session close) can be asserted without a live Tauri backend. Mock
+// pattern mirrors the other tests that stub `@tauri-apps/api/core` (e.g.
+// launcher/worktree, recents, projectTasks).
+const invokeMock = vi.fn(async (..._a: unknown[]): Promise<unknown> => null);
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
 // Store-level behavior for "Resume An Archived Session By Selecting It" (agent-overview
 // spec). The `it(...)` titles are the EXACT `#### Scenario:` names so the
@@ -66,5 +73,133 @@ describe('workspace — Resume An Archived Session By Selecting It', () => {
     expect(s.preview).toBeUndefined();
     expect(s.resume).toBeFalsy();
     expect(s.closed).toBe(true); // stays archived
+  });
+});
+
+describe('workspace — worktree cleanup on permanent close', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  /** A store with one single-pane workspace launched into a worktree; returns the
+   *  store, the paneId, and the worktree fields recorded on its registry entry. */
+  function withWorktreePane(): {
+    store: WorkspaceStore;
+    paneId: string;
+    worktreePath: string;
+    worktreeBase: string;
+  } {
+    const worktreePath = '/repo/.worktrees/session-x';
+    const worktreeBase = 'abc123';
+    const store = new WorkspaceStore();
+    const wsId = store.newWorkspace(
+      'claude',
+      worktreePath,
+      undefined,
+      'proj-1',
+      worktreePath,
+      worktreeBase
+    );
+    const entry = store.workspaces.find((w) => w.id === wsId)!;
+    const paneId = leavesInOrder(entry.ws.root)[0].paneId;
+    return { store, paneId, worktreePath, worktreeBase };
+  }
+
+  it('closeFocused on a worktree-backed pane removes its worktree if clean', () => {
+    const { store, worktreePath, worktreeBase } = withWorktreePane();
+    // Split so there are two leaves — closing the focused one actually prunes it
+    // (closing the ONLY leaf is a no-op and must NOT fire cleanup).
+    store.split('row');
+    // Refocus the worktree-backed (first) leaf, then close it.
+    const entry = store.active!;
+    const worktreeLeaf = leavesInOrder(entry.ws.root).find(
+      (l) => entry.registry[l.paneId]?.worktreePath === worktreePath
+    )!;
+    store.setFocus(worktreeLeaf.id);
+
+    store.closeFocused();
+
+    expect(invokeMock).toHaveBeenCalledWith('worktree_remove_if_clean', {
+      worktreePath,
+      base: worktreeBase
+    });
+  });
+
+  it('closeFocused on a pane with no worktree does not invoke cleanup', () => {
+    const store = new WorkspaceStore();
+    store.newWorkspace('/bin/zsh', '/proj'); // no worktree fields
+    // Split so the focused close actually prunes a leaf.
+    store.split('row');
+
+    store.closeFocused();
+
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('closeFocused on the only leaf is a no-op and does not invoke cleanup', () => {
+    const { store } = withWorktreePane();
+    // Single leaf: closeLeaf is a no-op, the pane survives, so no cleanup fires.
+    store.closeFocused();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('closeWorkspace removes the worktree of each closing worktree-backed pane', () => {
+    const { store, worktreePath, worktreeBase } = withWorktreePane();
+    const wsId = store.active!.id;
+
+    store.closeWorkspace(wsId);
+
+    expect(invokeMock).toHaveBeenCalledWith('worktree_remove_if_clean', {
+      worktreePath,
+      base: worktreeBase
+    });
+  });
+
+  it('closeWorkspace cleans up every worktree-backed pane it prunes', () => {
+    const store = new WorkspaceStore();
+    // Pane 1: worktree-backed.
+    const wsId = store.newWorkspace(
+      'claude',
+      '/repo/.worktrees/a',
+      undefined,
+      'proj-1',
+      '/repo/.worktrees/a',
+      'baseA'
+    );
+    // Pane 2 (split into the same workspace): a second worktree-backed pane.
+    store.splitWith(
+      'row',
+      'claude',
+      '/repo/.worktrees/b',
+      undefined,
+      'after',
+      'proj-1',
+      '/repo/.worktrees/b',
+      'baseB'
+    );
+    // Pane 3 (split again): no worktree.
+    store.split('row');
+
+    store.closeWorkspace(wsId);
+
+    expect(invokeMock).toHaveBeenCalledWith('worktree_remove_if_clean', {
+      worktreePath: '/repo/.worktrees/a',
+      base: 'baseA'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('worktree_remove_if_clean', {
+      worktreePath: '/repo/.worktrees/b',
+      base: 'baseB'
+    });
+    // Only the two worktree-backed panes trigger cleanup (the plain shell does not).
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('Archiving does not remove the worktree', () => {
+    const { store, paneId } = withWorktreePane();
+
+    store.closeAgent(paneId);
+
+    expect(store.session(paneId).closed).toBe(true); // archived, still resumable
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 });
