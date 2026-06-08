@@ -41,9 +41,10 @@
   like `setAgentLauncher`), keeping the store free of a direct projects-store
   import. Wire it from the app where the store is initialized.
 - [x] 3.2 Rewrite `load()` to iterate known projects and call
-  `project_tasks_load(path)` per project, merging into `byProject`; load each
-  project's `config.json` into a cached `configByProject`. Remove the global
-  `tasks_load` happy path (kept only for migration — task 4).
+  `project_tasks_load(path)` per project, merging into `byProject`. Remove the
+  global `tasks_load` happy path (kept only for migration — task 4). (Config is
+  NOT cached in the store; it is read on-demand via `projectFolderConfig.ts` —
+  see task 5.2/5.3 and design D7.)
 - [x] 3.3 Rewrite `save()` to write ONLY the mutated project's file via
   `project_tasks_save(path, serializeProjectTasks(defs))`. Catch failures: keep
   in-memory state, mark the project dirty, retry on the next save (resilience).

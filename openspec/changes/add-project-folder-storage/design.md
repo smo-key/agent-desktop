@@ -107,12 +107,18 @@ Migration is idempotent: once `.agent-desktop/tasks.json` exists and the
 user-level file is gone, it never runs again.
 
 ### D7 — `autoWorktree` read/write path
-`autoWorktree` leaves the `Project` interface's persisted envelope. The session
-launch path reads it from `project_config_load(path)` instead of the registry
-record. `ProjectForm` writes it via `project_config_save(path, ...)` on save. To
-avoid a synchronous launch-time disk read on a hot path, the store may cache each
-project's config alongside its tasks (loaded together in `load()`); launch reads
-the cached value. Editing the toggle updates both the cache and the file.
+`autoWorktree` leaves the `Project` interface's persisted envelope. **As built**,
+config access is **on-demand** (not cached in the task store) via a thin
+`projectFolderConfig.ts` helper: `loadAutoWorktree(path)` wraps
+`project_config_load` + `parseProjectConfig`, and `saveAutoWorktree(path, value)`
+wraps `serializeProjectConfig` + `project_config_save`. The launch paths
+(`newSession.ts`, `Launcher.svelte`) already `await` worktree creation, so an
+extra `await loadAutoWorktree(path)` on that path is cheap and avoids a stale
+cache. `ProjectForm` seeds the toggle (edit mode) from `loadAutoWorktree`; the
+parent (`ProjectPanel`) writes via `saveAutoWorktree` on save — on **create** only
+when the value is explicitly `true` (so a default-`false` config is never
+materialized and a teammate-committed `true` is never clobbered on re-add). This
+keeps the task store free of config concerns (it owns tasks only).
 
 ## Coupling with `project-worktrees` (in review)
 
