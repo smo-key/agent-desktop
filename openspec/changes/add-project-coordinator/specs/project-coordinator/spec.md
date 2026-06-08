@@ -1,51 +1,32 @@
 ## ADDED Requirements
 
-### Requirement: One coordinator per project, started on demand
-The system SHALL allow at most one coordinator agent per project. A coordinator
-SHALL NOT start automatically; it MUST be started by an explicit user action for
-that project.
+### Requirement: Coordinator lifecycle and toolkit come from add-agent-specialists
+The coordinator SHALL reuse the lifecycle (at most one per project, started on
+demand, persisted and reused, recorded on the project) and the agent-management
+toolkit provided by the `agent-coordinator-workflows` and
+`agent-orchestration-runtime` capabilities (introduced by the
+`add-agent-specialists` change), and SHALL NOT re-specify them. This capability
+adds only the GOVERNANCE behavior on top (the autonomy/guardrail system prompt,
+escalation surfacing, and the no-coordinator fallback below).
 
-#### Scenario: Starting a coordinator for a project without one
-- **WHEN** the user invokes "Start coordinator" for a project that has no running coordinator
-- **THEN** the system launches a coordinator agent bound to that project
-- **AND** the coordinator becomes the project's single coordinator
+#### Scenario: Lifecycle reused, not redefined
+- **WHEN** a coordinator is started, reused, or persisted for a project
+- **THEN** the behavior is that defined by `agent-coordinator-workflows` (single per project, on-demand, persistent/reused, recorded on the project)
 
-#### Scenario: Starting when one already runs reuses it
-- **WHEN** the user invokes "Start coordinator" for a project whose coordinator is already running
-- **THEN** the system does not launch a second coordinator
-- **AND** it focuses / reuses the existing coordinator
+### Requirement: Coordinator applies the governance system prompt
+The coordinator SHALL be launched with a governance system prompt — in addition
+to the orchestrator system prompt from `agent-coordinator-workflows` — that
+defines its hybrid-autonomy policy and the hard guardrails.
 
-### Requirement: Coordinator is a claude pane with the toolkit attached
-The coordinator SHALL be a `claude` session running in a PTY pane bound to the
-project. It MUST be launched with the coordinator MCP toolkit server attached and
-with a system prompt that defines its coordinator role, the hybrid-autonomy
-policy, and the hard guardrails.
-
-#### Scenario: Coordinator launch wiring
+#### Scenario: Governance prompt applied at launch
 - **WHEN** a coordinator is started for a project
-- **THEN** the launched pane runs `claude` with `cwd` inside the project
-- **AND** the MCP toolkit server is configured for that session
-- **AND** the coordinator's role/guardrail system prompt is applied
+- **THEN** the launched `claude` pane has the hybrid-autonomy + hard-guardrail policy applied in addition to its orchestrator prompt
 
-### Requirement: Coordinator persists and is reused for the session
-Once started, a coordinator SHALL persist for the app session and be reused. The
-project SHALL record its coordinator session so it is not duplicated and can be
-identified after focus changes or restart.
-
-#### Scenario: Coordinator persists across navigation
-- **WHEN** the user navigates away from and back to a project with a running coordinator
-- **THEN** the same coordinator session is still running and is reused
-
-### Requirement: Coordinator is distinctly surfaced to the human
-The human SHALL be able to interact with the coordinator directly in its own
-pane. The coordinator MUST be visually distinguished in the agents roster from
-normal agents (e.g. a badge or dedicated lane). Items the coordinator surfaces to
-the human SHALL appear in the Inbox "Needs you" lane attributed to the
-coordinator and to the agent the item concerns.
-
-#### Scenario: Coordinator is distinguished in the roster
-- **WHEN** a project has a running coordinator
-- **THEN** the coordinator appears in the agents roster with distinct treatment identifying it as the project's coordinator
+### Requirement: Coordinator-surfaced items are attributed in the inbox
+Items the coordinator surfaces (defers) to the human SHALL appear in the Inbox
+"Needs you" lane, attributed to the coordinator and identifying the originating
+agent the item concerns. (The coordinator's distinct roster treatment is provided
+by `agent-coordinator-workflows`.)
 
 #### Scenario: Surfaced item is attributed in the inbox
 - **WHEN** the coordinator surfaces an item to the human

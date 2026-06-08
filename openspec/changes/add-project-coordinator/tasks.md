@@ -1,3 +1,11 @@
+> **Superseded by `add-agent-specialists`:** task groups 1–4 below (the control
+> channel, the MCP toolkit adapter, the frontend executor, and the coordinator
+> launch/lifecycle) are now BUILT by the `add-agent-specialists` change as the
+> shared `agent-orchestration-runtime` + `agent-coordinator-workflows`
+> capabilities. When this change is built, REUSE them — do not re-implement.
+> Implement only the governance-specific tasks: `answer_question`, escalation
+> routing/interception (group 5), and the human surfaces (group 6) layered on top.
+
 ## 1. Control channel (Rust ↔ frontend bridge)
 
 - [ ] 1.1 Add a Rust control socket in `src-tauri/src/` (mirror the events socket in `events.rs`) that accepts JSON request/response with request ids and per-request timeouts

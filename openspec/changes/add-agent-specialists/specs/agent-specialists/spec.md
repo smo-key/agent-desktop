@@ -61,6 +61,35 @@ surface as a read error for that entry without breaking the panel.
 - **THEN** that entry surfaces as a read error
 - **AND** the other specialists still list normally
 
+### Requirement: Specialist library is presented as the "Agents" tab
+The specialist library SHALL be surfaced to the user as the **Agents** tab, while
+the running `claude` sessions SHALL be surfaced as the **Sessions** tab. The
+internal model term remains "specialist"; only the user-facing labels change. The
+Sessions tab area SHALL be resizable.
+
+#### Scenario: Library shown under the Agents tab
+- **WHEN** the user opens the tab listing the project's specialists
+- **THEN** that tab is labeled "Agents"
+- **AND** the tab listing running `claude` sessions is labeled "Sessions"
+
+#### Scenario: Sessions area is resizable
+- **WHEN** the user drags the Sessions area's resize affordance
+- **THEN** the Sessions area resizes and the chosen size persists like other resizable panels
+
+### Requirement: Form uses a model dropdown and a tools multiselect
+The create/edit form SHALL present `model` as a dropdown (a curated set of
+selectable Claude model ids plus a default/inherit option that omits the field)
+and `tools` as a multiselect of Claude Code tool names. The selections SHALL
+round-trip to the same `.claude/agents/<name>.md` frontmatter (`model`, `tools`).
+
+#### Scenario: Choosing model and tools via dropdowns
+- **WHEN** the user picks a model from the dropdown and selects tools from the multiselect and saves
+- **THEN** the written frontmatter has the chosen `model` and `tools`
+
+#### Scenario: Default model omits the field
+- **WHEN** the user leaves the model on the default/inherit option
+- **THEN** the written frontmatter omits `model`
+
 ### Requirement: Spawn a pane as a specialist
 The orchestration runtime's `spawn_agent` SHALL accept an optional specialist
 reference. When given, the launched `claude` pane SHALL be composed from that

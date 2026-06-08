@@ -13,42 +13,48 @@
 
 ## 3. Orchestration runtime — transport + executor
 
-- [ ] 3.1 Add a Rust control-socket module (mirror `events.rs`): accept JSON request/response with request ids and per-request timeouts; unit-test request/reply routing and timeout fallback in isolation
-- [ ] 3.2 On each control request, emit an `orchestration://request` Tauri event carrying request id, op, and args
-- [ ] 3.3 Add an `orchestration_reply` Tauri command the frontend calls to return a result/error for a request id; route it back to the waiting socket request; unit-test concurrent requests do not cross results
-- [ ] 3.4 Add a Rust-side per-target serialization queue so injections/requests to one agent do not interleave; unit-test ordering + deferral
-- [ ] 3.5 Add the bundled stdio MCP adapter under `src-tauri/resources/` (same Node family as `event-hook.cjs`) exposing `spawn_agent` / `message_agent` / `read_agent` / `list_agents` / `inspect_agent` / `archive_agent` / `unarchive_agent` as thin translations to control-socket requests; unit-test the adapter's request encoding
-- [ ] 3.6 Generate the per-session MCP config that attaches this toolkit to a coordinator session launch
+- [x] 3.1 Add a Rust control-socket module (mirror `events.rs`): accept JSON request/response with request ids and per-request timeouts; unit-test request/reply routing and timeout fallback in isolation
+- [x] 3.2 On each control request, emit an `orchestration://request` Tauri event carrying request id, op, and args
+- [x] 3.3 Add an `orchestration_reply` Tauri command the frontend calls to return a result/error for a request id; route it back to the waiting socket request; unit-test concurrent requests do not cross results
+- [x] 3.4 Add a Rust-side per-target serialization queue so injections/requests to one agent do not interleave; unit-test ordering + deferral
+- [x] 3.5 Add the bundled stdio MCP adapter under `src-tauri/resources/` (same Node family as `event-hook.cjs`) exposing `spawn_agent` / `message_agent` / `read_agent` / `list_agents` / `inspect_agent` / `archive_agent` / `unarchive_agent` as thin translations to control-socket requests; unit-test the adapter's request encoding
+- [x] 3.6 Generate the per-session MCP config that attaches this toolkit to a coordinator session launch
 
 ## 4. Orchestration runtime — frontend executor ops
 
-- [ ] 4.1 Handle `orchestration://request` events: dispatch each op to existing frontend functions and reply via `orchestration_reply`
-- [ ] 4.2 Implement `spawn_agent` via the existing launcher path, bound to the coordinator's project, returning the new pane identity; support the optional `specialist` arg (compose launch from the specialist file using the task-1 helper) and record the specialist on the spawned pane
-- [ ] 4.3 Implement `message_agent` (`pty_write` to a pane) and `read_agent` (recent output/activity), applying to both spawned agents and the user's existing project sessions
-- [ ] 4.4 Implement `list_agents` (every `claude` agent pane in the project, including pre-existing user sessions) and `inspect_agent`
-- [ ] 4.5 Implement `archive_agent` / `unarchive_agent` using existing archive state
-- [ ] 4.6 Enforce project scoping in the executor: reject ops targeting panes outside the coordinator's project or closed/nonexistent panes; gate injections on the target being idle
+- [x] 4.1 Handle `orchestration://request` events: dispatch each op to existing frontend functions and reply via `orchestration_reply`
+- [x] 4.2 Implement `spawn_agent` via the existing launcher path, bound to the coordinator's project, returning the new pane identity; support the optional `specialist` arg (compose launch from the specialist file using the task-1 helper) and record the specialist on the spawned pane
+- [x] 4.3 Implement `message_agent` (`pty_write` to a pane) and `read_agent` (recent output/activity), applying to both spawned agents and the user's existing project sessions
+- [x] 4.4 Implement `list_agents` (every `claude` agent pane in the project, including pre-existing user sessions) and `inspect_agent`
+- [x] 4.5 Implement `archive_agent` / `unarchive_agent` using existing archive state
+- [x] 4.6 Enforce project scoping in the executor: reject ops targeting panes outside the coordinator's project or closed/nonexistent panes; gate injections on the target being idle
 
 ## 5. Specialists panel (UI)
 
-- [ ] 5.1 Add a Specialists panel (sibling to Projects/Tasks) listing the active project's specialists with an empty state
-- [ ] 5.2 Add the create/edit form (name, description, model, tools) + system-prompt editor (body), wired to the store; surface validation messages
-- [ ] 5.3 Add delete with confirmation; refresh the list on create/edit/delete
-- [ ] 5.4 Badge a spawned pane in the roster/overview with its specialist identity (read the recorded specialist from the pane)
+- [x] 5.1 Add a Specialists panel (sibling to Projects/Tasks) listing the active project's specialists with an empty state
+- [x] 5.2 Add the create/edit form (name, description, model, tools) + system-prompt editor (body), wired to the store; surface validation messages
+- [x] 5.3 Add delete with confirmation; refresh the list on create/edit/delete
+- [x] 5.4 Badge a spawned pane in the roster/overview with its specialist identity (read the recorded specialist from the pane)
 
 ## 6. Coordinator lifecycle + dynamic workflows
 
-- [ ] 6.1 Add a `role: 'coordinator'` marker to `PaneSession` and a `coordinatorSessionId` back-reference on `Project` (`projects.ts` + persistence)
-- [ ] 6.2 Add a per-project "Start coordinator" affordance; launch a `claude` pane in the project with the toolkit MCP config (task 3.6) and the orchestrator system prompt
-- [ ] 6.3 Enforce single coordinator per project: reuse/focus the existing one instead of launching a second; persist and reuse across navigation/restart
-- [ ] 6.4 Author the orchestrator system prompt: take a goal, plan, spawn and coordinate specialists and existing sessions via the toolkit (no governance/guardrails here)
-- [ ] 6.5 Attribute coordinator-spawned/driven agents to the coordinator in the roster/overview
+- [x] 6.1 Add a `role: 'coordinator'` marker to `PaneSession` and a `coordinatorSessionId` back-reference on `Project` (`projects.ts` + persistence)
+- [x] 6.2 Add a per-project "Start coordinator" affordance; launch a `claude` pane in the project with the toolkit MCP config (task 3.6) and the orchestrator system prompt
+- [x] 6.3 Enforce single coordinator per project: reuse/focus the existing one instead of launching a second; persist and reuse across navigation/restart
+- [x] 6.4 Author the orchestrator system prompt: take a goal, plan, spawn and coordinate specialists and existing sessions via the toolkit (no governance/guardrails here)
+- [x] 6.5 Attribute coordinator-spawned/driven agents to the coordinator in the roster/overview
+
+## 9. UI refinements (follow-up scope)
+
+- [x] 9.1 Specialist (Agent) form: replace the free-text `model` field with a dropdown (curated Claude model ids + a "Default / inherit" option) and the free-text `tools` field with a multiselect of Claude Code tool names; round-trip to the same frontmatter model/tools
+- [x] 9.2 Rename the user-facing tabs: "Agents" → "Sessions" (running sessions) and "Specialists" → "Agents" (the specialist library); keep internal capability/model naming (`specialist`) unchanged
+- [x] 9.3 Make the renamed "Sessions" tab area resizable (a draggable splitter), consistent with the existing resizable panel idiom
 
 ## 7. Cross-change: extract shared runtime from add-project-coordinator
 
-- [ ] 7.1 Edit `openspec/changes/add-project-coordinator/specs/coordinator-toolkit/spec.md` to keep only governance (`answer_question` + guardrails) and reference `agent-orchestration-runtime` for the transport + spawn/message/read/list/inspect/archive
-- [ ] 7.2 Edit `add-project-coordinator/specs/project-coordinator/spec.md` (and `design.md` D1/D2/D5 notes) to consume `agent-orchestration-runtime` instead of re-specifying the socket + toolkit
-- [ ] 7.3 Run `openspec validate add-project-coordinator` and confirm no toolkit spec is duplicated across the two changes
+- [x] 7.1 Edit `openspec/changes/add-project-coordinator/specs/coordinator-toolkit/spec.md` to keep only governance (`answer_question` + guardrails) and reference `agent-orchestration-runtime` for the transport + spawn/message/read/list/inspect/archive
+- [x] 7.2 Edit `add-project-coordinator/specs/project-coordinator/spec.md` (and `design.md` D1/D2/D5 notes) to consume `agent-orchestration-runtime` instead of re-specifying the socket + toolkit
+- [x] 7.3 Run `openspec validate add-project-coordinator` and confirm no toolkit spec is duplicated across the two changes
 
 ## 8. Verification
 

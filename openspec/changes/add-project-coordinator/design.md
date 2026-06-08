@@ -38,6 +38,16 @@ and the place hooks/sockets land.
 
 ## Decisions
 
+> **Note (extracted to `add-agent-specialists`):** the shared substrate first
+> sketched in D1/D2/D5 below — the coordinator-as-`claude`-pane lifecycle, the
+> control-socket↔frontend-executor transport, and the spawn/message/read/list/
+> inspect/archive toolkit — is now OWNED by the `agent-orchestration-runtime` and
+> `agent-coordinator-workflows` capabilities in the `add-agent-specialists`
+> change, which ships them. This change CONSUMES them and adds only governance
+> (escalation, hybrid autonomy, hard guardrails, `answer_question`). D1/D2/D5 are
+> retained below for rationale/history; the normative spec lives in those
+> capabilities.
+
 ### D1. Coordinator = a `claude` pane launched with an MCP server attached
 The coordinator is an ordinary `PaneSession` with `program: 'claude'`, marked as
 the project's coordinator (a `role: 'coordinator'` flag and a back-reference on
