@@ -189,35 +189,60 @@ impl LlamaServer {
         }
 
         let child = spawn_llama_server(app, model_path)?;
-        // OnceCell::set fails only if already set, which the guard precludes.
-        let _ = self.child.set(child);
-
-        self.wait_healthy().await
+        // Confirm health BEFORE caching the child. If the process spawned but never
+        // becomes healthy (bad/half-downloaded model, port already bound, OOM during
+        // load), kill it and DON'T cache — otherwise `is_started()` would be true
+        // forever and every later polish call would stall on health polls against a
+        // dead process with no recovery short of an app restart.
+        match self.wait_healthy().await {
+            Ok(()) => {
+                // OnceCell::set fails only if already set, which the guard precludes.
+                let _ = self.child.set(child);
+                Ok(())
+            }
+            Err(e) => {
+                let _ = child.kill();
+                Err(e)
+            }
+        }
     }
 
     /// Poll `GET /health` with the [`health_backoff_schedule`] until it returns a
-    /// success status, or `Err` after the schedule is exhausted.
+    /// success status, or `Err` after the schedule is exhausted. Probes FIRST (so a
+    /// warm/already-healthy server returns with no added latency), sleeping only
+    /// BETWEEN retries. Each probe has a short timeout so a wedged socket can't hang.
     async fn wait_healthy(&self) -> Result<(), String> {
-        let client = reqwest::Client::new();
+        let client = http_client(std::time::Duration::from_secs(2));
         let url = format!("{}/health", server_base(LLAMA_PORT));
         let schedule = health_backoff_schedule(HEALTH_MAX_ATTEMPTS, HEALTH_BASE_MS);
         for (i, delay) in schedule.iter().enumerate() {
-            // Wait BEFORE the first probe too: the server needs a beat to bind.
-            tokio::time::sleep(std::time::Duration::from_millis(*delay)).await;
-            match client.get(&url).send().await {
-                Ok(resp) if resp.status().is_success() => return Ok(()),
-                _ => {
-                    if i + 1 == schedule.len() {
-                        return Err(format!(
-                            "llama-server did not become healthy after {} attempts",
-                            schedule.len()
-                        ));
-                    }
+            if let Ok(resp) = client.get(&url).send().await {
+                if resp.status().is_success() {
+                    return Ok(());
                 }
             }
+            // Sleep before the NEXT probe (not after the last) to give the server
+            // time to bind/load.
+            if i + 1 < schedule.len() {
+                tokio::time::sleep(std::time::Duration::from_millis(*delay)).await;
+            }
         }
-        Err("llama-server health check schedule was empty".to_string())
+        Err(format!(
+            "llama-server did not become healthy after {} attempts",
+            schedule.len()
+        ))
     }
+}
+
+/// A reqwest client with a hard request timeout, so a wedged `llama-server` (slow
+/// load, pathological prompt) can never block insertion — the caller turns a
+/// timeout into an `Err`, and the frontend degrades to the raw transcript. Falls
+/// back to a default client if the builder fails (it won't with just a timeout).
+fn http_client(timeout: std::time::Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
 }
 
 /// Spawn the `llama-server` sidecar with the polish model on the fixed localhost
@@ -281,7 +306,9 @@ pub async fn voice_polish(
     let body = build_polish_body(&text, spec.id);
     let body = serde_json::to_string(&body).map_err(|e| format!("serialize polish body: {e}"))?;
     let url = format!("{}/v1/chat/completions", server_base(LLAMA_PORT));
-    let client = reqwest::Client::new();
+    // Hard timeout so a wedged server can't block insertion forever — on timeout
+    // this returns Err and the frontend inserts the raw transcript instead.
+    let client = http_client(std::time::Duration::from_secs(30));
     // Send the JSON body explicitly (the reqwest `json` feature is intentionally
     // off — see Cargo.toml — so set the content type + body by hand).
     let resp = client

@@ -18,7 +18,7 @@
 // partial-event reducer); `invoke`, `Channel`, `MicCapture`, and the DOM stay in
 // thin, untested wrappers below.
 //
-// Live partials are driven from the frontend: a ~600ms interval re-transcribes the
+// Live partials are driven from the frontend: a short interval re-transcribes the
 // audio-so-far with the fast tiny model and shows it as the provisional overlay
 // (Whisper isn't natively streaming, so a rolling re-transcribe is the practical
 // approach). The final pass uses the tier model. Both reuse the one Tauri
@@ -147,6 +147,13 @@ async function transcribeFinal(
 const PARTIAL_INTERVAL_MS = 200;
 
 /**
+ * Rolling window (seconds) the live-partial pass re-transcribes. Bounds per-tick
+ * cost/latency on long utterances; the overlay shows the most recent speech while
+ * the authoritative FINAL pass (on stop) still covers the whole utterance.
+ */
+const PARTIAL_WINDOW_SEC = 12;
+
+/**
  * Drives one dictation session: capture → live partials → stop&insert / cancel.
  * Construct on panel open (after `ensureModels`), call `start()`, then exactly one
  * of `stopAndInsert()` (finalize) or `cancel()` (discard). All teardown paths
@@ -175,11 +182,13 @@ export class DictationPipeline {
   }
 
   /**
-   * Live partials: every ~600ms re-transcribe the audio captured so far with the
-   * fast tiny model (Whisper isn't natively streaming, so a rolling re-transcribe
-   * of the growing buffer is the practical "what I'm saying" overlay). Each pass
-   * supersedes the previous partial. Best-effort: a missing model / busy tick /
-   * transcription error never disrupts recording; the final pass is authoritative.
+   * Live partials: on each `PARTIAL_INTERVAL_MS` tick re-transcribe a ROLLING
+   * WINDOW of the most recent audio with the fast tiny model (Whisper isn't
+   * natively streaming, so a rolling re-transcribe is the practical "what I'm
+   * saying" overlay). Capping to the last `PARTIAL_WINDOW_SEC` bounds per-tick cost
+   * and keeps the partial from lagging on long utterances — the FINAL pass on stop
+   * still uses the whole utterance. Each pass supersedes the previous partial.
+   * Best-effort: a missing model / busy tick / error never disrupts recording.
    */
   async #startPartials(): Promise<void> {
     // Prefer the bundled tiny model for partials (fastest); fall back to the tier
@@ -198,14 +207,18 @@ export class DictationPipeline {
     return this.#capture.getLevel();
   }
 
-  /** One partial pass: transcribe the buffer-so-far → update the overlay. */
+  /** One partial pass: transcribe the recent rolling window → update the overlay. */
   async #tickPartial(): Promise<void> {
     if (this.#partialBusy || this.#finished || !this.#partialModel) return;
     const { samples, sampleRate } = this.#capture.getPcm();
     if (samples.length === 0) return;
+    // Cap to the last PARTIAL_WINDOW_SEC so each pass is bounded (cost + latency)
+    // regardless of how long the user has been talking.
+    const maxSamples = Math.floor(sampleRate * PARTIAL_WINDOW_SEC);
+    const window = samples.length > maxSamples ? samples.subarray(samples.length - maxSamples) : samples;
     this.#partialBusy = true;
     try {
-      const text = await transcribeFinal(samples, sampleRate, this.#partialModel);
+      const text = await transcribeFinal(window, sampleRate, this.#partialModel);
       // Ignore late results once we've started finalizing/cancelling.
       if (!this.#finished && text.trim()) voiceStore.setPartial(text);
     } catch {
@@ -227,7 +240,11 @@ export class DictationPipeline {
    * sets an error and does NOT throw; the panel closes only on a successful insert.
    */
   async stopAndInsert(): Promise<void> {
-    if (this.#finished) return;
+    // Only finalize an actual in-progress recording. If we're still requesting the
+    // mic, denied, errored, or already transcribing, do nothing — a stray confirm
+    // or a second activation tap in those phases must not flip state, run a final
+    // pass on an empty buffer, or clobber the denied/error guidance.
+    if (this.#finished || voiceStore.state !== 'recording') return;
     this.#finished = true;
 
     voiceStore.setState('transcribing');

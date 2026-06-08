@@ -210,9 +210,10 @@
     tabindex="-1"
   >
     {#if modelDownload.active && voiceStore.state !== 'denied' && voiceStore.state !== 'error'}
-      <!-- Models are downloading on first use: a determinate "Preparing models…"
-           bar. The bundled tiny model still lets dictation work, so this is
-           informative, not a hard block. -->
+      <!-- Models downloading on first use: a thin determinate strip shown ABOVE the
+           recording controls. The bundled tiny model still lets dictation work, so
+           the waveform + confirm stay available below — this is informative, not a
+           block. -->
       <div class="preparing">
         <div class="prep-row">
           <span class="prep-label">Preparing models…</span>
@@ -225,7 +226,9 @@
           <p class="prep-err">{modelDownload.error}</p>
         {/if}
       </div>
-    {:else if voiceStore.state === 'denied' || voiceStore.state === 'error'}
+    {/if}
+
+    {#if voiceStore.state === 'denied' || voiceStore.state === 'error'}
       <!-- Denied / error state: prominent guidance; recording does NOT proceed. -->
       <div class="guidance" class:denied={voiceStore.state === 'denied'}>
         <p class="guidance-msg">{voiceStore.error ?? status}</p>
