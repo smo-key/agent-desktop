@@ -116,6 +116,30 @@ export async function modelsStatus(
   }
 }
 
+/** Total bytes the downloaded models currently occupy on disk (the whisper tier
+ *  models + the polish LLM, plus any `.part` leftovers — never the bundled tiny
+ *  model). Never throws — a backend failure resolves to 0 so the Settings UI just
+ *  shows nothing to reclaim. */
+export async function modelsDiskUsage(): Promise<number> {
+  try {
+    return await invoke<number>('voice_models_disk_usage');
+  } catch {
+    return 0;
+  }
+}
+
+/** Delete every downloaded model file, returning the bytes freed. Never throws —
+ *  a backend failure resolves to 0 freed; the caller re-queries status/usage
+ *  afterward to reflect the real on-disk state. The next voice use re-downloads
+ *  any model on demand. */
+export async function deleteModels(): Promise<number> {
+  try {
+    return await invoke<number>('voice_delete_models');
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Ensure all models the (tier, polish) selection needs are present, downloading
  * the missing ones with live progress reflected into `modelDownload`. Resolves

@@ -1,4 +1,5 @@
 pub mod activity;
+pub mod claude_title;
 pub mod events;
 pub mod git;
 pub mod models;
@@ -295,24 +296,31 @@ fn strip_think_blocks(s: &str) -> String {
     out
 }
 
-/// Generate a short session FOCUS title from the user's messages, using the LOCAL
-/// model (the `llama-server` sidecar loading the Qwen3 polish model — see
-/// `polish.rs`). Locates the session transcript, extracts the user's prose messages,
-/// and asks the local model for a <=6-word title (e.g. "SKIPA-45: Fix Feature").
-/// Returns `None` when the user has sent nothing yet; returns `Err` (so the frontend
-/// keeps the previous title) if the local model is absent or the call fails. The
-/// frontend gates calls on the `user_hash` so a title is regenerated only when the
-/// user's messages actually change.
+/// Generate a short session FOCUS title from the user's messages. The PRIMARY path
+/// is the LOCAL model (the `llama-server` sidecar loading the Qwen3 polish model —
+/// see `polish.rs`): locate the session transcript, extract the user's prose
+/// messages, and ask the local model for a <=6-word title (e.g. "SKIPA-45: Fix
+/// Feature"). Returns `None` when the user has sent nothing yet.
 ///
-/// `async` runs this off the main/UI thread: the local model call can take a moment,
-/// and the sidecar may need a lazy start on the first request; the UI stays
-/// responsive while the title resolves in the background.
+/// When the on-device path fails for ANY reason (model absent, sidecar won't start,
+/// HTTP error, timeout) AND `cloud_fallback` is set (the opt-in `titles.cloudFallback`
+/// setting), regenerate the title with the `claude` CLI (`claude -p --model haiku` —
+/// see `claude_title.rs`), reusing the same prompt + `clean_title` so the result is
+/// identical in shape. With `cloud_fallback` off the on-device failure returns `Err`
+/// and the frontend keeps the previous title (the original on-device-only behavior).
+/// The frontend gates calls on the `user_hash` so a title is regenerated only when
+/// the user's messages actually change.
+///
+/// `async` runs this off the main/UI thread: the model call can take a moment, and
+/// the sidecar may need a lazy start on the first request; the UI stays responsive
+/// while the title resolves in the background.
 #[tauri::command]
 async fn session_focus(
     app: AppHandle,
     state: State<'_, Arc<polish::LlamaServer>>,
     session_id: String,
     cwd: Option<String>,
+    cloud_fallback: bool,
 ) -> Result<Option<String>, String> {
     let projects_base =
         activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
@@ -346,7 +354,21 @@ async fn session_focus(
     // Run the title completion through the shared local-model path (lazy-starts the
     // sidecar). The model id is the registry id; llama-server ignores it for routing.
     let body = polish::build_title_body(&joined, models::POLISH.id);
-    let raw = polish::chat_complete(&app, &state, body).await?;
+    let raw = match polish::chat_complete(&app, &state, body).await {
+        Ok(raw) => raw,
+        Err(on_device_err) => {
+            // On-device unavailable. Fall back to the cloud (claude -p haiku) ONLY
+            // when the user opted in; otherwise keep the previous title (Err).
+            if !cloud_fallback {
+                return Err(on_device_err);
+            }
+            claude_title::claude_title(&joined).await.map_err(|cloud_err| {
+                format!(
+                    "on-device title failed ({on_device_err}); cloud fallback failed ({cloud_err})"
+                )
+            })?
+        }
+    };
     let title = clean_title(&raw);
     Ok((!title.is_empty()).then_some(title))
 }
@@ -1105,6 +1127,8 @@ pub fn run() {
             transcribe::voice_transcribe_stream,
             models::voice_download_models,
             models::voice_models_status,
+            models::voice_models_disk_usage,
+            models::voice_delete_models,
             polish::voice_polish,
             whisper_server::voice_transcribe_partial,
             voice_bundled_model_path,

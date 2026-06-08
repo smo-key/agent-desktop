@@ -11,6 +11,7 @@
   import { settingsModal } from '$lib/ui/settingsStore.svelte';
   import { openWith } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
+  import { titleSettings } from '$lib/settings/titles.svelte';
   import VoicePanel from '$lib/voice/VoicePanel.svelte';
   import ModelOnboarding from '$lib/onboarding/ModelOnboarding.svelte';
   import { onboarding } from '$lib/onboarding/onboarding.svelte';
@@ -73,6 +74,8 @@
   onMount(() => {
     // Load the user's open-with preferences (seeds defaults on first run).
     void openWith.load();
+    // Load session-title preferences (the opt-in cloud title fallback).
+    void titleSettings.load();
     // Load voice-input preferences from the shared settings blob (seeds defaults),
     // then check whether the on-device models that selection needs are present. When
     // they're missing, the onboarding store goes `visible` and the full-screen gate

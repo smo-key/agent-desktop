@@ -1,0 +1,6 @@
+{
+  "provider": "local",
+  "taskRef": "add-delete-downloaded-models",
+  "url": "",
+  "lastEvent": "done"
+}

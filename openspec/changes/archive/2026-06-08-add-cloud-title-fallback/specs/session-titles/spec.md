@@ -1,8 +1,7 @@
-# session-titles Specification
+# session-titles Specification (delta)
 
-## Purpose
-TBD - created by syncing change switch-title-model-to-local. Update Purpose after archive.
-## Requirements
+## MODIFIED Requirements
+
 ### Requirement: On-device session-title generation
 
 The overview's per-agent FOCUS title SHALL be generated on-device by the local
@@ -55,6 +54,8 @@ rather than a distinctive placeholder the model is prone to parrot.
 - **WHEN** the user's messages mention no ticket or issue id
 - **THEN** the title contains no ticket id and never the prompt's example formats
   (e.g. `PROJ-45`, `#45`) — it just names the focus in plain words
+
+## ADDED Requirements
 
 ### Requirement: Opt-in cloud title fallback
 

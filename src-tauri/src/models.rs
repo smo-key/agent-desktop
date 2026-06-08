@@ -178,6 +178,22 @@ pub fn present_filenames(app_data_dir: &Path) -> HashSet<String> {
     set
 }
 
+/// PURE: from the filenames present under `<app_data_dir>/models/`, the subset that
+/// is DELETABLE downloaded model data — every downloadable registry model that is
+/// present ([`SMALL`], [`LARGE_V3_TURBO`], [`POLISH`]; NOT the bundled [`TINY`]),
+/// plus any leftover `*.part` temp file from an interrupted download. The bundled
+/// tiny model ships as a resource and never lives under `models/`, so it is never
+/// returned here — "delete downloaded models" must not touch it. Extracted so the
+/// selection is unit-testable apart from the filesystem.
+pub fn deletable_filenames(present: &HashSet<String>) -> Vec<String> {
+    let downloadable: [&str; 3] = [SMALL.filename, LARGE_V3_TURBO.filename, POLISH.filename];
+    present
+        .iter()
+        .filter(|name| downloadable.contains(&name.as_str()) || name.ends_with(".part"))
+        .cloned()
+        .collect()
+}
+
 // --- Tauri command surface --------------------------------------------------
 
 /// Progress event streamed to the frontend over a `Channel<DownloadEvent>` during
@@ -236,6 +252,53 @@ pub fn voice_models_status(
         ready: missing.is_empty(),
         missing,
     })
+}
+
+/// Total size in bytes of the DELETABLE downloaded model files present under
+/// `<app_data_dir>/models/` (the whisper tier models + the polish LLM, plus any
+/// `.part` leftovers — never the bundled tiny model). Zero when nothing is
+/// downloaded or the dir is missing. Lets the Settings UI show how much space a
+/// delete would reclaim and disable the control when there is nothing to remove.
+#[tauri::command]
+pub fn voice_models_disk_usage(app: AppHandle) -> Result<u64, String> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    let models_dir = base.join("models");
+    let mut total = 0u64;
+    for name in deletable_filenames(&present_filenames(&base)) {
+        if let Ok(meta) = std::fs::metadata(models_dir.join(&name)) {
+            total += meta.len();
+        }
+    }
+    Ok(total)
+}
+
+/// Delete every DELETABLE downloaded model file (and `.part` leftover) under
+/// `<app_data_dir>/models/`, returning the total bytes freed. Best-effort and
+/// idempotent: a missing dir/file is a no-op (mirrors `delete_specialist`), and a
+/// file that can't be removed is skipped rather than aborting the rest, so one
+/// stuck file never strands the others. The bundled tiny model is never under
+/// `models/`, so it is never removed; the next voice use re-downloads on demand.
+#[tauri::command]
+pub fn voice_delete_models(app: AppHandle) -> Result<u64, String> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    let models_dir = base.join("models");
+    let mut freed = 0u64;
+    for name in deletable_filenames(&present_filenames(&base)) {
+        let path = models_dir.join(&name);
+        let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        // Best-effort: count bytes only on a successful unlink; skip on any error
+        // (including already-gone) so a single failure can't abort the sweep.
+        if std::fs::remove_file(&path).is_ok() {
+            freed += size;
+        }
+    }
+    Ok(freed)
 }
 
 /// How often (in bytes received since the last emit) the download loop emits a
@@ -470,6 +533,36 @@ mod tests {
         );
         // Stored-for-reuse: once present, not re-planned.
         assert!(models_needed(Tier::Fast, false, &present(&["ggml-small.bin"])).is_empty());
+    }
+
+    #[test]
+    fn deletable_filenames_selects_downloaded_models_and_parts() {
+        let on_disk = present(&[
+            "ggml-small.bin",
+            "ggml-large-v3-turbo-q5_0.bin",
+            "Qwen3-1.7B-Q8_0.gguf",
+            "ggml-large-v3-turbo-q5_0.bin.part", // interrupted download leftover
+            "ggml-tiny.bin",                     // bundled — must NEVER be deletable
+            "notes.txt",                         // unknown — left alone
+        ]);
+        let got: HashSet<String> = deletable_filenames(&on_disk).into_iter().collect();
+        let want = present(&[
+            "ggml-small.bin",
+            "ggml-large-v3-turbo-q5_0.bin",
+            "Qwen3-1.7B-Q8_0.gguf",
+            "ggml-large-v3-turbo-q5_0.bin.part",
+        ]);
+        assert_eq!(got, want);
+        assert!(
+            !got.contains("ggml-tiny.bin"),
+            "the bundled tiny model is never a downloaded model and must be preserved"
+        );
+        assert!(!got.contains("notes.txt"), "unknown files must be left alone");
+    }
+
+    #[test]
+    fn deletable_filenames_empty_when_nothing_present() {
+        assert!(deletable_filenames(&HashSet::new()).is_empty());
     }
 
     #[test]

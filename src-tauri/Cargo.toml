@@ -52,10 +52,13 @@ futures-util = "0.3"
 # Transcript-polish llama-server sidecar manager (see src/polish.rs). `once_cell`
 # holds the single spawned child handle written exactly once; `tokio` (sync +
 # time) serializes the lazy start across concurrent callers and sleeps between
-# `/health` retries. Both are already in the tree transitively (tauri/reqwest);
-# pinned here as direct deps for the explicit features we use.
+# `/health` retries. `process`/`io-util` drive the cloud title fallback
+# (`claude -p`, see src/claude_title.rs): spawn the CLI, pipe messages to its
+# stdin, and `wait_with_output` under a timeout. All already in the tree
+# transitively (tauri/reqwest); pinned here as direct deps for the explicit
+# features we use.
 once_cell = "1"
-tokio = { version = "1", features = ["sync", "time"] }
+tokio = { version = "1", features = ["sync", "time", "process", "io-util"] }
 
 # Native macOS NSEvent monitor for the voice-panel double-tap-right-Command
 # gesture (see src/voice_activation.rs). objc2 0.6 / objc2-app-kit 0.3 are the
