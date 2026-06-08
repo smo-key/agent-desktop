@@ -77,6 +77,26 @@ describe('resolveCoordinatorPin (tasks 10.2–10.3)', () => {
     }
   });
 
+  it('shows Start with an EMPTY roster for a concrete project (task 10.6)', () => {
+    // With no sessions at all, a concrete project still gets the Start affordance in
+    // the top slot (the roster pins coordinator/affordance + rule above the
+    // "No sessions yet" empty state).
+    const pin = resolveCoordinatorPin([], 'P');
+    expect(pin.coordinator).toBeNull();
+    expect(pin.showStart).toBe(true);
+    expect(pin.rest).toEqual([]);
+  });
+
+  it('pins a live coordinator that is the ONLY row (task 10.6)', () => {
+    // The coordinator pinned at top with no other sessions: it is pulled out and the
+    // rest is empty, so only the pinned coordinator + rule render (empty state below).
+    const rows = [row({ paneId: 'coord', projectId: 'P', role: 'coordinator' })];
+    const pin = resolveCoordinatorPin(rows, 'P');
+    expect(pin.coordinator?.paneId).toBe('coord');
+    expect(pin.rest).toEqual([]);
+    expect(pin.showStart).toBe(false);
+  });
+
   it('pins only the FIRST coordinator when state momentarily has two', () => {
     const rows = [
       row({ paneId: 'coord1', projectId: 'P', role: 'coordinator' }),

@@ -755,8 +755,11 @@
 
 <!-- One roster row — shared by the pinned coordinator (top slot) and the lane lists
      below the rule, so the markup never diverges. `lane` only drives the row's
-     selection accent class. -->
-{#snippet sessionRow(r: AgentRow, lane: AgentLane)}
+     selection accent class. `isCoordPin` marks the row as the project's OWN pinned
+     coordinator: its title is forced to "Coordinator" and its own coordinator badge
+     is suppressed (task 10.5) — only that single pinned row, not the agents it
+     spawned (which keep their "coordinated" attribution). -->
+{#snippet sessionRow(r: AgentRow, lane: AgentLane, isCoordPin = false)}
   <button
     type="button"
     class="row {lane}"
@@ -767,8 +770,10 @@
     <ProjectIcon {...projAvatar(r.projectId)} size={30} />
     <span class="nm">
       <span class="t">
-        {titles.titleFor(r.paneId) ?? r.name}
-        {#if r.role === 'coordinator'}
+        {isCoordPin ? 'Coordinator' : (titles.titleFor(r.paneId) ?? r.name)}
+        {#if isCoordPin}
+          <!-- The pinned coordinator's own row carries no role badge (task 10.5). -->
+        {:else if r.role === 'coordinator'}
           <span
             class="spec-badge coord-badge"
             use:tooltip={'Project coordinator (orchestrates other agents)'}
@@ -830,42 +835,42 @@
       <!-- Middle region: the agent roster (or its empty state). Flexes to fill
            the space left between the header and the bottom Tasks launcher. -->
       <div class="agent-region">
-        {#if rows.length === 0}
-          <div class="empty-list">
-            <p>No sessions yet.</p>
-            <button type="button" class="btn-primary" onclick={newAgent}>＋ New session</button>
-          </div>
-        {:else}
-          <div class="list-scroll">
-            <!-- Coordinator TOP SLOT (tasks 10.2–10.3): the project's live
-                 coordinator pinned above all sessions, OR — when none is running —
-                 a focusable "Start coordinator" affordance. A rule separates it from
-                 the rest. No heading/label, just the row, the rule, then the lanes. -->
-            {#if pin.coordinator}
-              {@render sessionRow(pin.coordinator, laneForRow(pin.coordinator))}
-              <hr class="coord-rule" />
-            {:else if pin.showStart && activeCoordProject}
-              <button
-                type="button"
-                class="row coord-start"
-                class:sel={coordinatorStartProject(shownId) === activeCoordProjectId}
-                onclick={() => selectCoordinatorStart(activeCoordProject.id)}
-              >
-                <ProjectIcon {...projAvatar(activeCoordProject.id)} size={30} />
-                <span class="nm">
-                  <span class="t">
-                    Coordinator
-                    <span class="spec-badge coord-badge">
-                      <Icon name="bot" size={9} />not started
-                    </span>
-                  </span>
-                  <span class="s">Start to orchestrate this project</span>
-                </span>
-                <span class="start-cta"><Icon name="play" size={13} /></span>
-              </button>
-              <hr class="coord-rule" />
-            {/if}
+        <div class="list-scroll">
+          <!-- Coordinator TOP SLOT (tasks 10.2–10.3, 10.6): the project's live
+               coordinator pinned above all sessions, OR — when none is running —
+               a focusable "Start coordinator" affordance. A rule separates it from
+               the rest. This renders FIRST, even with no other sessions, so the
+               coordinator/affordance + rule always head the list and the "No sessions
+               yet" empty state sits BELOW them (task 10.6). -->
+          {#if pin.coordinator}
+            {@render sessionRow(pin.coordinator, laneForRow(pin.coordinator), true)}
+            <hr class="coord-rule" />
+          {:else if pin.showStart && activeCoordProject}
+            <button
+              type="button"
+              class="row coord-start"
+              class:sel={coordinatorStartProject(shownId) === activeCoordProjectId}
+              onclick={() => selectCoordinatorStart(activeCoordProject.id)}
+            >
+              <ProjectIcon {...projAvatar(activeCoordProject.id)} size={30} />
+              <span class="nm">
+                <!-- No "not started" badge on the affordance (task 10.5); the
+                     "Start to orchestrate" subline + play CTA convey the state. -->
+                <span class="t">Coordinator</span>
+                <span class="s">Start to orchestrate this project</span>
+              </span>
+              <span class="start-cta"><Icon name="play" size={13} /></span>
+            </button>
+            <hr class="coord-rule" />
+          {/if}
 
+          {#if rows.length === 0}
+            <!-- No sessions yet — shown BELOW the coordinator + rule (task 10.6). -->
+            <div class="empty-list">
+              <p>No sessions yet.</p>
+              <button type="button" class="btn-primary" onclick={newAgent}>＋ New session</button>
+            </div>
+          {:else}
             {#each LANE_ORDER as lane (lane)}
               {@const items = renderGrouped[lane]}
               {#if items.length > 0}
@@ -877,8 +882,8 @@
                 {/each}
               {/if}
             {/each}
-          </div>
-        {/if}
+          {/if}
+        </div>
       </div>
 
       <!-- Draggable splitter that resizes the Sessions roster (top); the bottom
