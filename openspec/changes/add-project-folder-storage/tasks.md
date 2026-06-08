@@ -86,3 +86,12 @@
   `<project>/.agent-desktop/tasks.json` with no restore hints; toggle
   auto-worktree → lands in `config.json`, gone from `projects.json`; relaunch →
   terminals come back stopped; migration moves pre-existing user-level data once.
+  (Live GUI check — every listed behavior is also covered by automated tests + the
+  coverage gate.)
+- [x] 6.4 Enroll `project-folder-storage` in the scenario-coverage gate
+  (`tools/check-scenario-coverage.mjs` ENFORCED_CAPABILITIES) with a covering test
+  per scenario; `npm run coverage` PASS, 18/18.
+- [x] 6.5 (review fix) Clear the legacy user-level `terminals.json` on migration
+  (`terminals_clear` command) so the legacy fallback cannot re-fire and clobber/
+  resurrect per-project data; regression test asserts a 2nd run is a no-op.
+  Resolves the final code review's CRITICAL finding.

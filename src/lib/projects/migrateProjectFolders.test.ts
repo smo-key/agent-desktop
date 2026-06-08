@@ -143,7 +143,9 @@ describe('project-folder-storage — migration', () => {
     expect(call('tasks_clear')).toHaveLength(0);
   });
 
-  it('falls back to the legacy terminals.json when tasks.json is absent', async () => {
+  it('Legacy source cleared', async () => {
+    // Falls back to the legacy terminals.json when tasks.json is absent, AND
+    // clears that legacy source so it cannot re-fire the migration.
     const legacy = serializeTasks({
       p: [{ id: 'a', name: 'dev', kind: 'terminal', command: 'npm run dev', cwd: null }]
     });

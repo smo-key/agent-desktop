@@ -117,11 +117,14 @@ with user-level tasks (from `<app_data_dir>/tasks.json`, or the legacy
 `terminals.json` fallback), it SHALL write the project's `.agent-desktop/tasks.json`
 (sanitized); and it SHALL lift each project's `autoWorktree` (from `projects.json`)
 into its `.agent-desktop/config.json`. After all RESOLVABLE, writable projects
-are migrated, it SHALL delete the user-level `tasks.json` and strip the
-`autoWorktree` field from every project record in `projects.json`. A project whose
-folder cannot be written SHALL be skipped, leaving its user-level data intact for
-a later run. The migration SHALL be idempotent — once a project's per-project file
-exists and the user-level file is gone, it does not run again.
+are migrated, it SHALL delete BOTH user-level source files — `tasks.json` AND the
+legacy `terminals.json` — and strip the `autoWorktree` field from every migrated
+project record in `projects.json`. Clearing the legacy `terminals.json` is
+REQUIRED for idempotency: it is the fallback source, so leaving it would re-fire
+the migration on every launch and overwrite/resurrect per-project data. A project
+whose folder cannot be written SHALL be skipped, leaving its user-level data
+intact for a later run. The migration SHALL be idempotent — once both user-level
+source files are gone, it reads null from both and does not run again.
 
 #### Scenario: Tasks migrated to project folder
 - **WHEN** the app first runs after this change with a user-level `tasks.json` holding tasks for project P (path writable)
@@ -137,4 +140,8 @@ exists and the user-level file is gone, it does not run again.
 
 #### Scenario: Idempotent
 - **WHEN** the app runs again after a successful migration
-- **THEN** no migration occurs (per-project files exist and the user-level `tasks.json` is gone)
+- **THEN** no migration occurs — both user-level `tasks.json` and the legacy `terminals.json` are gone, so each source reads null and no per-project file is rewritten
+
+#### Scenario: Legacy source cleared
+- **WHEN** a migration sourced tasks from the legacy `terminals.json` (because `tasks.json` was absent) and all writes succeeded
+- **THEN** the legacy `terminals.json` is deleted, so the next launch does not re-migrate from it
