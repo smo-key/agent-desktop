@@ -1,0 +1,6 @@
+{
+  "provider": "local",
+  "taskRef": "add-agent-specialists",
+  "url": "",
+  "lastEvent": "planned"
+}
