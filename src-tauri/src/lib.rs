@@ -10,6 +10,7 @@ pub mod transcribe;
 pub mod usage;
 pub mod vad;
 pub mod voice_activation;
+pub mod whisper_server;
 
 use std::fs;
 use std::path::PathBuf;
@@ -229,22 +230,39 @@ fn clean_title(raw: &str) -> String {
     title.chars().take(60).collect()
 }
 
+/// Byte index of the first ASCII-case-insensitive occurrence of `needle` in
+/// `haystack`, as an offset valid for slicing `haystack` itself. `needle` MUST be
+/// ASCII (our literal `<think>` tags are). Searching byte windows on the ORIGINAL
+/// string keeps offsets aligned — unlike searching a `to_lowercase()` copy, whose
+/// offsets can drift when case-folding changes the byte length (e.g. `İ` lowercases
+/// to two code points), which would risk an out-of-bounds / non-boundary panic or
+/// silent corruption. An all-ASCII match can only start on a char boundary (UTF-8
+/// multi-byte sequences never contain ASCII bytes), so the index is always valid.
+fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
+    let (hay, ndl) = (haystack.as_bytes(), needle.as_bytes());
+    if ndl.is_empty() || hay.len() < ndl.len() {
+        return None;
+    }
+    (0..=hay.len() - ndl.len()).find(|&i| hay[i..i + ndl.len()].eq_ignore_ascii_case(ndl))
+}
+
 /// Remove every `<think>…</think>` span (case-insensitive) from `s`. Qwen3 is a
 /// reasoning model; with thinking disabled the content is bare, but if a stray
 /// reasoning block leaks through it must not corrupt a 6-word title. An unterminated
-/// `<think>` drops the remainder.
+/// `<think>` drops the remainder. Offsets come from [`find_ascii_ci`] (valid for the
+/// original string), so multi-byte content around a tag never panics or corrupts.
 fn strip_think_blocks(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
     loop {
-        let lower = rest.to_lowercase();
-        let Some(start) = lower.find("<think>") else {
+        let Some(start) = find_ascii_ci(rest, "<think>") else {
             out.push_str(rest);
             break;
         };
         out.push_str(&rest[..start]);
-        match lower[start..].find("</think>") {
-            Some(end_rel) => rest = &rest[start + end_rel + "</think>".len()..],
+        let after_open = &rest[start + "<think>".len()..];
+        match find_ascii_ci(after_open, "</think>") {
+            Some(end_rel) => rest = &after_open[end_rel + "</think>".len()..],
             // Unterminated `<think>`: everything after it is reasoning; drop it.
             None => break,
         }
@@ -817,6 +835,10 @@ pub fn run() {
         // `voice_polish`). Held in managed state so it lives for the app's
         // lifetime and the spawned sidecar is reaped on exit.
         .manage(Arc::new(polish::LlamaServer::default()))
+        // The single live-partials whisper-server manager (lazy-started by
+        // `voice_transcribe_partial`). Managed so it lives for the app's lifetime
+        // and the spawned sidecar is reaped on exit; keeps the tiny model resident.
+        .manage(Arc::new(whisper_server::WhisperServer::default()))
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
             pty_write,
@@ -849,6 +871,7 @@ pub fn run() {
             models::voice_download_models,
             models::voice_models_status,
             polish::voice_polish,
+            whisper_server::voice_transcribe_partial,
             voice_bundled_model_path,
             voice_model_path
         ])
@@ -916,6 +939,20 @@ mod tests {
         );
         // Unterminated think block → no title leaks out.
         assert_eq!(clean_title("<think>never closes"), "");
+    }
+
+    #[test]
+    fn strip_think_blocks_handles_multibyte_before_tag_without_panic() {
+        // `İ` (U+0130) lowercases to TWO code points, so byte offsets found in a
+        // `to_lowercase()` copy would drift off `s` — these used to panic / corrupt.
+        // Offsets must stay valid for the original string.
+        assert_eq!(strip_think_blocks("İ<think>x</think>Y"), "İY");
+        assert_eq!(strip_think_blocks("İİ<think>x</think>Z"), "İİZ");
+        // A multi-byte char INSIDE the reasoning block is dropped with it.
+        assert_eq!(
+            clean_title("<think>İİİ reasoning</think>\nFix the café page"),
+            "Fix the café page"
+        );
     }
 
     #[test]
