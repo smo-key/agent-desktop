@@ -20,12 +20,11 @@ each partial is just inference (tens of ms) over the loaded tiny model.
   (`pcm_f32_to_wav_16k_mono`, `has_speech`, `trim_silence`, `strip_nonspeech`).
 - Rewire the frontend live-partial loop (`pipeline.ts` `#tickPartial`) to call
   `voice_transcribe_partial` instead of `voice_transcribe_final`, on a **~100ms**
-  fixed tick (in-flight guarded). Switch from a rolling re-transcribe window to
-  **incremental segment concatenation**: transcribe only NEW audio (cut on silence
-  boundaries / a max-length bound) and append it to a growing committed transcript,
-  so the overlay shows the **entire** message without reprocessing it each tick.
-  The current open tail is re-transcribed for a live preview (bounded, not the
-  whole message).
+  fixed tick (in-flight guarded). Switch from a rolling window that DROPS old text
+  to **full-message retention with a 6s sliding reprocess window**: audio older
+  than 6s is finalized once into committed text (never reprocessed); only the
+  trailing ≤6s window is re-transcribed each tick. The overlay shows the **entire**
+  message (committed + live window) while reprocessing stays bounded to 6s.
 - **Graceful degradation:** if whisper-server can't start / times out, partials
   silently no-op (no overlay) — recording and the authoritative final pass are
   unaffected.

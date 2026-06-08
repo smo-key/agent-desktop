@@ -56,37 +56,39 @@ update).
 *Audio transport:* a small in-memory WAV per pass (no temp file needed — POST the
 bytes directly via multipart), since the request is short-lived.
 
-### D4 — Frontend: incremental SEGMENT CONCATENATION (not rolling re-transcribe)
-The overlay must show the **entire** message, but we must NOT re-transcribe the
-whole utterance each tick (the latency goal). So partials are built by transcribing
-only **new** audio and **concatenating** the result onto a growing committed
-transcript:
+### D4 — Frontend: full-message retention with a 6s sliding REPROCESS window
+The overlay must show the **entire** message (older text is never dropped), but each
+tick may only re-transcribe a bounded amount of recent audio — a **6s sliding
+window** (`REPROCESS_WINDOW_SEC = 6`). Audio that scrolls past 6s old is finalized
+once into committed text and never reprocessed:
 
-- The pipeline tracks `committed: string` (concatenated text of finalized segments)
-  and `processedSamples: number` (how much PCM has been finalized).
-- On each ~100ms tick (in-flight guarded), `pending = pcm[processedSamples..end]`.
-  A pure helper `nextSegmentCut(pending, sampleRate, {minSec, maxSec, silence})`
-  picks a cut at the end of a speech run followed by a silence gap once the segment
-  is at least `minSec`, or force-cuts at `maxSec` (so an unbroken monologue still
-  advances). It returns `null` when there isn't enough new audio / no boundary yet.
-- When a cut is returned: transcribe **only** `pending[0..cut]` via
-  `voice_transcribe_partial`, append its text to `committed`, and advance
-  `processedSamples` by `cut`. Cutting on a silence boundary avoids splitting words.
-- The OPEN tail (`pending` after the cut, bounded by `maxSec`) is transcribed each
-  tick as a provisional preview shown after `committed` (visually distinct). This
-  is the only audio re-processed, and it's small/bounded — never the whole message.
-- Overlay = `committed` + provisional tail. `voiceStore.setPartial` carries this.
-- `PARTIAL_INTERVAL_MS` → 100. The old `PARTIAL_WINDOW_SEC` rolling window is
-  REMOVED in favor of `MAX_SEGMENT_SEC` (force-cut bound, ~8–10s). Reset
-  `committed`/`processedSamples` on each panel open. The final pass is unchanged
-  and still re-transcribes the full utterance for the authoritative result.
+- The pipeline tracks `committed: string` (finalized text, never re-transcribed) and
+  `committedSamples: number` (PCM folded into `committed`).
+- On each ~100ms tick (in-flight guarded), with `end = total captured samples`:
+  - **Finalize older audio:** if `end - committedSamples > REPROCESS_WINDOW_SEC`,
+    there is audio older than the window to lock in. A pure helper
+    `commitCut(pcm, committedSamples, end, sampleRate, REPROCESS_WINDOW_SEC, silence)`
+    picks a cut that leaves ≤ 6s of trailing audio, preferring a **silence boundary**
+    near `end − 6s` so a word isn't split (force-cut at the target if no silence is
+    found within a small search, bounded so it can't grow unbounded). Transcribe
+    `pcm[committedSamples..cut]` via `voice_transcribe_partial`, append to
+    `committed`, set `committedSamples = cut`. (Infrequent — only when ≥6s of new
+    audio has accrued.)
+  - **Reprocess the window:** transcribe the trailing `pcm[committedSamples..end]`
+    (≤ ~6s) each tick → `windowText`.
+  - **Overlay** = `committed` + (space) + `windowText` via `voiceStore.setPartial`,
+    so the whole message shows while only ≤6s is reprocessed per tick.
+- `PARTIAL_INTERVAL_MS` → 100. The old rolling-window-that-DROPS-old-text behavior
+  is REMOVED. Reset `committed`/`committedSamples` on each panel open. The final
+  pass is unchanged and still re-transcribes the full utterance authoritatively.
 
 `voice_transcribe_partial(pcm, sample_rate)` stays **stateless** — it transcribes
-exactly the PCM slice it's given (segment or tail); all segmentation/concatenation
-state lives in the frontend, where `nextSegmentCut` is pure + unit-tested.
-*Alternative (rejected):* re-transcribe a fixed trailing window each tick — either
-loses early text or reprocesses the whole message; the user wants the full message
-without reprocessing.
+exactly the PCM slice it's given (the finalize segment or the 6s window); all
+retention/concatenation state lives in the frontend, where `commitCut` is pure +
+unit-tested.
+*Alternative (rejected):* a rolling window that only shows the last N seconds —
+loses older text (the bug being fixed). Re-transcribing the whole utterance each
+tick — defeats the latency goal on long takes.
 
 ### D5 — Provisioning: build `whisper-server` statically alongside `whisper-cli`
 Extend `scripts/fetch-whisper.sh` to also build the `whisper-server` target with
