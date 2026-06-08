@@ -35,6 +35,12 @@ export interface TaskDef {
   cwd: string | null;
   /** The Claude prompt for an `agent` task. Absent for `terminal` tasks. */
   prompt?: string;
+  /** Whether a `terminal` task auto-closes its pane on a SUCCESSFUL exit (code 0).
+   *  Absent ⇒ the default `true` (close). Stored ONLY when the user unticks the
+   *  "Close automatically when complete" box (`false`) — a kept-open terminal stays
+   *  as a stopped slot so its output remains readable. A non-zero (failed) exit
+   *  always stays open regardless of this flag. */
+  closeOnComplete?: boolean;
   /** Lifecycle hint captured at graceful quit: was this terminal running? Drives
    *  selective auto-restart on the next launch. Absent ⇒ treated as not-running. */
   wasRunning?: boolean;
@@ -238,6 +244,9 @@ function normalize(raw: unknown): TaskDef | null {
   const name = typeof r.name === 'string' && r.name.trim() !== '' ? r.name : defaultTaskName(command);
   const def: TaskDef = { id: r.id, name, kind, command, cwd };
   if (typeof r.prompt === 'string') def.prompt = r.prompt;
+  // Only `false` is meaningful (the opted-out keep-open choice); `true`/absent are
+  // the default and stay unstored so the on-disk file stays tidy.
+  if (r.closeOnComplete === false) def.closeOnComplete = false;
   if (typeof r.wasRunning === 'boolean') def.wasRunning = r.wasRunning;
   if (typeof r.lastCommand === 'string' && r.lastCommand.trim() !== '') {
     def.lastCommand = r.lastCommand;
@@ -265,5 +274,97 @@ export function serializeTasks(map: TasksByProject): string {
     if (list.length > 0) projects[projectId] = list;
   }
   const envelope: PersistedTasks = { version: TASKS_VERSION, projects };
+  return JSON.stringify(envelope);
+}
+
+// ─── Per-project tasks file (`<project>/.agent-desktop/tasks.json`) ──────────
+// A FLAT, single-project envelope `{ version, tasks: TaskDef[] }` that is the
+// committed source of truth for one project. Unlike the user-level store, this
+// file EXCLUDES the machine-local restore hints (`wasRunning`, `lastCommand`) —
+// those describe one machine's live session at quit and must not be shared
+// across checkouts.
+
+/** The flat per-project persisted envelope written to `tasks.json`. */
+export interface PersistedProjectTasks {
+  version: typeof TASKS_VERSION;
+  tasks: TaskDef[];
+}
+
+/**
+ * Serialize one project's tasks into the flat `{ version, tasks }` envelope,
+ * STRIPPING the machine-local restore hints (`wasRunning`, `lastCommand`) so the
+ * committed file is portable. All other fields (`id`, `name`, `kind`, `command`,
+ * `cwd`, `prompt`, `closeOnComplete`) are retained as-is. The array is serialized
+ * verbatim — empty arrays are NOT dropped.
+ */
+export function serializeProjectTasks(defs: TaskDef[]): string {
+  const tasks = defs.map((d) => {
+    const { wasRunning: _wasRunning, lastCommand: _lastCommand, ...rest } = d;
+    return rest as TaskDef;
+  });
+  const envelope: PersistedProjectTasks = { version: TASKS_VERSION, tasks };
+  return JSON.stringify(envelope);
+}
+
+/**
+ * Parse the flat per-project tasks JSON (or `null`/empty for "no file") into a
+ * clean `TaskDef[]`. Accepts the `{ version, tasks: [...] }` envelope and reuses
+ * the same {@link normalize} coercion as {@link parseTasks}. ANY failure
+ * (null/empty/malformed/not-an-object/`tasks` not an array) collapses to `[]` —
+ * NEVER throws.
+ */
+export function parseProjectTasks(raw: string | null | undefined): TaskDef[] {
+  try {
+    if (raw == null || raw.trim() === '') return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+    const tasks = (parsed as { tasks?: unknown }).tasks;
+    if (!Array.isArray(tasks)) return [];
+    return tasks.map(normalize).filter((t): t is TaskDef => t !== null);
+  } catch {
+    return [];
+  }
+}
+
+// ─── Per-project config file (`<project>/.agent-desktop/config.json`) ────────
+
+/** The on-disk schema version for the per-project config envelope. */
+export const PROJECT_CONFIG_VERSION = 1 as const;
+
+/** Per-project configuration. `autoWorktree` absent ⇒ defaults to `false`. */
+export interface ProjectConfig {
+  /** Whether new sessions in this project auto-create a git worktree. */
+  autoWorktree?: boolean;
+}
+
+/**
+ * Parse the per-project config JSON (or `null`/empty for "no file") into a clean
+ * {@link ProjectConfig}. Accepts the `{ version, autoWorktree }` envelope and only
+ * sets `autoWorktree` when it is a real boolean. ANY failure (absent/malformed/
+ * not-an-object) collapses to `{}` (⇒ `autoWorktree` defaults false) — NEVER throws.
+ */
+export function parseProjectConfig(raw: string | null | undefined): ProjectConfig {
+  try {
+    if (raw == null || raw.trim() === '') return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const cfg: ProjectConfig = {};
+    const autoWorktree = (parsed as { autoWorktree?: unknown }).autoWorktree;
+    if (typeof autoWorktree === 'boolean') cfg.autoWorktree = autoWorktree;
+    return cfg;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Serialize a {@link ProjectConfig} into the versioned `{ version, ... }` envelope,
+ * including `autoWorktree` ONLY when it is a boolean so an unset config stays tidy.
+ */
+export function serializeProjectConfig(cfg: ProjectConfig): string {
+  const envelope: { version: typeof PROJECT_CONFIG_VERSION; autoWorktree?: boolean } = {
+    version: PROJECT_CONFIG_VERSION
+  };
+  if (typeof cfg.autoWorktree === 'boolean') envelope.autoWorktree = cfg.autoWorktree;
   return JSON.stringify(envelope);
 }

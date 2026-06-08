@@ -14,8 +14,14 @@ import {
   markRunningState,
   captureRunningState,
   autoRestartIds,
+  serializeProjectTasks,
+  parseProjectTasks,
+  parseProjectConfig,
+  serializeProjectConfig,
+  PROJECT_CONFIG_VERSION,
   type TaskDef,
-  type TasksByProject
+  type TasksByProject,
+  type ProjectConfig
 } from './projectTasks';
 
 // Tests for the PURE project-terminals model (project-terminals capability). The
@@ -155,6 +161,25 @@ describe('project-terminals — Persisted terminal definitions', () => {
     map = removeTask(map, 'a');
     const env = JSON.parse(serializeTasks(map));
     expect(env.projects).toEqual({});
+  });
+
+  it('Close-on-complete choice persists', () => {
+    // A terminal whose user unticked "Close automatically when complete" persists
+    // closeOnComplete:false so the keep-open choice survives a restart; a default
+    // task stores no flag (asserted in the sibling test below).
+    const map = addTask({}, 'p', t({ id: 'a', closeOnComplete: false }));
+    const round = parseTasks(serializeTasks(map));
+    expect(tasksForProject(round, 'p')[0].closeOnComplete).toBe(false);
+  });
+
+  it('omits closeOnComplete when at its default (close)', () => {
+    // The default (close on success) is the ABSENCE of the flag — a legacy/normal
+    // terminal carries no closeOnComplete key, keeping the on-disk file tidy.
+    const map = addTask({}, 'p', t({ id: 'a' }));
+    const stored = JSON.parse(serializeTasks(map)).projects.p[0];
+    expect(stored).not.toHaveProperty('closeOnComplete');
+    // And a def parsed without the flag leaves it undefined (⇒ close).
+    expect(parseTasks(serializeTasks(map)).p[0].closeOnComplete).toBeUndefined();
   });
 });
 
@@ -305,5 +330,123 @@ describe('project-terminals — Task kind (terminal | agent)', () => {
     expect(stored).not.toHaveProperty('paneId');
     expect(stored).not.toHaveProperty('running');
     expect(stored).not.toHaveProperty('exitCode');
+  });
+});
+
+describe('project-terminals — Per-project sanitized tasks file', () => {
+  it('round-trips a defs array through the flat envelope', () => {
+    const defs: TaskDef[] = [
+      t({ id: 'a', name: 'dev', command: 'npm run dev', cwd: '/x' }),
+      t({ id: 'g', kind: 'agent', command: null, prompt: 'fix the bug' })
+    ];
+    const round = parseProjectTasks(serializeProjectTasks(defs));
+    expect(round).toEqual(defs);
+  });
+
+  it('Per-project file', () => {
+    // Project P's tasks persist to its own flat `{ version, tasks: [...] }`
+    // envelope, containing only P's tasks (no projectId keying).
+    const defs: TaskDef[] = [t({ id: 'a' }), t({ id: 'b' })];
+    const env = JSON.parse(serializeProjectTasks(defs));
+    expect(env.version).toBe(TASKS_VERSION);
+    expect(env.tasks.map((x: TaskDef) => x.id)).toEqual(['a', 'b']);
+    expect(env).not.toHaveProperty('projects');
+  });
+
+  it('serializes the flat versioned envelope', () => {
+    const env = JSON.parse(serializeProjectTasks([t({ id: 'a' })]));
+    expect(env.version).toBe(TASKS_VERSION);
+    expect(Array.isArray(env.tasks)).toBe(true);
+    expect(env.tasks[0].id).toBe('a');
+    expect(env).not.toHaveProperty('projects');
+  });
+
+  it('strips machine-local restore hints (wasRunning / lastCommand)', () => {
+    const defs: TaskDef[] = [
+      t({ id: 'a', wasRunning: true, lastCommand: 'vim x' })
+    ];
+    const env = JSON.parse(serializeProjectTasks(defs));
+    expect(env.tasks[0]).not.toHaveProperty('wasRunning');
+    expect(env.tasks[0]).not.toHaveProperty('lastCommand');
+    // The retained fields survive.
+    expect(env.tasks[0]).toMatchObject({ id: 'a', name: 'dev server', command: 'npm run dev' });
+  });
+
+  it('retains cwd and closeOnComplete:false', () => {
+    const defs: TaskDef[] = [
+      t({ id: 'a', cwd: '/custom', closeOnComplete: false })
+    ];
+    const env = JSON.parse(serializeProjectTasks(defs));
+    expect(env.tasks[0].cwd).toBe('/custom');
+    expect(env.tasks[0].closeOnComplete).toBe(false);
+  });
+
+  it('serializes the array given (does not drop empty)', () => {
+    expect(JSON.parse(serializeProjectTasks([])).tasks).toEqual([]);
+  });
+
+  it('parseProjectTasks of bad inputs collapses to []', () => {
+    expect(parseProjectTasks(null)).toEqual([]);
+    expect(parseProjectTasks(undefined)).toEqual([]);
+    expect(parseProjectTasks('')).toEqual([]);
+    expect(parseProjectTasks('{}')).toEqual([]);
+    expect(parseProjectTasks('[]')).toEqual([]);
+    expect(parseProjectTasks('not json')).toEqual([]);
+    expect(parseProjectTasks('{"version":1,"tasks":"x"}')).toEqual([]);
+    expect(parseProjectTasks('null')).toEqual([]);
+  });
+
+  it('parseProjectTasks(serializeProjectTasks(defs)) equals the sanitized defs', () => {
+    const defs: TaskDef[] = [
+      t({ id: 'a', wasRunning: true, lastCommand: 'vim x', cwd: '/x', closeOnComplete: false }),
+      t({ id: 'g', kind: 'agent', command: null, prompt: 'fix' })
+    ];
+    const sanitized: TaskDef[] = [
+      t({ id: 'a', cwd: '/x', closeOnComplete: false }),
+      t({ id: 'g', kind: 'agent', command: null, prompt: 'fix' })
+    ];
+    expect(parseProjectTasks(serializeProjectTasks(defs))).toEqual(sanitized);
+  });
+});
+
+describe('project-terminals — Per-project config file', () => {
+  it('round-trips autoWorktree true', () => {
+    const cfg: ProjectConfig = { autoWorktree: true };
+    expect(parseProjectConfig(serializeProjectConfig(cfg))).toEqual({ autoWorktree: true });
+  });
+
+  it('round-trips autoWorktree false', () => {
+    const cfg: ProjectConfig = { autoWorktree: false };
+    expect(parseProjectConfig(serializeProjectConfig(cfg))).toEqual({ autoWorktree: false });
+  });
+
+  it('round-trips autoWorktree absent (defaults off, omitted on disk)', () => {
+    const env = JSON.parse(serializeProjectConfig({}));
+    expect(env.version).toBe(PROJECT_CONFIG_VERSION);
+    expect(env).not.toHaveProperty('autoWorktree');
+    expect(parseProjectConfig(serializeProjectConfig({}))).toEqual({});
+  });
+
+  it('carries the version and only includes autoWorktree when boolean', () => {
+    const env = JSON.parse(serializeProjectConfig({ autoWorktree: true }));
+    expect(env.version).toBe(PROJECT_CONFIG_VERSION);
+    expect(env.autoWorktree).toBe(true);
+  });
+
+  it('bad config inputs collapse to {}', () => {
+    expect(parseProjectConfig(null)).toEqual({});
+    expect(parseProjectConfig(undefined)).toEqual({});
+    expect(parseProjectConfig('')).toEqual({});
+    expect(parseProjectConfig('not json')).toEqual({});
+    expect(parseProjectConfig('[]')).toEqual({});
+    expect(parseProjectConfig('null')).toEqual({});
+    // autoWorktree present but not a boolean ⇒ ignored.
+    expect(parseProjectConfig('{"version":1,"autoWorktree":"yes"}')).toEqual({});
+  });
+
+  it('only sets autoWorktree from a real boolean', () => {
+    expect(parseProjectConfig('{"version":1,"autoWorktree":true}')).toEqual({ autoWorktree: true });
+    expect(parseProjectConfig('{"version":1,"autoWorktree":false}')).toEqual({ autoWorktree: false });
+    expect(parseProjectConfig('{"version":1}')).toEqual({});
   });
 });
