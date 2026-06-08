@@ -141,12 +141,30 @@ export async function migrateToProjectFolders(): Promise<void> {
       console.error('migrate: projects_save failed', err);
     }
 
-    // 6. Delete the user-level tasks file ONLY when every task write succeeded.
+    // 6. Delete BOTH user-level source files ONLY when every task write succeeded.
+    //    Clearing the legacy `terminals.json` too is essential for idempotency: it
+    //    is the fallback source (step 1), so leaving it would re-fire the migration
+    //    on every launch and overwrite/resurrect per-project `.agent-desktop`
+    //    data. With both gone, the next run reads null from both and returns.
     if (allTaskWritesOk) {
       try {
         await invoke('tasks_clear');
       } catch (err) {
         console.error('migrate: tasks_clear failed', err);
+      }
+      try {
+        await invoke('terminals_clear');
+      } catch (err) {
+        console.error('migrate: terminals_clear failed', err);
+      }
+      // Surface (but do not block on) user-level tasks for projects no longer in
+      // the registry: they have nowhere to migrate to and are dropped with the
+      // cleared source files.
+      const orphans = Object.keys(byProject).filter(
+        (id) => !rawProjects.some((rp) => rp.id === id)
+      );
+      if (orphans.length > 0) {
+        console.warn('migrate: dropped user-level tasks for unknown projects', orphans);
       }
     }
   } catch (err) {

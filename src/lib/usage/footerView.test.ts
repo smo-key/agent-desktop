@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { footerView } from './footerView';
+import { footerView, footerGitProjectId } from './footerView';
+import { ALL, UNASSIGNED } from '$lib/projects/projectRollup';
 import type { Snapshot, SnapshotMap } from './snapshots.svelte';
 import type { Project } from '$lib/projects/projects';
 
@@ -71,5 +72,25 @@ describe('footerView', () => {
   it('coerces a non-finite context_pct to null', () => {
     const map: SnapshotMap = { a: snap({ pane_id: 'a', context_pct: Number.NaN }) };
     expect(footerView(map, 'a', null, PROJECTS).context).toBeNull();
+  });
+});
+
+describe('footerGitProjectId', () => {
+  it('prefers the focused pane project when it has one', () => {
+    expect(footerGitProjectId('p1', 'p2')).toBe('p1');
+    expect(footerGitProjectId('p1', ALL)).toBe('p1');
+  });
+
+  it('falls back to the panel selection when no pane project (overview)', () => {
+    expect(footerGitProjectId(null, 'p2')).toBe('p2');
+  });
+
+  it('yields null when the panel selection is a bucket, not a project', () => {
+    expect(footerGitProjectId(null, ALL)).toBeNull();
+    expect(footerGitProjectId(null, UNASSIGNED)).toBeNull();
+  });
+
+  it('yields null when neither source names a project', () => {
+    expect(footerGitProjectId(null, '')).toBeNull();
   });
 });

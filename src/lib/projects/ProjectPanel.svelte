@@ -27,8 +27,6 @@
   import WorktreeDialog from './WorktreeDialog.svelte';
   import ContextMenu, { type MenuItem } from '../ui/ContextMenu.svelte';
   import { tooltip } from '../ui/tooltip';
-  import GitInfo from '../usage/GitInfo.svelte';
-  import { projectGit } from './projectGit.svelte';
   import { pushProject, pullProject } from './projectGitActions';
   import { startCoordinator, liveCoordinator } from '../orchestration/coordinator.svelte';
 
@@ -226,24 +224,19 @@
   {#each counts as c (c.project.id)}
     <button
       type="button"
-      class="pp-item pp-project"
+      class="pp-item"
       class:active={projectFilter.selected === c.project.id}
       onclick={() => projectFilter.select(c.project.id)}
       oncontextmenu={(e) => openMenu(e, c.project)}
     >
-      <span class="pp-row-main">
-        {#if c.project.logo}
-          <img class="pp-logo" src={c.project.logo} alt="" />
-        {:else}
-          <Icon name={c.project.icon} size={16} color={c.project.color} />
-        {/if}
-        <span class="pp-name" use:tooltip={c.project.path}>{c.project.name}</span>
-        {#if c.attn}<span class="pp-attn" use:tooltip={'Needs attention'}></span>{/if}
-        <span class="pp-ct">{c.count}</span>
-      </span>
-      <span class="pp-git">
-        <GitInfo git={projectGit.forPath(c.project.path)} always stack />
-      </span>
+      {#if c.project.logo}
+        <img class="pp-logo" src={c.project.logo} alt="" />
+      {:else}
+        <Icon name={c.project.icon} size={16} color={c.project.color} />
+      {/if}
+      <span class="pp-name" use:tooltip={c.project.path}>{c.project.name}</span>
+      {#if c.attn}<span class="pp-attn" use:tooltip={'Needs attention'}></span>{/if}
+      <span class="pp-ct">{c.count}</span>
     </button>
   {/each}
 
@@ -431,36 +424,6 @@
   .pp-item.active {
     background: var(--blue-tint);
     color: var(--blue-200);
-  }
-  /* A project row stacks its main line (icon · name · count) above a compact git
-     status line, so it reads its current branch at a glance. */
-  .pp-project {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 5px;
-  }
-  .pp-row-main {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-  }
-  /* The git line, indented to sit under the project NAME (icon width + gap). */
-  .pp-git {
-    padding-left: 26px;
-    min-width: 0;
-    overflow: hidden;
-  }
-  .pp-git :global(.git) {
-    gap: 4px;
-  }
-  .pp-git :global(.pill) {
-    height: 18px;
-    padding: 0 6px;
-    font-size: 10px;
-  }
-  .pp-git :global(.branch) {
-    max-width: 150px;
   }
   .pp-name {
     flex: 1;

@@ -8,6 +8,7 @@
 import { accountSummary, type RateWindow } from './rollup';
 import type { GitStatus, SnapshotMap } from './snapshots.svelte';
 import { projectForId, type Project } from '../projects/projects';
+import { ALL, UNASSIGNED } from '../projects/projectRollup';
 
 /** The footer's whole view-model. */
 export interface FooterView {
@@ -25,6 +26,23 @@ export interface FooterView {
   fiveHour: RateWindow;
   /** Account-wide 7-day rate-limit window. */
   sevenDay: RateWindow;
+}
+
+/**
+ * The id of the project whose FOLDER git the footer's left zone shows: the focused
+ * pane's project when it has one, else the project-panel's current selection when
+ * that is a concrete project (not the ALL / UNASSIGNED buckets). Null when neither
+ * yields a concrete project — the footer then shows no project git. This keeps the
+ * git meaningful in overview (no focused pane) by tracking the selected project.
+ * Pure + unit-tested.
+ */
+export function footerGitProjectId(
+  focusedProjectId: string | null,
+  panelSelection: string
+): string | null {
+  if (focusedProjectId) return focusedProjectId;
+  if (panelSelection === ALL || panelSelection === UNASSIGNED) return null;
+  return panelSelection || null;
 }
 
 /** Finite number in any range, else null (guards NaN/Infinity/strings). */

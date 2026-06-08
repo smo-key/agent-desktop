@@ -158,5 +158,40 @@ describe('project-folder-storage — migration', () => {
 
     expect(call('project_tasks_save')).toHaveLength(1);
     expect(call('tasks_clear')).toHaveLength(1);
+    // The legacy source MUST also be cleared, else it re-fires every launch.
+    expect(call('terminals_clear')).toHaveLength(1);
+  });
+
+  it('does not re-migrate from legacy terminals.json after cleanup', async () => {
+    // Regression for the idempotency bug: the legacy `terminals.json` is the
+    // fallback source, so if it is not cleared the migration re-runs on every
+    // launch and overwrites/resurrects per-project `.agent-desktop` data. Here a
+    // STATEFUL mock makes `terminals_clear` actually empty the legacy source, then
+    // we run the migration a SECOND time and assert it writes nothing.
+    let terminalsPresent = serializeTasks({
+      p: [{ id: 'a', name: 'dev', kind: 'terminal', command: 'npm run dev', cwd: null }]
+    }) as string | null;
+    invokeMock.mockImplementation(async (cmd: unknown) => {
+      if (cmd === 'tasks_load') return null;
+      if (cmd === 'terminals_load') return terminalsPresent;
+      if (cmd === 'projects_load') return projectsJson([{ id: 'p', path: '/p', name: 'P' }]);
+      if (cmd === 'terminals_clear') {
+        terminalsPresent = null; // the cleanup actually removes the legacy file
+        return null;
+      }
+      return null;
+    });
+
+    await migrateToProjectFolders(); // run 1: migrates from legacy, clears it
+    expect(call('project_tasks_save')).toHaveLength(1);
+    expect(call('terminals_clear')).toHaveLength(1);
+
+    invokeMock.mockClear();
+    await migrateToProjectFolders(); // run 2: both sources null → pure no-op
+
+    expect(call('project_tasks_save')).toHaveLength(0);
+    expect(call('project_config_save')).toHaveLength(0);
+    expect(call('projects_save')).toHaveLength(0);
+    expect(call('tasks_clear')).toHaveLength(0);
   });
 });

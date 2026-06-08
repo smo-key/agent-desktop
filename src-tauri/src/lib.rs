@@ -503,6 +503,21 @@ fn tasks_clear(app: AppHandle) -> Result<(), String> {
     }
 }
 
+/// Delete the LEGACY user-level `<app_data_dir>/terminals.json` (the original name
+/// of the user-level task store, still read by `terminals_load` as a migration
+/// fallback). Deleting an absent file is a NO-OP. Cleared alongside
+/// [`tasks_clear`] after a successful migration so the legacy fallback can never
+/// re-fire and resurrect/clobber per-project `.agent-desktop/tasks.json` data.
+#[tauri::command]
+fn terminals_clear(app: AppHandle) -> Result<(), String> {
+    let path = app_data_file(&app, TERMINALS_FILE)?;
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()), // no-op.
+        Err(e) => Err(format!("remove {path:?}: {e}")),
+    }
+}
+
 /// List a project's SPECIALISTS — the native Claude Code subagent files under
 /// `<projectPath>/.claude/agents/*.md`. Returns one `{ name, content }` per `.md`
 /// file (raw contents; the frontend parses them via `parseSpecialist`), sorted by
@@ -1064,6 +1079,7 @@ pub fn run() {
             tasks_load,
             tasks_save,
             tasks_clear,
+            terminals_clear,
             specialists_list,
             specialists_read,
             specialists_write,

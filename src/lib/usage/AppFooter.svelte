@@ -7,15 +7,19 @@
   // drags); elsewhere it falls back to right-aligned. All math is in the pure,
   // tested `footerView` / `terminalLeftFraction`; this is the thin reactive shell.
   import { snapshots } from './snapshots.svelte';
-  import { footerView } from './footerView';
+  import { footerView, footerGitProjectId } from './footerView';
   import { terminalLeftFraction } from './footerGeometry';
   import { workspace } from '$lib/layout/workspace.svelte';
   import { projects } from '$lib/projects/projects.svelte';
+  import { projectForId } from '$lib/projects/projects';
+  import { projectFilter } from '$lib/projects/projectFilter.svelte';
+  import { projectGit } from '$lib/projects/projectGit.svelte';
   import { view as topView } from '$lib/overview/view.svelte';
   import LimitBars from './LimitBars.svelte';
   import GitInfo from './GitInfo.svelte';
   import ContextBar from './ContextBar.svelte';
   import { friendlyTime } from '$lib/overview/friendlyTime';
+  import { tooltip } from '$lib/ui/tooltip';
 
   /** Total session cost as "$1.24", or an em dash when unknown. */
   function costLabel(value: number | null): string {
@@ -36,6 +40,15 @@
   const view = $derived(
     footerView(snapshots.byPane, focusedPaneId, projectId, projects.list)
   );
+
+  // The FOLDER git shown on the left (before the limit bars): the focused pane's
+  // project, else the panel's current selection (so it stays meaningful in the
+  // overview, where no pane is focused). Folder-based via `projectGit`, so it
+  // shows a project's branch + ahead/behind/modified even with no agent running.
+  const gitProject = $derived(
+    projectForId(projects.list, footerGitProjectId(projectId, projectFilter.selected))
+  );
+  const folderGit = $derived(projectGit.forPath(gitProject?.path ?? null));
 
   // The terminal area's left edge as a fraction [0,1] of the surface, or null when
   // there's no terminal pane / not in grid view. A "terminal" pane is a non-claude
@@ -71,16 +84,16 @@
   aria-label="Status footer"
 >
   <div class="zone left">
+    <GitInfo git={folderGit} always />
+    <span class="sep" aria-hidden="true"></span>
     <LimitBars fiveHour={view.fiveHour} sevenDay={view.sevenDay} {now} />
   </div>
 
   <div class="zone right">
     <ContextBar pct={view.context} />
     <span class="sep" aria-hidden="true"></span>
-    <GitInfo git={view.git} />
-    <span class="sep" aria-hidden="true"></span>
-    <span class="metric" title="Total session cost">{costLabel(view.cost)}</span>
-    <span class="metric dim" title="Time since last message">{friendlyTime(view.lastTs, now * 1000)}</span>
+    <span class="metric" use:tooltip={'Total cost of the focused session'}>{costLabel(view.cost)}</span>
+    <span class="metric dim" use:tooltip={'Time since the last message in the focused session'}>{friendlyTime(view.lastTs, now * 1000)}</span>
   </div>
 </footer>
 
