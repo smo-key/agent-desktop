@@ -70,3 +70,6 @@
 - [x] 10.2 Pin the coordinator to the TOP of the Sessions list (above all other sessions), with a horizontal rule separating it from the rest and no separate heading
 - [x] 10.3 When the active project has no running coordinator, show a focusable "Start coordinator" affordance in that top slot
 - [x] 10.4 Focusing the not-started coordinator shows an empty main-pane state inviting the user to click a Start button that launches the orchestrator
+- [x] 10.5 The coordinator row is always labeled "Coordinator" (running or not) and carries no role/"not started" badge
+- [x] 10.6 Show the coordinator (or its start affordance) for the active project even when there are no other sessions; render the "No sessions yet" empty state below the coordinator + rule
+- [x] 10.7 Remove the "Start coordinator" entry from the project context menu (the coordinator is started from the Sessions list)

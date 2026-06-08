@@ -83,25 +83,38 @@ available.
 ### Requirement: Coordinator is pinned to the top of the Sessions list
 The coordinator SHALL appear at the top of the Sessions list, above all other
 sessions, separated from them by a horizontal rule, with no separate heading for
-it. When the active project has no running coordinator, the Sessions list SHALL
-show a focusable "Start coordinator" affordance in that top position. Focusing it
-SHALL show an empty main-pane state inviting the user to click a Start button to
-launch the orchestrator; clicking Start SHALL launch the coordinator.
+it. Its row SHALL always be labeled "Coordinator" — whether running or not — and
+SHALL NOT carry a role or "not started" badge. The coordinator SHALL be shown for
+the active project even when there are no other sessions; in that case the "No
+sessions yet" empty state SHALL render below the coordinator and its rule. When
+the active project has no running coordinator, the top row SHALL be a focusable
+affordance (still labeled "Coordinator"); focusing it SHALL show an empty
+main-pane state inviting the user to click a Start button to launch the
+orchestrator, and clicking Start SHALL launch the coordinator.
 
 #### Scenario: Running coordinator is pinned at the top
 - **WHEN** a project has a running coordinator
-- **THEN** the coordinator appears at the top of the Sessions list above all other sessions
+- **THEN** the coordinator appears at the top of the Sessions list above all other sessions, labeled "Coordinator" with no role/"not started" badge
 - **AND** a horizontal rule separates it from the remaining sessions
 - **AND** there is no separate heading for it
 
-#### Scenario: Start affordance shown when no coordinator
+#### Scenario: Coordinator shown with no other sessions
+- **WHEN** the active project has no sessions other than the coordinator
+- **THEN** the coordinator row (and its rule) still appears at the top
+- **AND** the "No sessions yet" empty state renders below it
+
+#### Scenario: Affordance shown when no coordinator
 - **WHEN** the active project has no running coordinator
-- **THEN** a focusable "Start coordinator" affordance appears at the top of the Sessions list
+- **THEN** a focusable row labeled "Coordinator" appears at the top of the Sessions list
 
 #### Scenario: Focusing the not-started coordinator shows a Start prompt
-- **WHEN** the user focuses the not-started coordinator affordance
+- **WHEN** the user focuses the not-started coordinator row
 - **THEN** the main pane shows an empty state inviting the user to click Start to launch the orchestrator
 - **AND** clicking Start launches the coordinator
+
+#### Scenario: No Start coordinator entry in the project context menu
+- **WHEN** the user opens a project's context menu
+- **THEN** it does not contain a "Start coordinator" entry (the coordinator is started from the Sessions list)
 
 ### Requirement: Coordinated agents are attributed in the roster
 Agents the coordinator spawns or drives are real panes and SHALL be surfaced in
