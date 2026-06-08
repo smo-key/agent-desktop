@@ -152,6 +152,25 @@ describe('autoWorktree field — persistence', () => {
     expect(back[0].autoWorktree).toBeUndefined();
     expect(Boolean(back[0].autoWorktree)).toBe(false);
   });
+
+  it('edit-form draft carries autoWorktree through update unchanged', () => {
+    // The project form's onSave draft (which includes autoWorktree) flows into
+    // projects.update → updateProject. The edit patch must round-trip the flag,
+    // so reopening the form reflects the saved value.
+    const before = p({ id: 'c', autoWorktree: false });
+    const next = updateProject([before], 'c', {
+      name: 'Payments',
+      path: '/home/u/payments',
+      icon: 'credit-card',
+      color: '#4C8DFF',
+      autoWorktree: true
+    });
+    expect(next[0].autoWorktree).toBe(true);
+
+    // And it can be turned back off via the same path.
+    const off = updateProject(next, 'c', { autoWorktree: false });
+    expect(off[0].autoWorktree).toBe(false);
+  });
 });
 
 describe('contrastText', () => {

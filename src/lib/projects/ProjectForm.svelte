@@ -11,6 +11,7 @@
   import { processLogoFile } from './logo';
   import { pickFolder } from '../launcher/pick';
   import Icon from '../icons/Icon.svelte';
+  import { tooltip } from '../ui/tooltip';
   import ProjectIcon from '../icons/ProjectIcon.svelte';
 
   let {
@@ -36,6 +37,8 @@
   let logo = $state<string | undefined>(seed?.logo);
   // The avatar is either an icon or a logo — start on whichever the project has.
   let appearance = $state<'icon' | 'logo'>(seed?.logo ? 'logo' : 'icon');
+  // Auto-worktree: launch each session in its own git worktree. Absent ⇒ off.
+  let autoWorktree = $state(seed?.autoWorktree ?? false);
 
   let browsing = $state(false);
   let logoBusy = $state(false);
@@ -101,7 +104,8 @@
       path: folder.trim(),
       icon,
       color,
-      logo: appearance === 'logo' ? logo : undefined
+      logo: appearance === 'logo' ? logo : undefined,
+      autoWorktree
     });
   }
 
@@ -141,7 +145,7 @@
     <span class="pf-flabel">Folder</span>
     <button class="pf-browse" onclick={browse} disabled={browsing}>
       <Icon name="folder" size={14} color="var(--fg-3)" />
-      <span class="pf-folder" class:empty={!folder.trim()} title={folder}>
+      <span class="pf-folder" class:empty={!folder.trim()} use:tooltip={folder}>
         {folder.trim() || (browsing ? 'Opening…' : 'Choose folder…')}
       </span>
     </button>
@@ -219,10 +223,30 @@
           onclick={() => (color = c)}
         ></button>
       {/each}
-      <label class="cpick custom" class:on={isCustomColor} title="Custom color">
+      <label class="cpick custom" class:on={isCustomColor} use:tooltip={'Custom color'}>
         <input type="color" bind:value={color} aria-label="Custom color" />
       </label>
     </div>
+  </div>
+
+  <!-- Auto-worktree: launch each session in its own git worktree. A row-style
+       toggle — label + helper on the left, switch on the right. -->
+  <div class="pf-field">
+    <button
+      type="button"
+      class="pf-toggle-row"
+      role="switch"
+      aria-checked={autoWorktree}
+      onclick={() => (autoWorktree = !autoWorktree)}
+    >
+      <span class="pf-toggle-text">
+        <span class="pf-toggle-label">Auto-worktree</span>
+        <span class="pf-toggle-help">Launch each session in its own git worktree</span>
+      </span>
+      <span class="pf-switch" class:on={autoWorktree} aria-hidden="true">
+        <span class="pf-knob"></span>
+      </span>
+    </button>
   </div>
 
   <button type="button" class="pf-submit" disabled={!canSave} onclick={submit}>
@@ -471,6 +495,71 @@
   }
   .pf-folder.empty {
     color: var(--fg-4);
+  }
+
+  /* Auto-worktree toggle: a full-width row — text on the left, switch on the
+     right. Matches the form's other controls (space-900 well, subtle border). */
+  .pf-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    box-sizing: border-box;
+    text-align: left;
+    background: var(--space-900);
+    border: 1px solid var(--line-default);
+    border-radius: var(--r-sm);
+    padding: 9px 11px;
+    cursor: pointer;
+    transition: border-color var(--dur-fast);
+  }
+  .pf-toggle-row:hover {
+    border-color: var(--line-strong);
+  }
+  .pf-toggle-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .pf-toggle-label {
+    font-family: var(--font-sans);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--fg-1);
+  }
+  .pf-toggle-help {
+    font-size: 11.5px;
+    color: var(--fg-3);
+  }
+  .pf-switch {
+    flex: none;
+    position: relative;
+    width: 34px;
+    height: 20px;
+    border-radius: var(--r-full);
+    background: var(--space-700);
+    box-shadow: inset 0 0 0 1px var(--line-subtle);
+    transition: background var(--dur-fast);
+  }
+  .pf-switch.on {
+    background: var(--blue-500);
+    box-shadow: inset 0 0 0 1px var(--blue-500);
+  }
+  .pf-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: var(--r-full);
+    background: #fff;
+    box-shadow: var(--shadow-sm);
+    transition: transform var(--dur-fast);
+  }
+  .pf-switch.on .pf-knob {
+    transform: translateX(14px);
   }
 
   /* Full-width primary commit. */
