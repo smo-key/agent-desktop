@@ -123,6 +123,16 @@ const ENFORCED_CAPABILITIES = new Set([
   // scenario is headless-exempt (MANUAL below), like terminals-panel's rendered
   // behaviors; the pure scoping resolver they reuse is covered under activeProject.
   'tasks-panel',
+  // project-folder-storage: per-project `.agent-desktop/{tasks,config}.json` storage
+  // (relocated off the user-level app-data dir). The directory/file layout, path-keyed
+  // load/save, missing-file tolerance, and atomic write are Rust-tested
+  // (project_store.rs); the sanitized serialization, config defaults, per-project
+  // envelope, no-auto-restart, resilience (in-memory + retry), and the one-time
+  // destructive migration are pure/headless and unit-tested (projectTasks.test.ts,
+  // projectTasks.svelte.test.ts, migrateProjectFolders.test.ts, projects.test.ts).
+  // The single headless-exempt scenario is "Not gitignored" (asserting the absence of
+  // a real on-disk `.gitignore` mutation in the live app) — MANUAL below.
+  'project-folder-storage',
 ]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by
