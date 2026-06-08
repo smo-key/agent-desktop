@@ -16,6 +16,7 @@ Read first:
   file.
 - `.claude/skills/workflow/references/build-loop.md` (the subagent-driven build
   loop + TDD discipline you will follow in step 4).
+- `.claude/skills/workflow/references/worktrees.md` (only if `worktreePerTask`)
 
 ## Steps
 
@@ -38,5 +39,13 @@ Read first:
 5. **Mark review.** When tasks are complete, emit the `review` event; update
    `lastEvent`.
 
-6. **Hand off.** Tell the user implementation is complete and `workflow-close` is
-   next (drift reconciliation → verify → archive).
+6. **Merge back (only if `worktreePerTask` and `worktreeMergeAt: build`).** Merge
+   the task branch into its `baseBranch` and remove the worktree per the merge
+   procedure in `worktrees.md`. Stop and surface any merge conflict. (When
+   `worktreeMergeAt` is `archive`, leave the worktree in place — `workflow-done`
+   merges it.)
+
+7. **Hand off.** Tell the user implementation is complete and `workflow-done` is
+   next (drift reconciliation → adversarial code review → verify → archive). If
+   you merged in step 6, note that Done now runs in the main working tree on
+   `baseBranch`.

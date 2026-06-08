@@ -19,7 +19,9 @@
   </span>
   <StatusBar
     {pct}
-    label={pct === null ? 'context unknown' : `context ${Math.round(pct)}%`}
+    label={pct === null
+      ? 'Context window — usage unknown'
+      : `Context window — ${Math.round(pct)}% of the focused agent's context used`}
   />
 </div>
 

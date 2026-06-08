@@ -14,5 +14,8 @@ the user declines to file a free-form task.
   not print noise on every call.
 - **create(title, desc)** — nothing to create remotely; the OpenSpec change *is*
   the record. Return `{ ref: <change-name>, url: "" }`.
+- **set_requirements(ref, text)** — **no-op.** There is no external field to write
+  to. `workflow-define` prints the requirements brief to the terminal instead (it
+  writes no files in any mode).
 
 No credentials, network, or CLI required.

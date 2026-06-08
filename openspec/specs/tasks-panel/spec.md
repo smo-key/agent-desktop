@@ -76,8 +76,11 @@ require explicit confirmation.
 The system SHALL provide a modal dialog, modeled on the New session dialog, to
 create or edit a task. The task name SHALL be OPTIONAL — when left blank the
 system derives a default from the command or prompt. For a terminal task the
-command input SHALL use a monospace font. The dialog SHALL be dismissable
-(Cancel / Escape / backdrop) without changing any task.
+command input SHALL use a monospace font, and the dialog SHALL present a "Close
+automatically when complete" checkbox (defaulting to checked) that sets the task's
+`closeOnComplete` behavior. The checkbox SHALL be shown only for terminal-kind
+tasks. The dialog SHALL be dismissable (Cancel / Escape / backdrop) without
+changing any task.
 
 #### Scenario: Dialog mimics the New session modal
 - **WHEN** the create/edit dialog opens
@@ -136,7 +139,9 @@ interactive terminal via ⌘Y and via the Terminals panel's `＋` button.
 ### Requirement: Task completion toast
 
 When a terminal task completes successfully, the system SHALL show a transient
-toast notification reading "<task name> completed".
+toast notification reading "<task name> completed", anchored to the bottom-left of
+the window. The toast fires on a successful exit regardless of the task's
+`closeOnComplete` setting (whether or not the pane auto-closes).
 
 #### Scenario: Completion toast on success
 - **WHEN** a terminal task's command exits with code 0

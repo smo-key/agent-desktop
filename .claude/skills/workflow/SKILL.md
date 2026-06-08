@@ -14,7 +14,8 @@ missing, the stage skills scaffold a `local` default. The tracker is pluggable �
 see `references/providers.md` and `references/providers/{local,github,jira}.md`.
 Each task is linked to its OpenSpec change via `workflow.json`
 (`references/linkage.md`). Building is subagent-driven and self-contained —
-`references/build-loop.md`.
+`references/build-loop.md`. Optionally, `worktreePerTask` runs each task in its
+own git worktree, merged back when complete — `references/worktrees.md`.
 
 These skills depend only on the `openspec-*` skills and standard host tools (no
 other skill set required), so they can be shared standalone.

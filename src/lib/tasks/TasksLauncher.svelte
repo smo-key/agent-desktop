@@ -12,6 +12,7 @@
   // project. Agent-task runtime isn't tracked (agents are workspace sessions, not
   // right-panel panes — design D5), so agent rows show a best-effort idle dot.
   import Icon from '../icons/Icon.svelte';
+  import { tooltip } from '../ui/tooltip';
   import ContextMenu, { type MenuItem } from '../ui/ContextMenu.svelte';
   import { workspace } from '../layout/workspace.svelte';
   import { projectFilter } from '../projects/projectFilter.svelte';
@@ -111,7 +112,8 @@
       class="launch"
       onclick={() => taskDialog.showCreate(activeId)}
       disabled={!activeId}
-      title="New task"
+      aria-label="New task"
+      use:tooltip={'New task'}
     >＋</button>
   </header>
 
@@ -138,15 +140,13 @@
               class="rowbtn"
               onclick={() => rowClick(def)}
               oncontextmenu={(e) => openMenu(e, def)}
-              title={running
-                ? 'Click to reveal · right-click for options'
-                : 'Click to start · right-click for options'}
+              use:tooltip={running ? 'Click to reveal' : 'Click to start'}
             >
-              <span class="dot" class:on={running} class:fail={failed} title={dot}></span>
+              <span class="dot" class:on={running} class:fail={failed}></span>
               <Icon name={def.kind === 'agent' ? 'bot' : 'terminal'} size={13} />
               <span class="nm">
                 <span class="t">{def.name}</span>
-                <span class="s" title={subLabel(def)}>{subLabel(def)}</span>
+                <span class="s">{subLabel(def)}</span>
               </span>
             </button>
           </li>

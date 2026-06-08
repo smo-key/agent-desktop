@@ -13,6 +13,7 @@ Read first:
 - `.claude/skills/workflow/references/providers.md` and the configured provider.
 - `.claude/skills/workflow/references/linkage.md`
 - `.claude/skills/workflow/references/build-loop.md` (TDD discipline)
+- `.claude/skills/workflow/references/worktrees.md` (only if `worktreePerTask`)
 
 ## Steps
 
@@ -24,7 +25,10 @@ Read first:
 
 3. **Mark started.** Emit the `started` event.
 
-4. **Branch** if `branchPerTask` (`git switch -c <change-name>`).
+4. **Branch or worktree.** If `worktreePerTask`, create a worktree for the change
+   and work inside it, recording `baseBranch` + `worktreePath` for step 6's
+   `workflow.json` (see `worktrees.md`); this supersedes `branchPerTask`. Else if
+   `branchPerTask`, `git switch -c <change-name>`.
 
 5. **Implement with TDD.** Make the change directly following the TDD discipline
    in `references/build-loop.md` (failing test → minimal code → pass → commit),
@@ -34,7 +38,8 @@ Read first:
 6. **Capture the delta.** Create a minimal OpenSpec change directory for
    `<change-name>` containing a spec delta (`## ADDED`/`## MODIFIED` with at least
    one `#### Scenario:`) describing the behavior change, plus a short `tasks.md`
-   reflecting what you did. Write `workflow.json` (linkage.md). Commit.
+   reflecting what you did. Write `workflow.json` (linkage.md) — including
+   `baseBranch` + `worktreePath` if you created a worktree in step 4. Commit.
 
    If, while implementing, the change turns out to be larger than expected
    (needs design discussion or spans multiple capabilities), STOP and hand off to
@@ -47,4 +52,11 @@ Read first:
 8. **Archive.** Invoke **openspec-archive-change** so nothing lingers under
    `openspec/changes/`.
 
-9. **Mark done.** Emit the `done` event. Report what shipped and the task status.
+9. **Mark done.** Emit the `done` event.
+
+10. **Merge back (only if `worktreePerTask`).** Merge the task branch into its
+    `baseBranch` and remove the worktree per `worktrees.md` — Quick always merges
+    here, since build and archive coincide in this one pass (`worktreeMergeAt`
+    does not apply). Stop and surface any merge conflict.
+
+11. **Report** what shipped and the task status.

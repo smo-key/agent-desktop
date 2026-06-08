@@ -5,6 +5,7 @@
   // data URL), the logo image renders in place of the icon glyph. A neutral
   // "No project" chip shows when the focused pane has no project bound.
   import Icon from '$lib/icons/Icon.svelte';
+  import { tooltip } from '$lib/ui/tooltip';
   import { contrastText, projectLabel, type Project } from './projects';
 
   let { project }: { project: Project | null } = $props();
@@ -12,7 +13,7 @@
 
 {#if project}
   {@const fg = contrastText(project.color)}
-  <div class="chip" style:background={project.color} style:color={fg} title={project.path}>
+  <div class="chip" style:background={project.color} style:color={fg} use:tooltip={project.path}>
     {#if project.logo}
       <img class="logo" src={project.logo} alt="" />
     {:else}
@@ -21,7 +22,7 @@
     <span class="name">{projectLabel(project)}</span>
   </div>
 {:else}
-  <div class="chip none" title="No project for the focused pane">
+  <div class="chip none" use:tooltip={'No project for the focused pane'}>
     <span class="name">No project</span>
   </div>
 {/if}

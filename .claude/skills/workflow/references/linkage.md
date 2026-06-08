@@ -14,7 +14,9 @@ the change.)
   "provider": "github",
   "taskRef": "owner/repo#123",
   "url": "https://github.com/owner/repo/issues/123",
-  "lastEvent": "planned"
+  "lastEvent": "planned",
+  "baseBranch": "main",
+  "worktreePath": "/abs/path/to/repo-worktrees/add-sso-login"
 }
 ```
 
@@ -24,6 +26,10 @@ the change.)
 - `url` — link to the task if one exists (empty string for local free-form).
 - `lastEvent` — the most recent lifecycle event emitted, updated in place each
   time a skill calls `set_status`.
+- `baseBranch` / `worktreePath` — present **only** when `worktreePerTask` is on
+  (see `worktrees.md`). The branch the worktree was created from (the merge
+  target) and the worktree's absolute path, so Build/Done can merge back and
+  clean up without re-deriving them. Omit both when worktrees are off.
 
 ## Reading (Build / Close)
 
@@ -36,7 +42,8 @@ the change.)
 
 ## Writing / updating
 
-- Start/Plan/Quick create it after the change directory exists.
+- Start/Quick create it after the change directory exists (inside the worktree
+  when `worktreePerTask` is on), recording `baseBranch` + `worktreePath` then.
 - On every `set_status(event)`, update `lastEvent` to that event and rewrite the
   file.
 - `workflow-done` / `workflow-quick` leave the final file in the change so it is

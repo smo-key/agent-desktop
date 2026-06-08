@@ -22,6 +22,7 @@ Read these references first:
 - `.claude/skills/workflow/references/providers.md` and the file for the
   configured provider under `.claude/skills/workflow/references/providers/`
 - `.claude/skills/workflow/references/linkage.md`
+- `.claude/skills/workflow/references/worktrees.md` (only if `worktreePerTask`)
 
 ## Steps
 
@@ -48,8 +49,13 @@ Read these references first:
 3. **Mark started.** Emit the `started` event (see "Emitting a lifecycle event"
    in `providers.md`): `set_status(taskRef, statuses.started)` if mapped.
 
-4. **Branch.** If `branchPerTask` is true, create and switch to a branch named
-   after the change: `git switch -c <change-name>` (skip if it already exists).
+4. **Branch or worktree.**
+   - If `worktreePerTask` is true → create a worktree for the change and operate
+     inside it for everything that follows (see `worktrees.md`). Record
+     `baseBranch` + `worktreePath` for step 6's `workflow.json`. This supersedes
+     `branchPerTask`.
+   - Else if `branchPerTask` is true → create and switch to a branch named after
+     the change: `git switch -c <change-name>` (skip if it already exists).
 
 5. **Drive to apply-ready.** Pick the lane from step 2:
 
@@ -75,8 +81,9 @@ Read these references first:
 
 6. **Link + commit.** Write `openspec/changes/<change-name>/workflow.json`
    (format in `linkage.md`) with `provider`, `taskRef`, `url`, and
-   `lastEvent: "started"`. Stage and commit the OpenSpec artifacts and
-   `workflow.json` together.
+   `lastEvent: "started"` — plus `baseBranch` + `worktreePath` if a worktree was
+   created in step 4. Stage and commit the OpenSpec artifacts and `workflow.json`
+   together (inside the worktree, when one is in use).
 
 7. **Mark planned.** Emit the `planned` event; update `lastEvent` in
    `workflow.json`.

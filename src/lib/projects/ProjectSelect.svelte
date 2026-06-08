@@ -10,6 +10,7 @@
   import { projectForId, PROJECT_ICON_CHOICES, hexA } from './projects';
   import { pickFolder } from '../launcher/pick';
   import Icon from '../icons/Icon.svelte';
+  import { tooltip } from '../ui/tooltip';
 
   let {
     value,
@@ -165,7 +166,7 @@
     {#if current}
       <Icon name={current.icon} size={16} color={current.color} />
       <span class="psel-name">{current.name}</span>
-      <span class="psel-repo" title={current.path}>{current.path}</span>
+      <span class="psel-repo" use:tooltip={current.path}>{current.path}</span>
     {:else}
       <Icon name="folder" size={16} color="var(--fg-3)" />
       <span class="psel-name dim">Choose a project…</span>
@@ -211,7 +212,7 @@
           </div>
           <button class="psel-browse" onclick={browse} disabled={browsing}>
             <Icon name="folder" size={14} color="var(--fg-3)" />
-            <span class="psel-folder" class:empty={!folder.trim()} title={folder}>
+            <span class="psel-folder" class:empty={!folder.trim()} use:tooltip={folder}>
               {folder.trim() || (browsing ? 'Opening…' : 'Choose folder…')}
             </span>
           </button>

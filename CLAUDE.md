@@ -39,6 +39,15 @@ A change is not "done" until all of the following hold, in order:
    **conversation drift**: any behavior discussed or implemented in this session
    that is not yet reflected in `specs/`, `tasks.md`, or `proposal.md` must be
    added now. Do not pass verification with known, unrecorded drift.
+
+   Verification MUST also include an **adversarial code review**: run the
+   `adversarial-code-review` skill over the change's implementation diff. It
+   dispatches an independent, skeptical reviewer whose job is to prove the
+   **code** is broken (real bugs, edge cases, regressions) — distinct from the
+   spec-coverage checks above. **Every CRITICAL finding it returns must be
+   resolved (or proven a false positive) before archiving.** This gate applies
+   even when verification is run on its own (e.g. a bare `/openspec-verify-change`),
+   not only via `workflow-done`.
 3. **Archive** — run the `openspec-archive-change` skill. This promotes the
    change's delta specs into `openspec/specs/` (the durable, up-to-date specs)
    and moves the change to the archive.

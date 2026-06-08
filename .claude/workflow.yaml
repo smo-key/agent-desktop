@@ -1,8 +1,41 @@
+# Development workflow config (schema: .claude/skills/workflow/references/config.md).
+# Loaded by every workflow stage skill (start / build / done / quick / define).
+
+# Which ticket tracker to integrate with: local | github | jira.
+# `local` needs no other config; github/jira require a matching `github:`/`jira:` block.
 provider: local
-branchPerTask: true
+
+# Required when provider: github. Uncomment and fill in.
+# github:
+#   project: ""             # "owner/repo" — issues read/created here; Project (v2) board resolved from that owner
+#   requirementsField: ""   # optional: a Projects (v2) text field for the workflow-define brief; empty = issue body
+
+# Required when provider: jira. Uncomment and fill in.
+# Auth is read from env (JIRA_EMAIL, JIRA_API_TOKEN), never this file.
+# jira:
+#   baseUrl: ""             # https://your-site.atlassian.net
+#   projectKey: ""          # e.g. PROJ
+#   requirementsField: ""   # optional: a custom field id (e.g. customfield_10042) for the brief; empty = description
+
+# Create a git branch named after the change when Start/Quick begins (true | false).
+# Ignored when worktreePerTask is true (the worktree carries the task branch instead).
+branchPerTask: false
+
+# Run each task in its own git worktree, merged back into the branch you started
+# from when complete (true | false). Supersedes branchPerTask. See worktrees.md.
+worktreePerTask: false
+
+# Only when worktreePerTask: when to merge the task branch back and remove the worktree.
+#   archive — after Done verifies + archives (safest; a failing review blocks the merge)
+#   build   — as soon as implementation completes, for projects that must merge before testing
+worktreeMergeAt: archive
+
+# Map each workflow lifecycle event -> the EXACT status name in your tracker.
+# Omit any line to make that transition a no-op (e.g. trackers with only To Do/Doing/Done).
 statuses:
-  started:      "In Progress"
-  planned:      "In Progress"
-  implementing: "In Progress"
-  review:       "In Review"
-  done:         "Done"
+  started:      "New"          # Start/Quick at intake (incl. picking up a refined item)
+  refined:      "Ready"        # workflow-define: requirements drafted, awaiting a developer
+  planned:      "In Progress"  # Start: change is apply-ready
+  implementing: "In Progress"  # Build: implementation underway
+  review:       "In Review"    # Build: tasks complete, awaiting close-out
+  done:         "Done"         # Done/Quick: verified + archived

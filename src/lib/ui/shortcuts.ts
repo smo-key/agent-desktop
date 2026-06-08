@@ -57,8 +57,7 @@ export const SHORTCUTS: ShortcutGroup[] = [
   {
     title: 'Voice',
     items: [
-      { keys: ['⌘'], label: 'Voice input (tap right Command)' },
-      { keys: ['Mic'], label: 'Voice input (click the footer mic button)' }
+      { keys: ['⌘'], label: 'Voice input (tap right Command)' }
     ]
   }
 ];

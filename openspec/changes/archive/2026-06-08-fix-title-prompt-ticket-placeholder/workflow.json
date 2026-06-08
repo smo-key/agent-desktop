@@ -2,5 +2,5 @@
   "provider": "local",
   "taskRef": "fix-title-prompt-ticket-placeholder",
   "url": "",
-  "lastEvent": "started"
+  "lastEvent": "done"
 }

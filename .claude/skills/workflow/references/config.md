@@ -9,6 +9,8 @@ the user, then continues with `provider: local`.
 ```yaml
 provider: github            # local | github | jira  (required)
 branchPerTask: true         # create a git branch when Start/Quick begins (default: true)
+worktreePerTask: false      # run each task in its own git worktree, merged back when complete (default: false)
+worktreeMergeAt: archive    # when worktreePerTask: merge the task branch back at `archive` (after Done) or `build` (when implementation completes). default: archive
 
 github:                     # required when provider: github
   project: "owner/repo"     # repo for issues; project resolved via `gh project` for that owner
@@ -35,6 +37,16 @@ statuses:
 - `provider` — which tracker integration to use. `local` needs no other config.
 - `branchPerTask` — when true, Start/Quick create a git branch named after the
   change (e.g. `git switch -c <change-name>`) before discovery/implementation.
+- `worktreePerTask` — when true, each task runs in its own git worktree (on a
+  branch named after the change) instead of switching branches in place, and is
+  merged back into the branch you started from when complete. This supersedes
+  `branchPerTask`'s in-place switch — the worktree carries the task branch. See
+  `../worktrees.md` for the create/merge mechanics.
+- `worktreeMergeAt` — only meaningful when `worktreePerTask` is true. `archive`
+  (default) merges the task branch back at the end of `workflow-done`, after the
+  change is verified and archived — the safest path, since a failing review
+  blocks the merge. `build` merges as soon as `workflow-build` finishes
+  implementation, for projects where testing the change requires it merged first.
 - `github.project` — `owner/repo`. Issues are read/created here; the org/user
   Project (v2) board is discovered from that owner for status edits.
 - `github.requirementsField` / `jira.requirementsField` — optional. Where
@@ -63,6 +75,8 @@ statuses:
 ```yaml
 provider: local
 branchPerTask: true
+worktreePerTask: false
+worktreeMergeAt: archive
 statuses:
   started:      "In Progress"
   refined:      "Ready for Dev"

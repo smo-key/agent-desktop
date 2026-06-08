@@ -2,5 +2,5 @@
   "provider": "local",
   "taskRef": "add-first-launch-model-gate",
   "url": "",
-  "lastEvent": "started"
+  "lastEvent": "done"
 }

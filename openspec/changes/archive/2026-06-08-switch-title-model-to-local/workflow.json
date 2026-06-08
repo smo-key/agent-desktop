@@ -2,5 +2,5 @@
   "provider": "local",
   "taskRef": "switch-title-model-to-local",
   "url": "",
-  "lastEvent": "started"
+  "lastEvent": "done"
 }

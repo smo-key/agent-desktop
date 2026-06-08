@@ -11,6 +11,7 @@
 
   import { workspace } from './workspace.svelte';
   import { launcher } from '$lib/launcher/launcherStore.svelte';
+  import { tooltip } from '$lib/ui/tooltip';
 
   // Inline-rename bookkeeping. `editingId` is the workspace being renamed (double
   // click a row label to start); `draft` holds the in-progress text.
@@ -108,13 +109,13 @@
               autofocus
             />
           {:else}
-            <span class="name" title={ws.name}>{ws.name}</span>
+            <span class="name" use:tooltip={ws.name}>{ws.name}</span>
           {/if}
 
           {#if workspace.workspaces.length > 1}
             <button
               class="close"
-              title="Close session"
+              use:tooltip={'Close session'}
               aria-label={`Close ${ws.name}`}
               onclick={(e) => requestClose(ws.id, ws.name, e)}
             >

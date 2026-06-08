@@ -3,6 +3,7 @@
   // color comes from the shared `barColor` (green/yellow/red by fullness). A null
   // percent renders an "unknown" striped track. Used by LimitBars + ContextBar.
   import { barColor } from './barColor';
+  import { tooltip } from '$lib/ui/tooltip';
 
   let { pct, label }: { pct: number | null; label?: string } = $props();
 
@@ -10,7 +11,7 @@
   const width = $derived(known ? Math.max(0, Math.min(100, pct as number)) : 0);
 </script>
 
-<div class="bar" class:unknown={!known} title={label}>
+<div class="bar" class:unknown={!known} use:tooltip={label ?? ''}>
   {#if known}
     <div class="fill" style:width={`${width}%`} style:background={barColor(pct)}></div>
   {/if}

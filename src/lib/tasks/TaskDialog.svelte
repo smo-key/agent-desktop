@@ -18,6 +18,9 @@
   let name = $state('');
   let command = $state('');
   let prompt = $state('');
+  // Terminal-only: auto-close the pane on a successful exit (default on). When off,
+  // a finished terminal stays open so its output stays readable.
+  let closeOnComplete = $state(true);
 
   // The name is OPTIONAL (the store derives a default from the command/prompt when
   // blank). A terminal saves with any input (an empty command means an interactive
@@ -37,11 +40,13 @@
         name = def.name ?? '';
         command = def.command ?? '';
         prompt = def.prompt ?? '';
+        closeOnComplete = def.closeOnComplete !== false;
       } else {
         kind = 'terminal';
         name = '';
         command = '';
         prompt = '';
+        closeOnComplete = true;
       }
     });
   });
@@ -57,14 +62,14 @@
       if (kind === 'agent') {
         await projectTasks.update(taskDialog.editId, { name, kind, prompt });
       } else {
-        await projectTasks.update(taskDialog.editId, { name, kind, command });
+        await projectTasks.update(taskDialog.editId, { name, kind, command, closeOnComplete });
       }
     } else {
       if (!taskDialog.projectId) return;
       if (kind === 'agent') {
         await projectTasks.create(taskDialog.projectId, { kind, name, prompt });
       } else {
-        await projectTasks.create(taskDialog.projectId, { kind, name, command });
+        await projectTasks.create(taskDialog.projectId, { kind, name, command, closeOnComplete });
       }
     }
     taskDialog.close();
@@ -138,6 +143,12 @@
             placeholder="npm run dev — blank for an interactive shell"
           />
         </section>
+        <!-- Auto-close on success (default on). When off, a finished terminal stays
+             open so its output is readable; a failed run stays open regardless. -->
+        <label class="check">
+          <input type="checkbox" bind:checked={closeOnComplete} />
+          <span>Close automatically when complete</span>
+        </label>
       {:else}
         <section class="field">
           <span class="label">Prompt</span>
@@ -253,6 +264,25 @@
   .field input.mono,
   .field textarea.mono {
     font-family: var(--font-mono);
+  }
+
+  /* Auto-close checkbox row (terminal only) — sits just under the Command field. */
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-top: -6px;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    color: var(--fg-2);
+    cursor: pointer;
+    user-select: none;
+  }
+  .check input {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--blue-500);
+    cursor: pointer;
   }
 
   .seg {
