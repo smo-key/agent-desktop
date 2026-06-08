@@ -61,6 +61,7 @@
   import { friendlyTime } from './friendlyTime';
   import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
   import TasksLauncher from '$lib/tasks/TasksLauncher.svelte';
+  import SpecialistsPanel from '$lib/specialists/SpecialistsPanel.svelte';
 
   // --- Tasks launcher split (agent list on top / Tasks launcher on bottom) -----
   // The `.col-list` column splits into an agent region (top) and the Tasks
@@ -740,7 +741,14 @@
                   >
                     <ProjectIcon {...projAvatar(r.projectId)} size={30} />
                     <span class="nm">
-                      <span class="t">{titles.titleFor(r.paneId) ?? r.name}</span>
+                      <span class="t">
+                        {titles.titleFor(r.paneId) ?? r.name}
+                        {#if r.specialist}
+                          <span class="spec-badge" use:tooltip={`Spawned as specialist “${r.specialist}”`}>
+                            <Icon name="bot" size={9} />{r.specialist}
+                          </span>
+                        {/if}
+                      </span>
                       <span class="s" class:q={needsAttention(r)} use:tooltip={rowSub(r)}>{rowSub(r)}</span>
                       <span class="meta">
                         {#if showMeta(r)}
@@ -772,9 +780,11 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="tasks-gutter" onpointerdown={startTasksResize} use:tooltip={'Drag to resize'}></div>
 
-      <!-- Bottom region: the Tasks launcher, sized to a persisted fraction. -->
+      <!-- Bottom region: the Tasks launcher + the Specialists panel (sibling
+           surfaces), sized together to a persisted fraction and split evenly. -->
       <div class="tasks-region" style="flex: 0 0 {tasksFrac * 100}%">
-        <TasksLauncher />
+        <div class="launch-pane"><TasksLauncher /></div>
+        <div class="launch-pane sp"><SpecialistsPanel /></div>
       </div>
     </div>
 
@@ -881,8 +891,11 @@
   /* The horizontal splitter between the agent roster and the Tasks launcher. */
   .tasks-gutter { flex: 0 0 5px; cursor: row-resize; background: var(--space-900); border-top: 1px solid var(--line-subtle); }
   .tasks-gutter:hover { background: var(--blue-500); }
-  /* The bottom region: the Tasks launcher, sized to a persisted fraction. */
-  .tasks-region { min-height: 0; overflow: hidden; }
+  /* The bottom region: the Tasks launcher + Specialists panel stacked, sized to a
+     persisted fraction. Each pane scrolls independently and shares the height. */
+  .tasks-region { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .launch-pane { flex: 1 1 0; min-height: 0; overflow: hidden; }
+  .launch-pane.sp { border-top: 1px solid var(--line-subtle); }
 
   .group-h { display: flex; align-items: center; gap: 8px; padding: 14px 16px 6px; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tracking-label); }
   .group-h.attn { color: var(--orange-300); }
@@ -896,7 +909,11 @@
   .row.sel { background: rgba(61,123,255,0.10); border-left-color: var(--blue-500); }
   .row.attn.sel { background: var(--orange-tint); border-left-color: var(--orange-500); }
   .row .nm { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  .row .nm .t { font-weight: 600; font-size: 13px; color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .nm .t { font-weight: 600; font-size: 13px; color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+  /* Specialist attribution: a compact blue-tinted pill (icon + name) next to the
+     agent's title, marking a pane spawned AS a specialist (task 5.4). */
+  .row .nm .t .spec-badge { flex: none; display: inline-flex; align-items: center; gap: 3px; max-width: 120px; padding: 1px 6px 1px 5px; border-radius: var(--r-full); background: var(--blue-tint); color: var(--blue-200); font-family: var(--font-mono); font-size: 9.5px; font-weight: 500; letter-spacing: 0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .nm .t .spec-badge :global(.mc-icon) { opacity: 0.85; }
   .row .nm .s { font-size: 11px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
   .row .nm .s.q { color: var(--orange-300); }
   /* The tiny third row: context · cost · last activity, each an icon + value. */

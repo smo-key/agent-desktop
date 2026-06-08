@@ -162,6 +162,10 @@ export interface RosterPane {
   isApp: boolean;
   /** The project this agent was launched under, or null/undefined if none. */
   projectId?: string | null;
+  /** OPTIONAL name of the SPECIALIST (`.claude/agents/<name>.md`) this pane was
+   *  spawned AS by the orchestration toolkit — used to badge/attribute the agent
+   *  in the roster. Absent for panes not spawned as a specialist. */
+  specialist?: string | null;
   /** Whether this agent's session is CLOSED (Archived) — its PTY is terminated
    *  and it is retained only for restore/delete. */
   closed?: boolean;
@@ -225,6 +229,11 @@ export interface AgentRow {
   status: AgentStatus;
   /** The project this agent belongs to (registry `projectId`), or null if none. */
   projectId: string | null;
+  /** The SPECIALIST this pane was spawned AS (registry `specialist`), or null if
+   *  it was not spawned as a specialist. Surfaced as a roster badge so a
+   *  coordinator-spawned specialist agent is visibly attributed (task 5.4).
+   *  Optional: `rowFor` always sets it, but roster fixtures may omit it. */
+  specialist?: string | null;
   /** Whether the agent's session is CLOSED (Completed): PTY terminated, retained
    *  only for restore (`claude --resume`) or delete. Forces the `finished` status
    *  so a closed agent always sits in the Completed lane. Optional: `rowFor` always
@@ -343,6 +352,7 @@ function rowFor(
     lastTs: finiteOrNull(snapshot?.ts),
     status,
     projectId: pane.projectId ?? null,
+    specialist: pane.specialist ?? null,
     closed,
     paused: pane.paused === true,
     pausedHash: pane.pausedHash ?? null,

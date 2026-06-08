@@ -19,6 +19,7 @@ export function toRosterWorkspaces(entries: ReadonlyArray<WorkspaceEntry>): Rost
       cwd: entry.registry[leaf.paneId]?.cwd ?? null,
       isApp: entry.registry[leaf.paneId]?.program === 'claude',
       projectId: entry.registry[leaf.paneId]?.projectId ?? null,
+      specialist: entry.registry[leaf.paneId]?.specialist ?? null,
       closed: entry.registry[leaf.paneId]?.closed ?? false,
       paused: entry.registry[leaf.paneId]?.paused ?? false,
       pausedHash: entry.registry[leaf.paneId]?.pausedHash ?? null,
