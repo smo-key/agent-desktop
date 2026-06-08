@@ -17,7 +17,7 @@ import type { Specialist } from '../specialists/specialists';
 const PROJ = 'proj-1';
 
 /** A minimal located-pane fake. */
-function pane(paneId: string, over: Partial<{ projectId: string | null; closed: boolean; specialist: string | null; cwd: string | null; program: string }> = {}) {
+function pane(paneId: string, over: Partial<{ projectId: string | null; closed: boolean; specialist: string | null; cwd: string | null; program: string; role: 'coordinator' }> = {}) {
   return {
     workspaceId: 'ws-1',
     paneId,
@@ -26,7 +26,8 @@ function pane(paneId: string, over: Partial<{ projectId: string | null; closed: 
       cwd: over.cwd ?? '/repo',
       projectId: over.projectId === undefined ? PROJ : over.projectId,
       closed: over.closed ?? false,
-      specialist: over.specialist ?? undefined
+      specialist: over.specialist ?? undefined,
+      role: over.role
     } as any
   };
 }
@@ -104,6 +105,37 @@ describe('OrchestrationExecutor — scoping & safety (4.6)', () => {
     await ex.onRequest({ id: 5, op: 'frobnicate', args: { projectId: PROJ } });
     expect(replies[0].outcome.error).toMatch(/unknown op/);
   });
+
+  it('rejects message_agent targeting a coordinator pane (self/other coordinator)', async () => {
+    const { deps, replies, sent } = makeDeps({
+      locate: () => pane('coord', { role: 'coordinator' }),
+      statusOf: () => 'waiting'
+    });
+    const ex = new OrchestrationExecutor(deps);
+    await ex.onRequest({ id: 6, op: 'message_agent', args: { projectId: PROJ, paneId: 'coord', text: 'loop?' } });
+    expect(replies[0].outcome.error).toMatch(/coordinator/);
+    expect(sent).toEqual([]);
+  });
+
+  it('rejects archive_agent targeting a coordinator pane (would close the coordinator)', async () => {
+    const { deps, replies, archived } = makeDeps({
+      locate: () => pane('coord', { role: 'coordinator' })
+    });
+    const ex = new OrchestrationExecutor(deps);
+    await ex.onRequest({ id: 7, op: 'archive_agent', args: { projectId: PROJ, paneId: 'coord' } });
+    expect(replies[0].outcome.error).toMatch(/coordinator/);
+    expect(archived).toEqual([]);
+  });
+
+  it('rejects unarchive_agent targeting a coordinator pane', async () => {
+    const { deps, replies, unarchived } = makeDeps({
+      locate: () => pane('coord', { role: 'coordinator', closed: true })
+    });
+    const ex = new OrchestrationExecutor(deps);
+    await ex.onRequest({ id: 8, op: 'unarchive_agent', args: { projectId: PROJ, paneId: 'coord' } });
+    expect(replies[0].outcome.error).toMatch(/coordinator/);
+    expect(unarchived).toEqual([]);
+  });
 });
 
 describe('OrchestrationExecutor — message_agent (4.3 / 4.6 idle gating)', () => {
@@ -179,6 +211,16 @@ describe('OrchestrationExecutor — read/list/inspect (4.3/4.4)', () => {
     expect(agents.map((a: any) => a.paneId)).toEqual(['p1', 'p2', 'p3']);
     expect(agents[1].specialist).toBe('reviewer');
     expect(agents[2].archived).toBe(true);
+  });
+
+  it('list_agents omits coordinator panes (a coordinator does not list itself/other coordinators)', async () => {
+    const { deps, replies } = makeDeps({
+      panesInProject: () => [pane('p1'), pane('coord', { role: 'coordinator' }), pane('p2')]
+    });
+    const ex = new OrchestrationExecutor(deps);
+    await ex.onRequest({ id: 1, op: 'list_agents', args: { projectId: PROJ } });
+    const agents = replies[0].outcome.result.agents;
+    expect(agents.map((a: any) => a.paneId)).toEqual(['p1', 'p2']);
   });
 
   it('inspect_agent returns a single agent identity + state', async () => {

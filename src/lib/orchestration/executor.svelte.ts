@@ -218,6 +218,9 @@ export class OrchestrationExecutor {
     if (!pane) return { error: `no such agent pane: ${paneId}` };
     if (pane.session.program !== 'claude') return { error: `not an agent pane: ${paneId}` };
     if (pane.session.closed === true) return { error: `agent pane is closed: ${paneId}` };
+    if (pane.session.role === 'coordinator') {
+      return { error: `cannot target a coordinator pane: ${paneId}` };
+    }
     if ((pane.session.projectId ?? null) !== projectId) {
       return { error: `agent pane is outside the orchestrator's project: ${paneId}` };
     }
@@ -331,7 +334,12 @@ export class OrchestrationExecutor {
   private listAgents(args: Record<string, unknown>): OpResult {
     const projectId = this.orchestratorProject(args);
     if (!projectId) return { error: 'missing orchestrator projectId in args (scope required)' };
-    const agents = this.deps.panesInProject(projectId).map((p) => this.infoFor(p));
+    // Exclude coordinator panes: a coordinator orchestrates specialists and normal
+    // sessions, never other coordinators or itself.
+    const agents = this.deps
+      .panesInProject(projectId)
+      .filter((p) => p.session.role !== 'coordinator')
+      .map((p) => this.infoFor(p));
     return { result: { agents } };
   }
 
@@ -363,6 +371,9 @@ export class OrchestrationExecutor {
     const pane = this.deps.locate(paneId);
     if (!pane) return { error: `no such agent pane: ${paneId}` };
     if (pane.session.program !== 'claude') return { error: `not an agent pane: ${paneId}` };
+    if (pane.session.role === 'coordinator') {
+      return { error: `cannot target a coordinator pane: ${paneId}` };
+    }
     if ((pane.session.projectId ?? null) !== projectId) {
       return { error: `agent pane is outside the orchestrator's project: ${paneId}` };
     }
