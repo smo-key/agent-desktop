@@ -48,10 +48,14 @@ const DEFAULT_OPTS: CommitCutOpts = {
  *  - `reprocessWindowSec` the trailing window (s) that is re-transcribed each tick.
  *  - `opts`              silence-search tunables.
  *
- * Returns `null` when the UNFINALIZED span (`end - committedSamples`) is within the
- * window — there is nothing old enough to lock in yet. Otherwise returns the cut
+ * Returns `null` until the UNFINALIZED span (`end - committedSamples`) exceeds
+ * **2×** the window — so we only ever finalize in SUBSTANTIAL (~window-sized)
+ * chunks. Finalizing tiny per-tick slivers (which is what triggering at 1× would
+ * do) makes whisper transcribe ~100ms fragments → empty/garbage → committed text
+ * never accumulates and older text is lost. When it does fire it returns the cut
  * index, which:
  *   - leaves AT MOST `reprocessWindowSec` of trailing audio (`end - cut <= window`),
+ *     so the per-tick reprocess span stays bounded (window..2×window),
  *   - prefers a silence frame within `searchRadius` of the target `end - window`
  *     (so the boundary falls in a pause, not mid-word), falling back to the raw
  *     target when no silence is found,
@@ -66,8 +70,9 @@ export function commitCut(
   opts: CommitCutOpts = DEFAULT_OPTS
 ): number | null {
   const windowSamples = Math.floor(reprocessWindowSec * sampleRate);
-  // Nothing older than the window to finalize yet.
-  if (end - committedSamples <= windowSamples) return null;
+  // Only finalize once MORE than 2× the window has accrued, so each committed
+  // chunk is ~window-sized (transcribable) rather than a tiny per-tick sliver.
+  if (end - committedSamples <= 2 * windowSamples) return null;
 
   // The latest cut that still leaves ≤ window trailing. Cutting here (or earlier)
   // bounds the reprocess window.

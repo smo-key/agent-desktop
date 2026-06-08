@@ -116,15 +116,25 @@
     }
   });
 
-  // Window-level Esc: there's no focused dialog by default, so close on Escape
-  // whenever the panel is open.
-  function onWindowKeydown(e: KeyboardEvent) {
-    if (voiceStore.open && e.key === 'Escape') {
+  // Window-level Esc cancels the panel while it's open — and it must win even when
+  // a TUI (xterm) is focused. xterm handles keydown on its own textarea and stops
+  // propagation, so a bubble-phase `svelte:window` listener never sees Escape. We
+  // therefore register a CAPTURE-phase listener on window: capture runs top-down
+  // (window → … → target) BEFORE xterm's handler, so we intercept Escape first,
+  // swallow it (preventDefault + stopImmediatePropagation so the TUI never sees
+  // it), and discard. Only active while the panel is open, so Escape passes through
+  // to the app/TUI normally otherwise.
+  $effect(() => {
+    if (!voiceStore.open) return;
+    const onEscCapture = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
       discard();
-    }
-  }
+    };
+    window.addEventListener('keydown', onEscCapture, true);
+    return () => window.removeEventListener('keydown', onEscCapture, true);
+  });
 
   // Show the primary confirm (✓) control only while recording — not while
   // requesting the mic, denied, errored, or already transcribing.
@@ -171,7 +181,6 @@
   const overlayText = $derived(voiceStore.partial || voiceStore.finalText);
 </script>
 
-<svelte:window onkeydown={onWindowKeydown} />
 
 {#if !voiceStore.open && voice.prefs.enabled}
   <!-- Footer launcher: a small overlay panel centered in the footer. It's the

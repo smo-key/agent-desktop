@@ -65,15 +65,16 @@ once into committed text and never reprocessed:
 - The pipeline tracks `committed: string` (finalized text, never re-transcribed) and
   `committedSamples: number` (PCM folded into `committed`).
 - On each ~100ms tick (in-flight guarded), with `end = total captured samples`:
-  - **Finalize older audio:** if `end - committedSamples > REPROCESS_WINDOW_SEC`,
-    there is audio older than the window to lock in. A pure helper
-    `commitCut(pcm, committedSamples, end, sampleRate, REPROCESS_WINDOW_SEC, silence)`
-    picks a cut that leaves ≤ 6s of trailing audio, preferring a **silence boundary**
-    near `end − 6s` so a word isn't split (force-cut at the target if no silence is
-    found within a small search, bounded so it can't grow unbounded). Transcribe
-    `pcm[committedSamples..cut]` via `voice_transcribe_partial`, append to
-    `committed`, set `committedSamples = cut`. (Infrequent — only when ≥6s of new
-    audio has accrued.)
+  - **Finalize older audio in SUBSTANTIAL chunks:** `commitCut` only fires once the
+    un-finalized span exceeds **2×** `REPROCESS_WINDOW_SEC`, then cuts to leave 6s
+    trailing — so each committed chunk is ~6s. (Firing at 1× would finalize a tiny
+    ~per-tick sliver every 100ms; whisper transcribes ~100ms fragments to
+    empty/garbage, so `committed` never accumulates and older text is lost — the
+    "cuts off" bug.) The cut prefers a **silence boundary** near `end − 6s` so a word
+    isn't split (force-cut at the target otherwise). Transcribe `pcm[committedSamples..cut]`
+    via `voice_transcribe_partial`, append to `committed`, set `committedSamples = cut`.
+    Consequence: the per-tick reprocess span oscillates between 6s and 12s (still
+    bounded and fast on the resident tiny model), not a strict 6s.
   - **Reprocess the window:** transcribe the trailing `pcm[committedSamples..end]`
     (≤ ~6s) each tick → `windowText`.
   - **Overlay** = `committed` + (space) + `windowText` via `voiceStore.setPartial`,
@@ -97,6 +98,18 @@ at `src-tauri/binaries/whisper-server-aarch64-apple-darwin`. Register in
 `tauri.conf.json` `bundle.externalBin` and add a `shell:allow-execute` scope entry
 in `capabilities/default.json`. A git-ignored placeholder keeps `cargo build`
 green without the real binary (same pattern as whisper-cli / llama-server).
+
+### D6 — Escape cancels the panel even when a TUI is focused
+The voice panel floats over a terminal-first app; while recording, an xterm pane is
+usually focused. xterm handles keydown on its own textarea and stops propagation,
+so a bubble-phase `svelte:window` Escape listener never fires — Escape went to the
+TUI instead of cancelling dictation. Fix: while the panel is open, register a
+**capture-phase** `keydown` listener on `window` (`addEventListener('keydown', h, true)`)
+that intercepts Escape FIRST (capture runs top-down, before the focused xterm),
+`preventDefault` + `stopImmediatePropagation` so the TUI never sees it, and
+discards the panel. Only active while open, so Escape behaves normally otherwise.
+This makes the existing `voice-dictation` "Escape cancels" behavior actually hold
+over a focused terminal — captured as a MODIFIED delta to that capability here.
 
 ## Risks / Trade-offs
 
