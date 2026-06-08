@@ -41,7 +41,7 @@ tauri-plugin-shell = "2"
 # tasks.md 5.2). `stream` gives us a chunked `bytes_stream()` so we can sum bytes
 # and emit progress; `rustls-tls` avoids a system-OpenSSL build dependency.
 # default-features off drops the default openssl-tls path.
-reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls", "multipart"] }
 futures-util = "0.3"
 
 # Transcript-polish llama-server sidecar manager (see src/polish.rs). `once_cell`

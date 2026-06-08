@@ -18,20 +18,25 @@
 // partial-event reducer); `invoke`, `Channel`, `MicCapture`, and the DOM stay in
 // thin, untested wrappers below.
 //
-// Live partials are driven from the frontend: a short interval re-transcribes the
-// audio-so-far with the fast tiny model and shows it as the provisional overlay
-// (Whisper isn't natively streaming, so a rolling re-transcribe is the practical
-// approach). The final pass uses the tier model. Both reuse the one Tauri
-// `voice_transcribe_final` command, so there is no separate Rust streaming loop.
+// Live partials are driven from the frontend with FULL-MESSAGE RETENTION over a
+// sliding REPROCESS window: a short interval (~100ms) re-transcribes only the
+// trailing few seconds of audio via the persistent `whisper-server`
+// (`voice_transcribe_partial`, tiny model resident → ≤tens of ms per pass), while
+// audio older than the window is finalized ONCE into committed text and never
+// reprocessed. The overlay shows committed + the live window, so the WHOLE message
+// stays visible while per-tick cost stays bounded. The final pass is unchanged: it
+// uses the tier model via `voice_transcribe_final` over the whole utterance.
 //
-// Runs end-to-end once the whisper sidecar + a model are provisioned (the bundled
-// tiny model is used for partials); polish additionally needs the llama-server.
+// Runs end-to-end once the whisper sidecars + a model are provisioned (the bundled
+// tiny model is loaded by whisper-server for partials); polish additionally needs
+// the llama-server.
 
 import { invoke } from '@tauri-apps/api/core';
 import { voice } from '$lib/settings/voice.svelte';
 import { MicCapture } from './capture';
 import { finishDictation } from './polish';
 import { voiceStore } from './voiceStore.svelte';
+import { commitCut } from './segment';
 import type { VoiceModelTier } from '$lib/settings/voice.svelte';
 
 // --- Pure: model-path resolution --------------------------------------------
@@ -136,22 +141,38 @@ async function transcribeFinal(
   });
 }
 
+/**
+ * Run a LIVE PARTIAL pass over a PCM slice via the persistent whisper-server
+ * (`voice_transcribe_partial`, tiny model resident). Stateless on the Rust side —
+ * it transcribes exactly the slice given; all retention state lives here. The
+ * server owns the model, so no model path is passed.
+ */
+async function transcribePartial(pcm: Float32Array, sampleRate: number): Promise<string> {
+  return invoke<string>('voice_transcribe_partial', {
+    pcm: Array.from(pcm),
+    sampleRate
+  });
+}
+
 // --- The controller ---------------------------------------------------------
 
 /**
- * How often the live-partials loop polls to re-transcribe the audio-so-far (ms).
- * An in-flight guard means we never overlap passes, so the effective rate is
- * min(this, one whisper pass) — with the per-call model reload of the one-shot
- * CLI this is the practical floor. The final pass on stop is authoritative.
+ * How often the live-partials loop polls (ms). An in-flight guard means we never
+ * overlap passes, so the effective rate is min(this, one whisper-server inference).
+ * With the tiny model resident in the persistent server each pass is tens of ms,
+ * so ~100ms keeps the overlay near real-time. The final pass on stop is
+ * authoritative.
  */
-const PARTIAL_INTERVAL_MS = 200;
+const PARTIAL_INTERVAL_MS = 100;
 
 /**
- * Rolling window (seconds) the live-partial pass re-transcribes. Bounds per-tick
- * cost/latency on long utterances; the overlay shows the most recent speech while
- * the authoritative FINAL pass (on stop) still covers the whole utterance.
+ * The trailing window (seconds) re-transcribed on EACH partial tick. Audio older
+ * than this is finalized once into committed text and never reprocessed (see
+ * `commitCut` + `#tickPartial`), so per-tick cost stays bounded no matter how long
+ * the user talks while the overlay still shows the WHOLE message. The authoritative
+ * FINAL pass (on stop) still covers the entire utterance.
  */
-const PARTIAL_WINDOW_SEC = 12;
+const REPROCESS_WINDOW_SEC = 6;
 
 /**
  * Drives one dictation session: capture → live partials → stop&insert / cancel.
@@ -166,7 +187,11 @@ export class DictationPipeline {
   // Live-partials loop state (frontend-driven; see #startPartials).
   #partialTimer: ReturnType<typeof setInterval> | null = null;
   #partialBusy = false;
-  #partialModel: string | null = null;
+  // Full-message retention: text already finalized (older than the reprocess
+  // window, never re-transcribed) + how many leading PCM samples it covers. Reset
+  // at the start of each session.
+  #committed = '';
+  #committedSamples = 0;
 
   /**
    * Begin capture and start the live-partials loop. Sets `recording` on success;
@@ -176,29 +201,22 @@ export class DictationPipeline {
   async start(): Promise<void> {
     await this.#capture.start();
     voiceStore.setState('recording');
-    // Drive live partials from the frontend: periodically re-transcribe the
-    // audio-so-far with the FAST tiny model and show it as the provisional overlay.
+    // Reset retention state for this session, then drive live partials from the
+    // frontend (full-message retention over the sliding reprocess window).
+    this.#committed = '';
+    this.#committedSamples = 0;
     void this.#startPartials();
   }
 
   /**
-   * Live partials: on each `PARTIAL_INTERVAL_MS` tick re-transcribe a ROLLING
-   * WINDOW of the most recent audio with the fast tiny model (Whisper isn't
-   * natively streaming, so a rolling re-transcribe is the practical "what I'm
-   * saying" overlay). Capping to the last `PARTIAL_WINDOW_SEC` bounds per-tick cost
-   * and keeps the partial from lagging on long utterances — the FINAL pass on stop
-   * still uses the whole utterance. Each pass supersedes the previous partial.
-   * Best-effort: a missing model / busy tick / error never disrupts recording.
+   * Start the live-partials loop best-effort. The persistent `whisper-server` owns
+   * the (tiny) model, so there is no model-path resolution here — `#tickPartial`
+   * simply calls `voice_transcribe_partial`, which lazily starts the server and
+   * degrades to no-partials if it can't. A busy tick / error never disrupts
+   * recording or the authoritative final pass.
    */
   async #startPartials(): Promise<void> {
-    // Prefer the bundled tiny model for partials (fastest); fall back to the tier
-    // model if tiny isn't present.
-    const [tinyPath, tierPath] = await Promise.all([
-      bundledModelPath(),
-      tierModelPath(voice.prefs.modelTier)
-    ]);
-    this.#partialModel = tinyPath ?? tierPath;
-    if (!this.#partialModel || this.#finished) return;
+    if (this.#finished) return;
     this.#partialTimer = setInterval(() => void this.#tickPartial(), PARTIAL_INTERVAL_MS);
   }
 
@@ -207,20 +225,50 @@ export class DictationPipeline {
     return this.#capture.getLevel();
   }
 
-  /** One partial pass: transcribe the recent rolling window → update the overlay. */
+  /**
+   * One partial pass with FULL-MESSAGE RETENTION over the sliding reprocess window:
+   *  1. If ≥ `REPROCESS_WINDOW_SEC` of un-finalized audio has accrued, `commitCut`
+   *     picks a (silence-preferring) boundary; transcribe that older slice ONCE,
+   *     append it to `#committed`, and advance `#committedSamples` (never reprocessed
+   *     again).
+   *  2. Transcribe the trailing ≤ window slice `[committedSamples, end)` → the live
+   *     `windowText`.
+   *  3. Overlay = `#committed` + ' ' + `windowText`, so the WHOLE message shows while
+   *     only ≤ window is reprocessed per tick.
+   * In-flight guarded so passes never overlap; late results after finalize/cancel
+   * are ignored. Best-effort — any error is swallowed (partials are non-authoritative).
+   */
   async #tickPartial(): Promise<void> {
-    if (this.#partialBusy || this.#finished || !this.#partialModel) return;
+    if (this.#partialBusy || this.#finished) return;
     const { samples, sampleRate } = this.#capture.getPcm();
-    if (samples.length === 0) return;
-    // Cap to the last PARTIAL_WINDOW_SEC so each pass is bounded (cost + latency)
-    // regardless of how long the user has been talking.
-    const maxSamples = Math.floor(sampleRate * PARTIAL_WINDOW_SEC);
-    const window = samples.length > maxSamples ? samples.subarray(samples.length - maxSamples) : samples;
+    const end = samples.length;
+    if (end === 0) return;
     this.#partialBusy = true;
     try {
-      const text = await transcribeFinal(window, sampleRate, this.#partialModel);
+      // 1. Finalize audio older than the reprocess window (infrequent).
+      const cut = commitCut(samples, this.#committedSamples, end, sampleRate, REPROCESS_WINDOW_SEC);
+      if (cut !== null && cut > this.#committedSamples) {
+        const olderText = await transcribePartial(
+          samples.subarray(this.#committedSamples, cut),
+          sampleRate
+        );
+        if (this.#finished) return;
+        if (olderText.trim()) {
+          this.#committed = this.#committed ? `${this.#committed} ${olderText.trim()}` : olderText.trim();
+        }
+        this.#committedSamples = cut;
+      }
+
+      // 2. Reprocess the trailing window.
+      const windowText = await transcribePartial(
+        samples.subarray(this.#committedSamples, end),
+        sampleRate
+      );
       // Ignore late results once we've started finalizing/cancelling.
-      if (!this.#finished && text.trim()) voiceStore.setPartial(text);
+      if (this.#finished) return;
+      // 3. Overlay = committed + live window (the whole message).
+      const text = `${this.#committed} ${windowText}`.trim();
+      if (text) voiceStore.setPartial(text);
     } catch {
       // Partials are non-authoritative; swallow transient errors.
     } finally {

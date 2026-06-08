@@ -39,6 +39,42 @@ model-management slice (downloaded to app-data on first run), **not** bundled
 here, so the installer stays small. For a local MANUAL end-to-end test you can
 fetch a tiny model and pass its path to `voice_transcribe_final`.
 
+## `whisper-server` — whisper.cpp live-partials runtime
+
+The live-PARTIALS feature runs whisper.cpp's long-lived `whisper-server` with the
+**tiny** model loaded once and resident in memory, so each partial is just an
+inference (no per-call model reload). It serves `POST /inference` on `127.0.0.1`;
+the manager (`src-tauri/src/whisper_server.rs`) starts it lazily and health-checks
+`GET /health` before the first request. The FINAL high-quality pass still uses the
+one-shot `whisper-cli` + tier model — `whisper-server` is partials-only.
+
+Same sidecar convention — on Apple Silicon the file must be:
+
+```
+binaries/whisper-server-aarch64-apple-darwin
+```
+
+`tauri.conf.json` registers it as `bundle.externalBin: ["binaries/whisper-server"]`
+and `capabilities/default.json` grants `shell:allow-execute` for it as a sidecar.
+
+### Provisioning
+
+`whisper-server` is built by the SAME script as `whisper-cli` (both static targets
+from one whisper.cpp checkout):
+
+```sh
+./scripts/fetch-whisper.sh
+```
+
+### Local placeholder
+
+A git-ignored shell-script PLACEHOLDER `whisper-server-aarch64-apple-darwin` lets
+local `cargo build`/tauri-build resolve the sidecar without the real binary
+(mirrors `whisper-cli`/`llama-server`). It is not a working server — it exits
+non-zero, so a stray partial in dev degrades to no-partials with the final pass
+unaffected. A shippable `tauri build` needs the real binary via
+`./scripts/fetch-whisper.sh`.
+
 ## `llama-server` — llama.cpp transcript-polish runtime
 
 The transcript-POLISH feature shells out to llama.cpp's `llama-server` to clean

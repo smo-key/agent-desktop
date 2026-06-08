@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 #
-# Provision the whisper.cpp `whisper-cli` sidecar binary for the macOS arm64
-# build of agent-desktop.
+# Provision the whisper.cpp `whisper-cli` AND `whisper-server` sidecar binaries
+# for the macOS arm64 build of agent-desktop.
 #
 # Tauri's sidecar (`externalBin`) convention requires the binary to be named with
-# the Rust target triple appended, so this drops the binary at:
+# the Rust target triple appended, so this drops the binaries at:
 #
 #     src-tauri/binaries/whisper-cli-aarch64-apple-darwin
+#     src-tauri/binaries/whisper-server-aarch64-apple-darwin
+#
+# `whisper-cli` runs the one-shot FINAL transcription pass; `whisper-server` is a
+# long-lived HTTP server that keeps the tiny model resident for low-latency live
+# PARTIALS (see src-tauri/src/whisper_server.rs). Both are built statically from
+# the same checkout so each is self-contained.
 #
 # `tauri.conf.json` registers it as `bundle.externalBin: ["binaries/whisper-cli"]`
 # (Tauri appends the triple at bundle time) and `capabilities/default.json`
@@ -37,12 +43,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BIN_DIR="$ROOT_DIR/src-tauri/binaries"
 DEST="$BIN_DIR/whisper-cli-$TARGET_TRIPLE"
+DEST_SERVER="$BIN_DIR/whisper-server-$TARGET_TRIPLE"
 
 mkdir -p "$BIN_DIR"
 
 # --- Idempotency -------------------------------------------------------------
-if [[ -x "$DEST" && "${FORCE:-0}" != "1" ]]; then
-  echo "✓ whisper-cli sidecar already present: $DEST"
+# Build only when at least one of the two sidecars is missing (or FORCE=1).
+if [[ -x "$DEST" && -x "$DEST_SERVER" && "${FORCE:-0}" != "1" ]]; then
+  echo "✓ whisper-cli sidecar already present:    $DEST"
+  echo "✓ whisper-server sidecar already present: $DEST_SERVER"
   echo "  (set FORCE=1 to rebuild)"
   exit 0
 fi
@@ -70,19 +79,21 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 echo "→ Cloning whisper.cpp@$WHISPER_TAG (shallow) into $WORK_DIR ..."
 git clone --depth 1 --branch "$WHISPER_TAG" "$REPO_URL" "$WORK_DIR/whisper.cpp"
 
-echo "→ Building whisper-cli (Release) ..."
+echo "→ Building whisper-cli + whisper-server (Release) ..."
 cmake -S "$WORK_DIR/whisper.cpp" -B "$WORK_DIR/build" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_OSX_ARCHITECTURES=arm64 \
   -DBUILD_SHARED_LIBS=OFF \
   -DWHISPER_BUILD_TESTS=OFF \
   -DWHISPER_BUILD_EXAMPLES=ON
-# BUILD_SHARED_LIBS=OFF links libwhisper/libggml STATICALLY into whisper-cli so the
-# copied binary is self-contained. A shared build leaves the CLI depending on
+# BUILD_SHARED_LIBS=OFF links libwhisper/libggml STATICALLY into the binaries so
+# each copied binary is self-contained. A shared build leaves them depending on
 # @rpath dylibs in the (deleted) temp build tree, which fails to load as a sidecar.
-cmake --build "$WORK_DIR/build" --config Release --target whisper-cli -j
+# Build BOTH targets from the one configured tree (same static flags).
+cmake --build "$WORK_DIR/build" --config Release --target whisper-cli whisper-server -j
 
-# Locate the produced binary (path varies slightly across whisper.cpp versions).
+# --- Locate + install whisper-cli -------------------------------------------
+# (path varies slightly across whisper.cpp versions).
 BUILT=""
 for candidate in \
   "$WORK_DIR/build/bin/whisper-cli" \
@@ -103,11 +114,34 @@ fi
 cp "$BUILT" "$DEST"
 chmod +x "$DEST"
 
+# --- Locate + install whisper-server ----------------------------------------
+BUILT_SERVER=""
+for candidate in \
+  "$WORK_DIR/build/bin/whisper-server" \
+  "$WORK_DIR/build/bin/Release/whisper-server" \
+  "$WORK_DIR/build/whisper-server"; do
+  if [[ -f "$candidate" ]]; then
+    BUILT_SERVER="$candidate"
+    break
+  fi
+done
+
+if [[ -z "$BUILT_SERVER" ]]; then
+  echo "ERROR: build succeeded but whisper-server binary not found under $WORK_DIR/build." >&2
+  echo "  Inspect the build tree; the target name may have changed upstream." >&2
+  exit 1
+fi
+
+cp "$BUILT_SERVER" "$DEST_SERVER"
+chmod +x "$DEST_SERVER"
+
 echo ""
 echo "✓ Installed whisper-cli sidecar:"
 echo "    $DEST"
+echo "✓ Installed whisper-server sidecar:"
+echo "    $DEST_SERVER"
 echo ""
-echo "  This binary is git-ignored (provisioned, not committed). It will be"
+echo "  These binaries are git-ignored (provisioned, not committed). They will be"
 echo "  bundled by 'npm run tauri build' via tauri.conf.json externalBin."
 echo "  Model weights (ggml-*.bin) are downloaded separately at runtime by the"
 echo "  model-management slice (not bundled)."

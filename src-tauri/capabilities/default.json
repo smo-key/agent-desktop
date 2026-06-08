@@ -19,6 +19,11 @@
           "args": true
         },
         {
+          "name": "binaries/whisper-server",
+          "sidecar": true,
+          "args": true
+        },
+        {
           "name": "binaries/llama-server",
           "sidecar": true,
           "args": true

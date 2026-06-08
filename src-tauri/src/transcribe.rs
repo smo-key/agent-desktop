@@ -38,14 +38,14 @@ const WHISPER_SAMPLE_RATE: u32 = 16_000;
 /// final utterance. 0 would be invalid; this is a coarse ~ a few-ms frame which
 /// is plenty to detect any speech presence. The actual size is not latency
 /// sensitive here (we gate once, before the final pass).
-const VAD_FRAME_LEN: usize = 512;
+pub(crate) const VAD_FRAME_LEN: usize = 512;
 
 /// Default VAD energy threshold for normalized mic input. Above this RMS a frame
 /// is considered speech. Kept LOW (≈ -48 dBFS) so quiet speech / soft laptop mics
 /// still pass — its only job is to discard true silence/empty buffers (just above
 /// a typical noise floor). whisper's own silence annotations are stripped
 /// downstream, so a slightly permissive gate is safe.
-const VAD_THRESHOLD: f32 = 0.004;
+pub(crate) const VAD_THRESHOLD: f32 = 0.004;
 
 // --- Pure helper: argument builder ------------------------------------------
 
