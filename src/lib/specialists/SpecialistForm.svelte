@@ -1,7 +1,8 @@
 <script lang="ts">
   // The shared CREATE/EDIT form for a specialist (a native Claude Code subagent),
   // hosted by SpecialistDialog. Top: the specialist name as a big title input.
-  // Then description, an optional model override, a free-text tools allow-list, and
+  // Then description, a model dropdown (curated ids + Default/inherit), a tools
+  // multiselect (curated Claude Code tool names), and
   // the system-prompt editor (a textarea for the markdown body). A single full-width
   // Create / Save button commits; it is blocked (with the reason shown) while the
   // name is invalid. Mirrors ProjectForm.svelte's structure + styling tokens.
@@ -13,7 +14,12 @@
 
   import type { Specialist } from './specialists';
   import { specialists } from './specialists.svelte';
-  import { buildSpecialist, formatToolsInput } from './specialistForm';
+  import {
+    buildSpecialist,
+    formatToolsInput,
+    modelOptions,
+    toolOptions
+  } from './specialistForm';
 
   let {
     mode,
@@ -33,9 +39,24 @@
   const seed = initial;
   let name = $state(seed?.name ?? '');
   let description = $state(seed?.description ?? '');
+  // Model dropdown value: a curated id, '' for Default (inherit), or a preserved
+  // hand-edited id. The option list includes any out-of-list seed value.
   let model = $state(seed?.model ?? '');
-  let tools = $state(formatToolsInput(seed?.tools));
+  const modelChoices = modelOptions(seed?.model);
+  // Tools multiselect: the option list is the curated set plus any out-of-list
+  // seed tools (so hand-edited tools survive an edit); `selectedTools` is the set
+  // of checked names. Serialized back to the comma-text `buildSpecialist` expects.
+  const toolChoices = toolOptions(seed?.tools);
+  let selectedTools = $state<string[]>(seed?.tools ? [...seed.tools] : []);
   let prompt = $state(seed?.prompt ?? '');
+
+  function toggleTool(tool: string, on: boolean) {
+    if (on) {
+      if (!selectedTools.includes(tool)) selectedTools = [...selectedTools, tool];
+    } else {
+      selectedTools = selectedTools.filter((t) => t !== tool);
+    }
+  }
 
   // Validate the name against the loaded entries. On EDIT, exclude the specialist's
   // own name so an in-place edit (without renaming) is allowed.
@@ -47,7 +68,15 @@
 
   function submit() {
     if (!canSave) return;
-    onSave(buildSpecialist({ name, description, model, tools, prompt }));
+    onSave(
+      buildSpecialist({
+        name,
+        description,
+        model,
+        tools: formatToolsInput(selectedTools),
+        prompt
+      })
+    );
   }
 
   function onNameKey(e: KeyboardEvent) {
@@ -85,22 +114,28 @@
 
   <div class="sf-field">
     <span class="sf-flabel">Model</span>
-    <input
-      class="sf-input"
-      bind:value={model}
-      placeholder="Inherit (e.g. claude-sonnet-4-6)"
-      aria-label="Model override"
-    />
+    <select class="sf-input sf-select" bind:value={model} aria-label="Model override">
+      {#each modelChoices as choice (choice.value)}
+        <option value={choice.value}>{choice.label}</option>
+      {/each}
+    </select>
   </div>
 
   <div class="sf-field">
     <span class="sf-flabel">Tools</span>
-    <input
-      class="sf-input"
-      bind:value={tools}
-      placeholder="All tools (e.g. Read, Edit, Bash)"
-      aria-label="Tools allow-list"
-    />
+    <div class="sf-tools" role="group" aria-label="Tools allow-list">
+      {#each toolChoices as tool (tool)}
+        <label class="sf-tool">
+          <input
+            type="checkbox"
+            checked={selectedTools.includes(tool)}
+            onchange={(e) => toggleTool(tool, e.currentTarget.checked)}
+          />
+          <span>{tool}</span>
+        </label>
+      {/each}
+    </div>
+    <span class="sf-hint">None selected = all tools (inherits).</span>
   </div>
 
   <div class="sf-field">
@@ -195,6 +230,43 @@
     line-height: 1.5;
     font-family: var(--font-mono);
     font-size: 12px;
+  }
+
+  /* The model dropdown reuses the input chrome with native select affordance. */
+  .sf-select {
+    cursor: pointer;
+    appearance: auto;
+  }
+
+  /* Tools multiselect: a wrapped grid of checkbox chips matching the input frame. */
+  .sf-tools {
+    box-sizing: border-box;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 6px 12px;
+    background: var(--space-900);
+    border: 1px solid var(--line-default);
+    border-radius: var(--r-sm);
+    padding: 10px 11px;
+  }
+  .sf-tool {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--fg-2);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .sf-tool input[type='checkbox'] {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--blue-500);
+    cursor: pointer;
+  }
+  .sf-hint {
+    color: var(--fg-4);
+    font-size: 11px;
   }
 
   /* Full-width primary commit. */

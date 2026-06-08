@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSpecialist,
   formatToolsInput,
+  MODEL_CHOICES,
+  modelOptions,
   parseToolsInput,
+  TOOL_CHOICES,
+  toolOptions,
   type SpecialistFormFields
 } from './specialistForm';
 
@@ -72,5 +76,38 @@ describe('buildSpecialist', () => {
     });
     expect(s.model).toBe('claude-sonnet-4-6');
     expect(s.tools).toEqual(['Read', 'Edit']);
+  });
+});
+
+describe('modelOptions', () => {
+  it('returns the curated list for undefined / empty / Default', () => {
+    expect(modelOptions(undefined)).toBe(MODEL_CHOICES);
+    expect(modelOptions('')).toBe(MODEL_CHOICES);
+    expect(modelOptions('   ')).toBe(MODEL_CHOICES);
+  });
+
+  it('returns the curated list when the value is already curated', () => {
+    expect(modelOptions('claude-opus-4-8')).toBe(MODEL_CHOICES);
+  });
+
+  it('appends an out-of-list value verbatim so it is preserved', () => {
+    const opts = modelOptions('claude-future-9-9');
+    expect(opts).toHaveLength(MODEL_CHOICES.length + 1);
+    expect(opts[opts.length - 1]).toEqual({
+      value: 'claude-future-9-9',
+      label: 'claude-future-9-9'
+    });
+  });
+});
+
+describe('toolOptions', () => {
+  it('returns the curated list when undefined or all curated', () => {
+    expect(toolOptions(undefined)).toEqual([...TOOL_CHOICES]);
+    expect(toolOptions(['Read', 'Bash'])).toEqual([...TOOL_CHOICES]);
+  });
+
+  it('appends out-of-list tools (in saved order) so they survive an edit', () => {
+    const opts = toolOptions(['Read', 'MCP__custom', 'Edit', 'OtherTool']);
+    expect(opts).toEqual([...TOOL_CHOICES, 'MCP__custom', 'OtherTool']);
   });
 });

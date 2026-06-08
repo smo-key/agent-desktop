@@ -119,9 +119,9 @@
   }
 </script>
 
-<section class="specialists" aria-label="Specialists">
+<section class="specialists" aria-label="Agents">
   <header class="sh">
-    <h1>Specialists <span class="count">{entries.length}</span></h1>
+    <h1>Agents <span class="count">{entries.length}</span></h1>
     <button
       type="button"
       class="launch"

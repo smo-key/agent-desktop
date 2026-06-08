@@ -63,10 +63,11 @@
   import TasksLauncher from '$lib/tasks/TasksLauncher.svelte';
   import SpecialistsPanel from '$lib/specialists/SpecialistsPanel.svelte';
 
-  // --- Tasks launcher split (agent list on top / Tasks launcher on bottom) -----
-  // The `.col-list` column splits into an agent region (top) and the Tasks
-  // launcher (bottom). The launcher's height is a persisted fraction of the column
-  // (clamped), driven via flex-basis with a draggable gutter between them.
+  // --- Sessions / Tasks split (Sessions roster on top / Tasks bottom) ----------
+  // The `.col-list` column splits into the Sessions roster (top, resizable) and
+  // the bottom region (Tasks launcher + Agents library). The bottom region's
+  // height is a persisted fraction of the column (clamped) so the Sessions area
+  // resizes by dragging the gutter between them; driven via flex-basis.
   const TASKS_FRAC_KEY = 'agent-desktop:tasks-launcher-frac';
   const TASKS_FRAC_MIN = 0.15;
   const TASKS_FRAC_MAX = 0.6;
@@ -711,7 +712,7 @@
     <div class="col-list">
       <div class="lh">
         <img class="logo" src="/logomark.svg" alt="" aria-hidden="true" />
-        <h1>Agents <span class="count">{rows.length}</span></h1>
+        <h1>Sessions <span class="count">{rows.length}</span></h1>
         <button type="button" class="launch" onclick={newAgent} aria-label="New session" use:tooltip={'New session (⌘N)'}>＋</button>
       </div>
 
@@ -720,7 +721,7 @@
       <div class="agent-region">
         {#if rows.length === 0}
           <div class="empty-list">
-            <p>No agents yet.</p>
+            <p>No sessions yet.</p>
             <button type="button" class="btn-primary" onclick={newAgent}>＋ New session</button>
           </div>
         {:else}
@@ -791,12 +792,13 @@
         {/if}
       </div>
 
-      <!-- Draggable splitter between the agent roster (top) and Tasks (bottom). -->
+      <!-- Draggable splitter that resizes the Sessions roster (top); the bottom
+           region takes the persisted remainder. -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="tasks-gutter" onpointerdown={startTasksResize} use:tooltip={'Drag to resize'}></div>
 
-      <!-- Bottom region: the Tasks launcher + the Specialists panel (sibling
-           surfaces), sized together to a persisted fraction and split evenly. -->
+      <!-- Bottom region: the Tasks launcher + the Agents (specialists) panel
+           (sibling surfaces), sized together to a persisted fraction and split evenly. -->
       <div class="tasks-region" style="flex: 0 0 {tasksFrac * 100}%">
         <div class="launch-pane"><TasksLauncher /></div>
         <div class="launch-pane sp"><SpecialistsPanel /></div>
