@@ -23,7 +23,9 @@ import type { McpToolkitConfig } from '../usage/spawn';
  */
 export const ORCHESTRATOR_SYSTEM_PROMPT = `You are the COORDINATOR for this project — an orchestrator of other Claude Code agents.
 
-Your job: take a goal from the user, break it into a concrete plan, then spawn and coordinate specialist agents and existing project sessions to carry it out. You drive the work through the orchestration toolkit (tools prefixed \`mcp__orchestration__\`); you do not do the hands-on coding yourself unless a task is too small to delegate.
+Your job: take a goal from the user, break it into a concrete plan, then spawn and coordinate specialist agents and existing project sessions to carry it out. You drive the work entirely through the orchestration toolkit (tools prefixed \`mcp__orchestration__\`).
+
+You do NOT do work yourself. Do not edit files, run commands, or complete tasks directly — you cannot, and you must not try. You have no Task tool; never attempt to use it. Every goal MUST be accomplished by creating sessions with \`spawn_agent\` (optionally naming a \`specialist\`) and coordinating them with the toolkit (\`message_agent\`, \`read_agent\`, \`inspect_agent\`, \`list_agents\`, \`archive_agent\`). Read-only inspection (Read/Glob/Grep) is available for understanding the project before you delegate, but the actual work always belongs to the agents you spawn.
 
 Available toolkit:
 - \`list_agents\` — see every agent in this project (coordinator-spawned and user-started), with status.
@@ -39,7 +41,7 @@ How to work:
 4. When an agent finishes or stalls, message it with next steps or archive it.
 5. Report progress and the final outcome back to the user.
 
-Stay scoped to THIS project — every toolkit call is automatically bound to it. Be decisive and concrete: spawn real agents rather than describing what you would do. You have no approval/guardrail responsibilities; just plan, delegate, and integrate.`;
+Stay scoped to THIS project — every toolkit call is automatically bound to it. Be decisive and concrete: spawn real agents rather than describing what you would do, and never substitute your own hands-on work for delegation. You have no approval/guardrail responsibilities; just plan, delegate, and integrate.`;
 
 /** Spawn parameters the reuse lookup needs from a pane (framework-free shape). */
 export interface CoordinatorPaneView {
@@ -93,6 +95,12 @@ export function findCoordinatorPane(
  *     string, the simplest form claude accepts; no temp file needed). The config
  *     already carries the coordinator's own projectId in its server env so every
  *     toolkit call is project-scoped.
+ *   - `--disallowedTools Edit Write Bash NotebookEdit Task` — the coordinator must NOT
+ *     do work itself (task 10.1): the hands-on/work tools and the internal Task tool
+ *     are denied (each tool a separate arg, claude's variadic flag), forcing it to
+ *     delegate via `spawn_agent` and coordinate through the toolkit. The orchestration
+ *     MCP tools (`mcp__orchestration__*`) and read-only inspection (Read/Glob/Grep)
+ *     are deliberately left ALLOWED.
  *
  * Pure: depends only on its inputs; never mutates them.
  *
@@ -107,6 +115,13 @@ export function coordinatorLaunchArgs(
     '--append-system-prompt',
     systemPrompt,
     '--mcp-config',
-    JSON.stringify(mcpConfig)
+    JSON.stringify(mcpConfig),
+    // Work tools + internal Task tool denied — the coordinator only orchestrates.
+    '--disallowedTools',
+    'Edit',
+    'Write',
+    'Bash',
+    'NotebookEdit',
+    'Task'
   ];
 }

@@ -58,6 +58,31 @@ describe('coordinatorLaunchArgs (task 6.2)', () => {
     expect(JSON.parse(args[3])).toEqual(cfg);
   });
 
+  it('disallows the work tools + internal Task tool (task 10.1)', () => {
+    const args = coordinatorLaunchArgs(cfg);
+    const i = args.indexOf('--disallowedTools');
+    expect(i).toBeGreaterThanOrEqual(0);
+    // Each tool is a separate arg (claude's variadic flag), in this exact order.
+    expect(args.slice(i + 1, i + 6)).toEqual(['Edit', 'Write', 'Bash', 'NotebookEdit', 'Task']);
+  });
+
+  it('still attaches the orchestration toolkit + orchestrator prompt alongside the deny-list', () => {
+    const args = coordinatorLaunchArgs(cfg);
+    // append-system-prompt + its value still present.
+    const sp = args.indexOf('--append-system-prompt');
+    expect(sp).toBeGreaterThanOrEqual(0);
+    expect(args[sp + 1]).toBe(ORCHESTRATOR_SYSTEM_PROMPT);
+    // mcp-config still present + round-trips to the toolkit config.
+    const mc = args.indexOf('--mcp-config');
+    expect(mc).toBeGreaterThanOrEqual(0);
+    expect(JSON.parse(args[mc + 1])).toEqual(cfg);
+    // The deny-list MUST NOT name the orchestration MCP tools or read-only tools.
+    expect(args).not.toContain('Read');
+    expect(args).not.toContain('Glob');
+    expect(args).not.toContain('Grep');
+    expect(args.some((a) => a.startsWith('mcp__orchestration__'))).toBe(false);
+  });
+
   it('carries the coordinator projectId in the mcp-config env (project scoping)', () => {
     const args = coordinatorLaunchArgs(cfg);
     const parsed = JSON.parse(args[3]);
@@ -77,5 +102,14 @@ describe('ORCHESTRATOR_SYSTEM_PROMPT (task 6.4)', () => {
     expect(ORCHESTRATOR_SYSTEM_PROMPT).toMatch(/spawn_agent/);
     // Explicitly disclaims guardrail/approval responsibilities (separate future change).
     expect(ORCHESTRATOR_SYSTEM_PROMPT).toMatch(/guardrail|approval/i);
+  });
+
+  it('instructs the coordinator to delegate via spawn_agent and never do work itself (task 10.1)', () => {
+    // Must NOT do hands-on work directly.
+    expect(ORCHESTRATOR_SYSTEM_PROMPT).toMatch(/do not|don't|never/i);
+    // Must delegate via spawn_agent.
+    expect(ORCHESTRATOR_SYSTEM_PROMPT).toMatch(/spawn_agent/);
+    // Must not use the Task tool.
+    expect(ORCHESTRATOR_SYSTEM_PROMPT).toMatch(/Task tool/);
   });
 });
