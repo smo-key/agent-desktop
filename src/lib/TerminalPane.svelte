@@ -116,6 +116,10 @@
   // Initial-prompt delivery timers (component-scoped so teardown can clear them).
   let quietTimer: ReturnType<typeof setTimeout> | undefined;
   let maxTimer: ReturnType<typeof setTimeout> | undefined;
+  // Launch-spinner readiness backstop: clears the overlay even if a promptless
+  // pane spawns but emits no output and never exits (the prompt-bearing path is
+  // already capped by maxTimer). Component-scoped so teardown can clear it.
+  let spinnerCapTimer: ReturnType<typeof setTimeout> | undefined;
 
   // The host element xterm renders into.
   let host: HTMLDivElement;
@@ -414,6 +418,15 @@
     });
     loading = spinner.loading;
     loadingLabel = spinnerLabel(resume);
+    // Backstop: never leave the (opaque) overlay covering a live pane forever.
+    // Clears the spinner after the same cap used for prompt delivery, in case the
+    // pane never emits output and never exits.
+    if (loading) {
+      spinnerCapTimer = setTimeout(() => {
+        spinner?.onTimeout();
+        loading = spinner?.loading ?? false;
+      }, READY_MAX_MS);
+    }
 
     // Initial-prompt delivery waits for claude's startup output to go QUIET — the
     // TUI emits a burst of setup/render output on launch and is NOT yet accepting
@@ -680,9 +693,10 @@
     // status behind (a removed pane should simply vanish from the roster).
     clearRuntime(paneId);
 
-    // Cancel any pending initial-prompt delivery timers.
+    // Cancel any pending initial-prompt delivery timers and the spinner backstop.
     if (quietTimer) clearTimeout(quietTimer);
     if (maxTimer) clearTimeout(maxTimer);
+    if (spinnerCapTimer) clearTimeout(spinnerCapTimer);
 
     ro?.disconnect();
     ro = undefined;

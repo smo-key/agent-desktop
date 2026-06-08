@@ -9,7 +9,8 @@ Launching or resuming an agent has a visible gap: the PTY spawns, `claude`'s TUI
 - The overlay clears when the agent is ready:
   - a pane **without** an initial prompt (a plain new session, or a resumed pane) clears on the **first PTY output** — the TUI has begun rendering;
   - a pane **with** an initial prompt holds the spinner through the startup burst and clears only when the **prompt is injected**, so the empty input box never flashes before the text lands;
-  - an agent that **exits before becoming ready** clears the spinner too, so a process that dies on launch never spins forever.
+  - an agent that **exits before becoming ready** clears the spinner too, so a process that dies on launch never spins forever;
+  - a **readiness-timeout backstop** clears the spinner if none of the above happen, so a pane that spawns but emits no output (and never exits) is never hidden by the opaque overlay forever.
 - The overlay matches the terminal background and is `pointer-events: none` (purely visual; never intercepts a click), and respects `prefers-reduced-motion` (label without rotation).
 
 ## Capabilities

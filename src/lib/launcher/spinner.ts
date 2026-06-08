@@ -28,7 +28,9 @@ export function spinnerLabel(resume: boolean | undefined): string {
  *    spinner through claude's startup output burst so the empty input box never
  *    flashes before the text lands); or
  *  - the child exits before becoming ready (so a process that dies on launch
- *    never spins forever).
+ *    never spins forever); or
+ *  - a readiness-timeout backstop fires (so a promptless pane that spawns but
+ *    emits no output and never exits is not hidden by the overlay forever).
  */
 export class LaunchSpinner {
   #loading: boolean;
@@ -57,6 +59,12 @@ export class LaunchSpinner {
 
   /** The child exited before becoming ready. */
   onExit(): void {
+    this.#loading = false;
+  }
+
+  /** The readiness-timeout backstop elapsed — stop waiting regardless of state,
+   *  so a pane that never emits output (and never exits) is not covered forever. */
+  onTimeout(): void {
     this.#loading = false;
   }
 }

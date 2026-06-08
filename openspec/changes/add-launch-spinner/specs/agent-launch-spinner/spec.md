@@ -21,6 +21,7 @@ The launch spinner SHALL clear once the agent is ready, determined by whether th
 - A pane WITHOUT an initial prompt (a plain new session, or a pane resumed from a prior transcript) SHALL clear the spinner on the first PTY output (the TUI has begun rendering).
 - A pane WITH an initial prompt SHALL keep the spinner through the startup output burst and clear it only when the prompt is injected, so the empty input box is never shown before the prompt lands.
 - An agent that exits before becoming ready SHALL clear the spinner, so a process that dies on launch does not spin forever.
+- A readiness-timeout backstop SHALL clear the spinner if none of the above occur, so a pane that spawns but emits no output (and does not exit) is never hidden by the overlay indefinitely.
 
 #### Scenario: Promptless agent clears the spinner on first output
 
@@ -40,6 +41,11 @@ The launch spinner SHALL clear once the agent is ready, determined by whether th
 #### Scenario: Spinner clears if the agent exits before becoming ready
 
 - **WHEN** an agent pane's process exits before it becomes ready
+- **THEN** the launch spinner clears
+
+#### Scenario: Spinner clears after the readiness timeout backstop
+
+- **WHEN** an agent pane neither emits output, injects a prompt, nor exits, and the readiness-timeout backstop elapses
 - **THEN** the launch spinner clears
 
 ### Requirement: The spinner label reflects fresh launch vs resume

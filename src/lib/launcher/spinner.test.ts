@@ -51,6 +51,15 @@ describe('LaunchSpinner', () => {
     s.onExit();
     expect(s.loading).toBe(false);
   });
+
+  it('Spinner clears after the readiness timeout backstop', () => {
+    // A promptless agent that spawns but emits no output and never exits would
+    // otherwise spin forever; the backstop clears it so a live pane is never
+    // hidden indefinitely.
+    const s = new LaunchSpinner({ isAgent: true, hasPrompt: false });
+    s.onTimeout();
+    expect(s.loading).toBe(false);
+  });
 });
 
 describe('spinnerLabel', () => {
