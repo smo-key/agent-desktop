@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "setup": "npm install && npm run setup:hooks && npm run setup:sidecars",
+    "setup:hooks": "git config core.hooksPath .githooks",
+    "setup:sidecars": "./scripts/fetch-models.sh && ./scripts/fetch-whisper.sh && ./scripts/fetch-llama.sh",
+    "postinstall": "git config core.hooksPath .githooks 2>/dev/null || true",
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
