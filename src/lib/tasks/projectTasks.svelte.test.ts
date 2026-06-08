@@ -472,6 +472,20 @@ describe('project-tasks — bare terminals', () => {
     expect(bare?.running).toBe(false);
     expect(bare?.exitCode).toBe(1);
   });
+
+  it('Bare shell runs an initial command', () => {
+    const store = new ProjectTasksStore();
+    // A bare terminal launched with a command carries it as initialInput so the
+    // pane types+runs it once after spawn (e.g. a failed `git push`).
+    const id = store.launchBareTerminal('p', 'git push');
+    const bare = store.bareForProject('p').find((b) => b.id === id);
+    expect(bare?.initialInput).toBe('git push');
+    expect(bare?.running).toBe(true);
+    // A blank/whitespace command leaves a plain interactive shell (no input).
+    const id2 = store.launchBareTerminal('p', '   ');
+    const bare2 = store.bareForProject('p').find((b) => b.id === id2);
+    expect(bare2?.initialInput).toBeUndefined();
+  });
 });
 
 describe('project-tasks — editing', () => {

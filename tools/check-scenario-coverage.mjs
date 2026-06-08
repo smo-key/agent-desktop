@@ -307,6 +307,17 @@ const MANUAL_SCENARIOS = {
   // project-tasks: every scenario has a REAL headless test (model + store), so the
   // MANUAL set is intentionally empty.
   'project-tasks': new Set(),
+  // projects: the context-menu Push/Pull actions + their success/terminal-on-
+  // failure/toast-fallback/no-folder behaviors are pure-logic unit tests
+  // (projectGitActions.test.ts). Two scenarios are genuinely DOM-bound (rendered
+  // project pane / footer) with no pure surface to assert headless, confirmed live:
+  //   - the FOOTER surface wiring the rendered ahead/behind git pills to the same
+  //     (tested) pushProject/pullProject actions;
+  //   - the project rows rendering with NO git status line (git moved to the footer).
+  'projects': new Set([
+    'push_and_pull_are_available_from_the_footer',
+    'project_rows_carry_no_git_line',
+  ]),
   // tasks-panel: every scenario is a rendered-component / live-PTY behavior with no
   // pure surface to assert headless — confirmed live in-app.
   'tasks-panel': new Set([

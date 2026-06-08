@@ -42,6 +42,7 @@
   import { taskAgentReturnedToUser } from '$lib/tasks/agentTask';
   import { activeProjectId } from '$lib/tasks/activeProject';
   import { projectForId } from '$lib/projects/projects';
+  import { setGitTerminalOpener } from '$lib/projects/projectGitActions';
   import { buildLaunchPlan } from '$lib/launcher/plan';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import { ALL, UNASSIGNED } from '$lib/projects/projectRollup';
@@ -100,6 +101,19 @@
     });
     // A terminal task that succeeds (exit 0) pops a "<name> completed" toast.
     projectTasks.setTaskCompleteHandler((name) => toast.show(`${name} completed`));
+    // A failed project Push/Pull (context menu or footer) opens an interactive
+    // terminal in the project's folder running the failed git command, so the user
+    // sees git's full output and can act (auth, conflict, retry). Reveals + focuses
+    // the Terminals panel, mirroring `newTerminal()`.
+    setGitTerminalOpener((projectId, command) => {
+      tasksPanel.open = true;
+      const id = projectTasks.launchBareTerminal(projectId, command);
+      const pane = projectTasks.bareForProject(projectId).find((b) => b.id === id)?.paneId;
+      if (pane) {
+        lastCycledPaneId = pane;
+        focusTerminal(pane); // registry parks the request until the pane mounts
+      }
+    });
     // Tasks now live in each project's `<project>/.agent-desktop/tasks.json`. The
     // store resolves the folder paths through the projects registry, so the projects
     // list MUST be loaded first. Inject the accessor, then load projects → tasks in

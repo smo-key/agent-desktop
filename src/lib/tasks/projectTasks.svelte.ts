@@ -65,6 +65,9 @@ export interface BareTerminal {
   exitCode: number | null;
   /** Live terminal title (OSC 0/2) — the actively running command; empty until one arrives. */
   title: string;
+  /** One-shot command typed+run after spawn (e.g. a failed `git push` opened in a
+   *  terminal), or undefined for a plain interactive shell. */
+  initialInput?: string;
 }
 
 /** The user's interactive login shell (commands run through it). */
@@ -442,16 +445,20 @@ export class ProjectTasksStore {
   /**
    * Launch a transient bare interactive shell in `projectId` (⌘T / launcher
    * "Terminal"). Adds a running {@link BareTerminal} with a fresh id + pane id and
-   * returns its id. NOT persisted and NOT a task def.
+   * returns its id. NOT persisted and NOT a task def. An optional `initialInput`
+   * command is typed+run once after spawn (e.g. a failed `git push`/`git pull`
+   * opened in a terminal); a blank/whitespace command leaves a plain shell.
    */
-  launchBareTerminal(projectId: string): string {
+  launchBareTerminal(projectId: string, initialInput?: string): string {
+    const cmd = initialInput?.trim();
     const bare: BareTerminal = {
       id: nextBareId(),
       projectId,
       paneId: nextPaneId(),
       running: true,
       exitCode: null,
-      title: ''
+      title: '',
+      initialInput: cmd || undefined
     };
     const current = this.bareByProject[projectId] ?? [];
     this.bareByProject = { ...this.bareByProject, [projectId]: [...current, bare] };

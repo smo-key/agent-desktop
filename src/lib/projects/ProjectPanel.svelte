@@ -78,12 +78,12 @@
         {
           label: 'Push',
           icon: 'arrow-up',
-          onClick: () => void pushProject(path, name)
+          onClick: () => void pushProject(path, name, projectId)
         },
         {
           label: 'Pull',
           icon: 'arrow-down',
-          onClick: () => void pullProject(path, name)
+          onClick: () => void pullProject(path, name, projectId)
         },
         {
           label: 'Delete project',

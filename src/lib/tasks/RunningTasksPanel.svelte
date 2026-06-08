@@ -12,13 +12,16 @@
   //
   // Two entry kinds are unified into one ordered list per project:
   //   - terminal-task runs: a `terminal` def with a runtime — live while running;
-  //     a clean exit auto-deletes the runtime in the store (the pane disappears);
-  //     a non-zero exit becomes a "stopped (exit N)" slot with a Dismiss action.
+  //     a clean exit auto-deletes the runtime in the store (the pane disappears),
+  //     UNLESS the task opted out of "Close automatically when complete" — then it
+  //     stays as a stopped (exit 0) slot, like a non-zero exit but not flagged
+  //     failed; a non-zero exit becomes a "stopped (exit N)" slot with a Dismiss action.
   //   - bare terminals: transient interactive shells (⌘T / launcher) — live while
   //     running; a stopped bare shell (any exit, even 0) stays as a slot with a
   //     close (×) action (a different experience from a task).
   import TerminalPane from '../TerminalPane.svelte';
   import Icon from '../icons/Icon.svelte';
+  import { tooltip } from '../ui/tooltip';
   import { workspace } from '../layout/workspace.svelte';
   import { projects } from '../projects/projects.svelte';
   import { projectForId, projectLabel } from '../projects/projects';
@@ -69,9 +72,10 @@
     failed: boolean;
   };
 
-  /** The ACTIVE entries for `pid`: terminal-task runs (running or failed) followed
-   *  by bare terminals. A clean-exit task has no runtime (auto-closed) and so is
-   *  absent; a clean-exit bare shell stays as a stopped slot. */
+  /** The ACTIVE entries for `pid`: terminal-task runs (running, failed, or a
+   *  kept-open clean exit) followed by bare terminals. A clean-exit task is absent
+   *  only when it auto-closed (the default); a keep-open task stays as a stopped
+   *  (exit 0) slot. A clean-exit bare shell stays as a stopped slot. */
   function entriesFor(pid: string): Entry[] {
     const path = projectForId(projects.list, pid)?.path ?? null;
     const out: Entry[] = [];
@@ -110,6 +114,7 @@
         program: projectTasks.shell,
         args: [],
         cwd: path,
+        initialInput: bare.initialInput,
         onExit: (code) => projectTasks.noteBareExit(bare.id, code),
         onTitle: (t) => projectTasks.noteBareTitle(bare.id, t),
         onDismiss: () => projectTasks.removeBareTerminal(bare.id),
@@ -186,7 +191,7 @@
         if (activeId) projectTasks.launchBareTerminal(activeId);
       }}
       disabled={!activeId}
-      title="New terminal (⌘Y)"
+      use:tooltip={'New terminal (⌘Y)'}
       aria-label="New terminal"
     >＋</button>
   </header>
@@ -204,15 +209,15 @@
                 class="tp-dot"
                 class:on={entry.running}
                 class:fail={entry.failed}
-                title={entry.running ? 'running' : 'stopped'}
+                use:tooltip={entry.running ? 'Terminal running' : 'Terminal stopped'}
               ></span>
-              <span class="tp-name" title={entry.name}>{entry.name}</span>
+              <span class="tp-name" use:tooltip={entry.name}>{entry.name}</span>
               <div class="tp-actions">
                 {#if !entry.running}
                   {#if entry.kind === 'task'}
                     <button
                       class="tp-act"
-                      title="Dismiss"
+                      use:tooltip={'Dismiss'}
                       aria-label="Dismiss"
                       onclick={entry.onDismiss}
                     >
@@ -221,7 +226,7 @@
                   {:else}
                     <button
                       class="tp-act"
-                      title="Close"
+                      use:tooltip={'Close'}
                       aria-label="Close"
                       onclick={entry.onDismiss}
                     >

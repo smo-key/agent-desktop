@@ -10,12 +10,17 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock
 const showMock = vi.fn((..._a: unknown[]) => 0);
 vi.mock('../ui/toastStore.svelte', () => ({ toast: { show: (...a: unknown[]) => showMock(...a) } }));
 
-import { pushProject, pullProject } from './projectGitActions';
+import { pushProject, pullProject, setGitTerminalOpener } from './projectGitActions';
+
+// The injected terminal opener (set by the app at startup). Reset per test.
+const openMock = vi.fn((..._a: unknown[]) => {});
 
 beforeEach(() => {
   invokeMock.mockReset();
   invokeMock.mockResolvedValue('');
   showMock.mockReset();
+  openMock.mockReset();
+  setGitTerminalOpener(null);
 });
 
 // Scenario: Push succeeds
@@ -39,16 +44,34 @@ it('Pull succeeds', async () => {
   expect(showMock.mock.calls[0][0]).toMatch(/Acme/);
 });
 
-// Scenario: Push or pull fails — git's error message rides the failure toast and
-// the action never throws, for BOTH push and pull.
+// Scenario: Push or pull failure opens a terminal — when a terminal surface is
+// wired, a failed sync opens an interactive terminal in the project's folder
+// running the failed git command (no toast). Holds for BOTH push and pull.
+it('Push or pull failure opens a terminal', async () => {
+  setGitTerminalOpener(openMock);
+
+  invokeMock.mockRejectedValueOnce('rejected: no upstream');
+  await pushProject('/repo', 'Acme', 'p1');
+  expect(openMock).toHaveBeenCalledWith('p1', 'git push');
+  expect(showMock).not.toHaveBeenCalled();
+
+  openMock.mockClear();
+  invokeMock.mockRejectedValueOnce('conflict in foo.txt');
+  await pullProject('/repo', 'Acme', 'p1');
+  expect(openMock).toHaveBeenCalledWith('p1', 'git pull');
+  expect(showMock).not.toHaveBeenCalled();
+});
+
+// Scenario: Push or pull fails — with no opener wired (or no project id), git's
+// error rides a failure toast and the action never throws, for BOTH push and pull.
 it('Push or pull fails', async () => {
   invokeMock.mockRejectedValueOnce('rejected: no upstream');
-  await expect(pushProject('/repo', 'Acme')).resolves.toBeUndefined();
+  await expect(pushProject('/repo', 'Acme', 'p1')).resolves.toBeUndefined();
   expect(showMock.mock.calls[0][0]).toMatch(/rejected: no upstream/);
 
   showMock.mockClear();
   invokeMock.mockRejectedValueOnce('conflict in foo.txt');
-  await expect(pullProject('/repo', 'Acme')).resolves.toBeUndefined();
+  await expect(pullProject('/repo', 'Acme', 'p1')).resolves.toBeUndefined();
   expect(showMock.mock.calls[0][0]).toMatch(/conflict in foo.txt/);
 });
 

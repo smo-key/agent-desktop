@@ -14,6 +14,7 @@
   import { projectForId } from '$lib/projects/projects';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import { projectGit } from '$lib/projects/projectGit.svelte';
+  import { pushProject, pullProject } from '$lib/projects/projectGitActions';
   import { view as topView } from '$lib/overview/view.svelte';
   import LimitBars from './LimitBars.svelte';
   import GitInfo from './GitInfo.svelte';
@@ -50,6 +51,17 @@
   );
   const folderGit = $derived(projectGit.forPath(gitProject?.path ?? null));
 
+  // Push/Pull handlers for the footer's git indicators — present only when a real
+  // project with a folder backs the footer git, so the ↑/↓ pills become Push/Pull
+  // buttons with the SAME behavior as the project pane's context-menu actions
+  // (success toast; interactive terminal in the folder on failure).
+  const onPush = $derived(
+    gitProject?.path ? () => void pushProject(gitProject.path, gitProject.name, gitProject.id) : undefined
+  );
+  const onPull = $derived(
+    gitProject?.path ? () => void pullProject(gitProject.path, gitProject.name, gitProject.id) : undefined
+  );
+
   // The terminal area's left edge as a fraction [0,1] of the surface, or null when
   // there's no terminal pane / not in grid view. A "terminal" pane is a non-claude
   // (shell) pane; agents are claude panes. Reading the active tree + registry keeps
@@ -84,7 +96,7 @@
   aria-label="Status footer"
 >
   <div class="zone left">
-    <div class="left-git"><GitInfo git={folderGit} always /></div>
+    <div class="left-git"><GitInfo git={folderGit} always {onPush} {onPull} /></div>
     <span class="sep" aria-hidden="true"></span>
     <LimitBars fiveHour={view.fiveHour} sevenDay={view.sevenDay} {now} />
   </div>
