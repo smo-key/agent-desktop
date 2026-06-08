@@ -193,7 +193,7 @@
     return refs;
   }
 
-  // Refresh transcript activity, then ask the titles store to regenerate any Haiku
+  // Refresh transcript activity, then ask the titles store to regenerate any
   // session title whose user-messages hash changed (gated + throttled in the store,
   // so this is cheap to call often).
   async function refreshActivity(): Promise<void> {

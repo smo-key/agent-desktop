@@ -213,19 +213,64 @@ fn open_path(path: String, app: Option<String>) -> Result<(), String> {
         .map_err(|e| format!("open {path} (app {app:?}): {e}"))
 }
 
-/// Generate a short session FOCUS title from the user's messages, using Claude
-/// Haiku. Locates the session transcript, extracts the user's prose messages, and
-/// asks `claude -p --model haiku` for a <=6-word title (e.g. "SKIPA-45: Fix
-/// Feature"). Returns `None` when the user has sent nothing yet. Runs on Tauri's
-/// command worker thread (the blocking model call never blocks the UI); the
+/// Clean a raw model completion into a session-title string: drop any Qwen3
+/// `<think>…</think>` reasoning block that slipped into the content, take the first
+/// non-empty line, strip wrapping quotes / trailing periods, and clip to 60 chars.
+/// PURE so the post-processing is unit-tested apart from the model call.
+fn clean_title(raw: &str) -> String {
+    let body = strip_think_blocks(raw);
+    let title = body
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .trim_matches(|c| c == '"' || c == '\'' || c == '.')
+        .trim();
+    title.chars().take(60).collect()
+}
+
+/// Remove every `<think>…</think>` span (case-insensitive) from `s`. Qwen3 is a
+/// reasoning model; with thinking disabled the content is bare, but if a stray
+/// reasoning block leaks through it must not corrupt a 6-word title. An unterminated
+/// `<think>` drops the remainder.
+fn strip_think_blocks(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    loop {
+        let lower = rest.to_lowercase();
+        let Some(start) = lower.find("<think>") else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..start]);
+        match lower[start..].find("</think>") {
+            Some(end_rel) => rest = &rest[start + end_rel + "</think>".len()..],
+            // Unterminated `<think>`: everything after it is reasoning; drop it.
+            None => break,
+        }
+    }
+    out
+}
+
+/// Generate a short session FOCUS title from the user's messages, using the LOCAL
+/// model (the `llama-server` sidecar loading the Qwen3 polish model — see
+/// `polish.rs`). Locates the session transcript, extracts the user's prose messages,
+/// and asks the local model for a <=6-word title (e.g. "SKIPA-45: Fix Feature").
+/// Returns `None` when the user has sent nothing yet; returns `Err` (so the frontend
+/// keeps the previous title) if the local model is absent or the call fails. The
 /// frontend gates calls on the `user_hash` so a title is regenerated only when the
 /// user's messages actually change.
-// `(async)` runs this on a worker thread, NOT the main/UI thread: it shells out to
-// a blocking `claude -p` that can take seconds, and on the main thread that freezes
-// the whole webview (the app hangs until the title resolves). Off-thread, titles
-// resolve in the background while the UI stays responsive.
-#[tauri::command(async)]
-fn session_focus(session_id: String, cwd: Option<String>) -> Result<Option<String>, String> {
+///
+/// `async` runs this off the main/UI thread: the local model call can take a moment,
+/// and the sidecar may need a lazy start on the first request; the UI stays
+/// responsive while the title resolves in the background.
+#[tauri::command]
+async fn session_focus(
+    app: AppHandle,
+    state: State<'_, Arc<polish::LlamaServer>>,
+    session_id: String,
+    cwd: Option<String>,
+) -> Result<Option<String>, String> {
     let projects_base =
         activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
     let pane = PaneRef {
@@ -240,54 +285,26 @@ fn session_focus(session_id: String, cwd: Option<String>) -> Result<Option<Strin
     if msgs.is_empty() {
         return Ok(None);
     }
-    // Bound the prompt: the last 40 user messages, each clipped.
+    // Bound the prompt to fit the local model's modest context window (the sidecar
+    // runs with a 4096-token context): the last 20 user messages, each clipped.
     let joined: String = msgs
         .iter()
         .rev()
-        .take(40)
+        .take(20)
         .rev()
         .map(|m| {
             let one = m.split_whitespace().collect::<Vec<_>>().join(" ");
-            one.chars().take(500).collect::<String>()
+            one.chars().take(200).collect::<String>()
         })
         .collect::<Vec<_>>()
         .join("\n- ");
-    let prompt = format!(
-        "You label coding sessions. Read the user's messages to an AI coding agent \
-         below and reply with ONE short title (at most 6 words) naming the session's \
-         focus — for example \"SKIPA-45: Fix Feature\" or \"Improve frontend dialog \
-         handling\". Reply with ONLY the title: no quotes, no trailing punctuation, no \
-         preamble.\n\nMessages:\n- {joined}"
-    );
+    let joined = format!("Messages:\n- {joined}");
 
-    // Spawn a normal `claude -p` (reuses the user's auth) with the Haiku model. Seed
-    // a GUI-friendly PATH so `claude` resolves from a sparse app env (mirrors the
-    // PTY's seed_env). No cwd is set, so the project's CLAUDE.md isn't loaded.
-    let path = std::env::var("PATH")
-        .unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string());
-    let mut cmd = std::process::Command::new("claude");
-    cmd.args(["-p", "--model", "haiku", &prompt]);
-    cmd.env("PATH", path);
-    if let Ok(home) = std::env::var("HOME") {
-        cmd.env("HOME", home);
-    }
-    let output = cmd.output().map_err(|e| format!("spawn claude: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "claude exited {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let raw = String::from_utf8_lossy(&output.stdout);
-    let title = raw
-        .lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .unwrap_or("")
-        .trim_matches(|c| c == '"' || c == '\'' || c == '.')
-        .trim();
-    let title: String = title.chars().take(60).collect();
+    // Run the title completion through the shared local-model path (lazy-starts the
+    // sidecar). The model id is the registry id; llama-server ignores it for routing.
+    let body = polish::build_title_body(&joined, models::POLISH.id);
+    let raw = polish::chat_complete(&app, &state, body).await?;
+    let title = clean_title(&raw);
     Ok((!title.is_empty()).then_some(title))
 }
 
@@ -875,6 +892,42 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn clean_title_takes_first_nonempty_line_and_strips_decoration() {
+        assert_eq!(clean_title("\n  \"Fix login bug\".  \n"), "Fix login bug");
+        assert_eq!(
+            clean_title("Improve frontend dialog handling\nextra line"),
+            "Improve frontend dialog handling"
+        );
+    }
+
+    #[test]
+    fn clean_title_drops_think_blocks() {
+        assert_eq!(
+            clean_title("<think>let me reason\nabout this</think>\nSKIPA-45: Fix Feature"),
+            "SKIPA-45: Fix Feature"
+        );
+        // Case-insensitive tag, title on the same trailing segment.
+        assert_eq!(
+            clean_title("<THINK>hmm</THINK> Add dark mode"),
+            "Add dark mode"
+        );
+        // Unterminated think block → no title leaks out.
+        assert_eq!(clean_title("<think>never closes"), "");
+    }
+
+    #[test]
+    fn clean_title_clips_to_60_chars() {
+        let long = "a".repeat(100);
+        assert_eq!(clean_title(&long).chars().count(), 60);
+    }
+
+    #[test]
+    fn clean_title_empty_for_blank_input() {
+        assert_eq!(clean_title(""), "");
+        assert_eq!(clean_title("   \n  "), "");
     }
 
     #[test]

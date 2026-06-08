@@ -99,7 +99,7 @@ pub struct Activity {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messages: Option<Vec<String>>,
     /// A cheap stable hash of the USER's messages — changes only when the user adds
-    /// a message. The overview uses it to regenerate the Haiku session title (which
+    /// a message. The overview uses it to regenerate the session title (which
     /// is derived from the user's messages) ONLY when it actually changed, rather
     /// than on every poll. `null` when the user has sent nothing yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -241,7 +241,7 @@ fn user_text(entry: &Value) -> Option<String> {
 /// the bare words `exit`/`quit`, or a `/exit`, `/quit`, `/clear`, `/compact` slash
 /// command (which `claude` records as `<command-name>/NAME</command-name>…`). These
 /// don't count as user messages — a session whose only user entries are these is
-/// EMPTY (deleted on archive, no Haiku title). `t` is already trimmed.
+/// EMPTY (deleted on archive, no session title). `t` is already trimmed.
 fn is_meta_command(t: &str) -> bool {
     if t.eq_ignore_ascii_case("exit") || t.eq_ignore_ascii_case("quit") {
         return true;
@@ -402,7 +402,7 @@ pub fn summarize_transcript(path: &Path) -> Activity {
     }
 
     // USER-FOCUS hash: a cheap signal that the user's messages changed, so the
-    // overview regenerates the Haiku session title only on a real change. Tail-based
+    // overview regenerates the session title only on a real change. Tail-based
     // (the newest user message is always in the tail), which is all the change
     // detector needs.
     let user_msgs: Vec<String> = entries.iter().filter_map(user_text).collect();

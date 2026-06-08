@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // TitleStore persistence: the durable, sessionId-keyed title cache in
-// localStorage is what makes "close + reopen the app" NOT re-call Haiku. On
+// localStorage is what makes "close + reopen the app" NOT re-call the model. On
 // restart each claude pane re-spawns with its SAME persisted sessionId, so it
 // reads the same transcript and reports the same userHash; the cached
 // {title, hash} is seeded into byPane and the user-hash gate short-circuits the
@@ -48,7 +48,7 @@ describe('TitleStore restart persistence', () => {
     await flush();
 
     expect(store.titleFor('p1')).toBe('SKIPA-45: Fix Feature');
-    expect(invokeMock).not.toHaveBeenCalled(); // the whole point: no Haiku re-call
+    expect(invokeMock).not.toHaveBeenCalled(); // the whole point: no model re-call
   });
 
   it('regenerates after restart only when the user messages actually changed', async () => {
@@ -64,7 +64,7 @@ describe('TitleStore restart persistence', () => {
     expect(store.titleFor('p1')).toBe('New focus');
   });
 
-  it('persists a freshly generated title so the NEXT app start reuses it (still no Haiku call)', async () => {
+  it('persists a freshly generated title so the NEXT app start reuses it (still no model call)', async () => {
     invokeMock.mockResolvedValue('Improve frontend dialog handling');
 
     // First run: no cache, so it calls the model once and persists the result.

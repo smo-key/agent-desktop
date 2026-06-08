@@ -45,7 +45,7 @@ export interface Activity {
   /** Recent assistant messages (newest LAST), rendered as the transcript preview. */
   messages?: string[] | null;
   /** A cheap hash of the user's messages — changes only when the user adds one;
-   *  gates Haiku session-title regeneration. */
+   *  gates session-title regeneration. */
   userHash?: string | null;
 }
 

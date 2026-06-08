@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { shouldRequest, TITLE_THROTTLE_MS, type TitleEntry } from './titles.svelte';
 
-// Pure gating for Haiku title regeneration: request only when the user's messages
+// Pure gating for session-title regeneration: request only when the user's messages
 // changed (hash differs), not already fetching that hash, and not throttled.
 
 const entry = (hash: string | null): TitleEntry => ({ title: 'X', hash });
