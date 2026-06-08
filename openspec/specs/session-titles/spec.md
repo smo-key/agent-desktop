@@ -16,6 +16,11 @@ short title (at most 6 words; only the title, with no quotes, surrounding
 punctuation, or preamble). Any model reasoning block that leaks into the response
 SHALL be stripped before the title is returned.
 
+A ticket or issue id SHALL appear in the title only when one actually appears in
+the user's messages; the model SHALL NOT invent, guess, or copy an example id.
+Any example ticket formats in the prompt SHALL be generic (e.g. `PROJ-45`, `#45`)
+rather than a distinctive placeholder the model is prone to parrot.
+
 #### Scenario: Title generated from the user's messages
 
 - **WHEN** `session_focus` is invoked for a session whose transcript contains user
@@ -42,3 +47,9 @@ SHALL be stripped before the title is returned.
 - **WHEN** the local model's response contains a `<think>…</think>` reasoning block
 - **THEN** that block is stripped and the returned title is the bare focus title
   with no reasoning text
+
+#### Scenario: No ticket id is invented when none is present
+
+- **WHEN** the user's messages mention no ticket or issue id
+- **THEN** the title contains no ticket id and never the prompt's example formats
+  (e.g. `PROJ-45`, `#45`) — it just names the focus in plain words
