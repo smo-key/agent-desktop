@@ -68,7 +68,8 @@ tendency to hallucinate phantom text during silence.
 
 ### D4 — Polish: separate small local LLM, toggleable
 A second stage sends the final transcript to a small instruction-tuned LLM
-(Qwen3 1.7B Q4_K_M — the `models::POLISH` registry entry) running as a bundled
+(Qwen3 1.7B Q8_0 — the `models::POLISH` registry entry; the only GGUF quant the
+official `Qwen/Qwen3-1.7B-GGUF` repo publishes) running as a bundled
 local server subprocess. **Shippable baseline (implemented):** llama.cpp's
 `llama-server` provisioned as a Tauri sidecar (mirrors the whisper-cli sidecar;
 no Python/MLX dependency to ship), serving an OpenAI-compatible
@@ -119,7 +120,7 @@ sending anywhere unexpected.
 
 ### D8 — Model packaging: bundle tiny, download the rest
 Bundle only the tiny whisper model (instant first use / offline fallback).
-Download large-v3-turbo (~1.1GB q5) and the polish LLM (~0.7–1.5GB) on first run
+Download large-v3-turbo (~0.57GB q5) and the polish LLM (Qwen3 1.7B Q8_0, ~1.8GB) on first run
 with a progress UI; store under app data (not the installer, not git). A
 settings "model tier" lets advanced users pick what to fetch.
 

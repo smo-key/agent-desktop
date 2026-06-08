@@ -51,19 +51,28 @@ stop/close control.
 
 ### Requirement: Live transcript overlay
 
-While recording, the system SHALL display the in-progress transcript in the
-panel. Provisional (partial) text SHALL be visually distinct from committed text
-and MAY be revised as more audio context arrives.
+While recording, the system SHALL display a live mic-level waveform and the
+in-progress transcript in the panel, alongside a confirm (insert) control. The
+in-progress transcript MAY be revised as more audio context arrives. While the
+final result is being produced (processing), the system SHALL show the captured
+text with a distinct processing treatment until it is finalized. If no speech is
+recognized, the system SHALL show a brief notice rather than closing silently.
 
-#### Scenario: Partial text appears while speaking
+#### Scenario: Waveform and partial text appear while speaking
 
 - **WHEN** the user is speaking with the panel open
-- **THEN** the panel shows the in-progress transcript and updates it as the user continues
+- **THEN** the panel shows a live waveform driven by the mic level
+- **AND** shows the in-progress transcript, updating it as the user continues
 
-#### Scenario: Partial text is provisional
+#### Scenario: Processing treatment until finalized
 
-- **WHEN** new audio context revises an earlier partial guess
-- **THEN** the displayed provisional text updates accordingly and remains visually distinct from committed text
+- **WHEN** the user confirms and the final transcript is being produced
+- **THEN** the panel shows the captured text with a distinct processing (shimmer) treatment until the result is finalized
+
+#### Scenario: No speech recognized
+
+- **WHEN** the user confirms but no speech was recognized (silence / too quiet / too short)
+- **THEN** the panel shows a "didn't catch that" notice and does not close silently with no result
 
 ### Requirement: Microphone permission handling
 
