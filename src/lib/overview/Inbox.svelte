@@ -37,7 +37,8 @@
     nextInQueue,
     archiveDecision,
     autoArchiveAction,
-    shouldAutoResume
+    shouldAutoResume,
+    deleteAllArchivedRequest
   } from './inbox';
   import { toRosterWorkspaces, toNavWorkspaces } from './rosterInputs';
   import { runtimeMap } from './runtime';
@@ -57,6 +58,7 @@
   import ProjectPanel from '$lib/projects/ProjectPanel.svelte';
   import ProjectIcon from '$lib/icons/ProjectIcon.svelte';
   import Icon from '$lib/icons/Icon.svelte';
+  import { confirmModal } from '$lib/ui/confirmStore.svelte';
   import StatusBar from '$lib/usage/StatusBar.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import { friendlyTime } from './friendlyTime';
@@ -517,6 +519,19 @@
     workspace.deleteAgent(paneId);
   }
 
+  /** DELETE every Archived agent at once, behind a confirmation modal. The pure
+   *  `deleteAllArchivedRequest` builds the prompt + delete callback (targeting the
+   *  Archived/done lane shown under the header) and returns null when nothing is
+   *  archived; we just feed it the live deps and show the modal. */
+  function deleteAllArchived() {
+    const req = deleteAllArchivedRequest(pin.rest, {
+      deleteAgent: (id) => workspace.deleteAgent(id),
+      getSelected: () => userSelected,
+      setSelected: (v) => (userSelected = v)
+    });
+    if (req) confirmModal.show(req);
+  }
+
   // Auto-archive on completion: when an agent's process exits CLEANLY (its task
   // ended — `finished`, not a crash) AND it isn't paused, move it to Archived so it
   // stops occupying a live slot and persists as a restorable closed session. Guarded
@@ -937,6 +952,16 @@
               {#if items.length > 0}
                 <div class="group-h {lane}">
                   {LANES[lane].title} <span class="gn">· {items.length}</span><span class="rule"></span>
+                  {#if lane === 'done'}
+                    <button
+                      type="button"
+                      class="group-action"
+                      title="Delete all archived agents"
+                      onclick={deleteAllArchived}
+                    >
+                      Delete all
+                    </button>
+                  {/if}
                 </div>
                 {#each items as r (r.paneId)}
                   {@render sessionRow(r, lane)}
@@ -1092,6 +1117,20 @@
   .group-h.done { color: var(--fg-4); }
   .group-h .gn { color: var(--fg-4); }
   .group-h .rule { flex: 1; height: 1px; background: var(--line-faint); }
+  /* Right-aligned lane action (e.g. "Delete all" on Archived). Subtle until hover,
+     where it reveals its destructive intent. Inherits the mono/uppercase header. */
+  .group-h .group-action {
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    padding: 0;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    color: var(--fg-4);
+    cursor: pointer;
+  }
+  .group-h .group-action:hover { color: var(--danger, #e5484d); }
 
   .row { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 10px 16px; cursor: pointer; border: none; border-left: 2px solid transparent; background: none; transition: background var(--dur-fast); }
   .row:hover { background: rgba(255,255,255,0.025); }

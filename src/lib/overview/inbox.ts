@@ -6,7 +6,8 @@
 // the queue. Framework-free so it is trivially unit-tested; Inbox.svelte is the
 // thin reactive shell that feeds it the live roster and renders the result.
 
-import { needsAttention, type AgentRow, type AgentStatus } from './roster';
+import { archivedPaneIds, needsAttention, type AgentRow, type AgentStatus } from './roster';
+import type { ConfirmOptions } from '$lib/ui/confirmStore.svelte';
 
 /** Whether a status means the agent is waiting on YOU (waiting or errored). This is
  *  the STATUS-only check (used for badge/label styling); the attention QUEUE uses
@@ -108,4 +109,35 @@ export function shouldAutoResume(
 ): boolean {
   if (!liveHash) return false;
   return liveHash !== (pausedHash ?? null);
+}
+
+/**
+ * PURE: build the confirmation request for "delete all archived agents", or `null`
+ * when nothing is archived (so the caller hides the action). The returned
+ * `onConfirm` deletes every archived pane (`archivedPaneIds`) via `deleteAgent`,
+ * clearing the selection first if it points at one of them — so the agents are
+ * removed ONLY when the user confirms, and never the agents in other lanes.
+ */
+export function deleteAllArchivedRequest(
+  rows: AgentRow[],
+  deps: {
+    deleteAgent: (paneId: string) => void;
+    getSelected: () => string | null;
+    setSelected: (paneId: string | null) => void;
+  }
+): ConfirmOptions | null {
+  const ids = archivedPaneIds(rows);
+  if (ids.length === 0) return null;
+  const noun = ids.length === 1 ? 'agent' : 'agents';
+  return {
+    title: 'Delete archived agents',
+    message: `Delete all ${ids.length} archived ${noun}? This permanently removes their sessions and cannot be undone.`,
+    confirmLabel: 'Delete',
+    onConfirm: () => {
+      for (const id of ids) {
+        if (deps.getSelected() === id) deps.setSelected(null);
+        deps.deleteAgent(id);
+      }
+    }
+  };
 }

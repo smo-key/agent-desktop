@@ -9,7 +9,8 @@ import {
   shouldClearPin,
   archiveDecision,
   autoArchiveAction,
-  shouldAutoResume
+  shouldAutoResume,
+  deleteAllArchivedRequest
 } from './inbox';
 
 // Minimal AgentRow factory — only the fields the inbox cores read.
@@ -148,6 +149,66 @@ describe('Addressed attention agent advances the focus to the next', () => {
 
   it('does nothing when the agent was not pinned', () => {
     expect(shouldClearPin('waiting', 'working', false)).toBe(false);
+  });
+});
+
+describe('Delete all archived agents', () => {
+  const archived = (id: string) => row(id, 'finished', { closed: true });
+  // A test harness capturing deletions + a mutable selection, mirroring the live deps.
+  function harness(selected: string | null = null) {
+    const deleted: string[] = [];
+    let sel = selected;
+    const deps = {
+      deleteAgent: (id: string) => deleted.push(id),
+      getSelected: () => sel,
+      setSelected: (v: string | null) => (sel = v)
+    };
+    return { deleted, deps, sel: () => sel };
+  }
+
+  it('Deleting all archived agents after confirming', () => {
+    const rows = [row('live', 'working'), archived('a1'), archived('a2')];
+    const h = harness('a1'); // the current selection points at an archived pane
+    const req = deleteAllArchivedRequest(rows, h.deps);
+    expect(req).not.toBeNull();
+    expect(req!.message).toContain('2 archived agents');
+    // Nothing is deleted until the user actually confirms (runs onConfirm).
+    expect(h.deleted).toEqual([]);
+    req!.onConfirm();
+    expect(h.deleted).toEqual(['a1', 'a2']); // every archived agent removed
+    expect(h.sel()).toBeNull(); // selection cleared — it pointed at a deleted pane
+  });
+
+  it('Cancelling the confirmation keeps the archived agents', () => {
+    const rows = [archived('a1'), archived('a2'), row('live', 'working')];
+    const h = harness();
+    // The request is built to show the dialog, but cancelling never invokes onConfirm.
+    const req = deleteAllArchivedRequest(rows, h.deps);
+    expect(req).not.toBeNull();
+    expect(h.deleted).toEqual([]); // nothing removed without confirming
+  });
+
+  it('The action targets only archived agents', () => {
+    const rows = [
+      row('live', 'working'),
+      row('attn', 'waiting'),
+      row('paused', 'working', { paused: true }),
+      archived('a1'),
+      row('preview', 'working', { preview: true }) // previewing-archived counts too
+    ];
+    const h = harness();
+    deleteAllArchivedRequest(rows, h.deps)!.onConfirm();
+    expect(h.deleted).toEqual(['a1', 'preview']); // only the Archived (done) lane
+  });
+
+  it('The action is hidden when nothing is archived', () => {
+    const rows = [
+      row('live', 'working'),
+      row('attn', 'waiting'),
+      row('paused', 'working', { paused: true })
+    ];
+    // No archived agents → no request to show (the caller hides the action).
+    expect(deleteAllArchivedRequest(rows, harness().deps)).toBeNull();
   });
 });
 

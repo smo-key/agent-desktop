@@ -7,6 +7,7 @@ import {
   laneForRow,
   needsAttention,
   groupByLane,
+  archivedPaneIds,
   LANE_ORDER,
   WORKING_WINDOW_MS,
   type AgentRow,
@@ -399,6 +400,26 @@ describe('roster — control-room lanes', () => {
     ]);
     expect(grouped.attn.map((r) => r.paneId)).toEqual(['w']);
     expect(grouped.done.map((r) => r.paneId)).toEqual(['p']);
+  });
+
+  it('archivedPaneIds: the done-lane paneIds (closed + previewing), in roster order', () => {
+    const rows = [
+      laneRow('live', { status: 'working' }),
+      laneRow('closed', { status: 'finished', closed: true }),
+      laneRow('attn', { status: 'waiting' }),
+      laneRow('preview', { status: 'working', preview: true })
+    ];
+    // Both the closed and the previewing-archived rows count; live/attention do not.
+    expect(archivedPaneIds(rows)).toEqual(['closed', 'preview']);
+  });
+
+  it('archivedPaneIds: empty when nothing is archived', () => {
+    const rows = [
+      laneRow('a', { status: 'working' }),
+      laneRow('b', { status: 'waiting' }),
+      laneRow('c', { status: 'waiting', paused: true })
+    ];
+    expect(archivedPaneIds(rows)).toEqual([]);
   });
 });
 

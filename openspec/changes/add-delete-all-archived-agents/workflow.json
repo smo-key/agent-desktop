@@ -1,0 +1,6 @@
+{
+  "provider": "local",
+  "taskRef": "add-delete-all-archived-agents",
+  "url": "",
+  "lastEvent": "review"
+}

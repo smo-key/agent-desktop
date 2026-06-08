@@ -114,6 +114,16 @@ export function groupByLane(rows: AgentRow[]): Record<AgentLane, AgentRow[]> {
   return grouped;
 }
 
+/**
+ * PURE: the paneIds of the ARCHIVED rows — those in the `done` lane (closed or
+ * previewing-an-archived-session), in roster order. This is exactly the set shown
+ * under the overview's "Archived" header, so it backs the "delete all archived"
+ * action. Empty when nothing is archived.
+ */
+export function archivedPaneIds(rows: AgentRow[]): string[] {
+  return rows.filter((row) => laneForRow(row) === 'done').map((row) => row.paneId);
+}
+
 /** Per-pane runtime state captured from the live terminal (framework-free). */
 export interface PaneRuntime {
   /** Epoch ms of the most recent PTY output, or null if none seen yet. */

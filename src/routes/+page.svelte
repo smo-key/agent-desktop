@@ -8,6 +8,8 @@
   import HelpModal from '$lib/ui/HelpModal.svelte';
   import { help } from '$lib/ui/helpStore.svelte';
   import SettingsModal from '$lib/ui/SettingsModal.svelte';
+  import ConfirmModal from '$lib/ui/ConfirmModal.svelte';
+  import { confirmModal } from '$lib/ui/confirmStore.svelte';
   import { settingsModal } from '$lib/ui/settingsStore.svelte';
   import { openWith } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
@@ -429,6 +431,18 @@
     const alt = e.altKey;
     const key = e.key;
 
+    // A confirmation modal is the TOPMOST surface and owns the keyboard while open:
+    // Esc cancels it (its own handler only fires when focus is inside the dialog, so
+    // cover it here too) and we block every shortcut beneath so nothing fires under
+    // the "are you sure?" dialog. Checked first since it can sit over any other view.
+    if (confirmModal.open) {
+      if (key === 'Escape') {
+        e.preventDefault();
+        confirmModal.close();
+      }
+      return;
+    }
+
     // Help overlay: Cmd-/ toggles it from anywhere; bare ? opens it too, but only
     // when NOT typing into a field/terminal, so a literal "?" still reaches prompts
     // and the xterm terminal (Cmd-/ is the always-safe path). Handled before the
@@ -695,6 +709,7 @@
 <Toast />
 <HelpModal />
 <SettingsModal />
+<ConfirmModal />
 <VoicePanel />
 <!-- First-launch model download gate: a full-screen takeover shown only while the
      on-device models the current voice selection needs are missing (and not skipped
