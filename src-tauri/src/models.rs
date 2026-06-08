@@ -309,10 +309,11 @@ const PROGRESS_EMIT_INTERVAL: u64 = 2 * 1024 * 1024;
 /// Download every model the current selection needs that isn't already on disk,
 /// streaming progress to the frontend over `on_event`.
 ///
-/// For each needed model: emit [`DownloadEvent::Start`], stream the HTTP body in
-/// chunks (summing bytes, emitting throttled [`DownloadEvent::Progress`]) to a
-/// sibling `<filename>.part` temp file, then ATOMICALLY rename it into place and
-/// emit [`DownloadEvent::Done`]. A failure on one model emits
+/// For each needed model: emit [`DownloadEvent::Start`], download via the system
+/// `curl` to a sibling `<filename>.part` temp file (polling its size to emit
+/// throttled [`DownloadEvent::Progress`]; see [`download_one`] for why curl), then
+/// ATOMICALLY rename it into place and emit [`DownloadEvent::Done`]. A failure on
+/// one model emits
 /// [`DownloadEvent::Error`] for it and CONTINUES to the next (best-effort,
 /// never panics) — the caller learns the final readiness via
 /// [`voice_models_status`].
@@ -338,18 +339,8 @@ pub async fn voice_download_models(
     let present = present_filenames(&base);
     let needed = models_needed(Tier::from_str(&tier), polish, &present);
 
-    // Force HTTP/1.1. reqwest offers h2 via ALPN by default, but some corporate
-    // TLS-inspecting proxies (e.g. Netskope) mishandle the h2 connection and tear
-    // it down mid-handshake — surfacing as rustls "peer closed connection without
-    // sending TLS close_notify (unexpected EOF)" and failing every download. h1
-    // negotiates cleanly through the same proxy. Falls back to a default client if
-    // the builder ever fails (it doesn't, with these options).
-    let client = reqwest::Client::builder()
-        .http1_only()
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
     for spec in needed {
-        if let Err(message) = download_one(&client, spec, &models_dir, &on_event).await {
+        if let Err(message) = download_one(spec, &models_dir, &on_event).await {
             // Best-effort: surface this model's failure and keep going.
             let _ = on_event.send(DownloadEvent::Error {
                 id: spec.id.to_string(),
@@ -360,61 +351,103 @@ pub async fn voice_download_models(
     Ok(())
 }
 
-/// Stream a single model to `<models_dir>/<filename>.part`, emitting progress over
-/// `on_event`, then atomically rename it to its final name. Returns `Err(msg)` on
-/// any HTTP/IO failure (the caller turns it into a `DownloadEvent::Error`).
+/// Download a single model to `<models_dir>/<filename>.part` by shelling out to
+/// the system `curl`, emitting progress over `on_event`, then atomically renaming
+/// it to its final name. Returns `Err(msg)` on any failure (the caller turns it
+/// into a `DownloadEvent::Error`).
+///
+/// ## Why `curl` instead of an in-process HTTP client
+/// This app runs behind corporate TLS-inspecting proxies (e.g. Netskope). Under
+/// some policies that proxy steers traffic PER PROCESS: it silently drops the TLS
+/// connections of in-process clients — reqwest with `rustls` AND `native-tls`
+/// alike, even pinned to the same IP/port/TLS-version/headers as a working
+/// request — while letting the allow-listed system `curl` binary through. curl is
+/// therefore the only transport that works on those networks; on unrestricted
+/// networks it works just as well, so this is unconditional rather than a
+/// platform hack.
+///
+/// `curl` runs with `-s` (no progress meter — keeps its stderr pipe tiny so it
+/// can't deadlock), so there is no machine-readable progress to parse. Instead we
+/// poll the growing `.part` file's size on a timer and emit throttled progress
+/// against the registry size estimate (`approx_bytes`), since the real
+/// Content-Length is hidden behind the signed-CDN redirect.
 async fn download_one(
-    client: &reqwest::Client,
     spec: &ModelSpec,
     models_dir: &Path,
     on_event: &Channel<DownloadEvent>,
 ) -> Result<(), String> {
-    use futures_util::StreamExt;
-    use std::io::Write;
+    use std::process::Stdio;
+    use std::time::Duration;
+    use tokio::io::AsyncReadExt;
 
-    let resp = client
-        .get(spec.url)
-        .send()
-        .await
-        .map_err(|e| format!("GET {}: {e}", spec.url))?;
-    let resp = resp
-        .error_for_status()
-        .map_err(|e| format!("GET {} status: {e}", spec.url))?;
+    let final_path = models_dir.join(spec.filename);
+    let part_path = models_dir.join(format!("{}.part", spec.filename));
+    // Start clean — we don't resume a previous partial.
+    let _ = std::fs::remove_file(&part_path);
 
-    // Prefer the server's Content-Length; fall back to the registry estimate so
-    // the bar still moves when the server omits it.
-    let total = resp.content_length().unwrap_or(spec.approx_bytes);
+    let total = spec.approx_bytes;
     let _ = on_event.send(DownloadEvent::Start {
         id: spec.id.to_string(),
         total,
     });
 
-    let final_path = models_dir.join(spec.filename);
-    let part_path = models_dir.join(format!("{}.part", spec.filename));
-    let mut file =
-        std::fs::File::create(&part_path).map_err(|e| format!("create {part_path:?}: {e}"))?;
+    // -f: nonzero exit on HTTP >= 400; -s: silent (no progress spam that could
+    // fill the stderr pipe); -S: still surface the error text; -L: follow the
+    // HF → signed-CDN redirect. `--retry` rides out transient resets.
+    let mut child = tokio::process::Command::new("curl")
+        .args(["-fsSL", "--retry", "3", "--retry-delay", "1", "-o"])
+        .arg(&part_path)
+        .arg(spec.url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        // A stale CURL_CA_BUNDLE pointing at a missing corporate bundle (a common
+        // misconfig on these machines) makes curl abort with "could not load CA
+        // certs"; drop it so curl falls back to its built-in trust store.
+        .env_remove("CURL_CA_BUNDLE")
+        .spawn()
+        .map_err(|e| format!("spawn curl for {}: {e}", spec.id))?;
 
-    let mut received: u64 = 0;
+    let stderr = child.stderr.take();
+
+    // Poll the partial file's size while curl runs, emitting throttled progress.
     let mut last_emit: u64 = 0;
-    let mut stream = resp.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("stream {}: {e}", spec.url))?;
-        file.write_all(&chunk)
-            .map_err(|e| format!("write {part_path:?}: {e}"))?;
-        received += chunk.len() as u64;
-        if received - last_emit >= PROGRESS_EMIT_INTERVAL {
-            last_emit = received;
-            let _ = on_event.send(DownloadEvent::Progress {
-                id: spec.id.to_string(),
-                received,
-                total: total.max(received),
-            });
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(e) => return Err(format!("wait curl for {}: {e}", spec.id)),
         }
-    }
-    file.flush().map_err(|e| format!("flush {part_path:?}: {e}"))?;
-    drop(file);
+        if let Ok(meta) = std::fs::metadata(&part_path) {
+            let received = meta.len();
+            if received.saturating_sub(last_emit) >= PROGRESS_EMIT_INTERVAL {
+                last_emit = received;
+                let _ = on_event.send(DownloadEvent::Progress {
+                    id: spec.id.to_string(),
+                    received,
+                    total: total.max(received),
+                });
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    };
 
-    // A final progress at 100% then atomic move into place.
+    if !status.success() {
+        let mut err = String::new();
+        if let Some(mut s) = stderr {
+            let _ = s.read_to_string(&mut err).await;
+        }
+        let _ = std::fs::remove_file(&part_path);
+        return Err(format!(
+            "curl {} failed (exit {:?}): {}",
+            spec.url,
+            status.code(),
+            err.trim()
+        ));
+    }
+
+    // Final 100% progress from the true on-disk size, then atomic move into place.
+    let received = std::fs::metadata(&part_path).map(|m| m.len()).unwrap_or(total);
     let _ = on_event.send(DownloadEvent::Progress {
         id: spec.id.to_string(),
         received,

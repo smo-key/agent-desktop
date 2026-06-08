@@ -47,32 +47,35 @@ the gate SHALL surface the error and offer a retry rather than dismissing.
 
 ### Requirement: Model downloads work behind TLS-inspecting corporate proxies
 
-Model downloads SHALL succeed on corporate networks that perform TLS inspection.
-This has two parts:
+Model downloads SHALL succeed on corporate networks that perform TLS inspection,
+including networks that steer traffic per process and drop the connections of
+in-process HTTP clients while allowing established system tools through.
 
-1. **Trust.** Downloads SHALL validate TLS against the operating system trust
-   store, so that an internal CA installed in the OS keychain — which re-signs
-   upstream certificates — is honored. The download client SHALL NOT rely solely
-   on a bundled certificate set that ignores OS-installed trust anchors.
-2. **Connection protocol.** The download client SHALL negotiate a connection
-   protocol the proxy reliably supports. Because some inspecting proxies mishandle
-   HTTP/2 and tear the connection down mid-handshake, the client SHALL constrain
-   itself to HTTP/1.1 for model downloads rather than offering HTTP/2 via ALPN.
+To achieve this, model downloads SHALL be performed by shelling out to the
+system `curl` binary rather than an in-process HTTP client. Per-model the
+download SHALL: write to a sibling `<filename>.part` temp file, follow redirects,
+fail (and surface the error) on a non-success HTTP status, then atomically rename
+the completed file into place. Progress SHALL still be reported (e.g. by polling
+the partial file's size against the registry size estimate) so the gate's
+progress indicator continues to advance.
 
-#### Scenario: Download behind a TLS-inspecting proxy
+The implementation SHALL avoid the common corporate-machine misconfiguration
+where a `CURL_CA_BUNDLE` environment variable points at a missing certificate
+bundle (which would make `curl` abort before connecting).
 
-- **WHEN** the model download runs on a network whose TLS-inspecting proxy
-  re-signs the connection with a CA that is trusted by the OS but not part of any
-  bundled root set
-- **THEN** the TLS handshake succeeds and the download proceeds, rather than
-  failing with an unknown-issuer / invalid-certificate error
+#### Scenario: Download behind a per-process TLS-inspecting proxy
 
-#### Scenario: Proxy that mishandles HTTP/2
+- **WHEN** the model download runs on a network whose proxy drops the TLS
+  connections of in-process HTTP clients but allows the system `curl` binary
+- **THEN** the download is carried out by `curl` and completes, rather than
+  failing with a dropped-connection / unexpected-EOF error
 
-- **WHEN** the model download runs through an inspecting proxy that closes the
-  connection when the client offers HTTP/2
-- **THEN** the download still completes over HTTP/1.1 rather than failing with an
-  unexpected-EOF / connection-closed error
+#### Scenario: A download fails under curl
+
+- **WHEN** the spawned `curl` exits non-zero for a model (e.g. HTTP error or a
+  network failure)
+- **THEN** that model surfaces a download error (and the gate offers retry),
+  the partial file is cleaned up, and remaining models are still attempted
 
 ### Requirement: Skip defers the download for the session
 
