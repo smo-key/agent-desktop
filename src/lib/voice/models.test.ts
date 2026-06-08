@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { overallPercent, type PerModel } from './models';
+import { overallPercent, formatBytes, downloadRows, type PerModel } from './models';
 
 describe('overallPercent', () => {
   it('returns 0 for an empty map (nothing to show yet)', () => {
@@ -43,5 +43,47 @@ describe('overallPercent', () => {
       b: { received: 100, total: 100 }
     };
     expect(overallPercent(p)).toBe(100);
+  });
+});
+
+describe('formatBytes', () => {
+  it('formats GB-scale sizes with one decimal', () => {
+    expect(formatBytes(1_834_426_016)).toBe('1.8 GB');
+    expect(formatBytes(574_000_000)).toBe('574 MB');
+    expect(formatBytes(487_600_000)).toBe('488 MB');
+  });
+
+  it('formats small sizes in MB and rounds', () => {
+    expect(formatBytes(77_700_000)).toBe('78 MB');
+  });
+
+  it('handles zero / unknown as a dash', () => {
+    expect(formatBytes(0)).toBe('—');
+  });
+});
+
+describe('downloadRows', () => {
+  it('maps known missing filenames to labelled rows with sizes and a total', () => {
+    const { rows, totalBytes } = downloadRows([
+      'ggml-large-v3-turbo-q5_0.bin',
+      'Qwen3-1.7B-Q8_0.gguf'
+    ]);
+    expect(rows.map((r) => r.label)).toEqual(['Accurate transcription', 'Transcript polish']);
+    expect(rows.map((r) => r.size)).toEqual(['574 MB', '1.8 GB']);
+    expect(totalBytes).toBe(574_000_000 + 1_834_426_016);
+  });
+
+  it('keeps an unknown filename as a row labelled by its filename with no size', () => {
+    const { rows, totalBytes } = downloadRows(['mystery.bin']);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('mystery.bin');
+    expect(rows[0].size).toBe('—');
+    expect(totalBytes).toBe(0);
+  });
+
+  it('is empty for no missing models', () => {
+    const { rows, totalBytes } = downloadRows([]);
+    expect(rows).toEqual([]);
+    expect(totalBytes).toBe(0);
   });
 });

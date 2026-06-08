@@ -1,6 +1,6 @@
 # Tasks
 
-- [ ] 1.1 Add a pure display catalog to `src/lib/voice/models.ts`: `formatBytes`
+- [x] 1.1 Add a pure display catalog to `src/lib/voice/models.ts`: `formatBytes`
   and `downloadRows(missing)` mapping registry filenames → `{ label, bytes }` rows
   + total, mirroring `models.rs`. Unit-test both.
 - [ ] 1.2 Add `src/lib/onboarding/onboarding.svelte.ts`: a reactive store holding

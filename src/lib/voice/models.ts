@@ -44,6 +44,61 @@ export function overallPercent(perModel: PerModel): number {
   return Math.min(100, Math.floor((received / total) * 100));
 }
 
+// --- Display catalog (mirror of the Rust registry, for the onboarding gate) ----
+//
+// The Rust `models.rs` registry is the source of truth for filenames/sizes; this
+// is a DISPLAY-ONLY mirror so the first-launch gate can show a friendly label and
+// human size for each missing model. Keep filenames/`approxBytes` in sync with
+// `models.rs` (TINY / SMALL / LARGE_V3_TURBO / POLISH).
+const CATALOG: Record<string, { label: string; approxBytes: number }> = {
+  'ggml-tiny.bin': { label: 'Live transcription', approxBytes: 77_700_000 },
+  'ggml-small.bin': { label: 'Fast transcription', approxBytes: 487_600_000 },
+  'ggml-large-v3-turbo-q5_0.bin': {
+    label: 'Accurate transcription',
+    approxBytes: 574_000_000
+  },
+  'Qwen3-1.7B-Q8_0.gguf': { label: 'Transcript polish', approxBytes: 1_834_426_016 }
+};
+
+/**
+ * PURE: format a byte count as a short human size ("1.8 GB", "574 MB"). GB-scale
+ * sizes (>= 1 GB) get one decimal; smaller sizes round to whole MB. Zero/unknown
+ * renders as an em dash so an unsized row reads cleanly. Uses decimal (1000-based)
+ * units to match how the registry's `approx_bytes` and download hosts report sizes.
+ */
+export function formatBytes(bytes: number): string {
+  if (bytes <= 0) return '—';
+  const GB = 1_000_000_000;
+  const MB = 1_000_000;
+  if (bytes >= GB) return `${(bytes / GB).toFixed(1)} GB`;
+  return `${Math.round(bytes / MB)} MB`;
+}
+
+/** A single model row for the onboarding gate's download list. */
+export interface DownloadRow {
+  filename: string;
+  label: string;
+  size: string;
+}
+
+/**
+ * PURE: turn the `missing` filenames from a `ModelsStatus` into display rows
+ * (friendly label + human size) plus the summed `totalBytes`. A filename absent
+ * from the catalog is still listed — labelled by its raw filename with an unknown
+ * (dash) size and contributing 0 to the total — so a registry/catalog drift never
+ * hides a model the backend says is missing.
+ */
+export function downloadRows(missing: string[]): { rows: DownloadRow[]; totalBytes: number } {
+  let totalBytes = 0;
+  const rows = missing.map((filename) => {
+    const entry = CATALOG[filename];
+    const bytes = entry?.approxBytes ?? 0;
+    totalBytes += bytes;
+    return { filename, label: entry?.label ?? filename, size: formatBytes(bytes) };
+  });
+  return { rows, totalBytes };
+}
+
 /** Query current model readiness for the given selection. Never throws — any
  *  backend failure resolves to "not ready, nothing known missing" so the caller
  *  degrades gracefully (it will attempt a download, which surfaces real errors). */
