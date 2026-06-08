@@ -2,25 +2,30 @@
 
 ### Requirement: Per-project auto-worktree setting
 
-A project SHALL carry an optional `autoWorktree` boolean setting. When absent it
-defaults to `false`. The setting SHALL be persisted with the project in
-`projects.json` and SHALL survive reload and restart. Adding the field MUST be
-backward compatible: projects saved before this change load with `autoWorktree`
-effectively `false`.
+A project SHALL have an optional `autoWorktree` boolean setting that, when absent,
+defaults to `false`. The setting SHALL be persisted in the project's own folder
+config at `<project>/.agent-desktop/config.json` (the project-folder-storage
+capability), NOT on the `Project` record in `projects.json`; it SHALL survive
+reload and restart. Reading the setting MUST be robust: an absent, malformed, or
+unreadable folder config resolves to `autoWorktree: false` and never throws.
 
 The project create/edit form SHALL expose a control to view and change
-`autoWorktree`. Saving the form SHALL persist the chosen value onto the project.
+`autoWorktree`. In edit mode the control SHALL be seeded from the project's folder
+config. Saving the form SHALL persist the chosen value to the project's folder
+config.
 
 #### Scenario: Toggling the setting persists it
 
 - **WHEN** the user enables auto-worktree in a project's edit form and saves
-- **THEN** the project's `autoWorktree` is stored as `true` in `projects.json`
-- **AND** reopening the form shows the control in the enabled state
+- **THEN** `autoWorktree: true` is written to the project's
+  `<project>/.agent-desktop/config.json`
+- **AND** reopening the form seeds the control from that folder config in the
+  enabled state
 
 #### Scenario: Existing projects default to off
 
-- **WHEN** a project saved before this feature (no `autoWorktree` field) is loaded
-- **THEN** it is treated as `autoWorktree: false`
+- **WHEN** a project has no folder config (or it is absent/malformed/unreadable)
+- **THEN** its `autoWorktree` resolves to `false`
 - **AND** launching a session for it uses the project path with no worktree
 
 ### Requirement: Auto-create a worktree on session launch

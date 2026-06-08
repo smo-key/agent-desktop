@@ -92,12 +92,23 @@ Reuse the existing `run_git(dir, args)` helper. Add:
   from the management UI (force removes even when dirty, on user confirmation).
 
 ### 6. Persistence & registry shape
-- `Project` gains optional `autoWorktree?: boolean` (absent ⇒ `false`); serialized
-  in `projects.json` with no version bump (additive, backward compatible), exactly
-  like the existing optional `logo` field.
+- `autoWorktree` is persisted in the project's own folder config at
+  `<project>/.agent-desktop/config.json` (the **project-folder-storage**
+  capability — `project_config_load`/`project_config_save` Rust commands +
+  `parseProjectConfig`/`serializeProjectConfig`), accessed from the frontend via
+  `loadAutoWorktree`/`saveAutoWorktree` (`src/lib/projects/projectFolderConfig.ts`).
+  It is **not** a `Project` record field and is stripped on parse from
+  `projects.json`. Reads are defensive: absent/malformed/unreadable ⇒ `false`,
+  never throwing. *Revised from the original plan to store it on the `Project`
+  record (like `logo`): keeping per-folder settings with the folder travels with
+  the repo and keeps the projects registry purely about identity.* The form emits a
+  `ProjectDraft` (`Omit<Project,'id'> & { autoWorktree? }`); the panel splits the
+  flag out, saves the record, then writes the flag to the folder config.
 - The pane registry entry gains optional `worktreePath` and `worktreeBase` so
   close-time cleanup knows what to check/remove. Runtime-only association recorded
-  at launch, mirroring how `projectId`/`cwd` are recorded verbatim.
+  at launch, mirroring how `projectId`/`cwd` are recorded verbatim (NOT serialized
+  by `persistence.ts`, so the cleanup association is dropped across a restart; the
+  management UI's prune is the escape hatch for any resulting orphans).
 
 ## Risks / Trade-offs
 

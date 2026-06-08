@@ -10,8 +10,9 @@ each session maps cleanly to a single reviewable change.
 ## What Changes
 
 - Add a per-project **`autoWorktree`** setting (boolean, default `false`),
-  persisted on the project in `projects.json` and edited via a toggle in the
-  project create/edit form.
+  persisted in the project's folder config at `<project>/.agent-desktop/config.json`
+  (the project-folder-storage capability) — not on the `Project` record — and
+  edited via a toggle in the project create/edit form.
 - When a project with `autoWorktree` enabled launches a session, the app
   **auto-creates a fresh git worktree** at `<repo>/.worktrees/session/<timestamp>-<id>`
   on a new unique branch off the repo's current `HEAD`, and runs the session in
@@ -41,11 +42,14 @@ each session maps cleanly to a single reviewable change.
 
 ## Impact
 
-- **Frontend model/store**: `src/lib/projects/projects.ts` (add `autoWorktree` to
-  the `Project` interface + serialization), `src/lib/projects/projects.svelte.ts`
-  (generic `update` already carries new fields).
-- **UI**: `src/lib/projects/ProjectForm.svelte` (toggle); new worktree-management
-  surface (list/open/prune) reached from the project panel/form.
+- **Frontend model/store**: `src/lib/projects/projects.ts` (a `ProjectDraft` type
+  carrying `autoWorktree` alongside the record fields; `autoWorktree` is stripped
+  from the persisted `Project`), `src/lib/projects/projectFolderConfig.ts`
+  (`loadAutoWorktree`/`saveAutoWorktree` over the project-folder-storage commands).
+- **UI**: `src/lib/projects/ProjectForm.svelte` (toggle, seeded from folder config
+  in edit mode), `src/lib/projects/ProjectPanel.svelte` (routes the draft's flag to
+  the folder config); new worktree-management surface (list/open/prune) reached
+  from the project panel/form.
 - **Session launch**: `src/lib/launcher/newSession.ts` / `src/lib/launcher/plan.ts`
   (resolve the session cwd to a worktree path when `autoWorktree` is on),
   `src/lib/layout/workspace.svelte.ts` (carry the worktree association on the pane;
@@ -54,7 +58,7 @@ each session maps cleanly to a single reviewable change.
   commands to create a worktree (+ `.gitignore` touch), check whether a worktree
   is clean vs. its branch, remove a worktree, and list a repo's worktrees. No git
   worktree support exists today.
-- **Persistence**: `projects.json` gains an optional `autoWorktree` field
-  (backward compatible; absent = `false`).
+- **Persistence**: `autoWorktree` lives in `<project>/.agent-desktop/config.json`
+  (project-folder-storage); `projects.json` is unchanged. Absent/malformed ⇒ `false`.
 - **Dependencies**: none new — uses the system `git` binary already relied on by
   `git.rs`.

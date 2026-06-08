@@ -33,7 +33,17 @@
 - [x] 6.2 Wire "open" (launch a session into an existing worktree path) and "prune" (call `worktree_remove`, requiring explicit confirmation/force when the worktree has changes).
 - [x] 6.3 Add component tests for list rendering, the dirty-prune confirmation gate, and the open action. (Per repo convention — no component-mount harness — the tested logic lives in the `worktreePanel.svelte.ts` view-model with `worktreePanel.svelte.test.ts`.)
 
-## 7. Validate
+## 7. Storage pivot — folder config (revised from `projects.json`)
 
-- [x] 7.1 Run the frontend test suite and `cargo test` for the Rust changes; ensure green.
-- [x] 7.2 Run `openspec validate add-project-auto-worktree --strict` and reconcile any drift between code and spec.
+- [x] 7.0 Move `autoWorktree` off the `Project` record into the project's folder
+  config `<project>/.agent-desktop/config.json` (project-folder-storage): strip it
+  on parse in `projects.ts`, add a `ProjectDraft` type, add
+  `loadAutoWorktree`/`saveAutoWorktree` (`projectFolderConfig.ts`) over the
+  `project_config_load`/`project_config_save` commands; the form seeds the toggle
+  from the folder config in edit mode and both launch paths read it via
+  `loadAutoWorktree`. (Supersedes 1.1/1.2's `projects.json` storage.)
+
+## 8. Validate
+
+- [x] 8.1 Run the frontend test suite and `cargo test` for the Rust changes; ensure green.
+- [x] 8.2 Run `openspec validate add-project-auto-worktree --strict` and reconcile any drift between code and spec.
