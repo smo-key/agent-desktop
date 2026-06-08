@@ -15,18 +15,16 @@
 // project switch untouched.
 
 import { invoke } from '@tauri-apps/api/core';
+import { migrateToProjectFolders } from '../projects/migrateProjectFolders';
 import {
   addTask,
   removeTask,
   renameTask,
   defaultTaskName,
   defaultAgentName,
-  importLegacyTasks,
-  parseTasks,
-  serializeTasks,
+  parseProjectTasks,
+  serializeProjectTasks,
   tasksForProject,
-  captureRunningState,
-  autoRestartIds,
   type TaskDef,
   type TaskKind,
   type TasksByProject
@@ -124,6 +122,28 @@ export class ProjectTasksStore {
   }
 
   /**
+   * App-provided accessor for the projects registry: resolves each project's id +
+   * folder path so the store can read/write `<project>/.agent-desktop/tasks.json`.
+   * Injected so the store does NOT import the projects store directly; null until set.
+   */
+  projectsAccessor: (() => Array<{ id: string; path: string }>) | null = null;
+
+  /** Set the injected projects-registry accessor (id + path per project). */
+  setProjectsAccessor(fn: () => Array<{ id: string; path: string }>): void {
+    this.projectsAccessor = fn;
+  }
+
+  /** Project ids whose last per-project save FAILED (unwritable/missing folder).
+   *  Retried at the start of the next `saveProject`. */
+  private dirty = new Set<string>();
+
+  /** Resolve a project's folder path from the injected accessor, or null. */
+  private pathForProject(projectId: string): string | null {
+    const list = this.projectsAccessor?.() ?? [];
+    return list.find((p) => p.id === projectId)?.path ?? null;
+  }
+
+  /**
    * Injected handler fired when a terminal task COMPLETES SUCCESSFULLY (its command
    * exits with code 0), with the task's display name. The app wires this to a toast.
    * Injected so the store stays UI-free; null until the app sets it.
@@ -172,46 +192,26 @@ export class ProjectTasksStore {
   }
 
   /**
-   * Load persisted definitions and seed the store. On ANY failure the collections
-   * stay empty — never throws. Then auto-start exactly the terminals that were
-   * running at the previous graceful quit (their `wasRunning` flag); all others are
-   * restored as stopped. Call once on mount.
+   * Load persisted definitions and seed the store. First runs the one-time
+   * user-level → per-project-folder migration, then reads each project's
+   * `<project>/.agent-desktop/tasks.json` via the injected projects accessor.
+   * On ANY per-project failure that project is skipped (logged) — never throws.
+   * NO terminal is auto-started: terminals always restore stopped. Call once on mount.
    */
   async load(): Promise<void> {
-    let raw: string | null = null;
-    try {
-      raw = await invoke<string | null>('tasks_load');
-    } catch (err) {
-      console.error('tasks_load failed', err);
-      raw = null;
-    }
-    this.byProject = parseTasks(raw);
-    // One-time migration: ONLY when there is no tasks.json file at all (`raw == null`)
-    // do we fall back to the legacy terminals.json — importing each entry as a
-    // `terminal` task — and persist the result, so the migration runs exactly once.
-    // We deliberately key off "file absent" rather than "no tasks": a user who
-    // legitimately deleted all their tasks has a present (possibly empty) tasks.json,
-    // and must NOT have the stale, read-only terminals.json resurrect them.
-    if (raw == null) {
-      let legacy: string | null = null;
+    await migrateToProjectFolders();
+    const projects = this.projectsAccessor?.() ?? [];
+    const next: TasksByProject = {};
+    for (const { id, path } of projects) {
       try {
-        legacy = await invoke<string | null>('terminals_load');
+        const raw = await invoke<string | null>('project_tasks_load', { projectPath: path });
+        const defs = parseProjectTasks(raw);
+        if (defs.length > 0) next[id] = defs;
       } catch (err) {
-        console.error('terminals_load failed', err);
-        legacy = null;
-      }
-      const migrated = importLegacyTasks(legacy);
-      if (Object.keys(migrated).length > 0) {
-        this.byProject = migrated;
-        await this.save();
+        console.error('project_tasks_load failed', id, err);
       }
     }
-    // Selective auto-restart: only previously-running terminals come up — and they
-    // re-run the command they were running at quit (def.lastCommand), so a restored
-    // shell comes back to what it was doing.
-    for (const id of autoRestartIds(this.byProject)) {
-      this.start(id, this.defForId(id)?.lastCommand);
-    }
+    this.byProject = next;
     this.loaded = true;
   }
 
@@ -222,7 +222,14 @@ export class ProjectTasksStore {
    */
   async create(
     projectId: string,
-    opts: { kind: TaskKind; command?: string | null; cwd?: string | null; prompt?: string; name?: string }
+    opts: {
+      kind: TaskKind;
+      command?: string | null;
+      cwd?: string | null;
+      prompt?: string;
+      name?: string;
+      closeOnComplete?: boolean;
+    }
   ): Promise<string> {
     let def: TaskDef;
     if (opts.kind === 'agent') {
@@ -246,9 +253,12 @@ export class ProjectTasksStore {
         command,
         cwd: opts.cwd ?? null
       };
+      // Persist the keep-open choice ONLY when the user opted out (false); the
+      // default (close on success) is the absence of the flag.
+      if (opts.closeOnComplete === false) def.closeOnComplete = false;
     }
     this.byProject = addTask(this.byProject, projectId, def);
-    await this.save();
+    await this.saveProject(projectId);
     return def.id;
   }
 
@@ -260,19 +270,30 @@ export class ProjectTasksStore {
    */
   async update(
     id: string,
-    fields: { name?: string; kind?: TaskKind; command?: string | null; prompt?: string }
+    fields: {
+      name?: string;
+      kind?: TaskKind;
+      command?: string | null;
+      prompt?: string;
+      closeOnComplete?: boolean;
+    }
   ): Promise<void> {
     let changed = false;
+    let owningProjectId: string | null = null;
     const next: TasksByProject = {};
     for (const [projectId, list] of Object.entries(this.byProject)) {
       next[projectId] = list.map((t) => {
         if (t.id !== id) return t;
         changed = true;
+        owningProjectId = projectId;
         const kind: TaskKind = fields.kind ?? t.kind;
         const name = fields.name?.trim() || t.name;
         if (kind === 'agent') {
           const prompt = (fields.prompt ?? t.prompt ?? '').trim();
-          return { ...t, kind: 'agent', name, command: null, prompt };
+          const upd: TaskDef = { ...t, kind: 'agent', name, command: null, prompt };
+          // closeOnComplete is terminal-only — drop any residue when converting.
+          delete upd.closeOnComplete;
+          return upd;
         }
         const command =
           fields.command !== undefined
@@ -282,12 +303,16 @@ export class ProjectTasksStore {
             : t.command;
         const upd: TaskDef = { ...t, kind: 'terminal', name, command };
         delete upd.prompt;
+        // Keep-open is stored only at its non-default (`false`); ticking the box
+        // back on (`true`) clears the flag. Absent ⇒ preserve the prior choice.
+        if (fields.closeOnComplete === false) upd.closeOnComplete = false;
+        else if (fields.closeOnComplete === true) delete upd.closeOnComplete;
         return upd;
       });
     }
     if (changed) {
       this.byProject = next;
-      await this.save();
+      if (owningProjectId) await this.saveProject(owningProjectId);
     }
   }
 
@@ -317,16 +342,19 @@ export class ProjectTasksStore {
 
   /** Rename a terminal (blank ignored) and persist. */
   async rename(id: string, name: string): Promise<void> {
+    const projectId = this.projectIdForTask(id);
     this.byProject = renameTask(this.byProject, id, name);
-    await this.save();
+    if (projectId) await this.saveProject(projectId);
   }
 
   /** Remove a terminal entirely: stop its process, drop the def, persist. */
   async remove(id: string): Promise<void> {
+    // Capture the owning project BEFORE the def is removed.
+    const projectId = this.projectIdForTask(id);
     this.stop(id);
     delete this.runtime[id];
     this.byProject = removeTask(this.byProject, id);
-    await this.save();
+    if (projectId) await this.saveProject(projectId);
   }
 
   /** The def with id `id` across all projects, or undefined. */
@@ -382,11 +410,17 @@ export class ProjectTasksStore {
     const rt = this.runtime[id];
     if (!rt) return;
     if (code === 0) {
-      // Success: announce completion (the app shows a "<name> completed" toast),
-      // then close the pane.
+      // Success: announce completion (the app shows a "<name> completed" toast)
+      // either way. Then, unless the user opted out via "Close automatically when
+      // complete" (closeOnComplete === false), close the pane. When opted out, keep
+      // it as a stopped, non-failed slot (exitCode 0) so its output stays readable.
       const def = this.defForId(id);
       if (def) this.onTaskComplete?.(this.displayName(def));
-      delete this.runtime[id];
+      if (def?.closeOnComplete === false) {
+        this.runtime[id] = { ...rt, running: false, exitCode: 0 };
+      } else {
+        delete this.runtime[id];
+      }
       return;
     }
     this.runtime[id] = { ...rt, running: false, exitCode: code };
@@ -503,25 +537,47 @@ export class ProjectTasksStore {
   }
 
   /**
-   * Capture each terminal's current running state into its persisted `wasRunning`
-   * flag and persist — called at graceful quit so the next launch can selectively
-   * auto-restart. Synchronous flush so it completes before the window closes.
+   * Intentionally a NO-OP. Cross-restart auto-restart was dropped
+   * (add-project-folder-storage): nothing machine-local is persisted, so there is
+   * nothing to capture at quit. Kept so the `+page.svelte` close handler still
+   * type-checks; terminals always restore stopped on the next launch.
    */
   async captureRunningAndSave(): Promise<void> {
-    const info: Record<string, { running: boolean; title?: string }> = {};
-    for (const [id, rt] of Object.entries(this.runtime)) {
-      info[id] = { running: rt.running, title: rt.title };
-    }
-    this.byProject = captureRunningState(this.byProject, info);
-    await this.save();
+    // no-op
   }
 
-  /** Persist the current definitions via the Rust `tasks_save` command. */
-  private async save(): Promise<void> {
+  /**
+   * Persist ONE project's tasks to its `<project>/.agent-desktop/tasks.json`
+   * (sanitized via `serializeProjectTasks`). First flushes any previously-failed
+   * (dirty) projects. On failure: log, mark the project dirty, and do NOT throw —
+   * the next save retries it. A project with no resolvable path stays dirty.
+   */
+  private async saveProject(projectId: string): Promise<void> {
+    // Retry any previously-failed projects first (best-effort).
+    for (const id of [...this.dirty]) {
+      if (id === projectId) continue;
+      await this.writeProject(id);
+    }
+    await this.writeProject(projectId);
+  }
+
+  /** Write a single project's tasks file; record/clear its dirty flag. */
+  private async writeProject(projectId: string): Promise<void> {
+    const path = this.pathForProject(projectId);
+    if (!path) {
+      // No resolvable folder yet — keep it dirty so a later save retries.
+      this.dirty.add(projectId);
+      return;
+    }
     try {
-      await invoke('tasks_save', { json: serializeTasks(this.byProject) });
+      await invoke('project_tasks_save', {
+        projectPath: path,
+        json: serializeProjectTasks(this.byProject[projectId] ?? [])
+      });
+      this.dirty.delete(projectId);
     } catch (err) {
-      console.error('tasks_save failed', err);
+      console.error('project_tasks_save failed', projectId, err);
+      this.dirty.add(projectId);
     }
   }
 }

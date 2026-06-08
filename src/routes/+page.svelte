@@ -100,12 +100,16 @@
     });
     // A terminal task that succeeds (exit 0) pops a "<name> completed" toast.
     projectTasks.setTaskCompleteHandler((name) => toast.show(`${name} completed`));
-    // Load each project's task definitions and selectively auto-restart the
-    // terminal tasks that were running at the previous quit (project-tasks spec).
-    void projectTasks.load();
-    // Capture each terminal's running state on quit so the next launch can
-    // selectively auto-restart. Awaited by Tauri before the native close (and
-    // before Rust kills the PTYs), so `wasRunning` is persisted in time.
+    // Tasks now live in each project's `<project>/.agent-desktop/tasks.json`. The
+    // store resolves the folder paths through the projects registry, so the projects
+    // list MUST be loaded first. Inject the accessor, then load projects → tasks in
+    // order (the one-time user-level → project-folder migration runs inside load()).
+    projectTasks.setProjectsAccessor(() =>
+      projects.list.map((p) => ({ id: p.id, path: p.path }))
+    );
+    void projects.load().then(() => projectTasks.load());
+    // Terminals restore stopped now (auto-restart was dropped); the close handler is
+    // kept (a no-op) so quit ordering is unchanged.
     let unlistenTermClose: (() => void) | undefined;
     void getCurrentWindow()
       .onCloseRequested(async () => {
