@@ -145,3 +145,11 @@ source files are gone, it reads null from both and does not run again.
 #### Scenario: Legacy source cleared
 - **WHEN** a migration sourced tasks from the legacy `terminals.json` (because `tasks.json` was absent) and all writes succeeded
 - **THEN** the legacy `terminals.json` is deleted, so the next launch does not re-migrate from it
+
+#### Scenario: Does not clobber an existing per-project file
+- **WHEN** migration runs and a project's `.agent-desktop/tasks.json` already exists (a prior run or committed data)
+- **THEN** that file is left untouched (no overwrite) and the project still counts as migrated for cleanup purposes
+
+#### Scenario: Corrupt registry preserves task data
+- **WHEN** `projects.json` is unreadable/unparseable (no resolvable projects) while user-level tasks exist
+- **THEN** no per-project file is written and NEITHER user-level source file is deleted (the data is preserved for a later run)

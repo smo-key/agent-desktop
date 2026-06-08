@@ -126,10 +126,14 @@
 
   async function saveCreate(draft: ProjectDraft) {
     // `autoWorktree` lives in the project folder's config, not the record — split it
-    // out before persisting the project, then write it to the folder config.
+    // out before persisting the project. On CREATE we only WRITE the config when the
+    // user explicitly enabled it (`=== true`): the create form is not seeded from any
+    // existing folder config, so writing the default `false` would both materialize a
+    // redundant committed `config.json` and clobber a teammate-committed `true` when a
+    // folder is re-added. Absent config already means `false`.
     const { autoWorktree, ...record } = draft;
     const stored = await projects.add({ id: crypto.randomUUID(), ...record });
-    if (typeof autoWorktree === 'boolean') {
+    if (autoWorktree === true) {
       await saveAutoWorktree(stored.path, autoWorktree);
     }
     projectFilter.select(stored.id);

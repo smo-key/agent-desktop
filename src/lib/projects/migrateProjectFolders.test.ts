@@ -102,16 +102,16 @@ describe('project-folder-storage — migration', () => {
 
     await migrateToProjectFolders();
 
-    // tasks_clear NOT called because a task write failed.
+    // tasks_clear/terminals_clear NOT called because the task write failed: the
+    // source files are retained so the next launch retries (and won't clobber any
+    // project that already migrated).
     expect(call('tasks_clear')).toHaveLength(0);
-    // autoWorktree config write also fails for an unwritable folder; assert it is
-    // retained in projects.json so a later run retries.
-    // (config_save also rejects here is not set up; simulate via the same reject.)
+    expect(call('terminals_clear')).toHaveLength(0);
     const projSave = call('projects_save');
     expect(projSave).toHaveLength(1);
   });
 
-  it('retains autoWorktree in projects.json when its config write fails', async () => {
+  it('retains autoWorktree and sources when its config write fails', async () => {
     invokeMock.mockImplementation(async (cmd: unknown) => {
       if (cmd === 'tasks_load') return userTasks({});
       if (cmd === 'projects_load')
@@ -124,8 +124,78 @@ describe('project-folder-storage — migration', () => {
 
     const projSave = call('projects_save');
     const payload = JSON.parse((projSave[0][1] as { json: string }).json);
-    // The failed project keeps its autoWorktree for a later retry.
+    // The failed project keeps its autoWorktree for a later retry...
     expect(payload.projects[0].autoWorktree).toBe(true);
+    // ...and the user-level sources are NOT cleared, so autoWorktree is never
+    // silently lost (regression: cleanup was once gated only on task writes).
+    expect(call('tasks_clear')).toHaveLength(0);
+    expect(call('terminals_clear')).toHaveLength(0);
+  });
+
+  it('Does not clobber an existing per-project file', async () => {
+    // A re-run (e.g. after a prior partial failure) must NOT overwrite a project
+    // whose `.agent-desktop/tasks.json` already exists — the user may have edited
+    // it since. Regression for the partial-failure re-run clobber.
+    const tasks: Record<string, TaskDef[]> = {
+      p: [{ id: 'a', name: 'old', kind: 'terminal', command: 'stale', cwd: null }]
+    };
+    invokeMock.mockImplementation(async (cmd: unknown) => {
+      if (cmd === 'tasks_load') return userTasks(tasks);
+      if (cmd === 'projects_load') return projectsJson([{ id: 'p', path: '/p', name: 'P' }]);
+      if (cmd === 'project_tasks_load') return '{"version":1,"tasks":[{"id":"a","name":"edited","kind":"terminal","command":"new","cwd":null}]}';
+      return null;
+    });
+
+    await migrateToProjectFolders();
+
+    // The existing per-project file is left untouched (no overwrite)...
+    expect(call('project_tasks_save')).toHaveLength(0);
+    // ...and since the project is "secured" (its file exists), cleanup proceeds.
+    expect(call('tasks_clear')).toHaveLength(1);
+  });
+
+  it('Corrupt registry preserves task data', async () => {
+    // If projects.json fails to load / parse (returns null or garbage), every
+    // user-level task is "orphaned" — the migration must NOT delete the sources,
+    // or it would destroy ALL tasks. Regression for the orphan/corrupt-registry
+    // data-loss path.
+    const tasks: Record<string, TaskDef[]> = {
+      p: [{ id: 'a', name: 'dev', kind: 'terminal', command: 'x', cwd: null }]
+    };
+    invokeMock.mockImplementation(async (cmd: unknown) => {
+      if (cmd === 'tasks_load') return userTasks(tasks);
+      if (cmd === 'projects_load') return null; // registry unreadable
+      return null;
+    });
+
+    await migrateToProjectFolders();
+
+    // Nothing written (no project to write to) and NOTHING deleted.
+    expect(call('project_tasks_save')).toHaveLength(0);
+    expect(call('tasks_clear')).toHaveLength(0);
+    expect(call('terminals_clear')).toHaveLength(0);
+  });
+
+  it('Existing config preserved', async () => {
+    // A teammate-committed `.agent-desktop/config.json` must not be overwritten by
+    // a stale `autoWorktree` in projects.json — but the registry field is still
+    // stripped (config.json is now the source of truth).
+    invokeMock.mockImplementation(async (cmd: unknown) => {
+      if (cmd === 'tasks_load') return userTasks({});
+      if (cmd === 'projects_load')
+        return projectsJson([{ id: 'p', path: '/p', name: 'P', autoWorktree: false }]);
+      if (cmd === 'project_config_load') return '{"version":1,"autoWorktree":true}';
+      return null;
+    });
+
+    await migrateToProjectFolders();
+
+    // Committed config left untouched...
+    expect(call('project_config_save')).toHaveLength(0);
+    // ...registry field stripped anyway.
+    const projSave = call('projects_save');
+    const payload = JSON.parse((projSave[0][1] as { json: string }).json);
+    expect(payload.projects[0]).not.toHaveProperty('autoWorktree');
   });
 
   it('Idempotent', async () => {

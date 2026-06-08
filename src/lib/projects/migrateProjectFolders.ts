@@ -86,43 +86,72 @@ export async function migrateToProjectFolders(): Promise<void> {
     }
     const rawProjects = parseRawProjects(projectsRaw);
 
-    // 4. Write each project's tasks + config, tracking per-project success.
-    let allTaskWritesOk = true; // true ⇒ safe to delete the user-level tasks file
-    // projectId → migrated-ok (its autoWorktree can be stripped from projects.json)
+    // 4. Write each project's tasks + config. We NEVER overwrite an existing
+    //    per-project file (a prior run, or a teammate-committed file, may hold
+    //    newer data) — an existing file counts as already-migrated. We track:
+    //      - `securedTasks`: projectIds whose user-level tasks are safely in a
+    //        per-project file (written now OR already present).
+    //      - `configMigrated`: projectIds whose `autoWorktree` is now in their
+    //        config file (or already was) → safe to strip from `projects.json`.
+    //      - `allConfigWritesOk`: false if ANY config write failed.
+    const securedTasks = new Set<string>();
     const configMigrated = new Set<string>();
+    let allConfigWritesOk = true;
 
     for (const rp of rawProjects) {
       const id = typeof rp.id === 'string' ? rp.id : '';
       const path = typeof rp.path === 'string' ? rp.path : '';
       const autoWorktree = rp.autoWorktree;
       if (!id || !path) continue;
-      let configOk = true;
 
       const tasks = byProject[id];
       if (tasks && tasks.length > 0) {
+        let existing: string | null = null;
         try {
-          await invoke('project_tasks_save', {
-            projectPath: path,
-            json: serializeProjectTasks(tasks)
-          });
+          existing = await invoke<string | null>('project_tasks_load', { projectPath: path });
         } catch (err) {
-          console.error('migrate: project_tasks_save failed', id, err);
-          allTaskWritesOk = false;
+          console.error('migrate: project_tasks_load failed', id, err);
+        }
+        if (existing != null) {
+          securedTasks.add(id); // already migrated — do NOT clobber newer data.
+        } else {
+          try {
+            await invoke('project_tasks_save', {
+              projectPath: path,
+              json: serializeProjectTasks(tasks)
+            });
+            securedTasks.add(id);
+          } catch (err) {
+            console.error('migrate: project_tasks_save failed', id, err);
+            // NOT secured → the user-level source is retained (step 6).
+          }
         }
       }
 
       if (typeof autoWorktree === 'boolean') {
+        let existingCfg: string | null = null;
         try {
-          await invoke('project_config_save', {
-            projectPath: path,
-            json: serializeProjectConfig({ autoWorktree })
-          });
+          existingCfg = await invoke<string | null>('project_config_load', { projectPath: path });
         } catch (err) {
-          console.error('migrate: project_config_save failed', id, err);
-          configOk = false;
+          console.error('migrate: project_config_load failed', id, err);
         }
+        if (existingCfg != null) {
+          configMigrated.add(id); // committed/earlier config wins — don't clobber.
+        } else {
+          try {
+            await invoke('project_config_save', {
+              projectPath: path,
+              json: serializeProjectConfig({ autoWorktree })
+            });
+            configMigrated.add(id);
+          } catch (err) {
+            console.error('migrate: project_config_save failed', id, err);
+            allConfigWritesOk = false; // keep autoWorktree in projects.json; retry later.
+          }
+        }
+      } else {
+        configMigrated.add(id); // nothing to migrate for this project.
       }
-      if (configOk) configMigrated.add(id);
     }
 
     // 5. Re-save projects.json with `autoWorktree` stripped from MIGRATED projects
@@ -141,12 +170,24 @@ export async function migrateToProjectFolders(): Promise<void> {
       console.error('migrate: projects_save failed', err);
     }
 
-    // 6. Delete BOTH user-level source files ONLY when every task write succeeded.
-    //    Clearing the legacy `terminals.json` too is essential for idempotency: it
-    //    is the fallback source (step 1), so leaving it would re-fire the migration
-    //    on every launch and overwrite/resurrect per-project `.agent-desktop`
-    //    data. With both gone, the next run reads null from both and returns.
-    if (allTaskWritesOk) {
+    // 6. Delete BOTH user-level source files ONLY when migration is COMPLETE:
+    //    every user-level task projectId is secured in a per-project file AND no
+    //    config write failed. This guards three data-loss paths:
+    //      - a partial write failure (some project unwritable) keeps the sources
+    //        so the next launch retries — and step 4 won't clobber the projects
+    //        that already migrated;
+    //      - a failed config write keeps the sources so `autoWorktree` is retried
+    //        (it is NOT silently lost);
+    //      - tasks whose project is missing from `projects.json` (a removed
+    //        project, or a transiently corrupt/empty `projects.json`) are never
+    //        "secured", so the sources are NOT deleted — no destruction.
+    //    Clearing the legacy `terminals.json` too is essential for idempotency:
+    //    it is the fallback source (step 1), so leaving it would re-fire the
+    //    migration forever. With both gone, the next run reads null from both.
+    const taskProjectIds = Object.keys(byProject).filter((id) => (byProject[id]?.length ?? 0) > 0);
+    const unsecured = taskProjectIds.filter((id) => !securedTasks.has(id));
+    const complete = unsecured.length === 0 && allConfigWritesOk;
+    if (complete) {
       try {
         await invoke('tasks_clear');
       } catch (err) {
@@ -157,15 +198,11 @@ export async function migrateToProjectFolders(): Promise<void> {
       } catch (err) {
         console.error('migrate: terminals_clear failed', err);
       }
-      // Surface (but do not block on) user-level tasks for projects no longer in
-      // the registry: they have nowhere to migrate to and are dropped with the
-      // cleared source files.
-      const orphans = Object.keys(byProject).filter(
-        (id) => !rawProjects.some((rp) => rp.id === id)
-      );
-      if (orphans.length > 0) {
-        console.warn('migrate: dropped user-level tasks for unknown projects', orphans);
-      }
+    } else {
+      console.warn('migrate: incomplete — user-level sources retained for retry', {
+        unsecuredTaskProjects: unsecured,
+        allConfigWritesOk
+      });
     }
   } catch (err) {
     // Never let migration block app start.
