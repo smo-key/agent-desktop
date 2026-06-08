@@ -29,6 +29,10 @@ export interface Project {
   /** Optional logo image as a downscaled PNG data URL; renders instead of the
    *  icon glyph. Additive + optional — absent for projects created before logos. */
   logo?: string;
+  /** Whether launching this project auto-creates a git worktree per agent.
+   *  Additive + optional — absent (≡ `false`) for projects created before the
+   *  setting existed. */
+  autoWorktree?: boolean;
 }
 
 /** The top-level persisted envelope written to `projects.json`. */
@@ -197,6 +201,7 @@ function normalize(arr: ReadonlyArray<unknown>): Project[] {
     seen.add(path);
     const clean: Project = { ...item, path };
     if (typeof clean.logo !== 'string') delete clean.logo; // drop a malformed logo
+    if (typeof clean.autoWorktree !== 'boolean') delete clean.autoWorktree; // additive optional
     out.push(clean);
   }
   return out;

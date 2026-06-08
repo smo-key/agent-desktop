@@ -136,6 +136,24 @@ describe('logo field — persistence', () => {
   });
 });
 
+describe('autoWorktree field — persistence', () => {
+  it('Toggling the setting persists it', () => {
+    // Round-trip: serialize -> parse preserves autoWorktree: true.
+    const on = p({ id: 'a', autoWorktree: true });
+    const back = parseProjects(serializeProjects([on]));
+    expect(back[0].autoWorktree).toBe(true);
+  });
+
+  it('Existing projects default to off', () => {
+    // A legacy persisted project with no autoWorktree field loads with it
+    // absent/falsy — additive optional field, backward compatible.
+    const legacy = p({ id: 'b', path: '/b' });
+    const back = parseProjects(serializeProjects([legacy]));
+    expect(back[0].autoWorktree).toBeUndefined();
+    expect(Boolean(back[0].autoWorktree)).toBe(false);
+  });
+});
+
 describe('contrastText', () => {
   it('dark text on light backgrounds', () => {
     expect(contrastText('#ffffff')).toBe('#06080c');
