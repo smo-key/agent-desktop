@@ -527,19 +527,19 @@ describe('Closed Sessions Persist As Closed', () => {
     expect(back.resume).toBeFalsy(); // closed panes do NOT auto-resume on restart
   });
 
-  it('A paused claude pane serializes + restores as paused, keeping its baseline hash', () => {
+  it('A paused claude pane serializes + restores as paused, keeping its baseline count', () => {
     const ws: Workspace = { version: 1, root: leaf('L1', 'p1'), focusedId: 'L1' };
     const reg: Record<string, PersistedSession> = {
-      p1: { program: 'claude', cwd: '/a', sessionId: 's1', paused: true, pausedHash: 'h1' }
+      p1: { program: 'claude', cwd: '/a', sessionId: 's1', paused: true, pausedCount: 2 }
     };
     const state = serializeState([{ id: 'ws-1', name: 'S', ws, registry: reg }], 'ws-1');
     expect(state.workspaces[0].registry.p1.paused).toBe(true);
-    expect(state.workspaces[0].registry.p1.pausedHash).toBe('h1');
+    expect(state.workspaces[0].registry.p1.pausedCount).toBe(2);
 
     const restored = restoreState(JSON.stringify(state), ids('n'));
     const back = restored.workspaces[0].registry.p1;
     expect(back.paused).toBe(true);
-    expect(back.pausedHash).toBe('h1'); // baseline survives so it doesn't auto-resume on restart
+    expect(back.pausedCount).toBe(2); // baseline survives so it doesn't auto-resume on restart
     // A paused pane is LIVE (unlike closed): it resumes its transcript so you can
     // keep messaging it.
     expect(back.resume).toBe(true);
@@ -558,7 +558,7 @@ describe('Closed Sessions Persist As Closed', () => {
         closed: false,
         resume: true,
         preview: true,
-        previewHash: 'h1'
+        previewCount: 1
       }
     };
     const state = serializeState([{ id: 'ws-1', name: 'S', ws, registry: reg }], 'ws-1');

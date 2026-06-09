@@ -98,17 +98,23 @@ export function autoArchiveAction(
 }
 
 /**
- * PURE: whether a paused agent should auto-resume — true once the LIVE user-message
- * hash is present and differs from the hash captured when it was paused (the user
- * sent a new message). A missing/empty live hash never resumes, so a transient poll
- * gap can't un-pause an agent.
+ * PURE: whether a paused/previewing agent should auto-resume — true only once the
+ * LIVE user-message COUNT strictly EXCEEDS the baseline captured when it was paused /
+ * previewed (the user sent a genuinely new message). Both must be known numbers: an
+ * unknown live count (a transient poll gap) or an unestablished baseline never
+ * resumes — the caller lazily establishes the baseline from the first known reading.
+ *
+ * This replaces the old `user_hash` comparison, which keyed on a TAIL-windowed hash
+ * that could change WITHOUT a new user message (a `claude --resume` for preview grows
+ * the transcript and slides the window), spuriously unarchiving a previewed session.
+ * A strictly-increasing whole-file count cannot be moved by assistant output.
  */
 export function shouldAutoResume(
-  pausedHash: string | null | undefined,
-  liveHash: string | null | undefined
+  baselineCount: number | null | undefined,
+  liveCount: number | null | undefined
 ): boolean {
-  if (!liveHash) return false;
-  return liveHash !== (pausedHash ?? null);
+  if (typeof liveCount !== 'number' || typeof baselineCount !== 'number') return false;
+  return liveCount > baselineCount;
 }
 
 /**

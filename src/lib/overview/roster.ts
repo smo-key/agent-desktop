@@ -210,17 +210,19 @@ export interface RosterPane {
   /** Whether this agent is PAUSED (deferred): kept live, but moved to the Paused
    *  lane and out of attention until a new user message resumes it. */
   paused?: boolean;
-  /** The user-message hash captured when the agent was paused. The inbox resumes
-   *  the agent when the live hash differs from this (a new message was sent). */
-  pausedHash?: string | null;
+  /** The user-message COUNT captured when the agent was paused. The inbox resumes
+   *  the agent when the live count strictly exceeds this (a new message was sent).
+   *  `null`/absent until lazily established from the first known reading. */
+  pausedCount?: number | null;
   /** Whether this agent is being PREVIEWED: an archived session re-opened with
    *  `claude --resume` so its transcript is live + interactive, yet still presented
    *  as Archived (pinned to `done`, out of attention) until the user sends a
    *  message. Runtime-only — never persisted (serialized as `closed`). */
   preview?: boolean;
-  /** The user-message hash captured when the preview began; the inbox UNARCHIVES the
-   *  session when the live hash differs (a new message was sent). */
-  previewHash?: string | null;
+  /** The user-message COUNT captured when the preview began; the inbox UNARCHIVES the
+   *  session when the live count strictly exceeds this (a new message was sent).
+   *  `null`/absent until lazily established from the first known reading. */
+  previewCount?: number | null;
 }
 
 /** One workspace, projected to exactly what the roster reads. */
@@ -288,17 +290,17 @@ export interface AgentRow {
   /** Whether the agent is PAUSED (deferred): kept live but moved to the Paused lane
    *  and out of attention. Optional; roster fixtures may omit it (not-paused). */
   paused?: boolean;
-  /** The user-message hash captured at pause time; the inbox resumes the agent when
-   *  the live hash differs (a new message arrived). Null when paused with no
-   *  messages yet; undefined when not paused. */
-  pausedHash?: string | null;
+  /** The user-message COUNT captured at pause time; the inbox resumes the agent when
+   *  the live count strictly exceeds it (a new message arrived). Null when not yet
+   *  established; undefined when not paused. */
+  pausedCount?: number | null;
   /** Whether the agent is being PREVIEWED: an archived session resumed for viewing
    *  (live terminal), still pinned to the Archived lane and out of attention until a
    *  new message UNARCHIVES it. Optional; roster fixtures may omit it (not-preview). */
   preview?: boolean;
-  /** The user-message hash captured when the preview began; the inbox unarchives the
-   *  session when the live hash differs. Undefined when not previewing. */
-  previewHash?: string | null;
+  /** The user-message COUNT captured when the preview began; the inbox unarchives the
+   *  session when the live count strictly exceeds it. Undefined when not previewing. */
+  previewCount?: number | null;
 }
 
 /** Coerce to a finite number, else null (guards NaN/Infinity/strings). */
@@ -419,9 +421,9 @@ function rowFor(
     coordinatorPaneId: pane.coordinatorPaneId ?? null,
     closed,
     paused: pane.paused === true,
-    pausedHash: pane.pausedHash ?? null,
+    pausedCount: pane.pausedCount ?? null,
     preview: pane.preview === true,
-    previewHash: pane.previewHash ?? null
+    previewCount: pane.previewCount ?? null
   };
 }
 

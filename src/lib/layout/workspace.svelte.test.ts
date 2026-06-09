@@ -37,29 +37,34 @@ describe('workspace — Resume An Archived Session By Selecting It', () => {
     // Selecting it for preview respawns `claude --resume <sessionId>` (closed:false,
     // resume:true) yet keeps it presented as Archived (preview:true) with the
     // unarchive baseline recorded.
-    store.previewArchived(paneId, 'hash-1');
+    store.previewArchived(paneId, 1);
     const s = store.session(paneId);
     expect(s.closed).toBe(false);
     expect(s.resume).toBe(true);
     expect(s.preview).toBe(true);
-    expect(s.previewHash).toBe('hash-1');
+    expect(s.previewCount).toBe(1);
     expect(s.sessionId).toBe(sessionId); // same transcript
+
+    // Re-previewing (the auto-preview effect re-fires every focus tick) must NOT reset
+    // an already-established baseline.
+    store.previewArchived(paneId, 5);
+    expect(store.session(paneId).previewCount).toBe(1);
 
     // Committing the preview (the unarchive) drops preview state, leaving it live.
     store.commitPreview(paneId);
     const after = store.session(paneId);
     expect(after.preview).toBeUndefined();
-    expect(after.previewHash).toBeUndefined();
+    expect(after.previewCount).toBeUndefined();
     expect(after.closed).toBe(false);
 
     // Re-archiving a previewing session always clears its preview state too.
-    store.previewArchived(paneId, 'hash-2');
+    store.previewArchived(paneId, 2);
     store.closeAgent(paneId);
     const rearchived = store.session(paneId);
     expect(rearchived.closed).toBe(true);
     expect(rearchived.resume).toBe(false);
     expect(rearchived.preview).toBeUndefined();
-    expect(rearchived.previewHash).toBeUndefined();
+    expect(rearchived.previewCount).toBeUndefined();
   });
 
   it('A non-resumable archived session is just selected', () => {
@@ -68,11 +73,36 @@ describe('workspace — Resume An Archived Session By Selecting It', () => {
 
     store.closeAgent(paneId);
     // previewArchived is a no-op for a non-resumable pane — the inbox just selects it.
-    store.previewArchived(paneId, 'hash-1');
+    store.previewArchived(paneId, 0);
     const s = store.session(paneId);
     expect(s.preview).toBeUndefined();
     expect(s.resume).toBeFalsy();
     expect(s.closed).toBe(true); // stays archived
+  });
+
+  it('lazily establishes the preview/pause baseline only while unset', () => {
+    const { store, paneId } = withPane('claude');
+
+    // Preview with an UNKNOWN baseline (transcript not yet polled): previewCount null.
+    store.closeAgent(paneId);
+    store.previewArchived(paneId, null);
+    expect(store.session(paneId).previewCount).toBeNull();
+
+    // The gate effect establishes it from the first known reading — once.
+    store.establishPreviewBaseline(paneId, 4);
+    expect(store.session(paneId).previewCount).toBe(4);
+    // A later reading must NOT move an already-established baseline.
+    store.establishPreviewBaseline(paneId, 9);
+    expect(store.session(paneId).previewCount).toBe(4);
+
+    // Same one-shot semantics for a paused agent's baseline.
+    const { store: s2, paneId: p2 } = withPane('claude');
+    s2.pauseAgent(p2, null);
+    expect(s2.session(p2).pausedCount).toBeNull();
+    s2.establishPausedBaseline(p2, 2);
+    expect(s2.session(p2).pausedCount).toBe(2);
+    s2.establishPausedBaseline(p2, 7);
+    expect(s2.session(p2).pausedCount).toBe(2);
   });
 });
 

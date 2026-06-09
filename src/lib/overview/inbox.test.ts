@@ -225,37 +225,49 @@ describe('Archiving an empty session deletes it instead', () => {
 });
 
 describe('A new message resumes a paused session', () => {
-  it('resumes when the live hash differs from the paused-at hash', () => {
-    expect(shouldAutoResume('h1', 'h2')).toBe(true);
-    // Paused with no messages, then a message arrives: null -> a hash.
-    expect(shouldAutoResume(null, 'h1')).toBe(true);
+  it('resumes only when the live user-message COUNT strictly exceeds the paused-at count', () => {
+    expect(shouldAutoResume(1, 2)).toBe(true);
+    // Paused at 2 messages, two more arrive.
+    expect(shouldAutoResume(2, 4)).toBe(true);
   });
 
   it('stays paused while no new message has arrived', () => {
-    expect(shouldAutoResume('h1', 'h1')).toBe(false);
-    expect(shouldAutoResume(null, null)).toBe(false);
-    // A transient missing live hash must NOT resume (avoids a poll gap un-pausing).
-    expect(shouldAutoResume('h1', null)).toBe(false);
-    expect(shouldAutoResume('h1', undefined)).toBe(false);
+    expect(shouldAutoResume(1, 1)).toBe(false);
+    // A LOWER live count (e.g. the windowed read momentarily under-counts) never
+    // resumes — only a strict increase does.
+    expect(shouldAutoResume(2, 1)).toBe(false);
+    // A transient missing live count must NOT resume (avoids a poll gap un-pausing).
+    expect(shouldAutoResume(1, null)).toBe(false);
+    expect(shouldAutoResume(1, undefined)).toBe(false);
+    // An unestablished baseline never resumes — the inbox establishes it lazily from
+    // the first known reading rather than treating unknown as 0.
+    expect(shouldAutoResume(null, 3)).toBe(false);
+    expect(shouldAutoResume(undefined, 3)).toBe(false);
   });
 });
 
-// A previewing (resumed-from-Archived) session unarchives on the SAME hash-diff
-// signal a paused session resumes on: the inbox captures the user-message hash when
-// preview begins (`previewHash`) and unarchives (commitPreview) once the live hash
-// differs — i.e. the user sent a new message. Until then it stays previewing.
+// A previewing (resumed-from-Archived) session unarchives on the SAME count-increase
+// signal a paused session resumes on: the inbox captures the user-message COUNT when
+// preview begins (`previewCount`) and unarchives (commitPreview) once the live count
+// strictly exceeds it — i.e. the user sent a new message. The count (whole-file) is
+// used, NOT the windowed hash, so resuming the session for preview (which grows its
+// transcript) can never masquerade as a reply. Until a real new message it stays
+// previewing.
 describe('Sending a message unarchives a previewing session', () => {
-  it('unarchives once the live hash differs from the preview baseline', () => {
-    // Baseline captured at preview start; a new message changes the live hash.
-    expect(shouldAutoResume('preview-h1', 'preview-h2')).toBe(true);
-    // Previewed an archived session that had no messages, then one arrives.
-    expect(shouldAutoResume(null, 'preview-h1')).toBe(true);
+  it('unarchives once the live count exceeds the preview baseline', () => {
+    // Baseline captured at preview start; a new message lifts the live count.
+    expect(shouldAutoResume(3, 4)).toBe(true);
   });
 
   it('stays previewing while no new message has arrived', () => {
-    expect(shouldAutoResume('preview-h1', 'preview-h1')).toBe(false);
-    // A transient missing live hash must NOT unarchive (poll-gap safe).
-    expect(shouldAutoResume('preview-h1', null)).toBe(false);
-    expect(shouldAutoResume('preview-h1', undefined)).toBe(false);
+    expect(shouldAutoResume(3, 3)).toBe(false);
+    // Assistant output growing the resumed transcript does NOT change the count, so a
+    // steady count keeps it previewing — this is the bug fix.
+    expect(shouldAutoResume(3, 3)).toBe(false);
+    // A transient missing live count must NOT unarchive (poll-gap safe).
+    expect(shouldAutoResume(3, null)).toBe(false);
+    expect(shouldAutoResume(3, undefined)).toBe(false);
+    // An unestablished baseline never unarchives (lazily established instead).
+    expect(shouldAutoResume(null, 3)).toBe(false);
   });
 });

@@ -64,7 +64,7 @@
   import { friendlyTime } from './friendlyTime';
   import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
   import TasksLauncher from '$lib/tasks/TasksLauncher.svelte';
-  import SpecialistsPanel from '$lib/specialists/SpecialistsPanel.svelte';
+  // import SpecialistsPanel from '$lib/specialists/SpecialistsPanel.svelte'; // temporarily hidden
   import { ALL, UNASSIGNED } from '$lib/projects/projectRollup';
   import {
     resolveCoordinatorPin,
@@ -346,10 +346,20 @@
       clearAdvance();
       return;
     }
-    // A different agent now wants focus -> advance after the grace. Schedule ONCE
-    // per target: the roster recomputes every second, so without this guard the
-    // timer would reset each tick and never fire.
+    // A grace already counting down for this same target keeps riding: the roster
+    // recomputes every second and `leftAttention` is only true on the single
+    // transition tick, so without this the timer would never survive to fire.
     if (advanceTimer && pendingTarget === wantId) return;
+    // A DIFFERENT agent now wants focus. Only auto-advance when we JUST handled the
+    // agent we were on — i.e. it LEFT attention (you finished a waiting agent, so
+    // move on to the next one). NEVER yank focus off an agent you're parked on that
+    // didn't need input just because another agent now wants input; the queue
+    // indicator still shows it's waiting and you can step to it (click / ⌘↓) when
+    // you choose.
+    if (!leftAttention) {
+      clearAdvance();
+      return;
+    }
     clearAdvance();
     pendingTarget = wantId;
     const next = wantId;
@@ -448,11 +458,12 @@
 
   /** PREVIEW an archived session: respawn `claude --resume` so its transcript shows
    *  live, but keep it presented as Archived (out of attention) until a message is
-   *  sent. Captures the current user-message hash as the unarchive baseline, then
-   *  watches it. `previewArchived` is a no-op for a non-resumable pane (no session
-   *  id); `selectAgent` still shows it. */
+   *  sent. Captures the current user-message COUNT as the unarchive baseline, then
+   *  watches it (unarchives only once a NEW message lifts the count). `previewArchived`
+   *  is a no-op for a non-resumable pane (no session id); `selectAgent` still shows
+   *  it. A null count (transcript unread) is established lazily by the gate effect. */
   function startPreview(paneId: string) {
-    workspace.previewArchived(paneId, activity.forPane(paneId).userHash ?? null);
+    workspace.previewArchived(paneId, activity.forPane(paneId).userMsgCount ?? null);
     selectAgent(paneId);
   }
 
@@ -495,11 +506,11 @@
   }
 
   /** PAUSE (defer) an agent: keep it live but move it to the Paused lane, out of
-   *  attention. Records the current user-message hash so a new message resumes it.
-   *  Drops the pin so focus advances. */
+   *  attention. Records the current user-message COUNT so only a NEW message resumes
+   *  it. Drops the pin so focus advances. */
   function pauseAgent(paneId: string) {
     if (userSelected === paneId) userSelected = null;
-    workspace.pauseAgent(paneId, activity.forPane(paneId).userHash ?? null);
+    workspace.pauseAgent(paneId, activity.forPane(paneId).userMsgCount ?? null);
   }
 
   /** RESUME a paused agent (manual): clear paused and watch it. */
@@ -560,23 +571,40 @@
   $effect(() => {
     const f = focus;
     if (f?.closed) {
-      workspace.previewArchived(f.paneId, activity.forPane(f.paneId).userHash ?? null);
+      workspace.previewArchived(f.paneId, activity.forPane(f.paneId).userMsgCount ?? null);
     }
   });
 
   // Auto-resume / auto-unarchive: a PAUSED agent returns to its live status, and a
   // PREVIEWING (resumed-from-Archived) agent unarchives, the moment the user sends a
-  // new message — detected when the live user-message hash differs from the baseline
-  // hash captured at pause/preview time. Runs off the activity poll (the 1s clock
-  // re-derives rows).
+  // new message — detected when the live user-message COUNT strictly exceeds the
+  // baseline captured at pause/preview time. The count (whole-file) is the signal,
+  // NOT the windowed hash: resuming a session for preview grows its transcript, which
+  // would shift the hash but never the user-message count, so a previewed session no
+  // longer unarchives itself. Runs off the activity poll (the ~1s clock re-derives
+  // rows).
+  //
+  // When the baseline is still UNKNOWN (the pane was paused/previewed before its
+  // transcript had been polled — e.g. an archived pane auto-previewed on a restored
+  // layout), establish it from the first known live count instead of comparing. This
+  // closes the cold-start race where a null baseline would read the first real count
+  // as "the user replied".
   $effect(() => {
     for (const r of allRows) {
-      const liveHash = activity.forPane(r.paneId).userHash;
-      if (r.paused && shouldAutoResume(r.pausedHash, liveHash)) {
-        workspace.resumeAgent(r.paneId);
+      const liveCount = activity.forPane(r.paneId).userMsgCount;
+      if (r.paused) {
+        if (r.pausedCount == null && typeof liveCount === 'number') {
+          workspace.establishPausedBaseline(r.paneId, liveCount);
+        } else if (shouldAutoResume(r.pausedCount, liveCount)) {
+          workspace.resumeAgent(r.paneId);
+        }
       }
-      if (r.preview && shouldAutoResume(r.previewHash, liveHash)) {
-        workspace.commitPreview(r.paneId);
+      if (r.preview) {
+        if (r.previewCount == null && typeof liveCount === 'number') {
+          workspace.establishPreviewBaseline(r.paneId, liveCount);
+        } else if (shouldAutoResume(r.previewCount, liveCount)) {
+          workspace.commitPreview(r.paneId);
+        }
       }
     }
   });
@@ -985,11 +1013,11 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="tasks-gutter" onpointerdown={startTasksResize} use:tooltip={'Drag to resize'}></div>
 
-      <!-- Bottom region: the Tasks launcher + the Agents (specialists) panel
-           (sibling surfaces), sized together to a persisted fraction and split evenly. -->
+      <!-- Bottom region: the Tasks launcher. The Agents (specialists) panel is
+           temporarily hidden — restore the commented sibling below to bring it back. -->
       <div class="tasks-region" style="flex: 0 0 {tasksFrac * 100}%">
         <div class="launch-pane"><TasksLauncher /></div>
-        <div class="launch-pane sp"><SpecialistsPanel /></div>
+        <!-- <div class="launch-pane sp"><SpecialistsPanel /></div> -->
       </div>
     </div>
 

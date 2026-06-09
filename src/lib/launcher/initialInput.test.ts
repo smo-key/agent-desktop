@@ -2,12 +2,34 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   encodeInitialInput,
   encodeInitialText,
+  initialInputForMount,
   InitialInputSender,
   LaunchPromptReadiness,
   READY_MAX_MS,
   READY_QUIET_MS,
   SUBMIT_BYTES
 } from './initialInput';
+
+describe('initialInputForMount (one-shot prompt is never re-sent to a resumed pane)', () => {
+  it('delivers the launch prompt on a FRESH spawn (resume falsey)', () => {
+    expect(initialInputForMount('Commit all changes and push', false)).toBe(
+      'Commit all changes and push'
+    );
+    expect(initialInputForMount('do x', undefined)).toBe('do x');
+  });
+
+  it('NEVER re-delivers the prompt to a RESUMED pane (archive→restore / preview)', () => {
+    // The bug: an auto-archived agent task that the inbox auto-previews remounts with
+    // resume:true and the registry's initialInput still set — it must not re-run.
+    expect(initialInputForMount('Commit all changes and push', true)).toBeUndefined();
+  });
+
+  it('no prompt stays no prompt regardless of resume', () => {
+    expect(initialInputForMount(undefined, false)).toBeUndefined();
+    expect(initialInputForMount(null, true)).toBeUndefined();
+    expect(initialInputForMount('', true)).toBeUndefined();
+  });
+});
 
 /** A controllable stand-in for setTimeout/clearTimeout: tasks run only when the
  *  test advances the clock, so the quiet-window / hard-cap timing is exercised

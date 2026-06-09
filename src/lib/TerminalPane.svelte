@@ -11,6 +11,7 @@
   import { buildSpawnOverride } from './usage/spawn';
   import {
     InitialInputSender,
+    initialInputForMount,
     LaunchPromptReadiness,
     SUBMIT_DELAY_MS,
     READY_MAX_MS
@@ -407,8 +408,11 @@
     let disposed = false;
 
     // Capture the launch-time initial prompt once (an initial prompt is a
-    // spawn-time value; later prop changes must not re-send it).
-    initialInputSender = new InitialInputSender(initialInput);
+    // spawn-time value; later prop changes must not re-send it). A RESUMED pane
+    // (archive→restore / preview re-mounts this component with the registry's
+    // initialInput still set) must NOT re-send the launch prompt — its transcript
+    // already has it — so the prompt is gated on `resume` here.
+    initialInputSender = new InitialInputSender(initialInputForMount(initialInput, resume));
 
     // Arm the launch spinner from the same launch-time values: agent panes
     // (claude) show it; a prompt-bearing pane holds it until the prompt lands.

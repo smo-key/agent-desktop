@@ -102,8 +102,24 @@ pub struct Activity {
     /// a message. The overview uses it to regenerate the session title (which
     /// is derived from the user's messages) ONLY when it actually changed, rather
     /// than on every poll. `null` when the user has sent nothing yet.
+    ///
+    /// NOTE: this is computed over the TAIL window (with a head fallback), so it is
+    /// NOT guaranteed to change ONLY on a new user message — a long agentic turn can
+    /// slide the window and change it. That is fine for the title heuristic (a stray
+    /// regen is cheap), but it must NOT gate pause/preview auto-resume; use
+    /// [`Self::user_msg_count`] for that — see its note.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_hash: Option<String>,
+    /// The number of genuine USER prose messages in the transcript, counted over the
+    /// WHOLE file (not the tail window). Unlike `user_hash` this is strictly monotonic
+    /// — it increases ONLY when the user sends a new message and is unaffected by
+    /// assistant/tool output sliding the tail window or by a `claude --resume` that
+    /// appends non-user entries. The overview's pause/preview gate auto-resumes ONLY
+    /// when this strictly increases, so previewing an archived session (which resumes
+    /// it and grows its transcript) can no longer masquerade as a user reply. `null`
+    /// when the transcript is unreadable; `0` for a session with no real user message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_msg_count: Option<usize>,
 }
 
 /// One pane the frontend wants activity for: its frontend `pane_id` (the map key),
@@ -307,6 +323,27 @@ pub fn user_messages(path: &Path) -> Vec<String> {
     out
 }
 
+/// The number of genuine USER prose messages in a transcript, counted over the
+/// WHOLE file (not the tail window). Stable under assistant/tool appends — so a
+/// strictly-increasing count is a reliable "the user sent a new message" signal,
+/// which the windowed [`Activity::user_hash`] is NOT. Tolerant of malformed lines;
+/// `0` when none / unreadable.
+pub fn user_message_count(path: &Path) -> usize {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return 0;
+    };
+    body.lines()
+        .filter_map(|l| {
+            let t = l.trim();
+            if t.is_empty() {
+                return None;
+            }
+            serde_json::from_str::<Value>(t).ok()
+        })
+        .filter(|v| user_text(v).is_some())
+        .count()
+}
+
 /// The content blocks of an `assistant` entry, or empty.
 fn assistant_content(entry: &Value) -> &[Value] {
     if entry.get("type").and_then(Value::as_str) != Some("assistant") {
@@ -444,6 +481,13 @@ pub fn summarize_transcript(path: &Path) -> Activity {
     if !user_msgs.is_empty() {
         out.user_hash = Some(hash_strings(&user_msgs));
     }
+
+    // USER-MESSAGE COUNT: a whole-file count of genuine user prose messages — the
+    // STABLE signal the pause/preview auto-resume gate uses (the windowed `user_hash`
+    // above can change without a new user message, which spuriously unarchived a
+    // previewed session). Read separately from the file (the tail above can't see the
+    // whole conversation); cheap enough at the poll cadence.
+    out.user_msg_count = Some(user_message_count(path));
 
     // QUESTION: the LAST AskUserQuestion tool_use, pending iff no later tool_result
     // references its id. Tracked across ALL entries (not just the newest turn) so
@@ -956,6 +1000,72 @@ mod tests {
         assert!(
             act.user_hash.is_some(),
             "a content-rich session must read as Archive (user_hash present), not empty Delete"
+        );
+    }
+
+    /// REGRESSION (the spurious auto-unarchive bug): the overview's pause/preview
+    /// auto-resume gate must fire ONLY when the user sends a NEW message. The old gate
+    /// keyed on `user_hash`, which is computed over a sliding `TAIL_BYTES` window —
+    /// appending ASSISTANT-ONLY output (exactly what `claude --resume` does when a
+    /// session is PREVIEWED, with no new user message) can push an older user message
+    /// OUT of the window and change the hash, so the gate read it as "user replied"
+    /// and unarchived. The fix gates on `user_msg_count` instead, a WHOLE-FILE count
+    /// that is invariant under such appends. This test pins that invariance.
+    ///
+    /// It needs MULTIPLE user messages: the head-fallback in
+    /// `long_agent_turn_keeps_user_hash_from_head` masks the single-message case,
+    /// which is why the bug was intermittent (only larger, multi-prompt sessions hit
+    /// it). We assert here that `user_hash` DID change (proving the fixture exercises
+    /// the window slide) while `user_msg_count` did NOT (proving the new gate signal
+    /// is immune).
+    #[test]
+    fn user_msg_count_invariant_under_assistant_only_appends() {
+        use std::io::Write;
+        let tmp = TempDir::new("usercount-invariance");
+        // ~40 KiB assistant padding entry (no user text → never counts as a message).
+        let pad = || assistant(serde_json::json!([{"type":"text","text":"x".repeat(40 * 1024)}]));
+        let user = |t: &str| {
+            serde_json::json!({"type":"user","message":{"role":"user",
+                "content":[{"type":"text","text":t}]}})
+        };
+
+        // Layout: U1, ~120 KiB pad (P1), U2, ~40 KiB pad (P2). Initial file ~160 KiB
+        // < TAIL_BYTES, so the whole file is the window: user set = {U1, U2}.
+        let mut lines: Vec<Value> = vec![user("the first real question")];
+        for _ in 0..3 {
+            lines.push(pad()); // P1 ≈ 120 KiB
+        }
+        lines.push(user("the second real question"));
+        lines.push(pad()); // P2 ≈ 40 KiB
+        let path = write_transcript(tmp.path(), "-work-big", "sess-big", &lines);
+
+        let before = summarize_transcript(&path);
+        assert_eq!(before.user_msg_count, Some(2), "fixture has two real user messages");
+
+        // Append ~160 KiB of assistant-only output (P3) — the resumed/previewing
+        // session writing turns with NO new user message. Now bytes-below-U2 = P2+P3
+        // ≈ 200 KiB (< TAIL_BYTES, so U2 stays in the window) while bytes-below-U1 =
+        // P1+U2+P2+P3 ≈ 320 KiB (> TAIL_BYTES, so U1 drops OUT). The windowed user set
+        // collapses from {U1, U2} to {U2}.
+        let extra: String =
+            (0..4).map(|_| pad().to_string()).collect::<Vec<_>>().join("\n") + "\n";
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(extra.as_bytes()).unwrap();
+
+        let after = summarize_transcript(&path);
+
+        // The windowed hash DID change (the fixture really does slide the window)...
+        assert_ne!(
+            before.user_hash, after.user_hash,
+            "fixture should slide the tail window (user_hash changes) — else it is not \
+             exercising the bug"
+        );
+        // ...but the whole-file count did NOT: no new user message ⇒ same count. This
+        // is what keeps a previewed session from unarchiving itself.
+        assert_eq!(
+            after.user_msg_count, Some(2),
+            "user_msg_count must be invariant under assistant-only appends (no new \
+             user message)"
         );
     }
 }

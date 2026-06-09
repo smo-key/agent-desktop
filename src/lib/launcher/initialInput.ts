@@ -46,6 +46,25 @@ export function encodeInitialText(input: string | null | undefined): number[] | 
   return Array.from(new TextEncoder().encode(input));
 }
 
+/**
+ * The one-shot launch prompt a pane should deliver ON MOUNT, gated on whether this
+ * spawn is a RESUME. The initial prompt belongs to the FRESH launch only: a resumed
+ * session (`claude --resume`) already contains it in its transcript, so it must
+ * NEVER be re-sent. This matters because the prompt lives in the registry keyed by
+ * paneId and a pane RE-MOUNTS on archive→restore / preview (`{#key paneId}` with
+ * `closed` toggling) — each remount builds a fresh {@link InitialInputSender}. Without
+ * this gate the sender would re-type + re-submit the launch prompt into the resumed
+ * session, re-running it (e.g. an auto-archived "Commit and push" agent task that the
+ * inbox auto-previews would commit+push again, looping). Returns the prompt only for a
+ * fresh spawn (`resume` falsey); `undefined` for a resume.
+ */
+export function initialInputForMount(
+  initialInput: string | null | undefined,
+  resume: boolean | undefined
+): string | undefined {
+  return resume ? undefined : (initialInput ?? undefined);
+}
+
 /** The single byte a TUI reads as "submit this line": a carriage return. */
 export const SUBMIT_BYTES: number[] = [0x0d];
 

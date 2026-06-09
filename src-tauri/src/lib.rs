@@ -242,9 +242,12 @@ fn open_path(path: String, app: Option<String>) -> Result<(), String> {
 
 /// Clean a raw model completion into a session-title string: drop any Qwen3
 /// `<think>…</think>` reasoning block that slipped into the content, take the first
-/// non-empty line, strip wrapping quotes / trailing periods, and clip to 60 chars.
-/// PURE so the post-processing is unit-tested apart from the model call.
-fn clean_title(raw: &str) -> String {
+/// non-empty line, strip wrapping quotes / trailing periods, drop a hallucinated
+/// ticket-id prefix (see [`strip_phantom_ticket`]), and clip to 60 chars. `source`
+/// is the joined user transcript the title was generated from — the only ground
+/// truth for whether a ticket id is real. PURE so the post-processing is
+/// unit-tested apart from the model call.
+fn clean_title(raw: &str, source: &str) -> String {
     let body = strip_think_blocks(raw);
     let title = body
         .lines()
@@ -253,7 +256,85 @@ fn clean_title(raw: &str) -> String {
         .unwrap_or("")
         .trim_matches(|c| c == '"' || c == '\'' || c == '.')
         .trim();
-    title.chars().take(60).collect()
+    strip_phantom_ticket(title, source).chars().take(60).collect()
+}
+
+/// Drop a leading ticket/issue id from `title` when that id does NOT appear in
+/// `source`. The local model parrots the prompt's example formats (`#45`,
+/// `PROJ-45`) into titles for sessions that reference no ticket at all; the prompt
+/// alone has not stopped it, so this is the deterministic backstop. Only a LEADING
+/// id is considered (the documented title shape is "ID: focus"); an id genuinely
+/// present in the user's messages is kept verbatim. PURE for unit testing.
+fn strip_phantom_ticket(title: &str, source: &str) -> String {
+    match split_leading_ticket(title) {
+        Some((id, rest)) if !source_contains_id(source, id) => rest.to_string(),
+        _ => title.to_string(),
+    }
+}
+
+/// If `title` begins with a ticket/issue id, return `(id, rest)` where `rest` is
+/// the title after the id and an optional `:`/whitespace separator. Recognized
+/// forms: a GitHub issue `#<digits>`, or a tracker key `<2+ UPPERCASE letters>-<digits>`
+/// (e.g. `PROJ-45`). Returns `None` when there is no leading id. The 2-letter
+/// minimum avoids treating fragments like `I-9` or `A-1` as tickets.
+fn split_leading_ticket(title: &str) -> Option<(&str, &str)> {
+    let b = title.as_bytes();
+    let id_end = if b.first() == Some(&b'#') {
+        let mut i = 1;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == 1 {
+            return None; // bare '#'
+        }
+        i
+    } else {
+        let mut i = 0;
+        while i < b.len() && b[i].is_ascii_uppercase() {
+            i += 1;
+        }
+        if i < 2 {
+            return None; // need >=2 uppercase letters
+        }
+        if b.get(i) != Some(&b'-') {
+            return None;
+        }
+        i += 1; // consume '-'
+        let digits_start = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == digits_start {
+            return None; // no digits after '-'
+        }
+        i
+    };
+    let id = &title[..id_end];
+    let mut rest = title[id_end..].trim_start();
+    if let Some(stripped) = rest.strip_prefix(':') {
+        rest = stripped.trim_start();
+    }
+    Some((id, rest))
+}
+
+/// Whether `source` contains the ticket `id` as a standalone token (ASCII
+/// case-insensitive). Boundary-checked so `#45` does NOT match inside `#456` and
+/// `PROJ-45` does NOT match inside `PROJ-456` or `MYPROJ-45`: the char before the
+/// id must not be ASCII-alphanumeric and the char after must not be an ASCII digit.
+fn source_contains_id(source: &str, id: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut from = 0;
+    while let Some(rel) = find_ascii_ci(&source[from..], id) {
+        let start = from + rel;
+        let end = start + id.len();
+        let before_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+        let after_ok = end >= bytes.len() || !bytes[end].is_ascii_digit();
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
 }
 
 /// Byte index of the first ASCII-case-insensitive occurrence of `needle` in
@@ -369,7 +450,7 @@ async fn session_focus(
             })?
         }
     };
-    let title = clean_title(&raw);
+    let title = clean_title(&raw, &joined);
     Ok((!title.is_empty()).then_some(title))
 }
 
@@ -1178,26 +1259,30 @@ mod tests {
 
     #[test]
     fn clean_title_takes_first_nonempty_line_and_strips_decoration() {
-        assert_eq!(clean_title("\n  \"Fix login bug\".  \n"), "Fix login bug");
+        assert_eq!(clean_title("\n  \"Fix login bug\".  \n", ""), "Fix login bug");
         assert_eq!(
-            clean_title("Improve frontend dialog handling\nextra line"),
+            clean_title("Improve frontend dialog handling\nextra line", ""),
             "Improve frontend dialog handling"
         );
     }
 
     #[test]
     fn clean_title_drops_think_blocks() {
+        // The ticket id is in `source`, so it is kept (a real reference).
         assert_eq!(
-            clean_title("<think>let me reason\nabout this</think>\nSKIPA-45: Fix Feature"),
+            clean_title(
+                "<think>let me reason\nabout this</think>\nSKIPA-45: Fix Feature",
+                "Messages:\n- fix SKIPA-45 the login feature"
+            ),
             "SKIPA-45: Fix Feature"
         );
         // Case-insensitive tag, title on the same trailing segment.
         assert_eq!(
-            clean_title("<THINK>hmm</THINK> Add dark mode"),
+            clean_title("<THINK>hmm</THINK> Add dark mode", ""),
             "Add dark mode"
         );
         // Unterminated think block → no title leaks out.
-        assert_eq!(clean_title("<think>never closes"), "");
+        assert_eq!(clean_title("<think>never closes", ""), "");
     }
 
     #[test]
@@ -1209,7 +1294,7 @@ mod tests {
         assert_eq!(strip_think_blocks("İİ<think>x</think>Z"), "İİZ");
         // A multi-byte char INSIDE the reasoning block is dropped with it.
         assert_eq!(
-            clean_title("<think>İİİ reasoning</think>\nFix the café page"),
+            clean_title("<think>İİİ reasoning</think>\nFix the café page", ""),
             "Fix the café page"
         );
     }
@@ -1217,13 +1302,104 @@ mod tests {
     #[test]
     fn clean_title_clips_to_60_chars() {
         let long = "a".repeat(100);
-        assert_eq!(clean_title(&long).chars().count(), 60);
+        assert_eq!(clean_title(&long, "").chars().count(), 60);
     }
 
     #[test]
     fn clean_title_empty_for_blank_input() {
-        assert_eq!(clean_title(""), "");
-        assert_eq!(clean_title("   \n  "), "");
+        assert_eq!(clean_title("", ""), "");
+        assert_eq!(clean_title("   \n  ", ""), "");
+    }
+
+    #[test]
+    fn clean_title_strips_phantom_ticket_absent_from_source() {
+        // The model invented a ticket id; the session referenced none → drop it.
+        assert_eq!(
+            clean_title("PROJ-45: Fix login", "Messages:\n- please fix the login"),
+            "Fix login"
+        );
+        assert_eq!(
+            clean_title("#45: Add dark mode", "Messages:\n- add a dark mode"),
+            "Add dark mode"
+        );
+        // No colon, just whitespace, still stripped.
+        assert_eq!(
+            clean_title("ENG-12 Refactor parser", "Messages:\n- refactor the parser"),
+            "Refactor parser"
+        );
+    }
+
+    #[test]
+    fn clean_title_keeps_real_ticket_in_source() {
+        // Id genuinely present in the user's messages → keep verbatim.
+        assert_eq!(
+            clean_title("PROJ-45: Fix login", "Messages:\n- work on PROJ-45 login"),
+            "PROJ-45: Fix login"
+        );
+        // Case-insensitive match against the source.
+        assert_eq!(
+            clean_title("ENG-7: Cache layer", "Messages:\n- start eng-7"),
+            "ENG-7: Cache layer"
+        );
+        assert_eq!(
+            clean_title("#9: Crash on boot", "Messages:\n- see #9"),
+            "#9: Crash on boot"
+        );
+    }
+
+    #[test]
+    fn strip_phantom_ticket_boundary_checks() {
+        // A different number in source must not count as the title's id.
+        assert_eq!(
+            strip_phantom_ticket("#45: Foo", "issue #456 here"),
+            "Foo"
+        );
+        assert_eq!(
+            strip_phantom_ticket("PROJ-45: Foo", "see PROJ-456"),
+            "Foo"
+        );
+        assert_eq!(
+            strip_phantom_ticket("PROJ-45: Foo", "see MYPROJ-45"),
+            "Foo"
+        );
+        // Exact match (not a longer number) is kept.
+        assert_eq!(
+            strip_phantom_ticket("#45: Foo", "issue #45 here"),
+            "#45: Foo"
+        );
+    }
+
+    #[test]
+    fn ticket_issue_numbers_of_any_length() {
+        // Issue numbers vary in length — #1, #456, #4567 are all valid and parse.
+        assert_eq!(split_leading_ticket("#1: Crash"), Some(("#1", "Crash")));
+        assert_eq!(split_leading_ticket("#456: Crash"), Some(("#456", "Crash")));
+        assert_eq!(split_leading_ticket("#4567: Crash"), Some(("#4567", "Crash")));
+
+        // Each is kept when it actually appears in the source...
+        assert_eq!(clean_title("#1: Crash", "Messages:\n- see #1"), "#1: Crash");
+        assert_eq!(
+            clean_title("#4567: Crash", "Messages:\n- see #4567"),
+            "#4567: Crash"
+        );
+
+        // ...and a different-length number in the source is NOT a match (boundary
+        // check both directions): #456 is neither a prefix nor a superset hit of #4567.
+        assert_eq!(strip_phantom_ticket("#456: Foo", "see #4567"), "Foo");
+        assert_eq!(strip_phantom_ticket("#4567: Foo", "see #456"), "Foo");
+        assert_eq!(strip_phantom_ticket("#1: Foo", "see #12"), "Foo");
+    }
+
+    #[test]
+    fn split_leading_ticket_recognizes_and_rejects() {
+        assert_eq!(split_leading_ticket("PROJ-45: Fix"), Some(("PROJ-45", "Fix")));
+        assert_eq!(split_leading_ticket("#45 Fix"), Some(("#45", "Fix")));
+        assert_eq!(split_leading_ticket("AB-1: x"), Some(("AB-1", "x")));
+        // Not tickets: single-letter key, no digits, bare '#', plain words.
+        assert_eq!(split_leading_ticket("I-9 form"), None);
+        assert_eq!(split_leading_ticket("CI-CD pipeline"), None);
+        assert_eq!(split_leading_ticket("# heading"), None);
+        assert_eq!(split_leading_ticket("Improve dialog handling"), None);
     }
 
     #[test]

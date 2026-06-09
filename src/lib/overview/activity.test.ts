@@ -7,9 +7,14 @@ import { normalizeActivity } from './activity.svelte';
 describe('activity — transcript activity normalizer', () => {
   it('normalizes the activity map, coercing non-strings to null', () => {
     const norm = normalizeActivity({
-      'sess-a': { summary: 'Looking at the parser', question: null, contextPct: 42 },
+      'sess-a': {
+        summary: 'Looking at the parser',
+        question: null,
+        contextPct: 42,
+        userMsgCount: 3
+      },
       'sess-b': { summary: null, question: 'Which database?' },
-      'sess-c': { summary: 123, question: undefined, contextPct: 'x' } // non-numbers -> null
+      'sess-c': { summary: 123, question: undefined, contextPct: 'x', userMsgCount: 'x' } // non-numbers -> null
     });
     expect(norm['sess-a']).toEqual({
       summary: 'Looking at the parser',
@@ -17,7 +22,8 @@ describe('activity — transcript activity normalizer', () => {
       questions: null,
       contextPct: 42,
       messages: null,
-      userHash: null
+      userHash: null,
+      userMsgCount: 3
     });
     expect(norm['sess-b']).toEqual({
       summary: null,
@@ -25,7 +31,8 @@ describe('activity — transcript activity normalizer', () => {
       questions: null,
       contextPct: null,
       messages: null,
-      userHash: null
+      userHash: null,
+      userMsgCount: null
     });
     expect(norm['sess-c']).toEqual({
       summary: null,
@@ -33,7 +40,8 @@ describe('activity — transcript activity normalizer', () => {
       questions: null,
       contextPct: null,
       messages: null,
-      userHash: null
+      userHash: null,
+      userMsgCount: null
     });
   });
 
@@ -84,7 +92,8 @@ describe('activity — transcript activity normalizer', () => {
       questions: null,
       contextPct: null,
       messages: null,
-      userHash: null
+      userHash: null,
+      userMsgCount: null
     });
   });
 });

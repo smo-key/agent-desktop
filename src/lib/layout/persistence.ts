@@ -75,11 +75,12 @@ export interface PersistedSession {
    */
   paused?: boolean;
   /**
-   * The user-message hash captured when the agent was paused. Persisted alongside
+   * The user-message COUNT captured when the agent was paused. Persisted alongside
    * `paused` so the resume-on-new-message baseline survives a restart (without it a
-   * restored paused agent would immediately look "changed" and un-pause).
+   * restored paused agent would re-establish its baseline lazily — correct, but this
+   * avoids the one-poll window before the first reading).
    */
-  pausedHash?: string | null;
+  pausedCount?: number | null;
   /**
    * Set while an archived session is being PREVIEWED (resumed for viewing, but still
    * presented as Archived until a message is sent). RUNTIME-ONLY — NOT serialized:
@@ -87,9 +88,9 @@ export interface PersistedSession {
    * restores it as archived rather than as a live resumed session.
    */
   preview?: boolean;
-  /** The user-message hash captured when the preview began (runtime-only, not
-   *  serialized). The inbox unarchives the session when the live hash differs. */
-  previewHash?: string | null;
+  /** The user-message COUNT captured when the preview began (runtime-only, not
+   *  serialized). The inbox unarchives the session when the live count exceeds it. */
+  previewCount?: number | null;
   /**
    * OPTIONAL specialist name this pane was spawned AS (orchestration `spawn_agent`).
    * Persisted so the roster attribution survives a restart. Absent for non-specialist
@@ -210,11 +211,11 @@ function projectRegistry(
       // pane (resumed for viewing, but still presented as Archived) is runtime-only:
       // serialize it AS closed so a restart restores it archived, never live.
       ...(src?.closed || src?.preview ? { closed: true } : {}),
-      // Persist the paused state + its baseline hash so a deferred agent restores as
+      // Persist the paused state + its baseline count so a deferred agent restores as
       // paused and doesn't immediately auto-resume on restart. A previewing pane is
       // never paused, so this branch is skipped for it.
       ...(src?.paused && !src?.preview
-        ? { paused: true, pausedHash: src.pausedHash ?? null }
+        ? { paused: true, pausedCount: src.pausedCount ?? null }
         : {}),
       // Persist the specialist attribution + its composed CLI args so a resumed
       // specialist pane keeps both its roster badge and its persona across a restart.
@@ -326,10 +327,15 @@ function sanitizeRegistry(
       // user restores it (which sets resume:true then).
       const closed = raw.closed === true && program === 'claude';
       // A paused pane stays LIVE (it resumes), unlike closed — so the user can keep
-      // messaging it. It keeps its baseline hash so it doesn't auto-resume at once.
+      // messaging it. It keeps its baseline count so it doesn't auto-resume at once;
+      // an absent/legacy count restores as null and is re-established lazily.
       const paused = raw.paused === true && program === 'claude' && !closed;
-      const pausedHash =
-        paused && typeof raw.pausedHash === 'string' ? raw.pausedHash : paused ? null : undefined;
+      const pausedCount =
+        paused && typeof raw.pausedCount === 'number' && Number.isFinite(raw.pausedCount)
+          ? raw.pausedCount
+          : paused
+            ? null
+            : undefined;
       const resume = program === 'claude' && !closed && !!persistedSessionId;
       out[leafNode.paneId] = {
         program,
@@ -340,7 +346,7 @@ function sanitizeRegistry(
         ...(sessionId ? { sessionId } : {}),
         ...(resume ? { resume: true } : {}),
         ...(closed ? { closed: true } : {}),
-        ...(paused ? { paused: true, pausedHash } : {}),
+        ...(paused ? { paused: true, pausedCount } : {}),
         // Restore the specialist attribution + its composed CLI args (a resumed
         // specialist pane re-applies its persona via the `args` prop on respawn).
         ...(typeof raw.specialist === 'string' && raw.specialist
