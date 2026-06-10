@@ -27,11 +27,11 @@
 
 ## 5. Auto-advance setting (inbox-auto-advance)
 
-- [ ] 5.1 Create `src/lib/settings/autoAdvance.svelte.ts` (mirror `voice.svelte.ts`): `AutoAdvancePrefs { enabled: boolean }`, default `{ enabled: false }`, `parseAutoAdvancePrefs`, `AutoAdvanceStore` with `load`/`setEnabled`/`save` via `saveSettingsSlice('autoAdvance', …)`, singleton export.
-- [ ] 5.2 Add a "Focus behavior" row to `SettingsModal.svelte` with a checkbox bound to `autoAdvance.prefs.enabled` / `autoAdvance.setEnabled`.
-- [ ] 5.3 Call `autoAdvance.load()` in `+page.svelte` `onMount`.
-- [ ] 5.4 Gate the advance effect in `Inbox.svelte`: only arm the grace timer when `autoAdvance.prefs.enabled` (manual ⌘↑/⌘↓ and the next/prev buttons stay unconditional).
-- [ ] 5.5 Add tests: default off; parse coercion; effect does not advance when off and does when on.
+- [x] 5.1 Create `src/lib/settings/autoAdvance.svelte.ts` (mirror `voice.svelte.ts`): `AutoAdvancePrefs { enabled: boolean }`, default `{ enabled: false }`, `parseAutoAdvancePrefs`, `AutoAdvanceStore` with `load`/`setEnabled`/`save` via `saveSettingsSlice('autoAdvance', …)`, singleton export.
+- [x] 5.2 Add a "Focus behavior" row to `SettingsModal.svelte` with a checkbox bound to `autoAdvance.prefs.enabled` / `autoAdvance.setEnabled`.
+- [x] 5.3 Call `autoAdvance.load()` in `+page.svelte` `onMount`.
+- [x] 5.4 Gate the advance effect in `Inbox.svelte`: only arm the grace timer when `autoAdvance.prefs.enabled` (manual ⌘↑/⌘↓ and the next/prev buttons stay unconditional).
+- [x] 5.5 Add tests: default off; parse coercion; effect does not advance when off and does when on.
 
 ## 6. Footer PR button (footer-actions)
 
@@ -56,10 +56,10 @@
 
 ## 9. Session rename (session-titles)
 
-- [ ] 9.1 Extend `titles.svelte.ts`: add a `manual` marker to `TitleEntry` and a `setManualTitle(paneId, sessionId, title)` that updates `byPane`/`bySession`, persists, and marks the entry manual; have `shouldRequest` return false for a manual entry (manual sticks).
-- [ ] 9.2 Make the focus-pane header title (`Inbox.svelte` `.ttl`) click-to-edit using the inline-input pattern from `SessionRail.svelte` (draft state; Enter/blur commit, Esc cancel) and commit via `titles.setManualTitle(...)`.
-- [ ] 9.3 Add a "Rename" item to `openAgentMenu` (live/paused sessions) that opens the same header inline edit.
-- [ ] 9.4 Add tests: `setManualTitle` persists + sticks; `shouldRequest` skips a manual entry; header edit commit/cancel behavior.
+- [x] 9.1 Extend `titles.svelte.ts`: add a `manual` marker to `TitleEntry` and a `setManualTitle(paneId, sessionId, title)` that updates `byPane`/`bySession`, persists, and marks the entry manual; have `shouldRequest` return false for a manual entry (manual sticks).
+- [x] 9.2 Make the focus-pane header title (`Inbox.svelte` `.ttl`) click-to-edit using the inline-input pattern from `SessionRail.svelte` (draft state; Enter/blur commit, Esc cancel) and commit via `titles.setManualTitle(...)`.
+- [x] 9.3 Add a "Rename" item to `openAgentMenu` (live/paused sessions) that opens the same header inline edit.
+- [x] 9.4 Add tests: `setManualTitle` persists + sticks; `shouldRequest` skips a manual entry; header edit commit/cancel behavior.
 
 ## 10. Title refresh after each user message (session-titles)
 
