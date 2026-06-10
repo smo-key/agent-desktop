@@ -22,7 +22,9 @@
 
 ## 4. Spec promotion (deferred)
 
-- [ ] 4.1 When the `agent-overview` capability is promoted to `openspec/specs/`
+- [x] 4.1 When the `agent-overview` capability is promoted to `openspec/specs/`
   (i.e. when `add-agent-desktop` archives), fold this change's delta into the durable
   spec and archive this change. Kept active until then to avoid fragmenting the
-  in-flight capability.
+  in-flight capability. — done at close-out: `add-agent-desktop` archived 2026-06-10,
+  so this change's "Delete All Archived Agents" requirement folds cleanly into the
+  durable `agent-overview` spec on archive.
