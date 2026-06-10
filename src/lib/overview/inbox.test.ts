@@ -228,6 +228,23 @@ describe('Archiving an empty session deletes it instead', () => {
   });
 });
 
+// The COORDINATOR follows the SAME archive/delete rule as ordinary sessions
+// (coordinator-lifecycle): NOT delete-only. `archiveAgent` runs the coordinator's
+// own userHash through `archiveDecision`, exactly like any other row — an EMPTY
+// coordinator (no user messages) DELETES, a NON-empty one ARCHIVES (restorable).
+describe('Coordinator archive/delete follows the same rule as ordinary sessions', () => {
+  it('deletes an EMPTY coordinator (no user messages) outright', () => {
+    // The coordinator's transcript carries no user message yet → falsy userHash.
+    expect(archiveDecision(null)).toBe('delete');
+    expect(archiveDecision('')).toBe('delete');
+  });
+
+  it('archives a NON-empty coordinator (has user messages), restorable', () => {
+    // The user has talked to the coordinator → a real userHash → archive (kept).
+    expect(archiveDecision('coord-hash')).toBe('archive');
+  });
+});
+
 describe('A new message resumes a paused session', () => {
   it('resumes only when the live user-message COUNT strictly exceeds the paused-at count', () => {
     expect(shouldAutoResume(1, 2)).toBe(true);

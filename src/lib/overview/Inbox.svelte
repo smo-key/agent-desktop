@@ -24,6 +24,7 @@
     buildRoster,
     groupByLane,
     needsAttention,
+    isArchivedCoordinator,
     LANE_ORDER,
     laneForRow,
     type AgentLane,
@@ -749,49 +750,55 @@
     previewTimers.clear();
   });
 
-  /** Whether a row is the project COORDINATOR. The coordinator MUST NOT be pausable
-   *  or archivable by the user (it orchestrates the project's agents), but it MUST
-   *  stay deletable. We therefore omit Pause/Archive from its actions everywhere and
-   *  offer only Delete (close permanently) — task 10.9. Normal rows are unaffected. */
+  /** Whether a row is the project COORDINATOR. The coordinator follows the SAME
+   *  archive/delete rules as ordinary sessions (coordinator-lifecycle), so it is no
+   *  longer special-cased in the archive/pause paths. It IS still excluded from inline
+   *  rename (its title is pinned "Coordinator"), so the menu drops the Rename item for
+   *  it. Normal rows are unaffected. */
   function isCoordinator(r: AgentRow | null): boolean {
     return r?.role === 'coordinator';
   }
 
   /** Right-click a roster row. An Archived agent — closed OR being previewed (it's
-   *  still presented as archived until you reply) — offers only Delete; a paused agent
-   *  offers Open / Resume / Archive; a live agent offers Open / Pause / Archive. An
-   *  EMPTY live/paused session presents its archive action as Delete instead. The
-   *  COORDINATOR never offers Pause/Archive — only Open + Delete (task 10.9). */
+   *  still presented as archived until you reply) — offers only Delete (restore is the
+   *  focus-header Resume / a row click); a paused agent offers Open / Resume / Archive;
+   *  a live agent offers Open / Pause / Archive. An EMPTY live/paused session presents
+   *  its archive action as Delete instead. The COORDINATOR follows the SAME rules: a
+   *  LIVE/paused coordinator gets Open / Pause / Archive routed through `archiveAgent`
+   *  (so an empty coordinator DELETES and a non-empty one ARCHIVES); only Rename is
+   *  omitted (its title is pinned). An ARCHIVED coordinator offers Delete (and Restore
+   *  via the header), like any archived session. */
   function openAgentMenu(e: MouseEvent, row: AgentRow, name: string) {
     e.preventDefault();
     // The archive action for a live/paused row: an empty session deletes (nothing to
-    // keep) and reads as "Delete"; a session with messages archives (restorable).
+    // keep) and reads as "Delete"; a session with messages archives (restorable). This
+    // is the SAME decision for the coordinator — `archiveAgent` runs its userHash
+    // through `archiveDecision` just like any other row.
     const archiveItem: MenuItem = isEmptySession(row.paneId)
       ? { label: 'Delete', icon: 'trash-2', danger: true, onClick: () => archiveAgent(row.paneId) }
       : { label: 'Archive session', icon: 'archive', danger: true, onClick: () => archiveAgent(row.paneId) };
+    // The coordinator's title is pinned ("Coordinator"), so inline rename is suppressed
+    // — drop the Rename item for it (it would be a no-op) while keeping everything else.
+    const renameItem: MenuItem[] = isCoordinator(row)
+      ? []
+      : [{ label: 'Rename', icon: 'pencil', onClick: () => renameAgent(row) }];
     const items: MenuItem[] = row.closed || row.preview
       ? [
           { label: 'Delete', icon: 'trash-2', danger: true, onClick: () => deleteAgent(row.paneId, name) }
         ]
-      : isCoordinator(row)
-        ? // The coordinator: open + DELETE only — never Pause/Archive (task 10.9).
-          [
+      : row.paused
+        ? [
             { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
-            { label: 'Delete', icon: 'trash-2', danger: true, onClick: () => deleteAgent(row.paneId, name) }
+            ...renameItem,
+            { label: 'Resume', icon: 'play', onClick: () => resumeAgent(row.paneId) },
+            archiveItem
           ]
-        : row.paused
-          ? [
-              { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
-              { label: 'Rename', icon: 'pencil', onClick: () => renameAgent(row) },
-              { label: 'Resume', icon: 'play', onClick: () => resumeAgent(row.paneId) },
-              archiveItem
-            ]
-          : [
-              { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
-              { label: 'Rename', icon: 'pencil', onClick: () => renameAgent(row) },
-              { label: 'Pause', icon: 'pause', onClick: () => pauseAgent(row.paneId) },
-              archiveItem
-            ];
+        : [
+            { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
+            ...renameItem,
+            { label: 'Pause', icon: 'pause', onClick: () => pauseAgent(row.paneId) },
+            archiveItem
+          ];
     menu = { open: true, x: e.clientX, y: e.clientY, items };
   }
 
@@ -867,19 +874,19 @@
     if (!e.metaKey || e.altKey || e.ctrlKey || e.shiftKey) return;
 
     // ⌘W — archive (or delete-if-empty) the focused session. preventDefault also
-    // stops ⌘W from closing the app window via the webview. The COORDINATOR is never
-    // archivable (task 10.9) — fall through so ⌘W is a no-op on it.
+    // stops ⌘W from closing the app window via the webview. The COORDINATOR follows the
+    // SAME archive/delete rule (coordinator-lifecycle) — no longer excluded here.
     if (e.key === 'w' || e.key === 'W') {
-      if (!focus || focus.closed || isCoordinator(focus)) return;
+      if (!focus || focus.closed) return;
       e.preventDefault();
       archiveAgent(focus.paneId);
       return;
     }
 
     // ⌘. — pause the focused session, or resume it if already paused. The COORDINATOR
-    // is never pausable (task 10.9) — fall through so ⌘. is a no-op on it.
+    // follows the SAME pause rule (coordinator-lifecycle) — no longer excluded here.
     if (e.key === '.') {
-      if (!focus || focus.closed || isCoordinator(focus)) return;
+      if (!focus || focus.closed) return;
       e.preventDefault();
       if (focus.paused) resumeAgent(focus.paneId);
       else pauseAgent(focus.paneId);
@@ -972,6 +979,16 @@
         {isCoordPin ? 'Coordinator' : (titles.titleFor(r.paneId) ?? r.name)}
         {#if isCoordPin}
           <!-- The pinned coordinator's own row carries no role badge (task 10.5). -->
+        {:else if isArchivedCoordinator(r)}
+          <!-- An ARCHIVED (closed) coordinator is labeled with the bot "Coordinator"
+               badge (agent-roster-display) so its archived roster row is identifiable.
+               A LIVE coordinator's presentation (below) is unchanged. -->
+          <span
+            class="spec-badge coord-badge"
+            use:tooltip={'Archived project coordinator'}
+          >
+            <Icon name="bot" size={9} />Coordinator
+          </span>
         {:else if r.role === 'coordinator'}
           <span
             class="spec-badge coord-badge"
@@ -1163,17 +1180,10 @@
               onclick={() => deleteAgent(focus.paneId, displayName(focus.paneId, focus.name))}
               use:tooltip={'Delete session'}
             >Delete</button>
-          {:else if isCoordinator(focus)}
-            <!-- The COORDINATOR is never pausable or archivable (task 10.9) — it
-                 orchestrates the project's agents. It stays DELETABLE (close it
-                 permanently), so only Delete is offered here. -->
-            <button
-              type="button"
-              class="hbtn danger"
-              onclick={() => deleteAgent(focus.paneId, displayName(focus.paneId, focus.name))}
-              use:tooltip={'Delete coordinator'}
-            >Delete</button>
           {:else}
+            <!-- The COORDINATOR follows the SAME archive/delete rules as ordinary
+                 sessions (coordinator-lifecycle): Pause + Archive (non-empty) / Delete
+                 (empty), routed through the same handlers — no longer delete-only. -->
             {#if focus.paused}
               <button type="button" class="hbtn" onclick={() => resumeAgent(focus.paneId)} use:tooltip={'Resume (⌘.)'}>Resume</button>
             {:else}

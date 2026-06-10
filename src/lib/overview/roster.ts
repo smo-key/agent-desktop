@@ -90,6 +90,20 @@ export function coordinatorNeedsInput(
 }
 
 /**
+ * PURE: whether a row is an ARCHIVED COORDINATOR — a `role:'coordinator'` row whose
+ * session is CLOSED (Archived). The roster labels exactly these rows with the bot
+ * "Coordinator" badge (agent-roster-display: "Archived coordinator is labeled"); a
+ * LIVE coordinator keeps its existing presentation (its own pinned-row badge), so it
+ * is deliberately NOT matched here. A `preview`-ed coordinator (resumed-from-archived,
+ * `closed:false`) is live again and likewise unmatched.
+ */
+export function isArchivedCoordinator(
+  row: Pick<AgentRow, 'role' | 'closed'>
+): boolean {
+  return row.role === 'coordinator' && row.closed === true;
+}
+
+/**
  * PURE: whether a row is actively waiting on YOU — waiting/errored AND neither
  * paused (deferred) nor archived (closed). The inbox's attention queue + focus
  * advance use this so a paused/archived agent never nags or steals focus.

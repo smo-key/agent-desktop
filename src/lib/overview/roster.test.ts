@@ -6,6 +6,7 @@ import {
   laneOf,
   laneForRow,
   needsAttention,
+  isArchivedCoordinator,
   groupByLane,
   archivedPaneIds,
   LANE_ORDER,
@@ -458,6 +459,40 @@ describe('roster — control-room lanes', () => {
       laneRow('c', { status: 'waiting', paused: true })
     ];
     expect(archivedPaneIds(rows)).toEqual([]);
+  });
+
+  // agent-roster-display: "Archived coordinator is labeled" — an archived (closed)
+  // coordinator row carries the bot "Coordinator" badge; a LIVE coordinator does not
+  // (it keeps its existing pinned-row presentation, no archived label added).
+  it('isArchivedCoordinator: only a closed coordinator row is labeled', () => {
+    // The label case: a coordinator whose session is archived (closed).
+    expect(
+      isArchivedCoordinator(laneRow('coord', { role: 'coordinator', closed: true }))
+    ).toBe(true);
+    // A LIVE coordinator is NOT labeled (no archived badge on the live presentation).
+    expect(
+      isArchivedCoordinator(laneRow('coord', { role: 'coordinator' }))
+    ).toBe(false);
+    // A preview-ed (resumed-from-archived, closed:false) coordinator is live again.
+    expect(
+      isArchivedCoordinator(laneRow('coord', { role: 'coordinator', closed: false, preview: true }))
+    ).toBe(false);
+    // A plain archived (closed) agent is NOT a coordinator → no coordinator label.
+    expect(
+      isArchivedCoordinator(laneRow('agent', { closed: true }))
+    ).toBe(false);
+    // A coordinator-spawned agent (carries coordinatorPaneId, not role) is not labeled.
+    expect(
+      isArchivedCoordinator(laneRow('spawned', { coordinatorPaneId: 'coord', closed: true }))
+    ).toBe(false);
+  });
+
+  it('an archived coordinator sits in the Archived (done) lane', () => {
+    // The closed coordinator lands in `done` like any archived row, where its label
+    // renders.
+    expect(
+      laneForRow(laneRow('coord', { role: 'coordinator', status: 'finished', closed: true }))
+    ).toBe('done');
   });
 });
 
