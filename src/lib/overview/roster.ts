@@ -132,6 +132,16 @@ export interface PaneRuntime {
   exited: boolean;
   /** The process exit code once exited, else null (and null for an unknown code). */
   exitCode: number | null;
+  /**
+   * Whether Claude Code is ACTIVELY WORKING per a recent-terminal indicator that
+   * the event hooks miss (a foreground command running, or in-session background
+   * work — see `detectTerminalBusy`). Optional: absent/false means "no indicator",
+   * in which case status derivation is exactly as before this flag existed. The
+   * TerminalPane sets it via `noteBusy`; `rowFor` reads it the same channel as
+   * `exited`, to keep a LIVE non-coordinator agent In flight rather than Needs
+   * input while such work is in flight.
+   */
+  terminalBusy?: boolean;
 }
 
 /** The live `pane_id -> runtime` map the Overview feeds into `buildRoster`. */
@@ -397,6 +407,31 @@ function rowFor(
   // exited coordinator keeps its derived (finished/error) status — it's not "live".
   if (pane.role === 'coordinator' && !closed && !runtime?.exited) {
     status = coordinatorNeedsInput({ question, questions }, coordFlag) ? 'waiting' : 'working';
+  }
+  // TERMINAL-BUSY In-flight override (agent-status-derivation): Claude Code may be
+  // actively working while its event hooks report idle — a foreground command
+  // running in the terminal, or in-session background work (a dynamic workflow /
+  // another agent still running). The TerminalPane sets `runtime.terminalBusy` from
+  // `detectTerminalBusy` in that case. For a LIVE, NON-coordinator pane with NO
+  // pending AskUserQuestion, show it In flight (`working`) rather than Needs input,
+  // so it stays out of attention until the work finishes or the user interrupts it
+  // (the affordance disappears → terminalBusy clears → normal derivation resumes).
+  //
+  // Strictly ADDITIVE and fail-safe: gated on terminalBusy === true, so when the
+  // flag is false/absent the result is byte-for-byte the prior derivation. The
+  // coordinator path is untouched (decided above by coordinatorNeedsInput), an
+  // exited/closed pane is never re-flagged working (a dead process is never
+  // working), and a pending question keeps Needs input regardless of any indicator.
+  const hasPendingQuestion =
+    question != null || (Array.isArray(questions) && questions.length > 0);
+  if (
+    runtime?.terminalBusy === true &&
+    pane.role !== 'coordinator' &&
+    !closed &&
+    !runtime.exited &&
+    !hasPendingQuestion
+  ) {
+    status = 'working';
   }
   return {
     paneId: pane.paneId,
