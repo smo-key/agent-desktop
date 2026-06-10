@@ -81,6 +81,25 @@ export class EventStore {
   }
 
   /**
+   * Record a user INTERRUPT (Esc) for a pane. Interrupting aborts the in-flight tool,
+   * but claude fires NO `PostToolUse` for the aborted tool (and no `Stop`), so the
+   * event-sourced status would stay pinned at `working` indefinitely. When the pane is
+   * currently `working`, append a synthetic turn-end (`Stop`) so `deriveEventActivity`
+   * clears the in-flight tool and the row returns to `waiting` (Needs-input).
+   *
+   * A no-op unless the pane is actually working — a stray Esc at the idle prompt (or on
+   * a non-claude pane, which never has a `working` event status) adds no timeline noise.
+   * The synthetic event is frontend-only (not delivered to the durable sink); a later
+   * real event simply appends after it.
+   */
+  markInterrupt(paneId: string): void {
+    if (this.activityFor(paneId).status !== 'working') return;
+    const prior = this.timeline(paneId);
+    const ts = prior.length > 0 ? prior[prior.length - 1].ts : 0;
+    this.ingest({ paneId, sessionId: '', hookEventName: 'Stop', ts });
+  }
+
+  /**
    * Seed timelines from the `events_for(panes)` command (ring → durable sink →
    * transcript backfill, resolved in Rust) for the given app panes. Called on
    * mount/resume; merges into the live map (a pane absent from the result keeps

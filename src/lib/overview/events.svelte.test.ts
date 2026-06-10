@@ -62,4 +62,37 @@ describe('EventStore', () => {
     // A malformed session value is ignored, not stored.
     expect(store.timeline('bad')).toHaveLength(0);
   });
+
+  // INTERRUPT: pressing Esc aborts the in-flight tool, but claude fires NO PostToolUse
+  // for the aborted tool (and no Stop), so the event-sourced status would otherwise stay
+  // pinned at `working` forever. `markInterrupt` records a synthetic turn-end so the row
+  // returns to `waiting` (Needs-input).
+  it('Interrupt returns a mid-tool working pane to waiting', () => {
+    const store = new EventStore();
+    store.ingest(ev('UserPromptSubmit'));
+    store.ingest(ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:sleep 999' }));
+    expect(store.activityFor('p1').status).toBe('working');
+
+    store.markInterrupt('p1');
+
+    expect(store.activityFor('p1').status).toBe('waiting');
+    expect(store.activityFor('p1').currentAction).toBeNull();
+  });
+
+  it('Interrupt is a no-op when the pane is not working', () => {
+    const store = new EventStore();
+    // No events at all → nothing to interrupt; status stays unknown (→ PTY fallback).
+    store.markInterrupt('ghost');
+    expect(store.activityFor('ghost').status).toBeNull();
+    expect(store.timeline('ghost')).toHaveLength(0);
+
+    // An idle, waiting pane (turn already ended) gets no extra synthetic turn-end — a
+    // stray Esc at the prompt must not add timeline noise.
+    store.ingest(ev('UserPromptSubmit'));
+    store.ingest(ev('Stop'));
+    expect(store.activityFor('p1').status).toBe('waiting');
+    const before = store.timeline('p1').length;
+    store.markInterrupt('p1');
+    expect(store.timeline('p1').length).toBe(before);
+  });
 });

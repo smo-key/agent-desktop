@@ -18,6 +18,7 @@
   } from './launcher/initialInput';
   import { LaunchSpinner, spinnerLabel } from './launcher/spinner';
   import { noteOutput, noteExit, clearRuntime } from './overview/runtime';
+  import { events } from './overview/events.svelte';
 
   // PtyEvent — the exact wire shape the Rust backend streams over the per-pane
   // Channel (internally tagged on `event`):
@@ -659,6 +660,14 @@
             }).catch(() => {});
           }
           return false;
+        }
+        // Esc INTERRUPT (claude panes): claude aborts the in-flight tool but fires no
+        // PostToolUse/Stop for it, so the event-sourced status would stay pinned at
+        // "working". Record a synthetic turn-end (a no-op unless this pane is actually
+        // working) so the row returns to "waiting". The keystroke still flows to the PTY
+        // unchanged (return true) so claude performs the interrupt itself.
+        if (e.type === 'keydown' && e.key === 'Escape' && program === 'claude') {
+          events.markInterrupt(paneId);
         }
         return true;
       });
