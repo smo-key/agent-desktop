@@ -44,3 +44,30 @@ message SHALL trigger a fresh title.
 #### Scenario: A custom-titled session is not refreshed
 - **WHEN** a session has a custom (manual) title and the user sends a new message
 - **THEN** no automatic title is requested for that session
+
+### Requirement: Auto-titles reflect the whole session, weighted to the original request
+
+Auto-generated session titles SHALL be derived from the user's messages across the
+WHOLE session — not just the most recent message — and SHALL give more weight to the
+user's EARLIER messages, where the session's original request usually appears. The
+earliest user message(s) SHALL ALWAYS be included in the model input even in a long
+session (the original request SHALL NOT be dropped by recency-based truncation), and
+recent messages SHALL also be included so a genuinely new later request can still be
+reflected. A later message SHALL shift the title's focus only when it clearly
+introduces a new top-level task, not for incidental refinements or follow-ups.
+
+#### Scenario: The original request survives a long session
+- **WHEN** a session has more user messages than fit the bounded model input
+- **THEN** the earliest user message(s) carrying the original request are still included in the title input (they are not dropped by recency-based truncation)
+
+#### Scenario: Early request outweighs an incidental recent message
+- **WHEN** the early messages state the main task and the latest messages are incidental refinements or follow-ups
+- **THEN** the generated title reflects the original request rather than only the most recent message
+
+#### Scenario: A genuinely new later task can take over
+- **WHEN** a later message clearly introduces a new, distinct top-level task
+- **THEN** the title may reflect that new task
+
+#### Scenario: A short session considers all its messages
+- **WHEN** a session has only a few user messages (within the bound)
+- **THEN** all of them are considered when generating the title

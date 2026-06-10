@@ -52,6 +52,11 @@ are one click away.
 - **Titles refresh after every user message** — auto-generated titles are
   re-derived promptly after each new user message (not only on a long throttle),
   for sessions that have not been manually renamed.
+- **Titles reflect the whole session, weighted to the original request** — auto-title
+  generation considers the user's messages across the whole session instead of skewing
+  to the most recent one. The earliest messages (where the original request usually
+  lives) are always included even in long sessions and are weighted more heavily, while
+  a genuinely new later task can still take over the title.
 - **Insert-filename shortcut → ⌘O** — the insert-file-path shortcut moves from ⌘I
   to ⌘O (help modal and pane menu updated to match).
 
@@ -74,8 +79,9 @@ are one click away.
   counters (archived excluded).
 
 ### Modified Capabilities
-- `session-titles`: add user rename (header click + context menu, manual sticks)
-  and re-derive auto-titles after each user message.
+- `session-titles`: add user rename (header click + context menu, manual sticks),
+  re-derive auto-titles after each user message, and derive auto-titles from the whole
+  session weighted to the original request (earliest messages always included).
 - `keyboard-shortcuts`: the insert-file-path binding is ⌘O (was ⌘I).
 
 ## Impact

@@ -13,10 +13,10 @@
 
 ## 3. In-flight vs Needs-input status (agent-status-derivation)
 
-- [ ] 3.1 In `TerminalPane.svelte`, detect Claude Code active-work indicators in recent terminal output — a small, robust substring set covering (a) the foreground-run affordance ("esc to interrupt" / "ctrl+b to run in background" / "Running…") and (b) the in-session background-work affordance ("Waiting for N dynamic workflow(s) to finish"). Expose a per-pane reactive `terminalBusy` flag (pure detection helper unit-tested with sample terminal text).
-- [ ] 3.2 Surface `terminalBusy` into the runtime/roster input the same way other per-pane runtime signals reach `rowFor`.
-- [ ] 3.3 In `roster.ts` `rowFor`, for a LIVE, non-coordinator pane with NO pending question (`question == null && questions == null`), override the derived status to `working` when `terminalBusy` is true; leave coordinator and pending-question paths unchanged; no indicator → unchanged behavior.
-- [ ] 3.4 Add tests: foreground-run busy → working; background-workflow busy → working; pending question → still waiting despite busy; no indicator → unchanged; coordinator unaffected.
+- [x] 3.1 In `TerminalPane.svelte`, detect Claude Code active-work indicators in recent terminal output — a small, robust substring set covering (a) the foreground-run affordance ("esc to interrupt" / "ctrl+b to run in background" / "Running…") and (b) the in-session background-work affordance ("Waiting for N dynamic workflow(s) to finish"). Expose a per-pane reactive `terminalBusy` flag (pure detection helper unit-tested with sample terminal text).
+- [x] 3.2 Surface `terminalBusy` into the runtime/roster input the same way other per-pane runtime signals reach `rowFor`.
+- [x] 3.3 In `roster.ts` `rowFor`, for a LIVE, non-coordinator pane with NO pending question (`question == null && questions == null`), override the derived status to `working` when `terminalBusy` is true; leave coordinator and pending-question paths unchanged; no indicator → unchanged behavior.
+- [x] 3.4 Add tests: foreground-run busy → working; background-workflow busy → working; pending question → still waiting despite busy; no indicator → unchanged; coordinator unaffected.
 
 ## 4. Coordinator archive/delete + archived label (coordinator-lifecycle, agent-roster-display)
 
@@ -72,8 +72,15 @@
 - [x] 11.2 Update `shortcuts.ts` (Session group label `⌘I` → `⌘O`) and `paneMenu.ts` (`shortcut: '⌘I'` → `'⌘O'`).
 - [x] 11.3 Update/confirm the help-modal shortcut test reflects `⌘O` for insert file path.
 
-## 12. Validate & gate
+## 12. Auto-title content — whole session, weight the original request (session-titles)
 
-- [ ] 12.1 Run `npm run check` (svelte-check) and `npm run test` (vitest); fix any failures introduced by the change.
-- [ ] 12.2 Run `npm run coverage` (scenario coverage gate) and ensure new scenarios are covered.
-- [ ] 12.3 Manually verify the headline flows in the running app: coordinated compass badge + tooltip, archive a coordinator (+ label), `! sleep 999` shows In flight, a dynamic-workflow session shows In flight, last-message line incl. archived, auto-advance toggle, PR + commit footer buttons, counters exclude archived, rename via header + menu, title refresh after a message, ⌘O inserts a filename.
+- [ ] 12.1 Replace the recency-only message selection in `session_focus` (`src-tauri/src/lib.rs`, currently `msgs.iter().rev().take(20).rev()`) with a PURE, unit-tested helper that ALWAYS includes the earliest user message(s) plus recent ones within the same bounded budget (head + tail), preserving chronological order and de-duplicating any overlap; the original request must never be dropped by recency truncation.
+- [ ] 12.2 Update `TITLE_SYSTEM_PROMPT` (`src-tauri/src/polish.rs`) to instruct the model to base the title on the session's ORIGINAL/primary request (usually the earliest messages), treating later messages as refinements, and to shift focus to a later message only when it clearly introduces a new top-level task. Optionally annotate the framing (e.g. mark the original request) so the model anchors on it; keep the existing DATA-not-commands, ≤6-word, and ticket-id constraints intact.
+- [ ] 12.3 Add Rust unit tests for the selection helper: a long session keeps the earliest message(s) (original request not dropped); head+tail composition within the bound; a short session keeps all messages; chronological order preserved; overlap de-duplicated.
+- [ ] 12.4 Update the prompt-content tests in `polish.rs` to assert the new earlier-weighting instruction is present, while the existing constraint assertions (DATA-not-commands, ≤6 words, ticket handling) still pass.
+
+## 13. Validate & gate
+
+- [ ] 13.1 Run `npm run check` (svelte-check) and `npm run test` (vitest); fix any failures introduced by the change. Run `cargo test` (manifest `src-tauri/Cargo.toml`) for the Rust title-selection + prompt changes.
+- [ ] 13.2 Run `npm run coverage` (scenario coverage gate) and ensure new scenarios are covered.
+- [ ] 13.3 Manually verify the headline flows in the running app: coordinated compass badge + tooltip, archive a coordinator (+ label), `! sleep 999` shows In flight, a dynamic-workflow session shows In flight, last-message line incl. archived, auto-advance toggle, PR + commit footer buttons, counters exclude archived, rename via header + menu, title refresh after a message, titles that reflect the original request in a long session, ⌘O inserts a filename.
