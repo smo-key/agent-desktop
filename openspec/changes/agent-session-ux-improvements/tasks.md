@@ -49,11 +49,11 @@
 
 ## 7. Footer commit button (footer-actions)
 
-- [ ] 7.1 In `GitInfo.svelte`, make the modified (uncommitted-files) pill a button when `modified > 0`; inert when 0.
-- [ ] 7.2 On click with changes, `confirmModal.show({…, confirmLabel: 'Commit', onConfirm})`; on confirm spawn an agent task (prompt: commit the pending changes on the current branch) added to `taskAgentPanes` for auto-archive.
-- [ ] 7.3 Add tests: click with files → confirm shown; confirm → spawn; cancel → no spawn; no files → no dialog.
-- [ ] 7.4 Surface the changed file PATHS for the uncommitted-files indicator (extend the git-status command/wrapper to return the file list, or add a command) and show a hover tooltip on the indicator listing the FIRST 10 file paths, with an indication when more than 10 exist. Show no list when there are no changes.
-- [ ] 7.5 Add tests for the tooltip content builder: lists the first 10 files; indicates overflow when > 10; empty/no-tooltip when there are no changes.
+- [x] 7.1 In `GitInfo.svelte`, make the modified (uncommitted-files) pill a button when `modified > 0`; inert when 0.
+- [x] 7.2 On click with changes, `confirmModal.show({…, confirmLabel: 'Commit', onConfirm})`; on confirm spawn an agent task (prompt: commit the pending changes on the current branch) added to `taskAgentPanes` for auto-archive.
+- [x] 7.3 Add tests: click with files → confirm shown; confirm → spawn; cancel → no spawn; no files → no dialog.
+- [x] 7.4 Surface the changed file PATHS for the uncommitted-files indicator (extend the git-status command/wrapper to return the file list, or add a command) and show a hover tooltip on the indicator listing the FIRST 10 file paths, with an indication when more than 10 exist. Show no list when there are no changes.
+- [x] 7.5 Add tests for the tooltip content builder: lists the first 10 files; indicates overflow when > 10; empty/no-tooltip when there are no changes.
 
 ## 8. Exclude archived from project counters (project-agent-counters)
 
