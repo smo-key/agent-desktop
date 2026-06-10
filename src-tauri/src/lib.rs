@@ -953,6 +953,30 @@ fn git_pull(repo_path: String) -> Result<String, String> {
     git::pull(&repo_path)
 }
 
+/// List the local and remote-tracking branches for `repo_path`, plus the name
+/// of the currently checked-out branch. Never fails: an off-repo path returns an
+/// all-empty `BranchList`. Used by the footer branch-switcher UI.
+#[tauri::command(async)]
+fn git_list_branches(repo_path: String) -> Result<git::BranchList, String> {
+    Ok(git::list_branches(&repo_path))
+}
+
+/// Check out `branch` in `repo_path` (git DWIM: a remote short name creates a
+/// local tracking branch). Returns git's own message on success; `Err(message)`
+/// on failure so the frontend can surface it in a toast.
+#[tauri::command(async)]
+fn git_checkout(repo_path: String, branch: String) -> Result<String, String> {
+    git::checkout(&repo_path, &branch)
+}
+
+/// Create and check out a new branch `name` off the current HEAD in `repo_path`
+/// (`git checkout -b`). Returns git's own message on success; `Err(message)` on
+/// failure so the frontend can surface it in a toast.
+#[tauri::command(async)]
+fn git_create_branch(repo_path: String, name: String) -> Result<String, String> {
+    git::create_branch(&repo_path, &name)
+}
+
 /// Create a fresh session worktree off `repo_path`'s HEAD (auto-worktree
 /// projects). Returns `{ path, branch, base }`; ensures `.worktrees` is gitignored
 /// and the branch is unique. `Err` when `repo_path` isn't a git repo or git fails.
@@ -1198,6 +1222,9 @@ pub fn run() {
             git_status_for,
             git_push,
             git_pull,
+            git_list_branches,
+            git_checkout,
+            git_create_branch,
             worktree_create,
             worktree_remove_if_clean,
             worktree_list,

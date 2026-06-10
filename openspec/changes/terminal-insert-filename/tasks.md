@@ -44,8 +44,10 @@
 
 ## 6. Verify
 
-- [ ] 6.1 Run the unit tests and the project's typecheck/lint; confirm `quotePath`
+- [x] 6.1 Run the unit tests and the project's typecheck/lint; confirm `quotePath`
       and `paneMenu` tests pass and there are no type errors.
+      (`npx vitest run` → 769/769 pass; `npm run check` → 0 errors / 0 warnings.)
 - [ ] 6.2 Manual check (native dialog is not headless-testable): right-click an agent
       terminal → Insert Filename… → pick a file → quoted path appears at the cursor;
       cancel inserts nothing; ⌘I does the same for the focused terminal.
+      (REQUIRES the running app — left for the developer to verify manually.)

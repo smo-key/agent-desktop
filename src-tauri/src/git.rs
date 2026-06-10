@@ -171,6 +171,77 @@ pub fn pull(dir: &str) -> Result<String, String> {
     run_git_action(dir, &["pull", "--ff-only"])
 }
 
+// ───────────────────────── branch operations ─────────────────────────
+//
+// Listing, checking out, and creating local branches for the footer branch-
+// switcher UI.  All operations are best-effort and mirror the null-on-failure
+// contract of `status_for_dir`: failures return empty / Err rather than panic.
+
+/// Snapshot of the branches known to a repo, returned by [`list_branches`].
+/// JS sees `current/local/remotes` (camelCase not needed — all single words —
+/// but kept consistent with `WorktreeCreated`).
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchList {
+    /// The currently checked-out branch, or `None` when HEAD is detached or the
+    /// query failed.
+    pub current: Option<String>,
+    /// Short names of every local branch (`refs/heads/**`).
+    pub local: Vec<String>,
+    /// Short names of every remote-tracking branch (`refs/remotes/**`), with
+    /// symbolic `*/HEAD` entries (e.g. `origin/HEAD`) removed.
+    pub remotes: Vec<String>,
+}
+
+/// List the branches for a repo at `dir`.  Never fails: any git error yields an
+/// all-empty `BranchList`.
+pub fn list_branches(dir: &str) -> BranchList {
+    if dir.is_empty() {
+        return BranchList::default();
+    }
+
+    // Current branch: "HEAD" means detached; empty/missing means treat as None.
+    let current = run_git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]).and_then(|s| {
+        if s.is_empty() || s == "HEAD" {
+            None
+        } else {
+            Some(s)
+        }
+    });
+
+    // Local branches.
+    let local = run_git(dir, &["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+        .map(|out| out.lines().map(str::to_string).filter(|l| !l.is_empty()).collect())
+        .unwrap_or_default();
+
+    // Remote-tracking branches, minus symbolic `*/HEAD` entries.
+    let remotes = run_git(dir, &["for-each-ref", "--format=%(refname:short)", "refs/remotes"])
+        .map(|out| {
+            out.lines()
+                .map(str::to_string)
+                .filter(|l| !l.is_empty())
+                // Drop entries whose last path component is "HEAD"
+                // (e.g. "origin/HEAD", "upstream/HEAD").
+                .filter(|l| l.split('/').last() != Some("HEAD"))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    BranchList { current, local, remotes }
+}
+
+/// Check out an existing branch (or a remote-tracking branch via git's DWIM).
+/// Returns git's message on success, an error string on failure.
+pub fn checkout(dir: &str, branch: &str) -> Result<String, String> {
+    run_git_action(dir, &["checkout", branch])
+}
+
+/// Create and check out a new branch off the current HEAD (`git checkout -b`).
+/// Returns git's message on success, an error string on failure.
+pub fn create_branch(dir: &str, name: &str) -> Result<String, String> {
+    run_git_action(dir, &["checkout", "-b", name])
+}
+
 // ───────────────────────── git worktrees ─────────────────────────
 //
 // Auto-worktree projects launch each agent session into an isolated git
@@ -789,5 +860,75 @@ mod tests {
         assert_eq!(map.len(), 2);
         assert!(map[&dir].branch.is_some());
         assert_eq!(map["/definitely/not/a/repo"], GitStatus::default());
+    }
+
+    // ─────────────────── list_branches tests ───────────────────
+
+    #[test]
+    fn branches_are_listed_with_the_current_branch_marked() {
+        let repo = TempRepo::new("listbranch");
+        let path = repo.str();
+        // Create a second local branch.
+        run(path, &["branch", "feature"]);
+        // Simulate a remote-tracking ref without a real remote.
+        run(path, &["update-ref", "refs/remotes/origin/feature", "HEAD"]);
+        // Create the symbolic origin/HEAD ref (the one that must be filtered out).
+        run(path, &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/feature"]);
+
+        let bl = list_branches(path);
+        assert_eq!(bl.current, Some("main".to_string()), "current should be main");
+        assert!(bl.local.contains(&"main".to_string()), "local should contain main");
+        assert!(bl.local.contains(&"feature".to_string()), "local should contain feature");
+        assert!(
+            bl.remotes.contains(&"origin/feature".to_string()),
+            "remotes should contain origin/feature, got {:?}",
+            bl.remotes
+        );
+        assert!(
+            !bl.remotes.contains(&"origin/HEAD".to_string()),
+            "remotes must NOT contain origin/HEAD, got {:?}",
+            bl.remotes
+        );
+    }
+
+    #[test]
+    fn repository_with_no_remote() {
+        let repo = TempRepo::new("noremote");
+        let bl = list_branches(repo.str());
+        assert!(bl.remotes.is_empty(), "no remotes expected, got {:?}", bl.remotes);
+        assert!(
+            bl.local.contains(&"main".to_string()),
+            "local should contain main, got {:?}",
+            bl.local
+        );
+    }
+
+    #[test]
+    fn detached_head() {
+        let repo = TempRepo::new("detached");
+        let path = repo.str();
+        // Get the current HEAD sha to detach to.
+        let sha = run_git(path, &["rev-parse", "HEAD"]).expect("rev-parse should succeed");
+        run(path, &["checkout", "-q", &sha]);
+        let bl = list_branches(path);
+        assert_eq!(bl.current, None, "detached HEAD should yield current == None");
+        assert!(
+            bl.local.contains(&"main".to_string()),
+            "local should still contain main, got {:?}",
+            bl.local
+        );
+    }
+
+    #[test]
+    fn list_branches_off_repo_is_empty() {
+        let bad = list_branches("/definitely/not/a/repo");
+        assert!(bad.current.is_none(), "current should be None for non-repo");
+        assert!(bad.local.is_empty(), "local should be empty for non-repo");
+        assert!(bad.remotes.is_empty(), "remotes should be empty for non-repo");
+
+        let empty = list_branches("");
+        assert!(empty.current.is_none(), "current should be None for empty path");
+        assert!(empty.local.is_empty(), "local should be empty for empty path");
+        assert!(empty.remotes.is_empty(), "remotes should be empty for empty path");
     }
 }
