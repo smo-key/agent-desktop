@@ -74,6 +74,7 @@
   } from './coordinatorPin';
   import CoordinatorStart from '$lib/orchestration/CoordinatorStart.svelte';
   import { coordinatorNeedsInput } from '$lib/orchestration/coordinatorNeedsInput.svelte';
+  import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
 
   // --- Sessions / Tasks split (Sessions roster on top / Tasks bottom) ----------
   // The `.col-list` column splits into the Sessions roster (top, resizable) and
@@ -352,11 +353,13 @@
     if (advanceTimer && pendingTarget === wantId) return;
     // A DIFFERENT agent now wants focus. Only auto-advance when we JUST handled the
     // agent we were on — i.e. it LEFT attention (you finished a waiting agent, so
-    // move on to the next one). NEVER yank focus off an agent you're parked on that
-    // didn't need input just because another agent now wants input; the queue
-    // indicator still shows it's waiting and you can step to it (click / ⌘↓) when
-    // you choose.
-    if (!leftAttention) {
+    // move on to the next one) AND the user opted into auto-advance (the setting
+    // defaults OFF — inbox-auto-advance spec). NEVER yank focus off an agent you're
+    // parked on that didn't need input just because another agent now wants input;
+    // the queue indicator still shows it's waiting and you can step to it (click /
+    // ⌘↓) when you choose. Manual nav (⌘↑/↓, the next/prev buttons) bypasses this
+    // effect entirely, so it is unaffected by the setting.
+    if (!leftAttention || !autoAdvance.prefs.enabled) {
       clearAdvance();
       return;
     }

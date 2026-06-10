@@ -13,6 +13,7 @@
   import { settingsModal } from '$lib/ui/settingsStore.svelte';
   import { openWith } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
+  import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
   import VoicePanel from '$lib/voice/VoicePanel.svelte';
   import ModelOnboarding from '$lib/onboarding/ModelOnboarding.svelte';
@@ -79,6 +80,8 @@
     void openWith.load();
     // Load session-title preferences (the opt-in cloud title fallback).
     void titleSettings.load();
+    // Load the auto-advance focus preference (opt-in; defaults OFF).
+    void autoAdvance.load();
     // Load the persisted one-time onboarding flag FIRST so a returning user who has
     // already seen the gate never sees a flash of it, then load voice-input
     // preferences and check whether the on-device models that selection needs are
