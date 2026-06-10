@@ -15,8 +15,18 @@ import { invoke } from '@tauri-apps/api/core';
 import type { PaneRef } from './activity.svelte';
 import { titleSettings } from '$lib/settings/titles.svelte';
 
-/** Min interval between title requests for one pane (ms). */
-export const TITLE_THROTTLE_MS = 120_000;
+/**
+ * Min interval between title requests for one pane (ms) — a small FLOOR, not a
+ * long cool-down. The title is gated on the transcript's user-message hash, so a
+ * NEW user message (changed hash) must re-derive the title PROMPTLY rather than
+ * waiting out a long window. We keep only a few-seconds floor to coalesce a rapid
+ * burst of polls / messages into one request and avoid re-deriving mid-stream;
+ * 3 s is short enough to feel immediate after a message yet long enough to
+ * absorb the ~per-second activity poll and back-to-back edits. (Was 120_000 — a
+ * 2-minute window that wrongly blocked refreshing the title for up to 2 min after
+ * the user had already sent a new message.)
+ */
+export const TITLE_THROTTLE_MS = 3_000;
 
 /** localStorage key for the persisted, sessionId-keyed title cache. */
 const STORAGE_KEY = 'agent-desktop:session-titles';

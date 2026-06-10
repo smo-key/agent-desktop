@@ -16,7 +16,7 @@ import { TitleStore } from './titles.svelte';
 import type { PaneRef } from './activity.svelte';
 
 const STORAGE_KEY = 'agent-desktop:session-titles';
-const NOW = 1_000_000; // well past the throttle window (lastAttempt defaults to 0)
+const NOW = 1_000_000; // well past the small throttle floor (lastAttempt defaults to 0)
 
 const pane = (over: Partial<PaneRef> = {}): PaneRef => ({
   paneId: 'p1',
