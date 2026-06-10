@@ -12,8 +12,8 @@
 - [x] 2.3 Implement `projectTerminals.svelte.ts` reactive store: load/save via the Tauri commands, graceful empty fallback on parse error, debounced + on-quit flushed save
 - [x] 2.4 Implement create / rename / remove and per-project collection accessors in the store
 - [x] 2.5 Track runtime state per terminal (live `paneId`, running/stopped, exit code) in the store, not serialized
-- [x] 2.6 Capture each terminal's running state into `wasRunning` at quit; on load, mark the auto-restart set from `wasRunning`
-- [x] 2.7 Add tests for selective auto-restart: only `wasRunning` terminals start; stopped ones stay stopped (`autoRestartIds` / `markRunningState` in projectTerminals.test.ts)
+- [x] 2.6 ~~Capture each terminal's running state into `wasRunning` at quit; on load, mark the auto-restart set from `wasRunning`.~~ SUPERSEDED by `add-project-folder-storage`: the committed per-project store strips the machine-local restore hints (`wasRunning`/`lastCommand`), so no auto-restart set is ever built — terminals always restore stopped.
+- [x] 2.7 ~~Add tests for selective auto-restart: only `wasRunning` terminals start; stopped ones stay stopped (`autoRestartIds` / `markRunningState`).~~ SUPERSEDED: the `autoRestartIds`/`markRunningState` helpers were removed with the auto-restart decision; the load path now auto-starts nothing (see `projectTasks.svelte.ts` `load()` — "terminals always restore stopped").
 
 ## 3. Current-project derivation
 
@@ -39,12 +39,16 @@
 
 ## 6. Persistence integration
 
-- [x] 6.1 Load terminal collections on app start; auto-start only `wasRunning` terminals, restore the rest as stopped (`projectTerminals.load()` in `+page` onMount → `autoRestartIds`)
+- [x] 6.1 Load terminal collections on app start; restore ALL terminals stopped — auto-restart SUPERSEDED by `add-project-folder-storage`. `projectTasks.load()` (in `+page` onMount) runs the one-time user-level → per-project migration, then reads each project's committed defs; no terminal is auto-started.
 - [x] 6.2 Persist definitions on create/rename/remove and persist `wasRunning` on graceful quit (`getCurrentWindow().onCloseRequested` → `captureRunningAndSave`, awaited before native close)
 - [x] 6.3 Verify `terminals.json` is independent of `layout.json`/`projects.json` and that the panel never mutates the workspace tree — separate file + commands; the panel only reads `workspace.focusedId`/`session()`, never mutates the tree
 
 ## 7. Verification
 
 - [x] 7.1 Run the full test suite and type check; fix failures — 364 frontend tests pass, `svelte-check` 0 errors, `cargo check` clean, scenario-coverage gate PASS (both new caps enforced, 0 missing). Note: 2 pre-existing `events.rs` socket tests fail on this machine due to the macOS temp-dir path exceeding the Unix-socket `SUN_LEN` limit — unrelated to this change (events.rs untouched).
-- [ ] 7.2 Manually verify (LIVE in-app — the headless-exempt MANUAL scenarios): create terminals in two projects, run a dev server, toggle panel off/on (server keeps running), switch focus between projects (collections swap, processes survive), restart the app (running terminals auto-restart, stopped stay stopped), quit (no orphan processes)
+- [x] 7.2 Manually verify (LIVE in-app — the headless-exempt MANUAL scenarios): create terminals in two projects, run a dev server, toggle panel off/on (server keeps running), switch focus between projects (collections swap, processes survive), restart the app (all terminals restore STOPPED — auto-restart superseded by `add-project-folder-storage`), quit (no orphan processes). — confirmed by user high-level testing (close-out).
 - [x] 7.3 Validate the change with `openspec validate add-terminals-panel --strict` — valid
+
+## 8. Close-out review fixes
+
+- [x] 8.1 Fix (adversarial review CRITICAL): the ⌘Tab focus-cycle ring omitted running **bare** shells (the ⌘T transient terminals), so they could not be focused via the keyboard — violating the existing scenario "Focus cycle shortcut moves between agent and terminals" ("the active agent followed by its project's running terminals"). `+page.svelte` `focusCycleList()` now appends `projectTasks.bareForProject(pid)` entries where `running`, after the defined-terminal panes. Covered by the existing `terminals-panel` spec scenario (no new scenario needed — this aligns the implementation with the already-specified ring).
