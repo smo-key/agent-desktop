@@ -240,6 +240,53 @@ fn open_path(path: String, app: Option<String>) -> Result<(), String> {
         .map_err(|e| format!("open {path} (app {app:?}): {e}"))
 }
 
+/// Title-budget constants for [`select_title_messages`]. `TITLE_MAX_MSGS` caps how
+/// many user messages we feed the title model so the prompt fits the sidecar's
+/// modest 4096-token context (each message is also clipped to 200 chars by the
+/// caller). `TITLE_HEAD_MSGS` reserves the first slots for the EARLIEST messages —
+/// the session's original/primary request usually lives there, and recency-only
+/// truncation used to drop it in long sessions. The remaining
+/// `TITLE_MAX_MSGS - TITLE_HEAD_MSGS` slots take the most RECENT messages so a
+/// genuinely new later request can still surface. 8 + 12 keeps a strong anchor on
+/// the original ask while leaving room for refinements and any late pivot.
+const TITLE_MAX_MSGS: usize = 20;
+const TITLE_HEAD_MSGS: usize = 8;
+
+/// Select which user messages to feed the title model, weighting the EARLIEST
+/// (the original request) so recency truncation can never drop it. PURE so the
+/// selection is unit-tested apart from the model call and the I/O in
+/// [`session_focus`].
+///
+/// - When `msgs.len() <= max`, every message is returned (chronological order).
+/// - Otherwise the first `head` messages (the original request and its immediate
+///   context) PLUS the last `max - head` messages (recent activity, where a new
+///   top-level task would appear) are returned, in chronological order, with any
+///   index overlap de-duplicated (relevant only for tiny/odd `max`/`head`).
+///
+/// `head` is clamped to `max` so the tail window never has negative width.
+fn select_title_messages(msgs: &[String], max: usize, head: usize) -> Vec<&str> {
+    if msgs.len() <= max {
+        return msgs.iter().map(String::as_str).collect();
+    }
+    let head = head.min(max);
+    let tail_len = max - head;
+    // De-dup by POSITION: start the tail window at the later of (last `tail_len`
+    // messages) and (just past the head window), so a message is never emitted
+    // twice. With `len > max >= head` the tail window already begins past the head,
+    // but the `.max(head)` keeps the helper correct for tiny/odd `max`/`head` too.
+    let tail_start = (msgs.len() - tail_len).max(head);
+    let mut out: Vec<&str> = Vec::with_capacity(max);
+    // HEAD: the earliest messages (always includes the original request).
+    for m in &msgs[..head] {
+        out.push(m.as_str());
+    }
+    // TAIL: the most recent messages (chronological order preserved).
+    for m in &msgs[tail_start..] {
+        out.push(m.as_str());
+    }
+    out
+}
+
 /// Clean a raw model completion into a session-title string: drop any Qwen3
 /// `<think>…</think>` reasoning block that slipped into the content, take the first
 /// non-empty line, strip wrapping quotes / trailing periods, drop a hallucinated
@@ -418,19 +465,23 @@ async fn session_focus(
         return Ok(None);
     }
     // Bound the prompt to fit the local model's modest context window (the sidecar
-    // runs with a 4096-token context): the last 20 user messages, each clipped.
-    let joined: String = msgs
-        .iter()
-        .rev()
-        .take(20)
-        .rev()
-        .map(|m| {
-            let one = m.split_whitespace().collect::<Vec<_>>().join(" ");
-            one.chars().take(200).collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n- ");
-    let joined = format!("Messages:\n- {joined}");
+    // runs with a 4096-token context). Weight the EARLIEST messages so the session's
+    // original request is always included even in a long session (head + tail
+    // budget), then clip each message. The first selected message is the original
+    // request; label it so the model anchors on it (DATA, not a command).
+    let selected = select_title_messages(&msgs, TITLE_MAX_MSGS, TITLE_HEAD_MSGS);
+    let clip = |m: &str| -> String {
+        let one = m.split_whitespace().collect::<Vec<_>>().join(" ");
+        one.chars().take(200).collect::<String>()
+    };
+    let mut lines = selected.iter().map(|m| clip(m));
+    let first = lines.next().unwrap_or_default(); // msgs is non-empty (checked above)
+    let rest: Vec<String> = lines.collect();
+    let joined = if rest.is_empty() {
+        format!("Original request:\n- {first}")
+    } else {
+        format!("Original request:\n- {first}\nLater messages:\n- {}", rest.join("\n- "))
+    };
 
     // Run the title completion through the shared local-model path (lazy-starts the
     // sidecar). The model id is the registry id; llama-server ignores it for routing.
@@ -1528,5 +1579,88 @@ mod tests {
             fs::read_to_string(&second.wrapper_path).unwrap(),
             STATUSLINE_WRAPPER_SRC
         );
+    }
+
+    // --- select_title_messages (HEAD + TAIL message budget) -----------------
+
+    fn owned(strs: &[&str]) -> Vec<String> {
+        strs.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn select_title_messages_keeps_all_for_a_short_session() {
+        // len <= max → every message is included, in order, none dropped.
+        let msgs = owned(&["first request", "follow up", "another tweak"]);
+        let picked = select_title_messages(&msgs, 20, 8);
+        assert_eq!(picked, vec!["first request", "follow up", "another tweak"]);
+    }
+
+    #[test]
+    fn select_title_messages_long_session_always_keeps_the_earliest() {
+        // 30 messages, budget 20 (head 8 + tail 12). The ORIGINAL request (index 0)
+        // must survive — that is the whole point: recency must not drop it.
+        let raw: Vec<String> = (0..30).map(|i| format!("m{i}")).collect();
+        let picked = select_title_messages(&raw, 20, 8);
+        assert_eq!(picked.len(), 20);
+        // The earliest message is always the first selected.
+        assert_eq!(picked[0], "m0");
+        // The first HEAD messages are the earliest ones, in order.
+        assert_eq!(&picked[..8], &["m0", "m1", "m2", "m3", "m4", "m5", "m6", "m7"]);
+        // The TAIL is the most recent (max - head = 12) messages, in order.
+        assert_eq!(picked[8], "m18");
+        assert_eq!(picked[19], "m29");
+    }
+
+    #[test]
+    fn select_title_messages_preserves_chronological_order() {
+        let raw: Vec<String> = (0..50).map(|i| format!("m{i}")).collect();
+        let picked = select_title_messages(&raw, 20, 8);
+        // Map each selected message back to its original index; indices must be
+        // strictly increasing (chronological order preserved, no reordering).
+        let idxs: Vec<usize> = picked
+            .iter()
+            .map(|p| p.trim_start_matches('m').parse::<usize>().unwrap())
+            .collect();
+        assert!(idxs.windows(2).all(|w| w[0] < w[1]), "indices must increase: {idxs:?}");
+    }
+
+    #[test]
+    fn select_title_messages_dedupes_overlapping_head_and_tail_windows() {
+        // The head window is the first `head` messages; the tail window is the last
+        // `max - head` messages. When `head` is large relative to `max` the two
+        // windows can overlap on the same indices — the helper must take the union
+        // (each message at most once) and keep chronological order.
+        //
+        // 7 messages, max 6, head 5: head=[m0..m4], tail=last (6-5)=1=[m6]. The
+        // value "m4" appears only in the head; nothing is duplicated.
+        let seven = owned(&["m0", "m1", "m2", "m3", "m4", "m5", "m6"]);
+        let picked = select_title_messages(&seven, 6, 5);
+        assert_eq!(picked, vec!["m0", "m1", "m2", "m3", "m4", "m6"]);
+
+        // True index overlap: identical message text repeated and a head window that
+        // reaches into the tail window. 6 messages, max 8 > len → keep-all path, but
+        // verify the union dedup never doubles a message even if a head index also
+        // falls in the tail window. Use repeated text to prove de-dup is by index,
+        // not by value: head still keeps each position once.
+        let dup = owned(&["x", "x", "x", "x", "x", "x"]);
+        // len 6 <= max 8 → keep all 6 positions (repeated text is fine; positions
+        // are distinct), proving no spurious extra copies are appended.
+        assert_eq!(select_title_messages(&dup, 8, 5).len(), 6);
+
+        // Overlapping windows by index: 5 messages, max 5, head 4 → head=[m0..m3],
+        // tail=last (5-4)=1=[m4]; union is all 5, each once, in order.
+        let five = owned(&["m0", "m1", "m2", "m3", "m4"]);
+        assert_eq!(
+            select_title_messages(&five, 5, 4),
+            vec!["m0", "m1", "m2", "m3", "m4"]
+        );
+
+        // No value is duplicated in the truncating path either.
+        let raw: Vec<String> = (0..40).map(|i| format!("m{i}")).collect();
+        let p = select_title_messages(&raw, 20, 8);
+        let mut sorted = p.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), p.len(), "no message may appear twice");
     }
 }
