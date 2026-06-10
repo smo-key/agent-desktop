@@ -113,17 +113,22 @@ export class EventStore {
       const map = await invoke<EventMap>('events_for', { panes });
       let total = 0;
       for (const [paneId, events] of Object.entries(map)) {
-        // Seed ONLY a pane with no live timeline yet. A pane already populated is kept
-        // current by live `overview://event` ingest and may hold frontend-only events
-        // (e.g. a synthetic interrupt Stop); a wholesale overwrite here would (a) clobber
-        // that synthetic turn-end — re-pinning an interrupted pane to `working` — and
-        // (b) drop any live event that arrived during this `events_for` round-trip.
-        if ((this.byPane[paneId]?.length ?? 0) > 0) continue;
         const clean = Array.isArray(events) ? events.filter(isEvent) : [];
-        if (clean.length > 0) {
-          this.byPane[paneId] = clean;
-          total += clean.length;
-        }
+        if (clean.length === 0) continue; // nothing authoritative to seed; keep existing
+        // MERGE rather than overwrite. `clean` is authoritative for real events up to its
+        // last `ts`, but the live map may already hold things the snapshot can't reproduce:
+        // a frontend-only synthetic interrupt Stop, and live events that landed AFTER the
+        // snapshot was taken (newer `ts`). A wholesale overwrite would clobber the synthetic
+        // Stop (re-pinning an interrupted pane to `working`) or drop an in-flight live event.
+        // Preserve exactly those, appended after the snapshot in their existing order —
+        // events already in `clean` have `ts <= snapshotLastTs`, so they are never
+        // duplicated, and this keeps a (sink-empty + transcript) backfill from being lost
+        // when a live event raced ahead of this seed.
+        const existing = this.byPane[paneId] ?? [];
+        const snapshotLastTs = clean[clean.length - 1].ts;
+        const preserved = existing.filter((e) => e.synthetic === true || e.ts > snapshotLastTs);
+        this.byPane[paneId] = preserved.length > 0 ? [...clean, ...preserved] : clean;
+        total += clean.length;
       }
       return total;
     } catch (err) {

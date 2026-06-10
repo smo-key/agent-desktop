@@ -82,23 +82,35 @@ describe('EventStore', () => {
     expect(store.timeline('p1').at(-1)?.synthetic).toBe(true);
   });
 
-  it('seed does not overwrite an existing timeline (synthetic + live events survive)', async () => {
+  it('seed merge preserves a synthetic interrupt Stop (re-seed does not flip to working)', async () => {
     // REGRESSION: seed re-runs on every session-set change. A wholesale per-pane replace
-    // would clobber a frontend-only synthetic interrupt Stop (re-pinning the pane to
-    // `working`) and drop live events arriving during the `events_for` round-trip.
+    // would clobber the frontend-only synthetic interrupt Stop (the Rust ring can't
+    // reproduce it), re-pinning the interrupted pane back to `working`.
     const store = new EventStore();
     store.ingest(ev('UserPromptSubmit'));
     store.ingest(ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:x' }));
     store.markInterrupt('p1'); // frontend-only synthetic Stop → waiting
     expect(store.activityFor('p1').status).toBe('waiting');
 
-    // The Rust ring lacks the synthetic Stop; a re-seed must NOT clobber the live timeline.
+    // The Rust ring snapshot lacks the synthetic Stop; the merge must keep it.
     invokeMock.mockResolvedValueOnce({
       p1: [ev('UserPromptSubmit'), ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:x' })]
     });
-    const n = await store.seed([{ paneId: 'p1', sessionId: 's1', cwd: null }]);
-    expect(n).toBe(0); // nothing seeded — p1 already has a live timeline
-    expect(store.activityFor('p1').status).toBe('waiting'); // still interrupted, not working
+    await store.seed([{ paneId: 'p1', sessionId: 's1', cwd: null }]);
+    expect(store.activityFor('p1').status).toBe('waiting'); // synthetic Stop survived
+    expect(store.timeline('p1').at(-1)?.synthetic).toBe(true); // and is still the last event
+  });
+
+  it('seed merge preserves a live event newer than the snapshot (no lost update)', async () => {
+    // A live turn-ending Stop lands at ts 100 (during the `events_for` round-trip) while
+    // the snapshot was taken earlier (only the UserPromptSubmit at ts 50). The merge must
+    // not drop the newer live Stop, which would otherwise leave the pane stuck `working`.
+    const store = new EventStore();
+    store.ingest(ev('UserPromptSubmit', { ts: 50 }));
+    store.ingest(ev('Stop', { ts: 100 }));
+    invokeMock.mockResolvedValueOnce({ p1: [ev('UserPromptSubmit', { ts: 50 })] });
+    await store.seed([{ paneId: 'p1', sessionId: 's1', cwd: null }]);
+    expect(store.timeline('p1').map((e) => e.hookEventName)).toEqual(['UserPromptSubmit', 'Stop']);
   });
 
   it('Interrupt is a no-op when the pane is not working', () => {
