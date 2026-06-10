@@ -25,6 +25,14 @@ const STORAGE_KEY = 'agent-desktop:session-titles';
 export interface TitleEntry {
   title: string | null;
   hash: string | null;
+  /**
+   * Set when the user gave this session a CUSTOM title (header inline-edit or the
+   * agent card's "Rename" menu). A manual title is STICKY: it displays in place of
+   * any auto-generated title and `shouldRequest` returns false for it forever, so
+   * later messages never re-generate it. Persisted (under sessionId) so it survives
+   * restart/resume. Absent/false for auto-generated titles.
+   */
+  manual?: boolean;
 }
 
 /** Load the persisted sessionId -> entry cache (survives restart / resume). */
@@ -44,6 +52,7 @@ function loadPersisted(): Record<string, TitleEntry> {
  * PURE: whether to (re)request a title for a pane. Requests when the user has
  * messages (`userHash` is set) and the current title is for a DIFFERENT hash, we
  * are not already fetching that same hash, and the throttle window has elapsed.
+ * A MANUAL (custom) title is sticky — auto-generation stops for it permanently.
  */
 export function shouldRequest(
   entry: TitleEntry | undefined,
@@ -53,6 +62,7 @@ export function shouldRequest(
   nowMs: number,
   throttleMs: number = TITLE_THROTTLE_MS
 ): boolean {
+  if (entry?.manual) return false; // custom title — never auto-regenerate it
   if (!userHash) return false;
   if (entry?.hash === userHash) return false; // already titled for this hash
   if (pendingHash === userHash) return false; // already fetching this hash
@@ -73,6 +83,27 @@ export class TitleStore {
   /** The generated title for a pane, or null when none yet. */
   titleFor(paneId: string): string | null {
     return this.byPane[paneId]?.title ?? null;
+  }
+
+  /**
+   * Set a user-chosen CUSTOM title for a session (header inline-edit or the agent
+   * card's "Rename" menu). Updates the runtime `byPane` cache so it shows at once,
+   * marks the entry `manual` so `shouldRequest` never re-generates it, and PERSISTS
+   * it under `sessionId` (durable, survives restart/resume — it's reloaded into
+   * `byPane` by `hydrate`). An empty/whitespace title is ignored (no-op): a custom
+   * title can never blank out the displayed name.
+   */
+  setManualTitle(paneId: string, sessionId: string | null, title: string): void {
+    const trimmed = title.trim();
+    if (!trimmed) return; // ignore empty — never clear the shown title
+    // A manual title is hash-independent (it never re-generates), so we don't pin
+    // it to a userHash; `manual` is the sole gate `shouldRequest` reads.
+    const entry: TitleEntry = { title: trimmed, hash: null, manual: true };
+    this.byPane[paneId] = entry;
+    if (sessionId) {
+      this.#bySession[sessionId] = entry;
+      this.#persist();
+    }
   }
 
   /**
@@ -122,6 +153,11 @@ export class TitleStore {
         // on-device title model is unavailable. Off by default (on-device only).
         cloudFallback: titleSettings.prefs.cloudFallback
       });
+      // Bail if the user gave this session a CUSTOM title while we were awaiting:
+      // a manual title is sticky and must NEVER be clobbered by a now-stale
+      // auto-generation that was already in flight when the rename happened.
+      if (this.byPane[pane.paneId]?.manual) return;
+      if (pane.sessionId && this.#bySession[pane.sessionId]?.manual) return;
       const next: TitleEntry = { title: title ?? null, hash };
       this.byPane[pane.paneId] = next;
       // Persist a resolved title under its sessionId so it survives a restart.

@@ -105,3 +105,86 @@ describe('TitleStore restart persistence', () => {
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull(); // nothing worth persisting
   });
 });
+
+describe('TitleStore manual (custom) titles', () => {
+  it('setManualTitle sets the shown title, marks it manual, and PERSISTS it under sessionId', () => {
+    const store = new TitleStore();
+    store.setManualTitle('p1', 's1', '  Pay flow refactor  ');
+
+    // Shown immediately (and trimmed).
+    expect(store.titleFor('p1')).toBe('Pay flow refactor');
+
+    // Persisted under the sessionId, marked manual.
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) as string);
+    expect(saved.s1).toEqual({ title: 'Pay flow refactor', hash: null, manual: true });
+  });
+
+  it('restores a manual title from persistence on a fresh start (NO model call)', async () => {
+    // A prior session set a custom title; it was persisted as manual.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ s1: { title: 'Custom focus', hash: null, manual: true } }));
+
+    // Cold start: hydrate (cold path) shows it with no userHash and no model call.
+    const store = new TitleStore();
+    store.hydrate([pane()]);
+    expect(store.titleFor('p1')).toBe('Custom focus');
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('is STICKY: a manual title is NEVER overwritten by auto-generation, even on a changed hash', async () => {
+    invokeMock.mockResolvedValue('Auto-generated focus');
+
+    const store = new TitleStore();
+    store.setManualTitle('p1', 's1', 'Custom focus');
+
+    // The user keeps chatting: the user hash changes (h2, h3...) — auto-gen would
+    // normally re-run, but the manual marker stops it.
+    store.refresh([pane()], () => 'h2', NOW);
+    await flush();
+    store.refresh([pane()], () => 'h3', NOW + 1);
+    await flush();
+
+    expect(invokeMock).not.toHaveBeenCalled(); // auto-generation stopped
+    expect(store.titleFor('p1')).toBe('Custom focus'); // custom title held
+  });
+
+  it('a restored manual title also blocks auto-generation after restart', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ s1: { title: 'Sticky title', hash: 'h1', manual: true } }));
+    invokeMock.mockResolvedValue('Auto focus');
+
+    const store = new TitleStore();
+    store.refresh([pane()], () => 'h2', NOW); // changed hash since restart
+    await flush();
+
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(store.titleFor('p1')).toBe('Sticky title');
+  });
+
+  it('ignores an empty/whitespace custom title (does not overwrite or persist)', () => {
+    const store = new TitleStore();
+    store.setManualTitle('p1', 's1', '   ');
+    expect(store.titleFor('p1')).toBeNull();
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('an IN-FLIGHT auto-fetch that resolves AFTER a rename does NOT clobber the custom title', async () => {
+    // The auto-fetch is in flight (resolves on the next tick); the user renames
+    // before it lands. The stale auto title must be discarded, not applied.
+    let resolveFetch!: (t: string) => void;
+    invokeMock.mockReturnValue(new Promise<string>((res) => (resolveFetch = res)));
+
+    const store = new TitleStore();
+    store.refresh([pane()], () => 'h1', NOW); // kicks off #fetch (now pending)
+
+    // User renames while the fetch is still awaiting.
+    store.setManualTitle('p1', 's1', 'Custom focus');
+    expect(store.titleFor('p1')).toBe('Custom focus');
+
+    // The stale auto-fetch finally resolves — it must NOT overwrite the manual title.
+    resolveFetch('Auto focus');
+    await flush();
+
+    expect(store.titleFor('p1')).toBe('Custom focus');
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) as string);
+    expect(saved.s1).toEqual({ title: 'Custom focus', hash: null, manual: true });
+  });
+});

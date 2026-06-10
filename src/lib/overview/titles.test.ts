@@ -34,4 +34,15 @@ describe('shouldRequest', () => {
     // After the window, it requests.
     expect(shouldRequest(entry('h1'), undefined, 'h2', now - TITLE_THROTTLE_MS - 1, now)).toBe(true);
   });
+
+  it('never requests for a MANUAL entry, even when the user hash changed', () => {
+    // A custom title is sticky: automatic title generation STOPS for that session.
+    const manual: TitleEntry = { title: 'My custom title', hash: 'h1', manual: true };
+    // Hash changed (h2 != h1) and the throttle window has elapsed — normally a
+    // request — but the manual marker short-circuits it.
+    expect(shouldRequest(manual, undefined, 'h2', 0, 1_000_000)).toBe(false);
+    // Even with no prior hash recorded on the manual entry.
+    const manualNoHash: TitleEntry = { title: 'Custom', hash: null, manual: true };
+    expect(shouldRequest(manualNoHash, undefined, 'h9', 0, 1_000_000)).toBe(false);
+  });
 });

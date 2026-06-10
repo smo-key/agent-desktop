@@ -285,6 +285,85 @@
   // The focused (shown) agent row.
   const focus = $derived(viewRows.find((r) => r.paneId === shownId) ?? null);
 
+  // --- Rename the focused session (header inline-edit) -----------------------
+  // Click the focus-pane header title (or pick "Rename" in the agent card menu) to
+  // give the session a CUSTOM title. The same inline-input shape as the session
+  // rail: `editingTitle`/`titleDraft` $state, commit on Enter or blur, cancel on
+  // Esc. Committing calls `titles.setManualTitle`, which makes the custom title
+  // STICKY — auto-generation stops for that session and it persists across restart.
+  let editingTitle = $state(false);
+  let titleDraft = $state('');
+  let titleInput = $state<HTMLInputElement | null>(null);
+  // The paneId the header edit belongs to, so switching to a DIFFERENT agent
+  // abandons the rename (but selecting THIS agent — e.g. the menu "Rename" path —
+  // does not).
+  let editingPaneId = $state<string | null>(null);
+
+  /** The app-owned Claude session id for a row's pane (keys the durable title cache),
+   *  resolved against the row's OWN workspace so it's correct even when the focused
+   *  agent lives in a non-active workspace. Null for a non-claude/shell pane. */
+  function sessionIdOf(r: AgentRow): string | null {
+    return workspace.sessionIn(r.workspaceId, r.paneId).sessionId ?? null;
+  }
+
+  /** Enter header edit mode for the focused session, seeding the draft with the
+   *  currently-shown title. The coordinator's title is pinned ("Coordinator") and
+   *  is not user-renamable, so editing is suppressed for it. */
+  async function startTitleEdit(target: AgentRow | null = focus) {
+    if (!target || isCoordinator(target)) return;
+    titleDraft = focusTitle(target);
+    editingPaneId = target.paneId;
+    editingTitle = true;
+    await tick();
+    titleInput?.focus();
+    titleInput?.select();
+  }
+
+  /** Commit the header edit: a non-empty draft becomes the session's custom title
+   *  (sticky + persisted); an empty/whitespace draft is dropped (keeps the prior
+   *  title). Idempotent — safe to call from both Enter and blur. Commits against the
+   *  pane the edit was started on (not whatever is shown now). */
+  function commitTitleEdit() {
+    if (!editingTitle) return;
+    editingTitle = false;
+    const row = viewRows.find((r) => r.paneId === editingPaneId);
+    if (row) titles.setManualTitle(row.paneId, sessionIdOf(row), titleDraft);
+    editingPaneId = null;
+    titleDraft = '';
+  }
+
+  /** Cancel the header edit (Esc): discard the draft, keep the prior title. */
+  function cancelTitleEdit() {
+    editingTitle = false;
+    editingPaneId = null;
+    titleDraft = '';
+  }
+
+  function onTitleKey(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commitTitleEdit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelTitleEdit();
+    }
+  }
+
+  /** Agent card "Rename" menu item: focus the agent (so its header is shown), then
+   *  open the SAME header inline edit. Routes through `selectAgent` so the live
+   *  terminal is the focus and the header — with its title input — is on screen. */
+  function renameAgent(row: AgentRow) {
+    selectAgent(row.paneId);
+    void startTitleEdit(row);
+  }
+
+  // Switching to a DIFFERENT agent (or the edited one going away) abandons an
+  // in-progress rename rather than committing it to the wrong agent. Selecting the
+  // edited agent itself — the menu "Rename" path — leaves the edit intact.
+  $effect(() => {
+    if (editingTitle && shownId !== editingPaneId) cancelTitleEdit();
+  });
+
   // When `shownId` is the coordinator-start SENTINEL (not a real pane), the main
   // pane shows the Start empty-state for that project instead of a terminal (10.4).
   // Resolved to a concrete project, else null (a stale sentinel falls through to the
@@ -688,11 +767,13 @@
         : row.paused
           ? [
               { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
+              { label: 'Rename', icon: 'pencil', onClick: () => renameAgent(row) },
               { label: 'Resume', icon: 'play', onClick: () => resumeAgent(row.paneId) },
               archiveItem
             ]
           : [
               { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
+              { label: 'Rename', icon: 'pencil', onClick: () => renameAgent(row) },
               { label: 'Pause', icon: 'pause', onClick: () => pauseAgent(row.paneId) },
               archiveItem
             ];
@@ -1037,7 +1118,27 @@
         {@const av = projAvatar(focus.projectId)}
         <div class="fhead">
           <ProjectIcon {...av} size={26} />
-          <span class="ttl">{focusTitle(focus)}</span>
+          {#if editingTitle}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              class="ttl-edit"
+              bind:this={titleInput}
+              bind:value={titleDraft}
+              onkeydown={onTitleKey}
+              onblur={commitTitleEdit}
+              aria-label="Rename session"
+              autofocus
+            />
+          {:else if isCoordinator(focus)}
+            <span class="ttl">{focusTitle(focus)}</span>
+          {:else}
+            <button
+              type="button"
+              class="ttl ttl-btn"
+              onclick={() => startTitleEdit()}
+              use:tooltip={'Rename session'}
+            >{focusTitle(focus)}</button>
+          {/if}
           <span class="spc"></span>
           {#if needsAttention(focus) && queue.length > 1}
             <span class="nav">
@@ -1205,6 +1306,11 @@
   .col-focus { background: var(--space-850); min-width: 0; display: flex; flex-direction: column; min-height: 0; }
   .fhead { flex: none; display: flex; align-items: center; gap: 11px; padding: 11px 18px; border-bottom: 1px solid var(--line-subtle); background: var(--space-900); }
   .fhead .ttl { font-weight: 600; font-size: 13.5px; color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  /* The clickable title (renames on click) reads as plain text until hovered. */
+  .fhead .ttl-btn { display: inline-flex; align-items: center; max-width: 100%; padding: 2px 6px; margin: -2px -6px; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; cursor: text; text-align: left; font-family: var(--font-sans); }
+  .fhead .ttl-btn:hover { background: rgba(255, 255, 255, 0.04); border-color: var(--line-subtle); }
+  /* The inline rename input mirrors the session-rail rename affordance. */
+  .fhead .ttl-edit { flex: 0 1 auto; min-width: 0; max-width: 60%; font-weight: 600; font-size: 13.5px; font-family: var(--font-sans); color: var(--fg-1); background: var(--space-800); border: 1px solid var(--blue-500); box-shadow: var(--focus-ring); border-radius: var(--r-sm); padding: 2px 6px; outline: none; }
   .fhead .spc { flex: 1; }
   .fhead .nav { display: flex; gap: 4px; flex: none; }
   .fhead .nav button { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-sm); background: var(--space-750); border: 1px solid var(--line-subtle); color: var(--fg-3); cursor: pointer; font-size: 13px; }
