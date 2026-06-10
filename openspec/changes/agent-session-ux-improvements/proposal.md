@@ -43,7 +43,12 @@ are one click away.
   base branch (`main`), where there is nothing to PR.
 - **Commit button (footer)** — clicking the uncommitted-files indicator when there
   are changes opens a confirm dialog; on confirm it spawns an agent session (task)
-  that commits the changes and auto-archives.
+  that commits the changes and auto-archives. Hovering the indicator lists the first
+  10 uncommitted file paths (with an overflow hint when there are more).
+- **Open-PRs-awaiting-review button (footer)** — a footer button shows the number of
+  open PRs targeting `main` that await review: a warning icon + count when any exist,
+  a checkmark + `0` when none. Clicking it opens the repository's pull-requests page
+  on GitHub. It degrades to the neutral checkmark/`0` state when `gh` is unavailable.
 - **Project counters exclude archived** — archived (closed/previewed) agents are no
   longer counted in the per-project, unassigned, or all-agents counters.
 - **Rename a session** — the user can rename a session by clicking its title in the
@@ -74,7 +79,8 @@ are one click away.
   next Needs-Input agent.
 - `footer-actions`: the footer PR button and the commit action on the
   uncommitted-files indicator, each gated by a confirm dialog and run as an
-  auto-archiving agent task.
+  auto-archiving agent task; plus a hover list of the first 10 uncommitted files
+  and an "open PRs awaiting review" count button linking to GitHub.
 - `project-agent-counters`: which agents count toward project/unassigned/all-agents
   counters (archived excluded).
 

@@ -55,3 +55,48 @@ no uncommitted changes, the indicator SHALL be inert (clicking does nothing).
 #### Scenario: Cancelling the confirm spawns nothing
 - **WHEN** the commit confirmation dialog is shown and the user cancels
 - **THEN** no agent session is spawned
+
+### Requirement: The uncommitted-files indicator lists files on hover
+
+Hovering the uncommitted-files indicator SHALL show a tooltip listing the
+uncommitted file paths, capped at the FIRST 10, with an indication when more files
+exist beyond the first 10. WHEN there are no uncommitted changes, no file list is
+shown on hover.
+
+#### Scenario: Hover shows up to ten changed files
+- **WHEN** there are uncommitted changes and the user hovers the uncommitted-files indicator
+- **THEN** a tooltip lists the changed file paths, at most the first 10
+
+#### Scenario: More than ten files indicates the overflow
+- **WHEN** there are more than 10 uncommitted files and the user hovers the indicator
+- **THEN** the tooltip lists the first 10 and indicates that more files exist
+
+#### Scenario: No changes shows no file list
+- **WHEN** there are no uncommitted changes
+- **THEN** hovering the indicator shows no file list
+
+### Requirement: Open PRs awaiting review button
+
+The footer SHALL show a button indicating the number of OPEN pull requests targeting
+`main` that are awaiting review. WHEN one or more such PRs exist, the button SHALL
+show a WARNING icon together with the count; WHEN there are none, it SHALL show a
+CHECKMARK icon together with `0`. Clicking the button SHALL open the repository's
+pull-requests page on GitHub. WHEN the PR count cannot be determined (e.g. `gh` is
+unavailable or fails), the button SHALL degrade gracefully — showing the checkmark/`0`
+neutral state — without erroring.
+
+#### Scenario: Open PRs awaiting review show a warning and a count
+- **WHEN** there are N (N > 0) open PRs targeting `main` awaiting review
+- **THEN** the button shows a warning icon and the number N
+
+#### Scenario: No open PRs shows a checkmark and zero
+- **WHEN** there are no open PRs targeting `main` awaiting review
+- **THEN** the button shows a checkmark icon and `0`
+
+#### Scenario: Clicking opens the GitHub pull-requests page
+- **WHEN** the user clicks the open-PRs button
+- **THEN** the repository's pull-requests page is opened on GitHub
+
+#### Scenario: Detection unavailable degrades gracefully
+- **WHEN** the open-PR count cannot be determined (e.g. `gh` is unavailable)
+- **THEN** the button shows the neutral checkmark/`0` state and does not error

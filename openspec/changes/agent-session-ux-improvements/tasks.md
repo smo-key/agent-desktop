@@ -6,10 +6,10 @@
 
 ## 2. Status line shows last message/question, incl. archived (agent-roster-display)
 
-- [ ] 2.1 Generalize `rowSub(r)` in `Inbox.svelte`: priority = pending question (`questions[0].question` ?? `question`) → last assistant message (`summary`) → short generic fallback; apply for ALL lanes including `closed`/`preview` (replace the `'Archived · restore or delete'` and bare `'Needs input'` returns with this).
-- [ ] 2.2 Ensure an archived row still has a last message: add a per-`sessionId` last-summary cache (mirroring the title cache in `titles.svelte.ts`) and fall back to it when live activity for a closed pane is unavailable.
-- [ ] 2.3 Keep Restore/Delete reachable for archived rows via the existing context menu (no regression).
-- [ ] 2.4 Add tests for `rowSub` covering: pending question, last-message, archived-with-last-message, and the generic fallback when neither exists.
+- [x] 2.1 Generalize `rowSub(r)` in `Inbox.svelte`: priority = pending question (`questions[0].question` ?? `question`) → last assistant message (`summary`) → short generic fallback; apply for ALL lanes including `closed`/`preview` (replace the `'Archived · restore or delete'` and bare `'Needs input'` returns with this). Fallback is STATE-APPROPRIATE (Archived/Paused/Errored/Needs input/cost/Working…), not a flat string.
+- [x] 2.2 Ensure an archived row still has a last message: add a per-`sessionId` last-summary cache (mirroring the title cache in `titles.svelte.ts`) and fall back to it when live activity for a closed pane is unavailable.
+- [x] 2.3 Keep Restore/Delete reachable for archived rows via the existing context menu (no regression).
+- [x] 2.4 Add tests for `rowSub` covering: pending question, last-message, archived-with-last-message, and the generic fallback when neither exists.
 
 ## 3. In-flight vs Needs-input status (agent-status-derivation)
 
@@ -41,12 +41,17 @@
 - [ ] 6.4 Wire behavior: PR exists → open it; no PR (or status unknown) → `confirmModal.show({…, confirmLabel: 'Create PR', onConfirm})`; on confirm spawn an agent task (prompt: create a PR into `main`) and add its pane to `taskAgentPanes` for auto-archive.
 - [ ] 6.5 Provide the create-PR agent prompt + ensure the spawn path reuses the existing `taskAgentPanes` mechanism in `+page.svelte`.
 - [ ] 6.6 Add tests for the pure parts: disabled-on-base logic, open-vs-create decision (exists/none/unknown), and the confirm→spawn wiring.
+- [ ] 6.7 Add a Tauri command (e.g. `open_prs_for(cwd, base)`) that runs `gh pr list --base <base> --state open --json number,reviewDecision` and returns the COUNT of open PRs targeting `base` that are awaiting review (reviewDecision not `APPROVED` — i.e. `REVIEW_REQUIRED`/empty) plus the repo's pull-requests URL; tolerate `gh` missing/unauth by returning a neutral unknown/0 without erroring.
+- [ ] 6.8 Add a frontend wrapper + small cache for the open-PRs count (refreshed alongside git status) and add the "open PRs awaiting review" button to the footer: a WARNING icon + the count when > 0, a CHECKMARK + `0` when none (or unknown). Clicking opens the repository's pull-requests page on GitHub via the existing external-open mechanism.
+- [ ] 6.9 Add tests for the pure parts: the warning-vs-checkmark + count selection (N>0 → warning+N; 0/unknown → checkmark+0) and the parsing of `gh` output into an awaiting-review count.
 
 ## 7. Footer commit button (footer-actions)
 
 - [ ] 7.1 In `GitInfo.svelte`, make the modified (uncommitted-files) pill a button when `modified > 0`; inert when 0.
 - [ ] 7.2 On click with changes, `confirmModal.show({…, confirmLabel: 'Commit', onConfirm})`; on confirm spawn an agent task (prompt: commit the pending changes on the current branch) added to `taskAgentPanes` for auto-archive.
 - [ ] 7.3 Add tests: click with files → confirm shown; confirm → spawn; cancel → no spawn; no files → no dialog.
+- [ ] 7.4 Surface the changed file PATHS for the uncommitted-files indicator (extend the git-status command/wrapper to return the file list, or add a command) and show a hover tooltip on the indicator listing the FIRST 10 file paths, with an indication when more than 10 exist. Show no list when there are no changes.
+- [ ] 7.5 Add tests for the tooltip content builder: lists the first 10 files; indicates overflow when > 10; empty/no-tooltip when there are no changes.
 
 ## 8. Exclude archived from project counters (project-agent-counters)
 
@@ -63,8 +68,8 @@
 
 ## 10. Title refresh after each user message (session-titles)
 
-- [ ] 10.1 Lower the title request throttle so a new user message re-derives the title promptly (reduce `TITLE_THROTTLE_MS` to a small floor; keep the `user_hash` gate and the manual-title skip).
-- [ ] 10.2 Add/adjust tests for `shouldRequest`: re-requests on a changed hash within the new window; still skips unchanged hash and manual entries.
+- [x] 10.1 Lower the title request throttle so a new user message re-derives the title promptly (reduce `TITLE_THROTTLE_MS` to a small floor; keep the `user_hash` gate and the manual-title skip).
+- [x] 10.2 Add/adjust tests for `shouldRequest`: re-requests on a changed hash within the new window; still skips unchanged hash and manual entries.
 
 ## 11. Insert-filename shortcut → ⌘O (keyboard-shortcuts)
 
@@ -83,4 +88,4 @@
 
 - [ ] 13.1 Run `npm run check` (svelte-check) and `npm run test` (vitest); fix any failures introduced by the change. Run `cargo test` (manifest `src-tauri/Cargo.toml`) for the Rust title-selection + prompt changes.
 - [ ] 13.2 Run `npm run coverage` (scenario coverage gate) and ensure new scenarios are covered.
-- [ ] 13.3 Manually verify the headline flows in the running app: coordinated compass badge + tooltip, archive a coordinator (+ label), `! sleep 999` shows In flight, a dynamic-workflow session shows In flight, last-message line incl. archived, auto-advance toggle, PR + commit footer buttons, counters exclude archived, rename via header + menu, title refresh after a message, titles that reflect the original request in a long session, ⌘O inserts a filename.
+- [ ] 13.3 Manually verify the headline flows in the running app: coordinated compass badge + tooltip, archive a coordinator (+ label), `! sleep 999` shows In flight, a dynamic-workflow session shows In flight, last-message line incl. archived, auto-advance toggle, PR + commit footer buttons, uncommitted-files hover lists first 10 files, open-PRs-awaiting-review button (warning+count / checkmark+0, opens GitHub), counters exclude archived, rename via header + menu, title refresh after a message, titles that reflect the original request in a long session, ⌘O inserts a filename.
