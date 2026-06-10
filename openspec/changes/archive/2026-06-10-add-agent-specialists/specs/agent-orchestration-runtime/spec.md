@@ -45,10 +45,18 @@ The toolkit SHALL let the orchestrator send input to a running agent
 (`message_agent`) and read that agent's recent output / state (`read_agent`).
 These operations SHALL apply to every `claude` agent pane in the project,
 including sessions the user started manually, not only orchestrator-spawned ones.
+When the target agent is blocked on a pending `AskUserQuestion`, `message_agent`
+SHALL be refused with an error rather than delivering the text — free-form input
+cannot answer a structured multiple-choice question and would be lost or misread,
+so the orchestrator must wait for the question to clear (or have the user answer it).
 
 #### Scenario: Orchestrator messages an agent
 - **WHEN** the orchestrator calls `message_agent` for a running agent in its project with text
 - **THEN** the text is delivered as input to that agent's session
+
+#### Scenario: Messaging an agent awaiting a question is refused
+- **WHEN** the orchestrator calls `message_agent` for an agent that is currently blocked on a pending `AskUserQuestion`
+- **THEN** the operation is rejected with an error indicating the agent is awaiting a question, and no text is delivered to the pane
 
 #### Scenario: Orchestrator reads an agent
 - **WHEN** the orchestrator calls `read_agent` for an agent in its project

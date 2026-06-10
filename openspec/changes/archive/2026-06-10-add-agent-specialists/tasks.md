@@ -58,8 +58,8 @@
 
 ## 8. Verification
 
-- [ ] 8.1 End-to-end (acceptance): create a specialist → start the coordinator → give it a goal → it spawns that specialist as a visible pane, messages/reads it, and coordinates to completion, all attributed in the roster — _logic verified via unit/integration tests + final integration review; LIVE in-app acceptance run still pending_
-- [ ] 8.2 End-to-end: coordinator lists, reads, and messages a user-started existing session in the project as part of a workflow — _logic covered by executor tests + review; LIVE in-app run still pending_
+- [x] 8.1 End-to-end (acceptance): create a specialist → start the coordinator → give it a goal → it spawns that specialist as a visible pane, messages/reads it, and coordinates to completion, all attributed in the roster — logic verified via unit/integration tests + final integration review; LIVE in-app acceptance confirmed by user high-level testing (close-out).
+- [x] 8.2 End-to-end: coordinator lists, reads, and messages a user-started existing session in the project as part of a workflow — logic covered by executor tests + review; LIVE in-app run confirmed by user high-level testing (close-out).
 - [x] 8.3 End-to-end: cross-project / invalid / closed targets are rejected; an injection to a busy agent is deferred until idle — verified by `executor.svelte.test.ts` (scoping, idle-gating, coordinator-target rejection)
 - [x] 8.4 Confirm additive behavior: a project with no coordinator and no specialists behaves exactly as today — verified by review (no interception without a coordinator; empty-state panels)
 - [x] 8.5 Run `openspec validate add-agent-specialists` and the project's lint/test suite (`npm` + `cargo test`) — vitest 656/656; cargo 162 pass (+2 pre-existing unrelated `events::tests`); openspec validate green
@@ -79,3 +79,7 @@
 - [x] 10.11 Add a coordinator "needs input" tool to the orchestration toolkit (adapter + control socket) the coordinator calls when it needs user input without an AskUserQuestion
 - [x] 10.12 Suppress the default needs-input heuristic for the coordinator (show needs-input only on a pending AskUserQuestion or the needs-input tool); on the tool call, surface the coordinator as needing input and clear it when it resumes; add the instruction to the orchestrator system prompt
 - [x] 10.13 Fix: the focus-pane header for the coordinator reads "Coordinator" (matching its pinned row title) instead of its underlying workspace name ("Session N")
+
+## 11. Close-out review fixes
+
+- [x] 11.1 Fix (adversarial review CRITICAL): `message_agent` must refuse delivery to a target blocked on a pending `AskUserQuestion` instead of injecting free-form text (which cannot answer a structured question and would be lost/misread). `executor.svelte.ts` `messageAgent` checks `readActivity(paneId).question != null` before the working-gate and resolves with an error; `readActivityReal` ORs in the event store's immediate question so the gate does not lag the transcript. Covered by `executor.svelte.test.ts` "refuses to deliver to a target awaiting a question"; new scenario added to `agent-orchestration-runtime` spec ("Messaging an agent awaiting a question is refused").
