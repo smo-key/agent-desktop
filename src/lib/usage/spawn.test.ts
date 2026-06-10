@@ -53,6 +53,11 @@ describe('buildSpawnOverride', () => {
     expect(claude.args[0]).toBe('--settings');
     const parsed = JSON.parse(claude.args[1]);
     expect(parsed.remoteControlAtStartup).toBe(false);
+    // Claude's built-in agent view (←← opens it; ← backgrounds/detaches the session,
+    // exiting the local PTY) conflicts with agent-desktop's own agents panel — disable
+    // it per-session so an arrow keypress never archives a live session out from under
+    // the user.
+    expect(parsed.disableAgentView).toBe(true);
     // Command paths are shell-quoted so the spaced app-data path survives claude's
     // shell invocation (the wrapper/hook silently never run otherwise).
     expect(parsed.statusLine).toEqual({ type: 'command', command: `"${PATHS.wrapperPath}"` });
@@ -92,13 +97,18 @@ describe('buildSpawnOverride', () => {
       paneId: 'p1',
       usagePaths: PATHS
     });
-    // The override object contains ONLY `remoteControlAtStartup` (keep the
-    // transcript local), `statusLine.command` (the snapshot wrapper), and `hooks`
-    // (the AskUserQuestion sidecar) — no other keys — so `claude --settings` merges
-    // it per-key over the user's settings.json, leaving every other key (e.g.
-    // permissions.allow) in effect.
+    // The override object contains ONLY `remoteControlAtStartup` (keep the transcript
+    // local), `disableAgentView` (Claude's arrow-key agent view conflicts with ours),
+    // `statusLine.command` (the snapshot wrapper), and `hooks` (the event pipeline) — no
+    // other keys — so `claude --settings` merges it per-key over the user's settings.json,
+    // leaving every other key (e.g. permissions.allow) in effect.
     const parsed = JSON.parse(args[1]);
-    expect(Object.keys(parsed)).toEqual(['remoteControlAtStartup', 'statusLine', 'hooks']);
+    expect(Object.keys(parsed)).toEqual([
+      'remoteControlAtStartup',
+      'disableAgentView',
+      'statusLine',
+      'hooks'
+    ]);
     expect(parsed.remoteControlAtStartup).toBe(false);
     expect(parsed.statusLine.command).toBe(`"${PATHS.wrapperPath}"`);
     expect(parsed.hooks.PreToolUse[0].matcher).toBe('*');
@@ -156,7 +166,11 @@ describe('buildSpawnOverride', () => {
       paneId: 'p1',
       usagePaths: null
     });
-    expect(args).toEqual(['--settings', '{"remoteControlAtStartup":false}', '--resume']);
+    expect(args).toEqual([
+      '--settings',
+      '{"remoteControlAtStartup":false,"disableAgentView":true}',
+      '--resume'
+    ]);
     expect(env).toBeUndefined();
   });
 
@@ -188,7 +202,7 @@ describe('buildSpawnOverride', () => {
       '--session-id',
       'sess-uuid-2',
       '--settings',
-      '{"remoteControlAtStartup":false}'
+      '{"remoteControlAtStartup":false,"disableAgentView":true}'
     ]);
     expect(unwrapped.env).toBeUndefined();
 

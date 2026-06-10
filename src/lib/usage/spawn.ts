@@ -109,6 +109,7 @@ export function quoteCommand(path: string): string {
  *  - `program === 'claude'` →
  *      args = ['--session-id', <id>?,
  *              '--settings', JSON.stringify({ remoteControlAtStartup: false,
+ *                disableAgentView: true,
  *                statusLine?: { type: 'command', command: <wrapperPath> } }),
  *              ...existingArgs]
  *      env  = [['AGENT_DESKTOP_PANE', paneId],
@@ -118,14 +119,22 @@ export function quoteCommand(path: string): string {
  *      args = existingArgs unchanged, env = undefined.
  *
  * The `--settings` override is ALWAYS injected for a claude pane (even with no
- * usage paths) because it carries `remoteControlAtStartup: false`. The user's
- * global `remoteControlAtStartup: true` otherwise hands the session to the cloud
- * Remote-Control bridge, which writes only a STUB local transcript (a
- * `bridge-session` marker, no assistant turns / `AskUserQuestion` / token usage) —
- * starving the overview's transcript-derived activity (last message, pending
- * question, context %). Disabling it per-session keeps the full transcript local
- * so [`activity_for_panes`] can read it. The override merges per-key over the
- * global config for THIS session only; the global file is never touched.
+ * usage paths) because it carries `remoteControlAtStartup: false` and
+ * `disableAgentView: true`. The user's global `remoteControlAtStartup: true`
+ * otherwise hands the session to the cloud Remote-Control bridge, which writes only
+ * a STUB local transcript (a `bridge-session` marker, no assistant turns /
+ * `AskUserQuestion` / token usage) — starving the overview's transcript-derived
+ * activity (last message, pending question, context %). Disabling it per-session
+ * keeps the full transcript local so [`activity_for_panes`] can read it.
+ *
+ * `disableAgentView: true` turns off Claude's built-in agent view: `←←` opens it and
+ * a single `←` backgrounds/detaches the session, which EXITS the local PTY — and an
+ * exited session is auto-archived (deleted when empty). That view duplicates
+ * agent-desktop's own agents panel, so disabling it stops an accidental arrow-key
+ * keystroke from archiving a live session out from under the user.
+ *
+ * The override merges per-key over the global config for THIS session only; the
+ * global file is never touched.
  *
  * Pure: never mutates the input `args` array.
  */
@@ -161,9 +170,10 @@ export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
   //    launch, so the statusline override is the only optional part).
   const settings: {
     remoteControlAtStartup: boolean;
+    disableAgentView: boolean;
     statusLine?: { type: string; command: string };
     hooks?: Record<string, Array<{ matcher?: string; hooks: Array<{ type: string; command: string }> }>>;
-  } = { remoteControlAtStartup: false };
+  } = { remoteControlAtStartup: false, disableAgentView: true };
 
   let env: Array<[string, string]> | undefined;
   if (usagePaths) {
