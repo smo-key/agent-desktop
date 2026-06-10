@@ -123,6 +123,44 @@ describe('roster — Agent Roster Overview', () => {
     expect(b.status).toBe('waiting');
   });
 
+  // A `/clear` (or `/logout`) fires a SessionEnd hook that the event pipeline maps to
+  // `finished` — but the claude PROCESS is still alive (the conversation restarts in
+  // place). A LIVE (non-exited) pane must therefore NEVER be reported `finished` from an
+  // event, or the inbox auto-archive effect would archive/delete a session the user is
+  // still using. `finished` for a live row can only come from an actual PTY exit or an
+  // explicit close — mirror of "a dead process is never working".
+  it('A live process is never finished from a SessionEnd event', () => {
+    const now = 1_000_000;
+    const map = mapOf(snap('pane-a'));
+    const workspaces = [ws('ws-1', 'P', [{ paneId: 'pane-a', cwd: '/x' }])];
+    // PTY alive and quiet past the working window → the byte heuristic reads `waiting`.
+    const runtime = runtimeOf(
+      rt('pane-a', { lastOutputAt: now - WORKING_WINDOW_MS - 1_000, exited: false })
+    );
+    // A SessionEnd hook (e.g. from `/clear`) drove the event-sourced status to `finished`.
+    const eventActivity: Record<string, EventActivity> = {
+      'pane-a': { status: 'finished', currentAction: null, question: null, questions: null }
+    };
+    const rows = buildRoster(map, workspaces, runtime, now, {}, WORKING_WINDOW_MS, eventActivity);
+    // Falls back to the live PTY status instead of the event's stale `finished`.
+    expect(rows[0].status).toBe('waiting');
+  });
+
+  // The dual guard still holds the other way: a genuine end (the PTY actually exited) IS
+  // `finished` even if the last event said the agent was mid-tool — a dead process is
+  // never working. This locks the symmetry the fix above relies on.
+  it('An exited process is finished even when an event says working', () => {
+    const now = 1_000_000;
+    const map = mapOf(snap('pane-a'));
+    const workspaces = [ws('ws-1', 'P', [{ paneId: 'pane-a', cwd: '/x' }])];
+    const runtime = runtimeOf(rt('pane-a', { exited: true, exitCode: 0 }));
+    const eventActivity: Record<string, EventActivity> = {
+      'pane-a': { status: 'working', currentAction: 'Bash:x', question: null, questions: null }
+    };
+    const rows = buildRoster(map, workspaces, runtime, now, {}, WORKING_WINDOW_MS, eventActivity);
+    expect(rows[0].status).toBe('finished');
+  });
+
   // Only panes flagged as app (claude) sessions are agents; a plain shell pane in
   // the same workspace is not rostered. A pane with no runtime yet still rosters
   // (status derived from the missing activity), so the roster never silently drops

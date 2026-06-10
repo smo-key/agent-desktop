@@ -377,11 +377,18 @@ function rowFor(
   const closed = pane.closed === true;
   const question = event?.question ?? activity?.question ?? null;
   const questions = event?.questions ?? activity?.questions ?? null;
+  // A LIVE (non-exited) process is NEVER `finished` from an event: a `SessionEnd` hook
+  // (e.g. `/clear`, `/logout`) ends the CONVERSATION but the claude process restarts in
+  // place, so an event-sourced `finished` here is stale — fall back to the live PTY
+  // status. Only an actual PTY exit (below) or an explicit close finishes a live row, so
+  // the inbox auto-archive never fires on a session the user is still in. Mirror of the
+  // exit rule's "a dead process is never working".
+  const liveEventStatus = event?.status && event.status !== 'finished' ? event.status : null;
   let status: AgentStatus = closed
     ? 'finished'
     : runtime?.exited
       ? ptyStatus
-      : event?.status ?? ptyStatus;
+      : liveEventStatus ?? ptyStatus;
   // COORDINATOR needs-input suppression (tasks 10.11–10.12): a LIVE coordinator must
   // NOT inherit the default idle/waiting heuristic — it needs you ONLY when it asks
   // an AskUserQuestion (its pending question(s)) OR it called `request_user_input`
