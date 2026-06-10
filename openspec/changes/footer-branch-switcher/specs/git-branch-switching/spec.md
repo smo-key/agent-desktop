@@ -35,15 +35,21 @@ callback, mirroring how push/pull actions are wired only from the footer.
 The picker SHALL list the project folder's local branches and remote-tracking
 branches, obtained from a non-interactive git query. The branch the repository is
 currently on SHALL be marked as selected. Local and remote branches SHALL be
-visually distinguished (e.g. grouped into sections). The query SHALL fail safely:
-a folder that is not a git repository or that git cannot read yields an empty
-result rather than an error that breaks the UI.
+visually distinguished (e.g. grouped into sections). Every listed remote entry
+SHALL be a real `<remote>/<branch>` name: the remote's symbolic HEAD MUST be
+excluded — including the bare remote name (e.g. `origin`) that git's short ref
+form collapses `refs/remotes/origin/HEAD` into, which is not a checkout-able
+branch. The query SHALL fail safely: a folder that is not a git repository or
+that git cannot read yields an empty result rather than an error that breaks the
+UI.
 
 #### Scenario: Branches are listed with the current branch marked
 
 - **WHEN** the picker opens for a repository on branch `main`
 - **THEN** the picker lists the local branches with `main` marked as current, and
-  lists remote-tracking branches in a separate section
+  lists remote-tracking branches in a separate section, each as a real
+  `<remote>/<branch>` name — never the bare remote name `origin` (the remote's
+  symbolic HEAD is excluded)
 
 #### Scenario: Repository with no remote
 

@@ -214,15 +214,20 @@ pub fn list_branches(dir: &str) -> BranchList {
         .map(|out| out.lines().map(str::to_string).filter(|l| !l.is_empty()).collect())
         .unwrap_or_default();
 
-    // Remote-tracking branches, minus symbolic `*/HEAD` entries.
-    let remotes = run_git(dir, &["for-each-ref", "--format=%(refname:short)", "refs/remotes"])
+    // Remote-tracking branches as `<remote>/<branch>`. We read the FULL refname
+    // (not `%(refname:short)`) because git's short form renders a remote's
+    // symbolic HEAD `refs/remotes/origin/HEAD` as the bare remote name `origin` —
+    // which is NOT a checkout-able branch. Reading the full ref lets us drop every
+    // `*/HEAD` deterministically, then strip the `refs/remotes/` prefix, so the
+    // list only ever contains real `<remote>/<branch>` names.
+    let remotes = run_git(dir, &["for-each-ref", "--format=%(refname)", "refs/remotes"])
         .map(|out| {
             out.lines()
-                .map(str::to_string)
                 .filter(|l| !l.is_empty())
-                // Drop entries whose last path component is "HEAD"
-                // (e.g. "origin/HEAD", "upstream/HEAD").
-                .filter(|l| l.split('/').last() != Some("HEAD"))
+                // Drop the remote's symbolic HEAD (e.g. refs/remotes/origin/HEAD).
+                .filter(|l| !l.ends_with("/HEAD"))
+                // refs/remotes/origin/main -> origin/main
+                .filter_map(|l| l.strip_prefix("refs/remotes/").map(str::to_string))
                 .collect()
         })
         .unwrap_or_default();
@@ -887,6 +892,20 @@ mod tests {
         assert!(
             !bl.remotes.contains(&"origin/HEAD".to_string()),
             "remotes must NOT contain origin/HEAD, got {:?}",
+            bl.remotes
+        );
+        // Regression: git's short form renders refs/remotes/origin/HEAD as the
+        // BARE remote name `origin`, which is not a checkout-able branch. Reading
+        // the full refname + stripping the prefix must exclude it — every remote
+        // entry is a real `<remote>/<branch>` (always contains a slash).
+        assert!(
+            !bl.remotes.contains(&"origin".to_string()),
+            "remotes must NOT contain the bare remote name 'origin', got {:?}",
+            bl.remotes
+        );
+        assert!(
+            bl.remotes.iter().all(|r| r.contains('/')),
+            "every remote must be <remote>/<branch>, got {:?}",
             bl.remotes
         );
     }
