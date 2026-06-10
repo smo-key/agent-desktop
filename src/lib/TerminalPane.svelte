@@ -641,6 +641,28 @@
         }).catch(() => {});
       });
 
+      // Shift+Enter: xterm emits the same byte (\r) for Enter and Shift+Enter, so a
+      // TUI like claude can't tell them apart and submits on both. We intercept the
+      // keydown and inject \n instead — the byte Ctrl+J sends, which claude treats as
+      // "insert newline" in every terminal (no kitty/CSI-u negotiation required).
+      //
+      // Returning false alone is NOT enough: it suppresses xterm's keydown handling
+      // but the follow-up `keypress` still emits the submitting \r. preventDefault()
+      // on the keydown cancels that keypress, so the \r never reaches the PTY.
+      term.attachCustomKeyEventHandler((e) => {
+        if (e.type === 'keydown' && e.key === 'Enter' && e.shiftKey) {
+          e.preventDefault();
+          if (ptyId !== undefined) {
+            void invoke('pty_write', {
+              id: ptyId,
+              data: Array.from(enc.encode('\n'))
+            }).catch(() => {});
+          }
+          return false;
+        }
+        return true;
+      });
+
       // Title: surface xterm title changes (OSC 0/2) to an interested parent (the
       // Terminals panel labels a terminal with the running command). Only wired when
       // a callback is supplied (agent panes pass none).
