@@ -1,7 +1,7 @@
 # agent-desktop — Design Spec
 
 - **Date:** 2026-05-30
-- **Status:** Approved (ready for implementation planning)
+- **Status:** Superseded — implemented and shipped via OpenSpec change `add-agent-desktop` (archived 2026-06-10). The durable, up-to-date behavior now lives in `openspec/specs/` (capabilities: agent-overview, layout-persistence, projects, session-launcher, task-detection, terminal-core, tiling-layout, usage-dashboard). This document is retained for historical design rationale only.
 - **Author:** Arthur Pachachura (with Claude)
 
 A Tauri v2 + SvelteKit desktop terminal built for running and watching Claude Code

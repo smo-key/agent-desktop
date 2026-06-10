@@ -80,7 +80,7 @@ Cover every scenario in `specs/session-launcher/spec.md`.
 - [x] 9.2 `tools/check-scenario-coverage.mjs` reports 100% scenario coverage across all 7 capabilities. (All 7 enforced: terminal-core, tiling-layout, layout-persistence, usage-dashboard, task-detection, session-launcher, agent-overview — 0 missing each; gate exits 0.)
 - [x] 9.3 `openspec validate add-agent-desktop --strict` passes; full `npm run check` green.
 - [x] 9.4 Verify spawned `claude` children resolve PATH and are killed/reaped on quit — confirmed: `PtyManager::kill_all` reaps every pane child on quit and GUI PATH/env seeding is in place (adversarial review + user testing). NOTE: Developer-ID code-signing + packaging is split out as a separate, non-blocking **release** step (not a feature-completeness gate for this change).
-- [ ] 9.5 `openspec archive add-agent-desktop`; mark `docs/superpowers/specs/2026-05-30-agent-desktop-design.md` superseded.
+- [x] 9.5 `openspec archive add-agent-desktop`; mark `docs/superpowers/specs/2026-05-30-agent-desktop-design.md` superseded. — done at close-out: delta specs promoted into `openspec/specs/`, design doc marked Superseded.
 
 ## 10. Capability: `agent-overview` (Milestone 7 — mission control)
 
