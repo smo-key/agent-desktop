@@ -30,6 +30,12 @@
   // button is shown to the RIGHT of the PR button: it renders `openPrs` (a warning
   // glyph + the count when >0, else a neutral checkmark + `0`) and clicking opens
   // the repo's pull-requests page on GitHub. Without it no button shows.
+  //
+  // When `onCommit` is provided (the footer only), the MODIFIED (uncommitted-files)
+  // pill becomes a BUTTON whenever `modified > 0` — clicking opens a commit confirm.
+  // It stays INERT (a plain display pill, no action) when `modified` is 0/null, so
+  // a clean tree can't be clicked. `filesTip` carries the hover-tooltip text for
+  // that pill (the changed file paths, capped) — null/empty ⇒ no tooltip.
   import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import type { GitStatus } from './snapshots.svelte';
@@ -46,7 +52,9 @@
     prExists = false,
     prDisabled = false,
     onOpenPrs,
-    openPrs
+    openPrs,
+    onCommit,
+    filesTip = null
   }: {
     git: GitStatus | null;
     always?: boolean;
@@ -60,7 +68,14 @@
     prDisabled?: boolean;
     onOpenPrs?: () => void;
     openPrs?: { icon: string; label: string; warning: boolean };
+    onCommit?: () => void;
+    filesTip?: string | null;
   } = $props();
+
+  // The modified (uncommitted-files) pill is a clickable COMMIT button only when
+  // the footer wired `onCommit` AND there are actually changes (`modified > 0`).
+  // Otherwise it stays an inert display pill — a clean tree must not be clickable.
+  const commitable = $derived(!!onCommit && (git?.modified ?? 0) > 0);
 </script>
 
 <div class="git" class:stacked={stack}>
@@ -133,10 +148,35 @@
         {/if}
       {/if}
       {#if git.modified != null}
-        <span class="pill modified" class:zero={git.modified === 0} use:tooltip={`${git.modified} uncommitted file${git.modified === 1 ? '' : 's'} changed`}>
-          <Icon name="pencil" size={12} />
-          <span class="txt">{git.modified}</span>
-        </span>
+        {#if commitable}
+          <!-- Changes present + footer wired a commit action: a clickable COMMIT
+               button. Hover lists the changed file paths (filesTip); when paths
+               weren't surfaced, fall back to the count summary so a hint always
+               shows while there are changes. -->
+          <button
+            type="button"
+            class="pill modified action"
+            onclick={onCommit}
+            use:tooltip={filesTip ?? `${git.modified} uncommitted file${git.modified === 1 ? '' : 's'} changed — commit`}
+          >
+            <Icon name="pencil" size={12} />
+            <span class="txt">{git.modified}</span>
+          </button>
+        {:else}
+          <!-- INERT: a clean tree (modified === 0) or no commit action wired. A
+               clean tree shows NO tooltip (no file list); a non-zero count with no
+               action falls back to the count summary. -->
+          <span
+            class="pill modified"
+            class:zero={git.modified === 0}
+            use:tooltip={git.modified === 0
+              ? ''
+              : (filesTip ?? `${git.modified} uncommitted file${git.modified === 1 ? '' : 's'} changed`)}
+          >
+            <Icon name="pencil" size={12} />
+            <span class="txt">{git.modified}</span>
+          </span>
+        {/if}
       {:else if always}
         <span class="pill modified zero" use:tooltip={'No uncommitted changes'}>
           <Icon name="pencil" size={12} />

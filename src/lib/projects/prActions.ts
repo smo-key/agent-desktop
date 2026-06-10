@@ -133,6 +133,28 @@ export function buildCreatePrPrompt(base: string = DEFAULT_BASE): string {
 }
 
 /**
+ * The agent prompt that COMMITS the pending working-tree changes. Instructs the
+ * session to stage everything and create ONE commit with a clear conventional
+ * message on the CURRENT branch, then hand back to the user (so the auto-archive
+ * effect closes the fire-and-forget task). Crucially it must NOT push and NOT open
+ * a PR — committing locally is the whole job. Kept pure + exported so its shape is
+ * unit-tested (mirrors `buildCreatePrPrompt`).
+ */
+export function buildCommitPrompt(): string {
+  return [
+    'Commit the pending uncommitted changes in this repository on the CURRENT branch.',
+    '',
+    'Steps:',
+    '1. Review the working-tree changes (`git status` and `git diff`) so the commit message is accurate.',
+    '2. Stage ALL pending changes (`git add -A`).',
+    '3. Create exactly ONE commit with a clear, conventional-commits message (e.g. `feat: …`, `fix: …`, `chore: …`) summarizing the changes.',
+    '4. Print the resulting commit summary and then stop.',
+    '',
+    'Do NOT push the branch and do NOT open a pull request — just create the local commit on the current branch.'
+  ].join('\n');
+}
+
+/**
  * Open a URL externally (the user's default browser) via the `open_path`
  * command — the same command the app uses to open files/folders; on macOS `open
  * <url>` hands an http(s) URL to the default browser. Best-effort; a failure is
@@ -157,6 +179,21 @@ function spawnCreatePr(project: PrProject, base: string): void {
     return;
   }
   agentTaskLauncher(project.id, buildCreatePrPrompt(base));
+}
+
+/**
+ * Spawn the auto-archiving agent task that COMMITS the pending changes for
+ * `project`, reusing the SAME `agentTaskLauncher` (and thus the same `+page.svelte`
+ * `taskAgentPanes` auto-archive wiring) as the PR action — NOT a second launcher.
+ * No-op (warns) when no launcher is wired or the project has no folder.
+ */
+function spawnCommit(project: PrProject): void {
+  if (!project.path) return;
+  if (!agentTaskLauncher) {
+    console.warn('commit: no agent-task launcher wired');
+    return;
+  }
+  agentTaskLauncher(project.id, buildCommitPrompt());
 }
 
 /**
@@ -187,5 +224,25 @@ export async function onPrButtonClick(
     message: `No open pull request from "${branch}" into ${base} was found. Create one? This starts an agent session that pushes the branch and opens the PR into ${base}.`,
     confirmLabel: 'Create PR',
     onConfirm: () => spawnCreatePr(project, base)
+  });
+}
+
+/**
+ * Handle a COMMIT-button click (the footer's uncommitted-files indicator, only
+ * wired when there ARE changes). Opens a confirm dialog; confirming spawns the
+ * auto-archiving agent task that commits the pending changes on the current
+ * branch — via the SAME launcher the PR action uses. Cancelling fires nothing.
+ *
+ * A no-op when the project has no folder (nothing to commit in). The caller
+ * (`AppFooter`) already leaves the indicator INERT when the tree is clean, so this
+ * is only invoked when there's something to commit.
+ */
+export function onCommitButtonClick(project: PrProject): void {
+  if (!project.path) return;
+  confirmModal.show({
+    title: 'Commit changes',
+    message: `Commit the uncommitted changes in "${project.name}" on the current branch? This starts an agent session that stages the changes and creates one commit. It does not push or open a pull request.`,
+    confirmLabel: 'Commit',
+    onConfirm: () => spawnCommit(project)
   });
 }

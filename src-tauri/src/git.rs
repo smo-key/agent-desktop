@@ -21,6 +21,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
+/// The most paths we surface for the uncommitted-files hover list. The UI only
+/// shows the first 10 (plus an "and N more" hint), so we cap collection at a sane
+/// bound — enough to drive an accurate overflow indicator without shipping a giant
+/// list when a tree has thousands of changes.
+const MAX_CHANGED_PATHS: usize = 50;
+
 /// Git status for one project folder — the frontend `GitStatus` contract. Every
 /// field is `Option` (null when git couldn't answer) so the shape is stable.
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -32,6 +38,49 @@ pub struct GitStatus {
     pub modified: Option<i64>,
     pub ahead: Option<i64>,
     pub behind: Option<i64>,
+    /// The changed file PATHS (capped at [`MAX_CHANGED_PATHS`]) for the
+    /// uncommitted-files hover list. Empty when the tree is clean; left empty
+    /// (not null) when git couldn't answer — the count (`modified`) carries the
+    /// "couldn't answer" signal, this is only the optional path detail.
+    pub files: Vec<String>,
+}
+
+/// Parse the changed file PATHS out of `git status --porcelain` output. Each line
+/// is `XY <path>` — a two-column status code, a single separating space, then the
+/// path — so the path begins at byte offset 3. For a rename the path is
+/// `old -> new`, and we keep the NEW path (where the content now lives). Capped at
+/// [`MAX_CHANGED_PATHS`] so a huge dirty tree can't balloon the payload.
+///
+/// IMPORTANT: pass the RAW (un-trimmed) porcelain. The first status column is a
+/// SPACE for any worktree-only change (e.g. ` M file` for an unstaged
+/// modification), so a leading `trim()` would shift that line and corrupt its
+/// path. Offsets are byte indices; porcelain path bytes are ASCII (git quotes
+/// non-ASCII names), so byte slicing never splits a char.
+///
+/// Quoted paths (git quotes names with special/non-ASCII bytes, wrapping them in
+/// `"…"` with C-style escapes) are passed through verbatim, including the quotes —
+/// the hover list is a best-effort hint, so an exact unescape isn't worth the
+/// complexity; the path still reads recognizably.
+pub fn parse_porcelain_paths(porcelain: &str) -> Vec<String> {
+    porcelain
+        .lines()
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| {
+            // Path starts after the 2-col status + 1 separating space (offset 3).
+            // A shorter line (no path) is skipped.
+            let rest = line.get(3..)?;
+            if rest.is_empty() {
+                return None;
+            }
+            // Rename / copy: `old -> new` — keep the destination path.
+            let path = match rest.rsplit_once(" -> ") {
+                Some((_old, new)) => new,
+                None => rest,
+            };
+            Some(path.to_string())
+        })
+        .take(MAX_CHANGED_PATHS)
+        .collect()
 }
 
 /// Run `git -C <dir> <args...>`, returning trimmed stdout on a clean exit, else
@@ -43,6 +92,17 @@ fn run_git(dir: &str, args: &[&str]) -> Option<String> {
     }
     let text = String::from_utf8(output.stdout).ok()?;
     Some(text.trim().to_string())
+}
+
+/// Run `git -C <dir> <args...>`, returning RAW (un-trimmed) stdout on a clean exit,
+/// else `None`. Used for `status --porcelain`, whose first status column can be a
+/// SPACE (` M file`) that a leading trim would eat — corrupting the path parse.
+fn run_git_raw(dir: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()
 }
 
 /// Compute the git status for a single folder. Mirrors the statusline wrapper:
@@ -58,14 +118,14 @@ pub fn status_for_dir(dir: &str) -> GitStatus {
     }
     // `--porcelain` prints one line per change; empty stdout => clean tree. The
     // line count is the number of modified paths (`dirty` is just `count > 0`).
-    if let Some(porcelain) = run_git(dir, &["status", "--porcelain"]) {
-        let count = if porcelain.is_empty() {
-            0
-        } else {
-            porcelain.lines().count() as i64
-        };
+    // Read RAW (un-trimmed): the first status column is a SPACE for worktree-only
+    // changes, so a trim would shift those lines and corrupt the path parse below.
+    if let Some(porcelain) = run_git_raw(dir, &["status", "--porcelain"]) {
+        let count = porcelain.lines().filter(|l| !l.is_empty()).count() as i64;
         out.dirty = Some(count > 0);
         out.modified = Some(count);
+        // Also collect the changed file PATHS (capped) for the hover list.
+        out.files = parse_porcelain_paths(&porcelain);
     }
     // Commits BEHIND origin/main (matches the footer / user's Claude statusline).
     if let Some(behind) = run_git(dir, &["rev-list", "HEAD..origin/main", "--count", "--no-merges"])
@@ -863,6 +923,53 @@ mod tests {
         // `modified` resolves to a concrete count (>= 0) inside a repo.
         assert!(status.modified.is_some(), "expected a modified count inside the repo");
         assert!(status.modified.unwrap() >= 0);
+    }
+
+    #[test]
+    fn parse_porcelain_paths_strips_status_prefix_and_handles_renames() {
+        // A representative porcelain blob: modified, added, staged-add, untracked,
+        // a partially-staged file, and a rename (`old -> new`).
+        let porcelain = " M src/a.rs\nA  src/b.rs\n?? scratch.txt\nMM src/c.rs\nR  old/name.rs -> new/name.rs\n";
+        let paths = parse_porcelain_paths(porcelain);
+        assert_eq!(
+            paths,
+            vec![
+                "src/a.rs".to_string(),
+                "src/b.rs".to_string(),
+                "scratch.txt".to_string(),
+                "src/c.rs".to_string(),
+                // Rename keeps the NEW (destination) path.
+                "new/name.rs".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_porcelain_paths_is_empty_for_a_clean_tree() {
+        assert!(parse_porcelain_paths("").is_empty());
+    }
+
+    #[test]
+    fn parse_porcelain_paths_caps_at_the_max() {
+        // Build a porcelain blob with more than the cap of changed files.
+        let body: String = (0..(MAX_CHANGED_PATHS + 20))
+            .map(|i| format!(" M f{i}.txt\n"))
+            .collect();
+        let paths = parse_porcelain_paths(&body);
+        assert_eq!(paths.len(), MAX_CHANGED_PATHS, "should cap at MAX_CHANGED_PATHS");
+        assert_eq!(paths[0], "f0.txt");
+    }
+
+    #[test]
+    fn status_for_dir_collects_changed_paths() {
+        let repo = TempRepo::new("paths");
+        // Add a tracked-but-modified file and an untracked one.
+        fs::write(repo.path().join("README.md"), "changed\n").unwrap();
+        fs::write(repo.path().join("new.txt"), "fresh\n").unwrap();
+        let status = status_for_dir(repo.str());
+        assert!(status.files.contains(&"README.md".to_string()), "files: {:?}", status.files);
+        assert!(status.files.contains(&"new.txt".to_string()), "files: {:?}", status.files);
+        assert_eq!(status.modified, Some(2));
     }
 
     #[test]
