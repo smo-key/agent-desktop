@@ -32,6 +32,10 @@ export interface AgentEvent {
   question?: { questions?: unknown } | null;
   /** The message text on a `Notification` event. */
   notification?: string | null;
+  /** The end reason on a `SessionEnd` event (`clear` / `logout` / `prompt_input_exit` /
+   *  `other`). `clear` keeps the process alive (the conversation restarts), so it is not
+   *  a finished session. */
+  reason?: string | null;
 }
 
 /** The high-level event-sourced activity for one pane (the roster's input). */
@@ -106,7 +110,8 @@ function questionText(questions: PendingQuestion[]): string | null {
  *  - last event `SessionStart`                    → `waiting` — idle at the prompt
  *      (freshly started or just resumed), a STABLE status so it doesn't bounce
  *      with the idle TUI's redraws; it never reads "working" until you prompt it
- *  - last event `SessionEnd`                      → `finished`
+ *  - last event `SessionEnd`                      → `finished`, EXCEPT reason `clear`
+ *      (a `/clear` restarts the conversation in place) → `waiting` (idle at the prompt)
  *  - nothing determinable                         → `null` (roster falls back to PTY)
  *
  * `currentAction` is the latest PreToolUse summary with no matching PostToolUse,
@@ -171,7 +176,11 @@ export function deriveEventActivity(events: AgentEvent[]): EventActivity {
       status = 'waiting';
       break;
     case 'SessionEnd':
-      status = 'finished';
+      // A `/clear` fires SessionEnd(reason:"clear") but the claude PROCESS continues (a
+      // SessionStart follows), so it is idle at the freshly-cleared prompt — `waiting`,
+      // NOT `finished`. A real end (logout / prompt-input-exit / other, or an unknown
+      // reason from an older event) finishes.
+      status = last.reason === 'clear' ? 'waiting' : 'finished';
       break;
     default:
       status = null;
