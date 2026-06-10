@@ -2,16 +2,21 @@
 
 ### Requirement: Per-category open-with preferences
 
-The app SHALL maintain a preference for which application opens a file, keyed by three categories: HTML files, code files, and other files (the catch-all, including directories and unknown/binary types). Each category's value SHALL be either "System Default" (the OS handler) or a named application. A file SHALL be classified into exactly one category by its filename/extension.
+The app SHALL maintain a preference for which application opens a file, keyed by four categories: HTML files, Markdown files, code files, and other files (the catch-all, including directories and unknown/binary types). Each category's value SHALL be either "System Default" (the OS handler) or a named application. A file SHALL be classified into exactly one category by its filename/extension.
 
 #### Scenario: HTML files classify to the HTML category
 
 - **WHEN** a path ends in `.html`, `.htm`, or `.xhtml`
 - **THEN** it is classified as an HTML file
 
+#### Scenario: Markdown files classify to the Markdown category
+
+- **WHEN** a path ends in `.md`, `.markdown`, `.mdx`, `.mdown`, or `.mkd`
+- **THEN** it is classified as a Markdown file (its own category, not code)
+
 #### Scenario: Source and text files classify to the code category
 
-- **WHEN** a path is a recognized source or text file (e.g. `.ts`, `.py`, `.rs`, `.css`, `.md`, `.txt`, or a well-known extension-less code file such as `Dockerfile`)
+- **WHEN** a path is a recognized source or text file (e.g. `.ts`, `.py`, `.rs`, `.css`, `.txt`, or a well-known extension-less code file such as `Dockerfile`)
 - **THEN** it is classified as a code file
 
 #### Scenario: Unknown, binary, and extension-less paths classify to other

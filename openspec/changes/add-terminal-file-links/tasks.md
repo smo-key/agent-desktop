@@ -32,3 +32,7 @@
 
 - [x] 6.1 Type-check (`npm run check`, 0 errors), full test suite (`npm test`, all pass incl. new `terminalLinks` + `openWith`), and production build (`npm run build`) succeed. Rust `cargo check` clean.
 - [x] 6.2 Manual GUI pass in a dev build (confirmed by user — "Looks good"): ⌘-hover shows the dotted underline + a STABLE pointer cursor (no flicker at rest), clears on release/leave/scroll; ⌘-click opens via prefs; non-⌘ selection/scroll unaffected; Settings gear opens the dialog; changing an app persists across restart; HTML→Brave and code/other→Cursor open correctly.
+
+## 7. Close-out spec reconciliation
+
+- [x] 7.1 Reconcile the `open-with-preferences` delta spec with shipped code: the implementation classifies into FOUR buckets — `html`, `markdown`, `code`, `other` (`openWith.svelte.ts` `classify()`, `SettingsModal.svelte`) — but the spec described three and put `.md` under code. Updated the requirement to four categories and added a "Markdown files classify to the Markdown category" scenario (markdown is its own bucket: `.md`/`.markdown`/`.mdx`/`.mdown`/`.mkd`), and dropped `.md` from the code-classification example. Covered by `openWith.test.ts`. (Capability is pending/non-enforced, so no coverage-gate impact.)
