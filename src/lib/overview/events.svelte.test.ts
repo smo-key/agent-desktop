@@ -82,7 +82,7 @@ describe('EventStore', () => {
     expect(store.timeline('p1').at(-1)?.synthetic).toBe(true);
   });
 
-  it('seed merge preserves a synthetic interrupt Stop (re-seed does not flip to working)', async () => {
+  it('Seed merge preserves a synthetic interrupt Stop', async () => {
     // REGRESSION: seed re-runs on every session-set change. A wholesale per-pane replace
     // would clobber the frontend-only synthetic interrupt Stop (the Rust ring can't
     // reproduce it), re-pinning the interrupted pane back to `working`.
@@ -101,7 +101,7 @@ describe('EventStore', () => {
     expect(store.timeline('p1').at(-1)?.synthetic).toBe(true); // and is still the last event
   });
 
-  it('seed merge preserves a live event newer than the snapshot (no lost update)', async () => {
+  it('Seed merge preserves a live event newer than the snapshot', async () => {
     // A live turn-ending Stop lands at ts 100 (during the `events_for` round-trip) while
     // the snapshot was taken earlier (only the UserPromptSubmit at ts 50). The merge must
     // not drop the newer live Stop, which would otherwise leave the pane stuck `working`.

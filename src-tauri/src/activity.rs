@@ -84,9 +84,11 @@ pub struct Activity {
     /// still waiting), or `null` — a compact one-line form for the callout.
     #[serde(default)]
     pub question: Option<String>,
-    /// The full structured pending question(s) — header, options, multi-select — so
-    /// the overview can render the choices and answer on the user's behalf. `null`
-    /// when nothing is pending.
+    /// The full structured pending question(s) — header, options, multi-select. The
+    /// transcript-derived activity does NOT populate this (a pending question is not
+    /// on disk), so it is `null` here; the overview's live structured question comes
+    /// from the activity-event pipeline (`PreToolUse[AskUserQuestion]`) on the
+    /// frontend. Retained on the wire shape as the frontend's typed fallback slot.
     #[serde(default)]
     pub questions: Option<Vec<PendingQuestion>>,
     /// Context-window usage 0..100 derived from the newest assistant message's
@@ -569,69 +571,24 @@ pub fn find_transcript(projects_base: &Path, pane: &PaneRef) -> Option<PathBuf> 
     None
 }
 
-/// The PENDING-question sidecar next to a transcript: `<dir>/<session_id>.question.json`.
-/// The app's `question-hook.js` writes it on `PreToolUse[AskUserQuestion]` (as
-/// `{"questions":[{header, question, multiSelect, options:[{label, description}]}]}`)
-/// and deletes it once answered (`PostToolUse`/`Stop`). This is the ONLY reliable
-/// source for a *pending* question: the assistant turn carrying the `AskUserQuestion`
-/// is not written to the transcript until it's answered, so by the time it's on disk
-/// it's no longer pending. Returns the structured question(s) when valid + non-empty.
-fn read_pending_questions(transcript: &Path, session_id: &str) -> Option<Vec<PendingQuestion>> {
-    let sidecar = transcript
-        .parent()?
-        .join(format!("{session_id}.question.json"));
-    let body = std::fs::read_to_string(&sidecar).ok()?;
-    let v: Value = serde_json::from_str(&body).ok()?;
-    let arr = v.get("questions")?.as_array()?;
-    let questions: Vec<PendingQuestion> = arr
-        .iter()
-        .filter_map(|q| serde_json::from_value(q.clone()).ok())
-        .filter(|q: &PendingQuestion| !q.question.trim().is_empty())
-        .collect();
-    if questions.is_empty() {
-        None
-    } else {
-        Some(questions)
-    }
-}
-
-/// The compact one-line form of the pending question(s): each question's text,
-/// collapsed and joined, truncated for the callout.
-fn question_summary(questions: &[PendingQuestion]) -> Option<String> {
-    let joined = questions
-        .iter()
-        .map(|q| collapse(&q.question))
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" • ");
-    if joined.is_empty() {
-        None
-    } else {
-        Some(truncate(&joined, QUESTION_MAX))
-    }
-}
-
 /// Build the `pane_id -> Activity` map for a set of panes rooted at
 /// `projects_base`. Each pane's transcript is its EXACT `<session_id>.jsonl` — so
 /// two agents in the same folder never cross-contaminate. A pane with no session
 /// id, or whose transcript doesn't exist yet, is simply absent. Never panics.
 ///
-/// A PENDING question is taken from the hook-written `<session_id>.question.json`
-/// sidecar (it can't be read from the transcript — see [`read_pending_question`]);
-/// it overrides the transcript's question, which is `None` while pending.
+/// The activity (summary + any transcript-derived question) comes wholly from the
+/// transcript. A live PENDING `AskUserQuestion` is NOT read here: it is sourced from
+/// the activity-event pipeline (`PreToolUse[AskUserQuestion]`) on the frontend (see
+/// the `activity-timeline` capability), which became the authoritative source. The
+/// former `<session_id>.question.json` sidecar — written by a now-deleted question
+/// hook — and its `read_pending_questions` reader were retired with that migration.
 pub fn activity_for_panes(projects_base: &Path, panes: &[PaneRef]) -> HashMap<String, Activity> {
     let mut map = HashMap::new();
     for pane in panes {
         let Some(transcript) = find_transcript(projects_base, pane) else {
             continue;
         };
-        let mut activity = summarize_transcript(&transcript);
-        if let Some(sid) = pane.session_id.as_deref().and_then(safe_component) {
-            if let Some(questions) = read_pending_questions(&transcript, sid) {
-                activity.question = question_summary(&questions);
-                activity.questions = Some(questions);
-            }
-        }
+        let activity = summarize_transcript(&transcript);
         map.insert(pane.pane_id.clone(), activity);
     }
     map
@@ -819,57 +776,6 @@ mod tests {
         assert_eq!(map.get("pane-B").and_then(|a| a.summary.as_deref()), Some("from B"));
         assert_eq!(map.get("pane-B2").and_then(|a| a.summary.as_deref()), Some("from B"));
         assert!(!map.contains_key("pane-none"), "no session id -> omitted");
-    }
-
-    /// A PENDING question lives in the hook-written `<session_id>.question.json`
-    /// sidecar (the transcript never carries it while pending). `activity_for_panes`
-    /// reads that sidecar and uses it as the row's question; removing the sidecar
-    /// (the hook's clear-on-answer) drops the question again.
-    #[test]
-    fn pending_question_comes_from_the_sidecar() {
-        let tmp = TempDir::new("sidecar");
-        let base = tmp.path();
-        let cwd = "/work/q";
-        let project = project_dir_for_cwd(cwd);
-        // A transcript with assistant text but NO AskUserQuestion (the pending turn
-        // isn't on disk) — exactly the live "agent is asking" shape.
-        let path = write_transcript(
-            base,
-            &project,
-            "sess-Q",
-            &[assistant(serde_json::json!([{"type":"text","text":"thinking"}]))],
-        );
-        let sidecar = path.with_file_name("sess-Q.question.json");
-        std::fs::write(
-            &sidecar,
-            r#"{"questions":[{"header":"DB","question":"Postgres or MySQL?","multiSelect":false,"options":[{"label":"Postgres","description":"relational"},{"label":"MySQL","description":""}]}]}"#,
-        )
-        .unwrap();
-
-        let panes = vec![PaneRef {
-            pane_id: "pane-Q".into(),
-            session_id: Some("sess-Q".into()),
-            cwd: Some(cwd.into()),
-        }];
-        let map = activity_for_panes(base, &panes);
-        let a = map.get("pane-Q").unwrap();
-        assert_eq!(a.summary.as_deref(), Some("thinking"));
-        // Compact one-line form for the callout.
-        assert_eq!(a.question.as_deref(), Some("Postgres or MySQL?"));
-        // Structured options surfaced for the answer UI.
-        let qs = a.questions.as_ref().unwrap();
-        assert_eq!(qs.len(), 1);
-        assert_eq!(qs[0].header, "DB");
-        assert_eq!(qs[0].options.len(), 2);
-        assert_eq!(qs[0].options[0].label, "Postgres");
-        assert_eq!(qs[0].options[0].description, "relational");
-        assert!(!qs[0].multi_select);
-
-        // Hook clears it on answer -> no pending question.
-        std::fs::remove_file(&sidecar).unwrap();
-        let map2 = activity_for_panes(base, &panes);
-        assert!(map2.get("pane-Q").unwrap().question.is_none());
-        assert!(map2.get("pane-Q").unwrap().questions.is_none());
     }
 
     /// The recent assistant TEXT messages surface newest-LAST with newlines

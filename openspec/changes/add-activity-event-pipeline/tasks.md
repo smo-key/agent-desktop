@@ -46,7 +46,7 @@
 ## 7. Pending question via event + retire sidecar
 
 - [x] 7.1 Write failing tests: pending question surfaced from the `PreToolUse[AskUserQuestion]` event; cleared on Post/Stop; no sidecar read
-- [ ] 7.2 Source pending question from the event store (DEFERRED: keep `read_pending_questions` dormant-but-tested until `add-agent-desktop` archives — removing it now would orphan the enforced agent-overview scenario "Pending question comes from the sidecar")
+- [x] 7.2 Source pending question from the event store; retire the sidecar reader. The pending `AskUserQuestion` now comes from the `PreToolUse[AskUserQuestion]` event (frontend event store), preferred over the activity poll (`roster.ts`: `event?.questions ?? activity?.questions`). At close-out (after `add-agent-desktop` archived) the deferral was resolved: `read_pending_questions` + `question_summary` + the sidecar block in `activity_for_panes` and the `pending_question_comes_from_the_sidecar` Rust test were REMOVED, and the agent-overview "Pending question comes from the sidecar" scenario was reconciled to event-sourced (scenario removed; prose cross-refs `activity-timeline`).
 - [x] 7.3 Delete `src-tauri/resources/question-hook.cjs` and any now-dead references
 - [x] 7.4 Verify question tests pass
 
@@ -61,4 +61,4 @@
 - [x] 9.1 Integration test: a simulated event sequence (incl. a restart seeded from disk) drives expected `status`/`currentAction`/timeline transitions
 - [x] 9.2 Run full svelte-check + frontend + Rust test suites green
 - [x] 9.3 `openspec validate add-activity-event-pipeline --strict` passes
-- [ ] 9.4 Manual smoke: launch a session, confirm live status/currentAction/timeline, answer a question, restart the app, confirm the timeline rehydrates
+- [x] 9.4 Manual smoke: launch a session, confirm live status/currentAction/timeline, answer a question, restart the app, confirm the timeline rehydrates. — confirmed by user high-level testing (close-out).

@@ -109,7 +109,7 @@ The system SHALL present the card overview as the primary top-level view, which 
 ### Requirement: Live Transcript Activity
 The system SHALL spawn each `claude` agent with an APP-OWNED session id (`--session-id <uuid>`) and derive that agent's high-level activity directly from its EXACT session TRANSCRIPT (`~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`), so the overview surfaces the agent's last message and any pending question INDEPENDENTLY of the statusline snapshot — which does not re-render while Claude is blocked on an interactive `AskUserQuestion` prompt — and never cross-contaminates two agents that share a folder. The frontend SHALL poll this per-pane `{summary, question}` on a short clock.
 
-Because the assistant turn carrying an `AskUserQuestion` is NOT written to the transcript until the question is answered (it flushes only once the tool resolves), a PENDING question cannot be read from the transcript. The system SHALL therefore install an `AskUserQuestion` hook into each agent's per-session `--settings` that, on `PreToolUse`, writes the question text to a `<uuid>.question.json` sidecar beside the transcript, and on `PostToolUse`/`Stop` clears it; the activity reader SHALL use that sidecar as the agent's pending `question`. The system SHALL also disable the cloud Remote-Control bridge per session (`remoteControlAtStartup: false`) so the transcript stays local and complete.
+Because the assistant turn carrying an `AskUserQuestion` is NOT written to the transcript until the question is answered (it flushes only once the tool resolves), a PENDING question cannot be read from the transcript. The system SHALL therefore source a pending question from the activity-event pipeline: the `PreToolUse[AskUserQuestion]` hook event carries the structured question payload, which the frontend surfaces as the agent's pending `question` and structured `questions`, clearing it on the matching `PostToolUse`/`Stop` (see the `activity-timeline` capability). This supersedes the earlier `<uuid>.question.json` sidecar written by a dedicated question hook and read back by the transcript reader — both now retired. The system SHALL also disable the cloud Remote-Control bridge per session (`remoteControlAtStartup: false`) so the transcript stays local and complete.
 
 #### Scenario: Agent launched with an app-owned session id
 - **WHEN** a `claude` pane is spawned
@@ -122,10 +122,6 @@ Because the assistant turn carrying an `AskUserQuestion` is NOT written to the t
 #### Scenario: Pending question surfaces from the transcript
 - **WHEN** an agent's latest turn used the `AskUserQuestion` tool and no later tool result has answered it
 - **THEN** the agent's `question` is the question text and is shown prominently on the card/window; once a tool result answers it, the question clears
-
-#### Scenario: Pending question comes from the sidecar
-- **WHEN** an agent is blocked on an `AskUserQuestion` whose assistant turn is not yet in the transcript, and the hook has written `<uuid>.question.json` beside the transcript
-- **THEN** the activity reader uses that sidecar's text as the agent's pending `question`, AND surfaces the structured `questions` (each with its header, prompt, multi-select flag, and selectable options); when the sidecar is removed (the hook's clear-on-answer), both clear
 
 #### Scenario: Answer a pending question from the overview
 - **WHEN** an agent's card shows a pending question's options and the user clicks an option, or types their own answer

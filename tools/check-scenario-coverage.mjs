@@ -411,8 +411,15 @@ const scenariosByCap = new Map(); // capability -> [{ title, snake }]
 
 for (const base of specGlobs) {
   for (const file of walk(base, /\.md$/)) {
+    const unix = file.replace(/\\/g, '/');
+    // Archived changes are IMMUTABLE history whose delta specs were already
+    // promoted into openspec/specs/ — re-scanning them double-counts and, worse,
+    // couples the live gate to frozen snapshots (a legitimately removed
+    // scenario+test would still be referenced by the frozen copy). Count only
+    // ACTIVE changes' deltas + the promoted specs, per this file's header intent.
+    if (unix.includes('/changes/archive/')) continue;
     // capability = the directory name immediately under .../specs/
-    const m = file.replace(/\\/g, '/').match(/\/specs\/([^/]+)\//);
+    const m = unix.match(/\/specs\/([^/]+)\//);
     if (!m) continue;
     const capability = m[1];
     const text = readFileSync(file, 'utf8');

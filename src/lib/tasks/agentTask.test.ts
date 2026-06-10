@@ -26,7 +26,7 @@ describe('project-tasks — agent task auto-archive', () => {
     expect(taskAgentReturnedToUser('waiting', [])).toBe(false);
   });
 
-  it('does not archive a pane the user interrupted (synthetic turn-end)', () => {
+  it('Agent task is not archived after a user interrupt', () => {
     // Esc on a task-spawned agent injects a SYNTHETIC Stop (→ waiting) so the user can
     // take the session over. That must NOT auto-archive the pane out from under them.
     const interrupted = [
