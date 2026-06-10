@@ -18,6 +18,7 @@
   import {
     projectCounts,
     unassignedCount,
+    allAgentsCount,
     ALL,
     UNASSIGNED
   } from './projectRollup';
@@ -95,9 +96,12 @@
     };
   }
 
-  // Per-project counts + attention flags, and the unassigned bucket size.
+  // Per-project counts + attention flags, the unassigned bucket size, and the
+  // "All agents" total — all single-sourced from projectRollup so they share the
+  // same non-archived predicate (archived/previewed agents are excluded).
   const counts = $derived(projectCounts(rows, projects.list));
   const unassigned = $derived(unassignedCount(rows));
+  const allAgents = $derived(allAgentsCount(rows));
 
   // --- Create / edit dialog state (the shared ProjectForm drives both) ------
   let creating = $state(false);
@@ -211,7 +215,7 @@
   >
     <Icon name="layers" size={16} color="var(--fg-4)" />
     <span class="pp-name">All agents</span>
-    <span class="pp-ct">{rows.length}</span>
+    <span class="pp-ct">{allAgents}</span>
   </button>
 
   <div class="pp-label">Projects</div>
