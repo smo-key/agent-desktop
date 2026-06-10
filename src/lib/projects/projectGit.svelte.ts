@@ -75,6 +75,24 @@ export class ProjectGitStore {
       return 0;
     }
   }
+
+  /**
+   * Refresh a SINGLE folder's status and MERGE it into the map, leaving every
+   * other entry intact — unlike `refresh`, which replaces the whole map. Used to
+   * update the footer immediately after a branch switch without waiting for (or
+   * clobbering) the slow full poll. A null/empty path or a failed fetch is a
+   * no-op that leaves the existing entry untouched.
+   */
+  async refreshOne(path: string | null | undefined): Promise<void> {
+    if (!path) return;
+    try {
+      const map = await invoke<unknown>('git_status_for', { paths: [path] });
+      const entry = normalizeGitMap(map)[path];
+      if (entry) this.byPath[path] = entry;
+    } catch (err) {
+      console.warn('git_status_for (refreshOne) failed:', err);
+    }
+  }
 }
 
 /** Singleton store, imported by the project pane + the route. */
