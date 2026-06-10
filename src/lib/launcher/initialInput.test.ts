@@ -233,6 +233,30 @@ describe('LaunchPromptReadiness (deliver only once the TUI is ready)', () => {
     expect(onReady).toHaveBeenCalledOnce();
   });
 
+  it('defers delivery when output settles BEFORE the PTY id is wired', () => {
+    // REGRESSION: the per-pane output channel is wired BEFORE `pty_spawn` resolves, so
+    // a first byte (then a quiet settle) can arrive while `ptyId` is still undefined.
+    // Firing then would no-op against the undefined id AND latch, dropping the prompt.
+    // Delivery must wait until `wired()`.
+    const clock = fakeClock();
+    const onReady = vi.fn();
+    const g = gate(onReady, clock);
+
+    // Output arrives and settles BEFORE wired() (pty_spawn not yet resolved):
+    g.noteOutput();
+    clock.advance(READY_QUIET_MS + 50);
+    expect(onReady).not.toHaveBeenCalled(); // deferred — PTY id not live yet
+
+    // The PTY is now wired (pty_spawn resolved, ptyId set): the deferred delivery fires.
+    g.wired();
+    expect(onReady).toHaveBeenCalledOnce();
+
+    // And only once, despite further output / time.
+    g.noteOutput();
+    clock.advance(READY_MAX_MS);
+    expect(onReady).toHaveBeenCalledOnce();
+  });
+
   it('delivers once output has been quiet for READY_QUIET_MS after first byte', () => {
     const clock = fakeClock();
     const onReady = vi.fn();

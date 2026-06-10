@@ -77,6 +77,28 @@ describe('EventStore', () => {
 
     expect(store.activityFor('p1').status).toBe('waiting');
     expect(store.activityFor('p1').currentAction).toBeNull();
+    // The injected turn-end is marked SYNTHETIC so task auto-archive can tell a user
+    // interrupt from a genuine "returned to user".
+    expect(store.timeline('p1').at(-1)?.synthetic).toBe(true);
+  });
+
+  it('seed does not overwrite an existing timeline (synthetic + live events survive)', async () => {
+    // REGRESSION: seed re-runs on every session-set change. A wholesale per-pane replace
+    // would clobber a frontend-only synthetic interrupt Stop (re-pinning the pane to
+    // `working`) and drop live events arriving during the `events_for` round-trip.
+    const store = new EventStore();
+    store.ingest(ev('UserPromptSubmit'));
+    store.ingest(ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:x' }));
+    store.markInterrupt('p1'); // frontend-only synthetic Stop → waiting
+    expect(store.activityFor('p1').status).toBe('waiting');
+
+    // The Rust ring lacks the synthetic Stop; a re-seed must NOT clobber the live timeline.
+    invokeMock.mockResolvedValueOnce({
+      p1: [ev('UserPromptSubmit'), ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:x' })]
+    });
+    const n = await store.seed([{ paneId: 'p1', sessionId: 's1', cwd: null }]);
+    expect(n).toBe(0); // nothing seeded — p1 already has a live timeline
+    expect(store.activityFor('p1').status).toBe('waiting'); // still interrupted, not working
   });
 
   it('Interrupt is a no-op when the pane is not working', () => {

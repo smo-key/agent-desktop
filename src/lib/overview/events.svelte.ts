@@ -96,7 +96,10 @@ export class EventStore {
     if (this.activityFor(paneId).status !== 'working') return;
     const prior = this.timeline(paneId);
     const ts = prior.length > 0 ? prior[prior.length - 1].ts : 0;
-    this.ingest({ paneId, sessionId: '', hookEventName: 'Stop', ts });
+    // `synthetic: true` marks this as a frontend-only interrupt turn-end (not a real
+    // hook event): it clears the in-flight tool so the row shows Needs-input, but
+    // consumers like task auto-archive must NOT read it as a genuine "returned to user".
+    this.ingest({ paneId, sessionId: '', hookEventName: 'Stop', ts, synthetic: true });
   }
 
   /**
@@ -110,6 +113,12 @@ export class EventStore {
       const map = await invoke<EventMap>('events_for', { panes });
       let total = 0;
       for (const [paneId, events] of Object.entries(map)) {
+        // Seed ONLY a pane with no live timeline yet. A pane already populated is kept
+        // current by live `overview://event` ingest and may hold frontend-only events
+        // (e.g. a synthetic interrupt Stop); a wholesale overwrite here would (a) clobber
+        // that synthetic turn-end — re-pinning an interrupted pane to `working` — and
+        // (b) drop any live event that arrived during this `events_for` round-trip.
+        if ((this.byPane[paneId]?.length ?? 0) > 0) continue;
         const clean = Array.isArray(events) ? events.filter(isEvent) : [];
         if (clean.length > 0) {
           this.byPane[paneId] = clean;

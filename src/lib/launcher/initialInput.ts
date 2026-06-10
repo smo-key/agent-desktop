@@ -123,6 +123,11 @@ export class LaunchPromptReadiness {
   private fired = false;
   private quiet: ReturnType<typeof setTimeout> | null = null;
   private cap: ReturnType<typeof setTimeout> | null = null;
+  /** True once `wired()` has run — i.e. the PTY id is live and a write can land. */
+  private isWired = false;
+  /** A `fire()` that elapsed BEFORE `wired()`; replayed once the PTY is wired so the
+   *  prompt isn't dropped against a not-yet-set `ptyId`. */
+  private pendingFire = false;
 
   constructor(
     private readonly onReady: () => void,
@@ -137,8 +142,12 @@ export class LaunchPromptReadiness {
    *  window. Does NOT start the quiet window otherwise — that waits for output. */
   wired(): void {
     if (this.fired) return;
+    this.isWired = true;
     if (this.cap === null) this.cap = this.schedule(() => this.fire(), this.maxMs);
     if (this.sawOutput) this.armQuiet();
+    // Output may have already settled (or a stray cap elapsed) before the PTY id was
+    // live; deliver now that it is.
+    if (this.pendingFire) this.fire();
   }
 
   /** Call on every output byte: `claude` has begun rendering. (Re)starts the
@@ -169,6 +178,18 @@ export class LaunchPromptReadiness {
 
   private fire(): void {
     if (this.fired) return;
+    // The settle window (or hard cap) elapsed before the PTY id is live — the spawn
+    // round-trip outran the first output byte. Delivering now would no-op against an
+    // undefined `ptyId` AND latch `fired`, silently dropping the prompt. Defer instead;
+    // `wired()` replays this once the id is set.
+    if (!this.isWired) {
+      this.pendingFire = true;
+      if (this.quiet !== null) {
+        this.cancel(this.quiet);
+        this.quiet = null;
+      }
+      return;
+    }
     this.fired = true;
     if (this.quiet !== null) {
       this.cancel(this.quiet);

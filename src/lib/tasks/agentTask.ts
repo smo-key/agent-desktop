@@ -15,8 +15,13 @@
  */
 export function taskAgentReturnedToUser(
   status: string | null | undefined,
-  timeline: ReadonlyArray<{ hookEventName: string }>
+  timeline: ReadonlyArray<{ hookEventName: string; synthetic?: boolean }>
 ): boolean {
   if (status !== 'waiting' && status !== 'finished') return false;
+  // A SYNTHETIC interrupt turn-end (the user pressed Esc to TAKE OVER this session)
+  // must not read as "returned to user → archive": the user is now driving the pane,
+  // so it stays open in Needs-input rather than being auto-archived out from under them.
+  const last = timeline[timeline.length - 1];
+  if (last?.hookEventName === 'Stop' && last.synthetic === true) return false;
   return timeline.some((e) => e.hookEventName === 'UserPromptSubmit');
 }

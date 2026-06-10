@@ -242,8 +242,11 @@
     if (webgl || !term || !opened) return;
     try {
       const { WebglAddon } = await import('@xterm/addon-webgl');
-      // The term may have been disposed (or we lost focus) while awaiting.
-      if (!term || !opened || webgl) return;
+      // The term may have been disposed (or we lost focus) while awaiting. The
+      // `!active` re-check is load-bearing: WebGL contexts are capped (~16/page), so
+      // attaching one to a pane that went inactive during the dynamic import would
+      // pin a context on an off-screen pane and starve the genuinely-active one.
+      if (!term || !opened || webgl || !active) return;
       const addon = new WebglAddon();
       contextLossSub = addon.onContextLoss(() => {
         addon.dispose();

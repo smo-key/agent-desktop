@@ -304,6 +304,14 @@ export class OrchestrationExecutor {
           resolve({ error: `agent pane is no longer available: ${paneId}` });
           return;
         }
+        // A pane sitting on an interactive AskUserQuestion/permission menu derives
+        // status `waiting` (not `working`), so it would pass the busy-gate below — but
+        // writing free text + Enter into that menu selects a garbage option and
+        // corrupts the transcript. Refuse rather than deliver into a live menu.
+        if (this.deps.readActivity(paneId).question != null) {
+          resolve({ error: `agent is awaiting a question; message not delivered: ${paneId}` });
+          return;
+        }
         if (this.deps.statusOf(paneId) === 'working') {
           if (Date.now() >= deadline) {
             resolve({ error: `agent is busy (mid-turn); message not delivered: ${paneId}` });

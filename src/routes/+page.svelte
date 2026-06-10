@@ -402,6 +402,13 @@
         const rt = projectTasks.runtime[t.id];
         if (rt?.running) list.push(rt.paneId);
       }
+      // Bare ⌘Y shells are running terminals too — the panel shows them and the badge
+      // counts them — so the cycle must reach them, not only command-backed task-defs.
+      // (Every "new terminal" entry point — ⌘Y, the panel ＋, the git-failure opener —
+      // creates a bare shell, so omitting these left the ring with just the agent.)
+      for (const b of projectTasks.bareForProject(pid)) {
+        if (b.running) list.push(b.paneId);
+      }
     }
     return list;
   }

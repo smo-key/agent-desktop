@@ -36,6 +36,11 @@ export interface AgentEvent {
    *  `other`). `clear` keeps the process alive (the conversation restarts), so it is not
    *  a finished session. */
   reason?: string | null;
+  /** Frontend-only marker: a SYNTHETIC turn-end injected by `markInterrupt` (the user
+   *  pressed Esc), NOT a real hook event. Never sent to Rust or the durable sink. Lets
+   *  consumers (e.g. task auto-archive) distinguish a user interrupt from a genuine
+   *  turn end. */
+  synthetic?: boolean;
 }
 
 /** The high-level event-sourced activity for one pane (the roster's input). */
