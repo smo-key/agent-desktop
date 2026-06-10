@@ -1,8 +1,8 @@
 ## 1. Coordinated badge → compass icon (agent-roster-display)
 
-- [ ] 1.1 In `Inbox.svelte` `sessionRow`, change the coordinated branch to an icon-only badge using `<Icon name="compass" size={9}/>` with no "coordinated" text; keep the `use:tooltip={'Spawned by the project coordinator'}`.
-- [ ] 1.2 Verify the badge styling still fits without the text label (adjust `coord-badge` padding/max-width if needed for an icon-only chip).
-- [ ] 1.3 Add/adjust a unit or component test asserting the coordinated badge renders the compass icon, no "coordinated" text, and keeps the tooltip.
+- [x] 1.1 In `Inbox.svelte` `sessionRow`, change the coordinated branch to an icon-only badge using `<Icon name="compass" size={9}/>` with no "coordinated" text; keep the `use:tooltip={'Spawned by the project coordinator'}`.
+- [x] 1.2 Verify the badge styling still fits without the text label (adjust `coord-badge` padding/max-width if needed for an icon-only chip).
+- [x] 1.3 Add/adjust a unit or component test asserting the coordinated badge renders the compass icon, no "coordinated" text, and keeps the tooltip.
 
 ## 2. Status line shows last message/question, incl. archived (agent-roster-display)
 
@@ -23,7 +23,9 @@
 - [ ] 4.1 In `Inbox.svelte` `openAgentMenu`, remove the coordinator delete-only special case; give a live coordinator the same Open/Pause/Archive items as ordinary sessions, routed through `archiveAgent` (so `archiveDecision` deletes an empty coordinator and archives a non-empty one). Archived coordinator still offers Delete.
 - [ ] 4.2 In `sessionRow`, when `r.role === 'coordinator' && r.closed`, render a `<Icon name="bot" size={9}/> Coordinator` badge on the row.
 - [ ] 4.3 Confirm restoring an archived coordinator resumes it as the project's live coordinator (existing `restoreAgent` + `findCoordinatorPane`); add a regression test for archive→restore.
-- [ ] 4.4 Add tests: archive non-empty coordinator → closed/retained; archive empty coordinator → deleted; archived coordinator shows the bot "Coordinator" label.
+- [x] 4.4 Add tests: archive non-empty coordinator → closed/retained; archive empty coordinator → deleted; archived coordinator shows the bot "Coordinator" label.
+- [x] 4.5 Enforce one-coordinator-per-project: extend `startCoordinator` so that when an ARCHIVED coordinator exists for the project, "Start coordinator" RESTORES it (`workspace.restoreAgent`, focus, update `coordinatorPaneId`) instead of spawning a second coordinator. Add an `archivedCoordinatorPane`/`archivedCoordinator` finder mirroring `findCoordinatorPane` but `closed === true`.
+- [x] 4.6 Tests: `startCoordinator` restores an archived coordinator (no duplicate, exactly one live coordinator after); and the real UI restore path (`previewArchived` → `commitPreview`) re-makes the coordinator live (`findCoordinatorPane`/`isLiveCoordinator` find it). Replace the tautological `archiveDecision` coordinator tests with assertions that actually exercise the coordinator archive/restore wiring.
 
 ## 5. Auto-advance setting (inbox-auto-advance)
 
