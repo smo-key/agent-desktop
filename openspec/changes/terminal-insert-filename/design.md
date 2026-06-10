@@ -63,16 +63,24 @@ Add `insertFilename(): void` to `PaneMenuDeps` and an item
 `{ id: 'insert-filename', label: 'Insert Filename…', shortcut: '⌘I', run: () => deps.insertFilename() }`
 to the **first** section, after Paste. Not disabled by selection state (it doesn't
 depend on one); like Paste it simply no-ops if the PTY is dead. `PaneNode.openMenu`
-implements the dep: `async () => { const p = await pickFile(); if (p) handle?.paste(quotePath(p)); }`.
+implements the dep by funneling through the shared flow:
+`insertFilename: () => { void insertFilenameInto(handle); }` (where `handle =
+getTerminal(node.paneId)`). The menu path always has a live pane, so opening the
+dialog first is fine.
 
 ### D5 — ⌘I handler targets the focused terminal regardless of view
 Add a branch to `onKeydown` BEFORE the `if (!view.isGrid) return;` grid gate (that
 gate makes pane shortcuts inert because the live terminal is shown in the inbox).
-The handler resolves the focused agent pane's handle and runs the same
-pick→quote→paste flow; it `preventDefault()`s and is a no-op when no live focused
-terminal exists. Focused-pane resolution reuses the same source the menu/focus logic
-uses (`workspace` focused id → pane id → `getTerminal`); a shared helper avoids
-duplicating that mapping between `+page.svelte` and `PaneNode`.
+The handler resolves the focused terminal pane's handle via `focusedTerminalHandle()`
+(the active workspace's focused pane — not program-filtered, mirroring the menu and
+Copy/Paste; it only ever resolves workspace panes, never the out-of-scope
+Terminals-panel shells). It `preventDefault()`s unconditionally. Crucially, it
+resolves the handle FIRST and only calls `insertFilenameInto(handle)` when a handle
+exists — so NO dialog opens when nothing is focused (the spec's "no dialog" rule).
+This is why the ⌘I path cannot just hand an undefined handle to `insertFilenameInto`,
+which opens the picker before checking the handle. The shared resolver
+(`focusedTerminalHandle`, `workspace` focused leaf id → pane id → `getTerminal`)
+lives beside the flow so `+page.svelte` doesn't duplicate the mapping.
 *Alternative considered:* handle ⌘I inside `TerminalPane` per-pane — rejected; the
 global handler already centralizes ⌘-shortcuts and must work while xterm has focus.
 

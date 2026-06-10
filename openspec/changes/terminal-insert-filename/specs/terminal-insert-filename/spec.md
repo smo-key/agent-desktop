@@ -24,19 +24,23 @@ disabled by selection state.
 
 ### Requirement: Insert Filename keyboard shortcut
 
-Pressing **⌘I** SHALL perform the Insert Filename action against the currently
-focused agent terminal, regardless of the active view and even while the terminal
-has keyboard focus. The shortcut SHALL be a no-op (no dialog) when there is no live
-focused agent terminal, and SHALL prevent the keystroke's default so no stray byte
-reaches the PTY.
+Pressing **⌘I** SHALL perform the Insert Filename action against the active
+workspace's currently focused terminal pane (where agents live — the bare
+Terminals-panel shells are a separate surface and are never the target),
+regardless of the active view and even while the terminal has keyboard focus. The
+shortcut resolves the focused terminal pane like Copy/Paste do — it does not
+filter by the running program. The shortcut SHALL be a no-op (no dialog) when there
+is no focused terminal pane, and SHALL prevent the keystroke's default so no stray
+byte reaches the PTY.
 
 #### Scenario: ⌘I opens the picker for the focused terminal
 - **WHEN** an agent terminal is focused and the user presses ⌘I
 - **THEN** the same native file picker opens and a successful selection inserts into
   that focused terminal
 
-#### Scenario: ⌘I with no live focused terminal
-- **WHEN** the user presses ⌘I and there is no live focused agent terminal
+#### Scenario: ⌘I with no focused terminal pane
+- **WHEN** the user presses ⌘I and there is no focused terminal pane in the active
+  workspace
 - **THEN** nothing happens (no dialog opens) and the default keystroke is suppressed
 
 #### Scenario: ⌘I is documented in the help modal
@@ -47,8 +51,9 @@ reaches the PTY.
 ### Requirement: Quoted absolute path inserted at the cursor
 
 On a successful selection, the system SHALL insert the chosen file's absolute path,
-wrapped in double quotes, into the focused agent terminal at its input cursor — using
-the same PTY write path as Paste. Any double-quote character within the path SHALL be
+wrapped in double quotes, into the target terminal pane (the pane whose menu was
+opened, or the focused pane for ⌘I) at its input cursor — using the same PTY write
+path as Paste. Any double-quote character within the path SHALL be
 escaped as `\"`. No trailing space SHALL be appended.
 
 #### Scenario: Plain path is quoted and inserted
