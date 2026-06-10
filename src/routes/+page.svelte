@@ -22,6 +22,7 @@
   import { tooltip } from '$lib/ui/tooltip';
   import { startNewSession } from '$lib/launcher/newSession';
   import { workspace } from '$lib/layout/workspace.svelte';
+  import { insertFilenameInto, focusedTerminalHandle } from '$lib/layout/insertFilename';
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
   import { restorePersistedLayout, watchAndPersist } from '$lib/layout/store-backend.svelte';
   import { snapshots } from '$lib/usage/snapshots.svelte';
@@ -513,6 +514,20 @@
     if (meta && key === 'Tab') {
       e.preventDefault();
       cycleFocus();
+      return;
+    }
+
+    // Cmd-I inserts a picked file's quoted path into the FOCUSED terminal at the
+    // cursor. A global shortcut (works in every view, incl. while xterm holds
+    // focus) — placed BEFORE the grid-only gate below so it isn't made inert. We
+    // resolve the focused terminal FIRST and open no dialog when there is none, so
+    // it is a clean no-op outside an agent terminal (the menu item, which always
+    // has a live pane, goes straight through insertFilenameInto). preventDefault
+    // unconditionally so the keystroke never leaks a stray byte to a PTY.
+    if (meta && (key === 'i' || key === 'I')) {
+      e.preventDefault();
+      const handle = focusedTerminalHandle();
+      if (handle) void insertFilenameInto(handle);
       return;
     }
 

@@ -15,14 +15,14 @@
 
 ## 3. Context-menu item
 
-- [ ] 3.1 In `src/lib/layout/paneMenu.ts`, add `insertFilename(): void` to
+- [x] 3.1 In `src/lib/layout/paneMenu.ts`, add `insertFilename(): void` to
       `PaneMenuDeps` and an `{ id: 'insert-filename', label: 'Insert Filename…',
       shortcut: '⌘I', run: () => deps.insertFilename() }` item to the first section,
       after Paste (not disabled by selection state).
-- [ ] 3.2 Update `src/lib/layout/paneMenu.test.ts` to cover the new item: it is
+- [x] 3.2 Update `src/lib/layout/paneMenu.test.ts` to cover the new item: it is
       present in the first section, has the ⌘I hint, is not disabled, and `run()`
       invokes the injected `insertFilename` dep.
-- [ ] 3.3 In `src/lib/layout/PaneNode.svelte` `openMenu`, implement the
+- [x] 3.3 In `src/lib/layout/PaneNode.svelte` `openMenu`, implement the
       `insertFilename` dep: `pickFile()` → if a path is returned, `handle?.paste(quotePath(path))`.
 
 ## 4. ⌘I global shortcut
@@ -30,14 +30,16 @@
 - [x] 4.1 Add a focused-agent-terminal resolver (shared so `+page.svelte` and
       `PaneNode` don't duplicate the focused-id → paneId → `getTerminal` mapping).
       (Done in group 1's commit as `focusedTerminalHandle()` in `layout/insertFilename.ts`.)
-- [ ] 4.2 In `src/routes/+page.svelte` `onKeydown`, add a `meta && (key === 'i' ||
+- [x] 4.2 In `src/routes/+page.svelte` `onKeydown`, add a `meta && (key === 'i' ||
       key === 'I')` branch BEFORE the `if (!view.isGrid) return;` grid gate: resolve
       the focused agent terminal handle, run `pickFile()` → `handle.paste(quotePath(path))`,
       `preventDefault()`, and no-op (no dialog) when there is no live focused terminal.
+      (Resolves the handle FIRST via `focusedTerminalHandle()` so no dialog opens
+      when nothing is focused; then funnels through `insertFilenameInto(handle)`.)
 
 ## 5. Help-modal registry
 
-- [ ] 5.1 In `src/lib/ui/shortcuts.ts`, add `{ keys: ['⌘', 'I'], label: 'Insert file
+- [x] 5.1 In `src/lib/ui/shortcuts.ts`, add `{ keys: ['⌘', 'I'], label: 'Insert file
       path into terminal' }` to the `Session` group.
 
 ## 6. Verify
