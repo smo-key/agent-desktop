@@ -45,8 +45,13 @@ In `git.rs`:
   failure) helper. Use porcelain-stable plumbing rather than parsing `git branch`
   decorations:
   - local branches: `git for-each-ref --format=%(refname:short) refs/heads`
-  - remote branches: `git for-each-ref --format=%(refname:short) refs/remotes`
-    (drop the symbolic `origin/HEAD` entry).
+  - remote branches: `git for-each-ref --format=%(refname) refs/remotes`, then
+    drop every `*/HEAD` and strip the `refs/remotes/` prefix → `origin/main`. We
+    read the FULL refname (not `%(refname:short)`) on purpose: git's short form
+    renders the remote's symbolic HEAD `refs/remotes/origin/HEAD` as the bare
+    remote name `origin`, which is **not** a checkout-able branch and would
+    otherwise leak into the list. Reading the full ref guarantees every entry is a
+    real `<remote>/<branch>`.
   - current branch: reuse the existing `rev-parse --abbrev-ref HEAD` (already used
     by `status_for_dir`); `HEAD` means detached → no current branch.
   Returns a serializable `{ current: Option<String>, local: Vec<String>, remotes:
@@ -113,21 +118,30 @@ other entries intact. `branchActions` calls this after a successful switch/creat
 ### Component: `BranchPicker.svelte` modeled on `ProjectSelect.svelte`
 
 A new `src/lib/usage/BranchPicker.svelte` (co-located with the footer that owns
-it). It owns its open/filter/highlight state and renders:
+it) is the **menu only** — the trigger is the existing branch pill in
+`GitInfo.svelte`, which becomes a `<button>` (see below) and toggles the footer's
+`open` state. BranchPicker owns its filter/highlight/branch-list state and renders:
 
-- a trigger that is the branch pill itself (icon + branch text), styled like the
-  current `.pill.branch` but as a `<button>`;
-- a menu that opens **upward** (`bottom: calc(100% + 6px)` instead of `ProjectSelect`'s
-  `top`), since the footer sits at the window bottom;
-- a filter `<input>` at the top; arrow/Enter/Escape keyboard nav with a roving
-  highlight over the filtered options (combobox pattern from `ProjectSelect`);
+- a menu that opens **upward** from just above the trigger. It is **`position:
+  fixed`**, not `absolute` — the footer's `.zone.left` / `.left-git` are
+  `overflow: hidden` (so a long branch name ellipsizes), which would clip an
+  upward-opening absolute popup. The footer passes the pill's wrapper as an
+  `anchor` element; on open the menu measures `anchor.getBoundingClientRect()` and
+  sets `left = rect.left`, `bottom = window.innerHeight - rect.top + 6`, so the
+  fixed menu escapes the clipping and sits above the pill (mirrors how
+  `ContextMenu.svelte` positions a fixed popover);
+- a filter `<input>` at the top; arrow/Home/End/Enter/Escape keyboard nav with a
+  roving highlight over the flattened actionable rows (combobox pattern from
+  `ProjectSelect`), scrolled into view;
 - a **Local** section (current branch marked with a check) and a **Remotes**
   section (only when non-empty);
 - an inline **create** row (seeded with the filter text) that runs `createBranch`;
-- a busy/disabled reflection of `gitBusy.isBusy(path)`.
+- an outside-click scrim + a busy/disabled reflection of `gitBusy.isBusy(path)`.
 
-On open it calls `listBranches(path)` to load the lists. Selecting an option calls
-`switchBranch`; the create row calls `createBranch`; both close the menu.
+On open it calls `listBranches(path)` to load the lists (and `onClose`s immediately
+if `path` is falsy — the no-folder guard). Selecting a local option calls
+`switchBranch`; a remote option calls `switchBranch(remoteShortName(ref))`; the
+create row calls `createBranch`; all close the menu.
 
 ### `GitInfo.svelte` gains an optional `onPickBranch` seam — footer-only
 
