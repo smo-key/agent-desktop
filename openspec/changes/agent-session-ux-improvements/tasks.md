@@ -20,9 +20,9 @@
 
 ## 4. Coordinator archive/delete + archived label (coordinator-lifecycle, agent-roster-display)
 
-- [ ] 4.1 In `Inbox.svelte` `openAgentMenu`, remove the coordinator delete-only special case; give a live coordinator the same Open/Pause/Archive items as ordinary sessions, routed through `archiveAgent` (so `archiveDecision` deletes an empty coordinator and archives a non-empty one). Archived coordinator still offers Delete.
-- [ ] 4.2 In `sessionRow`, when `r.role === 'coordinator' && r.closed`, render a `<Icon name="bot" size={9}/> Coordinator` badge on the row.
-- [ ] 4.3 Confirm restoring an archived coordinator resumes it as the project's live coordinator (existing `restoreAgent` + `findCoordinatorPane`); add a regression test for archive→restore.
+- [x] 4.1 In `Inbox.svelte` `openAgentMenu`, remove the coordinator delete-only special case; give a live coordinator the same Open/Pause/Archive items as ordinary sessions, routed through `archiveAgent` (so `archiveDecision` deletes an empty coordinator and archives a non-empty one). Archived coordinator still offers Delete.
+- [x] 4.2 In `sessionRow`, when `r.role === 'coordinator' && r.closed`, render a `<Icon name="bot" size={9}/> Coordinator` badge on the row.
+- [x] 4.3 Confirm restoring an archived coordinator resumes it as the project's live coordinator (existing `restoreAgent` + `findCoordinatorPane`); add a regression test for archive→restore.
 - [x] 4.4 Add tests: archive non-empty coordinator → closed/retained; archive empty coordinator → deleted; archived coordinator shows the bot "Coordinator" label.
 - [x] 4.5 Enforce one-coordinator-per-project: extend `startCoordinator` so that when an ARCHIVED coordinator exists for the project, "Start coordinator" RESTORES it (`workspace.restoreAgent`, focus, update `coordinatorPaneId`) instead of spawning a second coordinator. Add an `archivedCoordinatorPane`/`archivedCoordinator` finder mirroring `findCoordinatorPane` but `closed === true`.
 - [x] 4.6 Tests: `startCoordinator` restores an archived coordinator (no duplicate, exactly one live coordinator after); and the real UI restore path (`previewArchived` → `commitPreview`) re-makes the coordinator live (`findCoordinatorPane`/`isLiveCoordinator` find it). Replace the tautological `archiveDecision` coordinator tests with assertions that actually exercise the coordinator archive/restore wiring.
@@ -88,6 +88,6 @@
 
 ## 13. Validate & gate
 
-- [ ] 13.1 Run `npm run check` (svelte-check) and `npm run test` (vitest); fix any failures introduced by the change. Run `cargo test` (manifest `src-tauri/Cargo.toml`) for the Rust title-selection + prompt changes.
-- [ ] 13.2 Run `npm run coverage` (scenario coverage gate) and ensure new scenarios are covered.
+- [x] 13.1 Run `npm run check` (svelte-check) and `npm run test` (vitest); fix any failures introduced by the change. Run `cargo test` (manifest `src-tauri/Cargo.toml`) for the Rust title-selection + prompt changes. — RESULT: vitest 908/908 pass (98 files); svelte-check 0 errors/0 warnings; cargo changed-modules all green (pr:: 20, git:: 25, polish:: 12, claude_title:: 4, select_title_messages 4). The only Rust failures are `events::tests` (2) binding a Unix socket whose temp path exceeds macOS `SUN_LEN` — pre-existing/environmental, `events.rs` is untouched by this change.
+- [x] 13.2 Run `npm run coverage` (scenario coverage gate) and ensure new scenarios are covered. — RESULT: PASS (every enforced, testable scenario has a matching test).
 - [ ] 13.3 Manually verify the headline flows in the running app: coordinated compass badge + tooltip, archive a coordinator (+ label), `! sleep 999` shows In flight, a dynamic-workflow session shows In flight, last-message line incl. archived, auto-advance toggle, PR + commit footer buttons, uncommitted-files hover lists first 10 files, open-PRs-awaiting-review button (warning+count / checkmark+0, opens GitHub), counters exclude archived, rename via header + menu, title refresh after a message, titles that reflect the original request in a long session, ⌘O inserts a filename.
