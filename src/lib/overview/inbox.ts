@@ -9,6 +9,61 @@
 import { archivedPaneIds, needsAttention, type AgentRow, type AgentStatus } from './roster';
 import type { ConfirmOptions } from '$lib/ui/confirmStore.svelte';
 
+/** Max characters of the roster sub-line (a one-line display); longer messages are
+ *  clipped with a trailing ellipsis. Sized for the narrow inbox column + its tooltip
+ *  so a multi-paragraph assistant message doesn't render a giant tooltip. */
+export const ROW_SUB_MAX_LEN = 140;
+
+/** The short generic sub-line shown when a row has neither a pending question nor any
+ *  (live or cached) last assistant message — e.g. a just-spawned agent with no output
+ *  yet. Deliberately terse; replaces the old per-lane strings. */
+export const ROW_SUB_FALLBACK = 'No messages yet';
+
+/**
+ * PURE: collapse a (possibly multi-line) message to a single trimmed line and clip it
+ * to `ROW_SUB_MAX_LEN` for the one-line roster sub-line. Returns null for an
+ * empty/whitespace-only/absent input so callers can fall through to the next source.
+ * Internal runs of whitespace (incl. newlines/tabs) collapse to single spaces.
+ */
+export function clipLine(
+  text: string | null | undefined,
+  maxLen: number = ROW_SUB_MAX_LEN
+): string | null {
+  if (!text) return null;
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  if (oneLine.length === 0) return null;
+  return oneLine.length > maxLen ? oneLine.slice(0, maxLen) + '…' : oneLine;
+}
+
+/**
+ * PURE: the secondary "what it last said / is asking" line for a roster row, used for
+ * EVERY lane — including archived (closed) and previewing rows. Priority:
+ *   1. a pending question — the structured `questions[0].question`, else the compact
+ *      `question` string (this is what the agent is waiting on YOU for);
+ *   2. the last assistant message — the live `summary`, else the per-session cached
+ *      summary the caller injects via `cachedSummary` (a closed pane has no live PTY,
+ *      so its `summary` is gone — the cache, recorded while it was live, supplies it);
+ *   3. a short generic fallback (`ROW_SUB_FALLBACK`) when none of the above exists.
+ * Each candidate is clipped to one line; an empty/whitespace candidate is skipped.
+ *
+ * `cachedSummary` is an injected lookup (`() => string | null`) so this stays a pure
+ * function of its inputs and is unit-testable without a live component. Resolving the
+ * session id (to key the cache) is the caller's job.
+ */
+export function rowSub(
+  row: Pick<AgentRow, 'question' | 'questions' | 'summary'>,
+  cachedSummary: () => string | null = () => null
+): string {
+  const question =
+    row.questions && row.questions.length > 0 ? row.questions[0].question : row.question;
+  return (
+    clipLine(question) ??
+    clipLine(row.summary) ??
+    clipLine(cachedSummary()) ??
+    ROW_SUB_FALLBACK
+  );
+}
+
 /** Whether a status means the agent is waiting on YOU (waiting or errored). This is
  *  the STATUS-only check (used for badge/label styling); the attention QUEUE uses
  *  the row-level `needsAttention` so paused/archived agents are excluded. */

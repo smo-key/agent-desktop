@@ -38,7 +38,8 @@
     archiveDecision,
     autoArchiveAction,
     shouldAutoResume,
-    deleteAllArchivedRequest
+    deleteAllArchivedRequest,
+    rowSub as rowSubText
   } from './inbox';
   import { toRosterWorkspaces, toNavWorkspaces } from './rosterInputs';
   import { runtimeMap } from './runtime';
@@ -46,6 +47,7 @@
   import { activity } from './activity.svelte';
   import { events } from './events.svelte';
   import { titles } from './titles.svelte';
+  import { summaries } from './summaries.svelte';
   import { projects } from '$lib/projects/projects.svelte';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import {
@@ -691,6 +693,19 @@
     }
   });
 
+  // Record each LIVE row's last assistant message into the durable, sessionId-keyed
+  // summary cache (mirrors the title cache). When the agent is later ARCHIVED its PTY
+  // is gone, so its live `summary` disappears — the roster sub-line then falls back to
+  // this cache (`rowSub` → `summaries.summaryFor`) so an archived row still shows the
+  // last thing it said. `record` ignores empty/closed-pane reads, so a closed row never
+  // overwrites the message it had while live. Runs off the same ~1s roster re-derive.
+  $effect(() => {
+    for (const r of allRows) {
+      if (r.closed || r.preview) continue; // a closed/previewing pane has no fresh live message
+      if (r.summary) summaries.record(sessionIdOf(r), r.summary);
+    }
+  });
+
   // Re-archive a previewing session the user has walked away from. While a previewing
   // session is the SHOWN agent (the user is on its window) no timer runs; once it
   // stops being shown, a grace timer starts and — if the user neither returns nor
@@ -896,10 +911,6 @@
       : { icon: 'folder', color: '#7B8499' };
   }
 
-  function cost(value: number | null): string {
-    return value === null ? '—' : `$${value.toFixed(2)}`;
-  }
-
   /** Whether a row shows the CONTEXT-window measure (with its mini-bar) in the meta
    *  row: only LIVE agents — not archived/previewed (closed) or paused. Archived and
    *  paused rows drop context and show just cost + last activity. */
@@ -928,17 +939,14 @@
     return 'b-standby';
   }
 
-  /** The secondary line for a roster row: question / current action / cost·model. */
+  /** The secondary line for a roster row: the agent's last message or pending question,
+   *  shown for EVERY lane including archived (closed) rows. Delegates the priority +
+   *  clipping to the pure `rowSubText` (question → live summary → cached summary →
+   *  generic fallback) and injects the per-session cached last-summary lookup so a
+   *  CLOSED pane — whose live `summary` is gone with its PTY — still shows the last
+   *  thing it said (recorded into `summaries` while it was live). */
   function rowSub(r: AgentRow): string {
-    if (r.closed) return 'Archived · restore or delete';
-    if (r.paused) return 'Paused · send a message to resume';
-    if (isAttention(r.status)) {
-      if (r.status === 'error') return 'Errored — needs you';
-      if (r.questions && r.questions.length > 0) return r.questions[0].question;
-      return r.question ?? 'Needs input';
-    }
-    if (r.status === 'finished') return cost(r.cost);
-    return r.currentAction ?? r.summary ?? 'Working…';
+    return rowSubText(r, () => summaries.summaryFor(sessionIdOf(r)));
   }
 </script>
 

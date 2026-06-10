@@ -10,8 +10,13 @@ import {
   archiveDecision,
   autoArchiveAction,
   shouldAutoResume,
-  deleteAllArchivedRequest
+  deleteAllArchivedRequest,
+  rowSub,
+  clipLine,
+  ROW_SUB_FALLBACK,
+  ROW_SUB_MAX_LEN
 } from './inbox';
+import type { PendingQuestion } from './roster';
 
 // Minimal AgentRow factory — only the fields the inbox cores read.
 function row(paneId: string, status: AgentStatus, over: Partial<AgentRow> = {}): AgentRow {
@@ -269,5 +274,118 @@ describe('Sending a message unarchives a previewing session', () => {
     expect(shouldAutoResume(3, undefined)).toBe(false);
     // An unestablished baseline never unarchives (lazily established instead).
     expect(shouldAutoResume(null, 3)).toBe(false);
+  });
+});
+
+// clipLine collapses a (possibly multi-line) message to a single line and trims it
+// to a sensible length for the one-line roster sub-line + its tooltip.
+describe('clipLine', () => {
+  it('returns the text unchanged when short and single-line', () => {
+    expect(clipLine('All done')).toBe('All done');
+  });
+
+  it('collapses internal newlines/whitespace to single spaces', () => {
+    expect(clipLine('line one\nline two\t  three')).toBe('line one line two three');
+  });
+
+  it('trims leading/trailing whitespace', () => {
+    expect(clipLine('  hello  ')).toBe('hello');
+  });
+
+  it('clips an over-long message to the max length with an ellipsis', () => {
+    const long = 'x'.repeat(ROW_SUB_MAX_LEN + 50);
+    const out = clipLine(long);
+    expect(out).not.toBeNull();
+    expect(out!.length).toBeLessThanOrEqual(ROW_SUB_MAX_LEN + 1); // + the ellipsis char
+    expect(out!.endsWith('…')).toBe(true);
+  });
+
+  it('returns null for empty/whitespace-only/null input', () => {
+    expect(clipLine('   ')).toBeNull();
+    expect(clipLine('')).toBeNull();
+    expect(clipLine(null)).toBeNull();
+    expect(clipLine(undefined)).toBeNull();
+  });
+});
+
+// rowSub is the PURE sub-line text for a roster row: a pending question, else the
+// last assistant message (live `summary`, else the per-session cached summary the
+// caller injects for an archived/closed pane whose live activity is gone), else a
+// short generic fallback. This holds for EVERY lane including archived (closed) and
+// preview rows — there is no special "Archived · restore or delete" / bare
+// "Needs input" string any more.
+describe('rowSub — last message/question on every row', () => {
+  const q = (question: string): PendingQuestion => ({
+    header: '',
+    question,
+    multiSelect: false,
+    options: []
+  });
+
+  it('shows a pending structured question first', () => {
+    const r = row('a', 'waiting', {
+      questions: [q('Which database should I use?')],
+      summary: 'last assistant message'
+    });
+    expect(rowSub(r)).toBe('Which database should I use?');
+  });
+
+  it('shows the compact pending question string when there is no structured one', () => {
+    const r = row('a', 'waiting', { question: 'Pick a branch', summary: 'msg' });
+    expect(rowSub(r)).toBe('Pick a branch');
+  });
+
+  it('shows the last assistant message when there is no pending question', () => {
+    const r = row('a', 'working', { summary: 'I refactored the parser.' });
+    expect(rowSub(r)).toBe('I refactored the parser.');
+  });
+
+  it('an ARCHIVED row with a live summary shows that summary, NOT "Archived · restore or delete"', () => {
+    const r = row('a', 'finished', { closed: true, summary: 'Shipped the fix.' });
+    expect(rowSub(r)).toBe('Shipped the fix.');
+    expect(rowSub(r)).not.toContain('Archived');
+  });
+
+  it('an ARCHIVED row with NO live summary falls back to the injected cached summary', () => {
+    // A closed pane has no live activity (`summary` is null), so the caller injects
+    // the last summary it recorded while the pane was live.
+    const r = row('a', 'finished', { closed: true, summary: null });
+    expect(rowSub(r, () => 'Last thing it said before archiving')).toBe(
+      'Last thing it said before archiving'
+    );
+    expect(rowSub(r, () => 'Last thing it said before archiving')).not.toContain('Archived');
+  });
+
+  it('prefers a pending question over both the live summary and the cached one', () => {
+    const r = row('a', 'waiting', {
+      question: 'Need your call here',
+      summary: 'older message'
+    });
+    expect(rowSub(r, () => 'cached')).toBe('Need your call here');
+  });
+
+  it('prefers the live summary over the cached one', () => {
+    const r = row('a', 'working', { summary: 'live message' });
+    expect(rowSub(r, () => 'cached message')).toBe('live message');
+  });
+
+  it('falls back to a short generic label when neither a question nor any summary exists', () => {
+    const r = row('a', 'idle', { summary: null, question: null, questions: null });
+    expect(rowSub(r, () => null)).toBe(ROW_SUB_FALLBACK);
+    // And with no cache lookup at all.
+    expect(rowSub(r)).toBe(ROW_SUB_FALLBACK);
+  });
+
+  it('clips a very long last message for the one-line display', () => {
+    const long = 'y'.repeat(ROW_SUB_MAX_LEN + 80);
+    const r = row('a', 'working', { summary: long });
+    const out = rowSub(r);
+    expect(out.length).toBeLessThanOrEqual(ROW_SUB_MAX_LEN + 1);
+    expect(out.endsWith('…')).toBe(true);
+  });
+
+  it('ignores a whitespace-only summary and falls through to the fallback', () => {
+    const r = row('a', 'idle', { summary: '   ' });
+    expect(rowSub(r, () => '  ')).toBe(ROW_SUB_FALLBACK);
   });
 });
