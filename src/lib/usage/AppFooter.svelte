@@ -15,6 +15,13 @@
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import { projectGit } from '$lib/projects/projectGit.svelte';
   import { pushProject, pullProject } from '$lib/projects/projectGitActions';
+  import {
+    DEFAULT_BASE,
+    prButtonDisabled,
+    cachedPrStatus,
+    refreshPrStatus,
+    onPrButtonClick
+  } from '$lib/projects/prActions';
   import { gitBusy } from '$lib/projects/projectGitBusy.svelte';
   import { view as topView } from '$lib/overview/view.svelte';
   import LimitBars from './LimitBars.svelte';
@@ -82,6 +89,39 @@
     branchOpen = false;
   });
 
+  // PR button (footer only): an open PR from the current branch into `main`?
+  // `prStatus` is a reactive snapshot of the per-branch cache; the effect below
+  // refreshes it alongside git status (best-effort) and re-reads after a click.
+  // The button is disabled on the base branch / when there's no branch or project.
+  let prStatus = $state<ReturnType<typeof cachedPrStatus>>({ kind: 'unknown' });
+  const prBranch = $derived(folderGit?.branch ?? null);
+  const prDisabled = $derived(prButtonDisabled(gitProject?.id, prBranch, DEFAULT_BASE));
+  const prExists = $derived(prStatus.kind === 'exists');
+  // Refresh PR status whenever the footer's project/branch (or the polled git
+  // status) changes: query gh in the background, then re-read the cache snapshot.
+  $effect(() => {
+    void folderGit; // re-run when git status is re-polled
+    const path = gitProject?.path ?? null;
+    const branch = prBranch;
+    prStatus = cachedPrStatus(branch); // show the last-known intent immediately
+    if (prButtonDisabled(gitProject?.id, branch, DEFAULT_BASE)) return;
+    void refreshPrStatus(path, branch, DEFAULT_BASE).then(() => {
+      prStatus = cachedPrStatus(branch);
+    });
+  });
+  // Click: open the existing PR, else open the create-confirm (also for unknown).
+  const onPr = $derived(
+    !prDisabled && gitProject?.path && prBranch
+      ? () =>
+          void onPrButtonClick(
+            { id: gitProject.id, path: gitProject.path, name: gitProject.name },
+            prBranch,
+            DEFAULT_BASE,
+            prStatus
+          )
+      : undefined
+  );
+
   // The terminal area's left edge as a fraction [0,1] of the surface, or null when
   // there's no terminal pane / not in grid view. A "terminal" pane is a non-claude
   // (shell) pane; agents are claude panes. Reading the active tree + registry keeps
@@ -118,7 +158,7 @@
   <div class="zone left">
     <div class="left-git">
       <div class="branch-anchor" bind:this={branchAnchorEl}>
-        <GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} {onPickBranch} />
+        <GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} {onPickBranch} {onPr} {prExists} {prDisabled} />
       </div>
       <BranchPicker
         open={branchOpen}

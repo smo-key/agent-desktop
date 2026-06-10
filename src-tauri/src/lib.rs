@@ -5,6 +5,7 @@ pub mod git;
 pub mod models;
 pub mod orchestration;
 pub mod polish;
+pub mod pr;
 pub mod project_store;
 pub mod pty;
 pub mod specialists;
@@ -1028,6 +1029,18 @@ fn git_create_branch(repo_path: String, name: String) -> Result<String, String> 
     git::create_branch(&repo_path, &name)
 }
 
+/// Look up the OPEN PR status for `repo_path`'s current branch into `base`
+/// (default branch, typically `main`), for the footer's PR button. Resolves the
+/// branch in `repo_path`, then runs `gh pr list --head <branch> --base <base>
+/// --state open --json url,number`. Returns `{ kind: "exists", url, number }`
+/// when one exists, `{ kind: "none" }` when not, and `{ kind: "unknown" }` (NOT
+/// an error) when `gh` is missing/unauthenticated/errors — so the frontend falls
+/// back to the create-confirm path. Best-effort; never fails.
+#[tauri::command(async)]
+async fn pr_status_for(repo_path: String, base: String) -> Result<pr::PrStatus, String> {
+    Ok(pr::pr_status_for(&repo_path, &base).await)
+}
+
 /// Create a fresh session worktree off `repo_path`'s HEAD (auto-worktree
 /// projects). Returns `{ path, branch, base }`; ensures `.worktrees` is gitignored
 /// and the branch is unique. `Err` when `repo_path` isn't a git repo or git fails.
@@ -1276,6 +1289,7 @@ pub fn run() {
             git_list_branches,
             git_checkout,
             git_create_branch,
+            pr_status_for,
             worktree_create,
             worktree_remove_if_clean,
             worktree_list,

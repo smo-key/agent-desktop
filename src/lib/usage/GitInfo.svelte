@@ -19,6 +19,12 @@
   // button that opens the branch picker; without it the branch stays a read-only
   // display pill (the project pane keeps it read-only), mirroring the push/pull
   // span↔button switch.
+  //
+  // When `onPr` is provided (the footer only), a PR button is shown immediately
+  // to the RIGHT of the modified (edited-files) pill: clicking opens the existing
+  // PR (when `prExists`) or a create-PR confirm. It is DISABLED when `prDisabled`
+  // (on the base branch, or no branch/project). Without `onPr` no PR button shows
+  // (the project pane omits it), mirroring the other footer-only switches.
   import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import type { GitStatus } from './snapshots.svelte';
@@ -30,7 +36,10 @@
     onPush,
     onPull,
     busy = false,
-    onPickBranch
+    onPickBranch,
+    onPr,
+    prExists = false,
+    prDisabled = false
   }: {
     git: GitStatus | null;
     always?: boolean;
@@ -39,6 +48,9 @@
     onPull?: () => void;
     busy?: boolean;
     onPickBranch?: () => void;
+    onPr?: () => void;
+    prExists?: boolean;
+    prDisabled?: boolean;
   } = $props();
 </script>
 
@@ -129,6 +141,23 @@
         <span class="pill clean" use:tooltip={'Working tree clean'}>
           <Icon name="check" size={12} />
         </span>
+      {/if}
+      {#if onPr}
+        <button
+          type="button"
+          class="pill pr action"
+          class:exists={prExists}
+          onclick={onPr}
+          disabled={prDisabled}
+          use:tooltip={prDisabled
+            ? 'Open a pull request — switch off the base branch first'
+            : prExists
+              ? 'Open this branch’s pull request on GitHub'
+              : 'Create a pull request into main'}
+        >
+          <Icon name="git-pull-request" size={12} />
+          <span class="txt">PR</span>
+        </button>
       {/if}
     </span>
   {:else}
@@ -246,5 +275,18 @@
     color: var(--nominal-500);
     box-shadow: none;
     padding: 0 6px;
+  }
+  /* The PR button sits immediately right of the modified pill. Neutral by default
+     (create intent); a brighter accent tint when an open PR already exists (open
+     intent). The shared `button.pill.action` rules above carry hover/active/disabled. */
+  .pr {
+    background: var(--space-750);
+    color: var(--fg-2);
+    box-shadow: inset 0 0 0 1px var(--line-subtle);
+  }
+  .pr.exists {
+    background: var(--blue-tint);
+    color: var(--info-500);
+    box-shadow: none;
   }
 </style>

@@ -48,6 +48,7 @@
   import { activeProjectId } from '$lib/tasks/activeProject';
   import { projectForId } from '$lib/projects/projects';
   import { setGitTerminalOpener } from '$lib/projects/projectGitActions';
+  import { setAgentTaskLauncher } from '$lib/projects/prActions';
   import { buildLaunchPlan } from '$lib/launcher/plan';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import { ALL, UNASSIGNED } from '$lib/projects/projectRollup';
@@ -109,6 +110,24 @@
       );
       // Remember this session was spawned by a task: once it finishes its turn and
       // returns to the user, an $effect (below) auto-archives it (project-tasks spec).
+      if (paneId) taskAgentPanes.add(paneId);
+    });
+    // Footer actions (PR button, and later the commit button) spawn an
+    // AUTO-ARCHIVING agent task via a generic `(projectId, prompt)` launcher —
+    // EXACTLY mirroring the project-tasks agent launcher above so the same
+    // auto-archive $effect (below) closes the fire-and-forget session once it
+    // returns to the user. Shared on purpose; not PR-specific.
+    setAgentTaskLauncher((projectId, prompt) => {
+      const proj = projectForId(projects.list, projectId);
+      if (!proj) return;
+      const paneId = workspace.launch(
+        buildLaunchPlan({
+          folder: proj.path,
+          prompt,
+          placement: 'tab',
+          projectId: proj.id
+        })
+      );
       if (paneId) taskAgentPanes.add(paneId);
     });
     // A terminal task that succeeds (exit 0) pops a "<name> completed" toast.
