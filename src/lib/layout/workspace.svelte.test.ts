@@ -354,4 +354,36 @@ describe('workspace — coordinator archive / delete / restore (coordinator-life
     // findCoordinatorPane finds it again → the project no longer offers "Start".
     expect(findCoordinatorPane(coordinatorPanes(store), 'proj-A')?.paneId).toBe(paneId);
   });
+
+  // The REAL UI restore path for an ARCHIVED session is previewArchived → commitPreview
+  // (the inbox's resume-on-select), NOT restoreAgent. This proves that path also brings
+  // the coordinator back as the project's LIVE coordinator (findCoordinatorPane re-finds
+  // it), so the single-coordinator invariant holds however the user un-archives it.
+  it('the UI preview/commit restore path makes the coordinator live again', () => {
+    const { store, paneId } = withCoordinator('proj-A');
+    const sessionId = store.session(paneId).sessionId;
+
+    // Archive it: no live coordinator for the project.
+    store.closeAgent(paneId);
+    expect(findCoordinatorPane(coordinatorPanes(store), 'proj-A')).toBeNull();
+
+    // Selecting it for preview respawns `claude --resume`, but it stays presented as
+    // Archived until a new message — yet it IS live (closed:false), so the project's
+    // single-coordinator invariant already re-binds to it.
+    store.previewArchived(paneId, 0);
+    expect(store.session(paneId).closed).toBe(false);
+    expect(store.session(paneId).preview).toBe(true);
+    expect(findCoordinatorPane(coordinatorPanes(store), 'proj-A')?.paneId).toBe(paneId);
+
+    // Committing the preview (a new message) unarchives it into a normal live agent.
+    store.commitPreview(paneId);
+    const s = store.session(paneId);
+    expect(s.closed).toBe(false); // live
+    expect(s.preview).toBeUndefined(); // no longer pinned to Archived
+    expect(s.resume).toBe(true); // resumed the same transcript
+    expect(s.sessionId).toBe(sessionId);
+    expect(s.role).toBe('coordinator');
+    // The project's live coordinator is this same pane — no second coordinator exists.
+    expect(findCoordinatorPane(coordinatorPanes(store), 'proj-A')?.paneId).toBe(paneId);
+  });
 });

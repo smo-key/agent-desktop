@@ -228,22 +228,13 @@ describe('Archiving an empty session deletes it instead', () => {
   });
 });
 
-// The COORDINATOR follows the SAME archive/delete rule as ordinary sessions
-// (coordinator-lifecycle): NOT delete-only. `archiveAgent` runs the coordinator's
-// own userHash through `archiveDecision`, exactly like any other row — an EMPTY
-// coordinator (no user messages) DELETES, a NON-empty one ARCHIVES (restorable).
-describe('Coordinator archive/delete follows the same rule as ordinary sessions', () => {
-  it('deletes an EMPTY coordinator (no user messages) outright', () => {
-    // The coordinator's transcript carries no user message yet → falsy userHash.
-    expect(archiveDecision(null)).toBe('delete');
-    expect(archiveDecision('')).toBe('delete');
-  });
-
-  it('archives a NON-empty coordinator (has user messages), restorable', () => {
-    // The user has talked to the coordinator → a real userHash → archive (kept).
-    expect(archiveDecision('coord-hash')).toBe('archive');
-  });
-});
+// NOTE: The coordinator follows the SAME archive/delete rule as ordinary sessions
+// (an EMPTY coordinator deletes, a NON-empty one archives, restorable). That generic
+// rule is already covered by `archiveDecision` above; the COORDINATOR-SPECIFIC store
+// wiring — archive → restore brings it back as the project's live coordinator — is
+// exercised at the store level in `layout/workspace.svelte.test.ts` (which involves a
+// real coordinator pane), so the former tautological `archiveDecision('coord-hash')`
+// re-assertions here were redundant illusory coverage and have been removed.
 
 describe('A new message resumes a paused session', () => {
   it('resumes only when the live user-message COUNT strictly exceeds the paused-at count', () => {

@@ -22,6 +22,7 @@ import { projects } from '../projects/projects.svelte';
 import type { Project } from '../projects/projects';
 import { toast } from '../ui/toastStore.svelte';
 import {
+  archivedCoordinatorPane,
   coordinatorLaunchArgs,
   findCoordinatorPane,
   type CoordinatorPaneView
@@ -63,6 +64,15 @@ export function liveCoordinator(projectId: string): CoordinatorPaneView | null {
 }
 
 /**
+ * The ARCHIVED (closed) coordinator pane for `projectId`, or null. Mirrors
+ * {@link liveCoordinator} but matches the closed pane, so `startCoordinator` can RESTORE
+ * an archived coordinator instead of spawning a second one (one coordinator per project).
+ */
+export function archivedCoordinator(projectId: string): CoordinatorPaneView | null {
+  return archivedCoordinatorPane(allCoordinatorPanes(), projectId);
+}
+
+/**
  * Start (or focus) the project's coordinator. Returns the coordinator's paneId, or
  * null when the launch couldn't proceed (no toolkit paths). Fire-and-forget for most
  * callers; the promise resolves once the launch is recorded.
@@ -73,6 +83,19 @@ export async function startCoordinator(project: Project): Promise<string | null>
   if (existing) {
     workspace.focusPane(existing.paneId);
     return existing.paneId;
+  }
+
+  // 1b. One-coordinator-per-project invariant: if the project has an ARCHIVED
+  //     coordinator, RESTORE it (resume its transcript via `claude --resume`) instead of
+  //     spawning a second `role:'coordinator'` pane. To get a FRESH coordinator the user
+  //     deletes the archived one first (then no archived pane exists and Start spawns
+  //     below). Short-circuits BEFORE any toolkit-path resolution.
+  const archived = archivedCoordinator(project.id);
+  if (archived) {
+    workspace.restoreAgent(archived.paneId);
+    workspace.focusPane(archived.paneId);
+    void projects.update(project.id, { coordinatorPaneId: archived.paneId });
+    return archived.paneId;
   }
 
   // 2. Resolve the installed adapter + control socket (same memoized round-trip as
