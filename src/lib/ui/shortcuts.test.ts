@@ -60,6 +60,7 @@ describe('shortcuts registry covers every functional binding', () => {
     { keys: ['⌘', '⇧', '↑'], where: 'previous project filter' },
     { keys: ['⌘', 'W'], where: 'archive session' },
     { keys: ['⌘', '.'], where: 'pause / resume session' },
+    { keys: ['⌘', 'O'], where: 'insert file path into terminal' },
     { keys: ['⌘', 'Enter'], where: 'confirm and launch' }
   ];
 

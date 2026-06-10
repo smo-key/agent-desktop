@@ -40,7 +40,7 @@ describe('Pane Context Menu', () => {
   it('Context menu has an always-enabled Insert Filename item in the first section', () => {
     const m = buildPaneMenu(makeDeps());
     const insert = item(m, 'insert-filename');
-    expect(insert.shortcut).toBe('⌘I');
+    expect(insert.shortcut).toBe('⌘O');
     expect(insert.disabled).toBeFalsy();
     // It lives in the first section alongside Copy/Paste.
     expect(m[0].some((i) => i.id === 'insert-filename')).toBe(true);

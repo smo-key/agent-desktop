@@ -45,7 +45,7 @@ export const SHORTCUTS: ShortcutGroup[] = [
     items: [
       { keys: ['⌘', 'W'], label: 'Archive session' },
       { keys: ['⌘', '.'], label: 'Pause / resume session' },
-      { keys: ['⌘', 'I'], label: 'Insert file path into terminal' }
+      { keys: ['⌘', 'O'], label: 'Insert file path into terminal' }
     ]
   },
   {

@@ -517,14 +517,15 @@
       return;
     }
 
-    // Cmd-I inserts a picked file's quoted path into the FOCUSED terminal at the
+    // Cmd-O inserts a picked file's quoted path into the FOCUSED terminal at the
     // cursor. A global shortcut (works in every view, incl. while xterm holds
     // focus) — placed BEFORE the grid-only gate below so it isn't made inert.
-    // Exclude Alt/Ctrl so Cmd-Opt-I still reaches the WKWebView inspector (and a
-    // stray Cmd-Ctrl-I falls through). `insertFilenameInto` checks the focused
+    // Exclude Alt/Ctrl so only the bare Cmd-O combo fires (stray Cmd-Opt-O /
+    // Cmd-Ctrl-O fall through). `insertFilenameInto` checks the focused
     // handle BEFORE opening the picker, so this is a clean no-op (no dialog) when
-    // no terminal is focused; preventDefault keeps the keystroke off the PTY.
-    if (meta && !alt && !e.ctrlKey && (key === 'i' || key === 'I')) {
+    // no terminal is focused; preventDefault keeps the keystroke off the PTY and
+    // suppresses the webview's native "Open file" accelerator.
+    if (meta && !alt && !e.ctrlKey && (key === 'o' || key === 'O')) {
       e.preventDefault();
       void insertFilenameInto(focusedTerminalHandle());
       return;

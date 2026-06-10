@@ -2,7 +2,7 @@
 // picks a file via the native dialog; its ABSOLUTE path — wrapped in double
 // quotes — is pasted into the focused terminal at the cursor (a plain
 // `pty_write`, the same path the context-menu Paste uses). The menu item,
-// PaneNode wiring, and ⌘I shortcut live elsewhere and all funnel through the
+// PaneNode wiring, and ⌘O shortcut live elsewhere and all funnel through the
 // ONE pick→quote→paste flow here ([`insertFilenameInto`]), so the quoting and
 // the "cancel inserts nothing" contract are defined in exactly one place.
 //
@@ -37,7 +37,7 @@ export function quotePath(abs: string): string {
 
 /**
  * The ONE pick→quote→paste flow. If `handle` is undefined (no live terminal) →
- * do nothing AND open NO dialog (so ⌘I with nothing focused, or the menu on a
+ * do nothing AND open NO dialog (so ⌘O with nothing focused, or the menu on a
  * closed session, is a clean no-op — never a pointless native dialog). Otherwise
  * call `pick()` (defaulting to the native [`pickFile`]); on a non-null path paste
  * its quoted form into the terminal; on `null` (cancel / unavailable dialog) do
