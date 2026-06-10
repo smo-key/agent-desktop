@@ -14,11 +14,6 @@ import type { ConfirmOptions } from '$lib/ui/confirmStore.svelte';
  *  so a multi-paragraph assistant message doesn't render a giant tooltip. */
 export const ROW_SUB_MAX_LEN = 140;
 
-/** The short generic sub-line shown when a row has neither a pending question nor any
- *  (live or cached) last assistant message — e.g. a just-spawned agent with no output
- *  yet. Deliberately terse; replaces the old per-lane strings. */
-export const ROW_SUB_FALLBACK = 'No messages yet';
-
 /**
  * PURE: collapse a (possibly multi-line) message to a single trimmed line and clip it
  * to `ROW_SUB_MAX_LEN` for the one-line roster sub-line. Returns null for an
@@ -35,6 +30,39 @@ export function clipLine(
   return oneLine.length > maxLen ? oneLine.slice(0, maxLen) + '…' : oneLine;
 }
 
+/** PURE: total session cost as a compact label — `$1.50`, or an em dash when unknown.
+ *  Used as the FINISHED-state sub-line fallback (a finished row with no message shows
+ *  what it cost). Mirrors the formatting of the old inline `cost` helper. */
+export function cost(value: number | null | undefined): string {
+  return value === null || value === undefined ? '—' : `$${value.toFixed(2)}`;
+}
+
+/**
+ * PURE: the STATE-APPROPRIATE generic sub-line for a row that has NO pending question
+ * and NO (live or cached) last message — the per-lane words restored from the old
+ * inline `rowSub`. The more-specific lifecycle states win, in precedence order:
+ *   - closed (Archived)        → 'Archived'
+ *   - paused                   → 'Paused · send a message to resume'
+ *   - error                    → 'Errored — needs you'
+ *   - attention (waiting, etc) → 'Needs input'
+ *   - finished                 → the formatted `cost`
+ *   - working / idle / other   → `currentAction`, else 'Working…'
+ * Only ever reached as the LAST resort by `rowSub` (a real message always wins first),
+ * so e.g. an archived row WITH a (cached) message shows the message, not 'Archived'.
+ */
+export function stateFallback(
+  row: Pick<AgentRow, 'closed' | 'paused' | 'status' | 'currentAction' | 'cost'>
+): string {
+  if (row.closed) return 'Archived';
+  if (row.paused) return 'Paused · send a message to resume';
+  if (isAttention(row.status)) {
+    if (row.status === 'error') return 'Errored — needs you';
+    return 'Needs input';
+  }
+  if (row.status === 'finished') return cost(row.cost);
+  return row.currentAction ?? 'Working…';
+}
+
 /**
  * PURE: the secondary "what it last said / is asking" line for a roster row, used for
  * EVERY lane — including archived (closed) and previewing rows. Priority:
@@ -43,7 +71,9 @@ export function clipLine(
  *   2. the last assistant message — the live `summary`, else the per-session cached
  *      summary the caller injects via `cachedSummary` (a closed pane has no live PTY,
  *      so its `summary` is gone — the cache, recorded while it was live, supplies it);
- *   3. a short generic fallback (`ROW_SUB_FALLBACK`) when none of the above exists.
+ *   3. a STATE-APPROPRIATE generic fallback (`stateFallback`) when none of the above
+ *      exists — the per-lane word for the row's state (Archived / Paused / Errored /
+ *      Needs input / the cost / the current action), NOT a single flat string.
  * Each candidate is clipped to one line; an empty/whitespace candidate is skipped.
  *
  * `cachedSummary` is an injected lookup (`() => string | null`) so this stays a pure
@@ -51,16 +81,16 @@ export function clipLine(
  * session id (to key the cache) is the caller's job.
  */
 export function rowSub(
-  row: Pick<AgentRow, 'question' | 'questions' | 'summary'>,
+  row: Pick<
+    AgentRow,
+    'question' | 'questions' | 'summary' | 'closed' | 'paused' | 'status' | 'currentAction' | 'cost'
+  >,
   cachedSummary: () => string | null = () => null
 ): string {
   const question =
     row.questions && row.questions.length > 0 ? row.questions[0].question : row.question;
   return (
-    clipLine(question) ??
-    clipLine(row.summary) ??
-    clipLine(cachedSummary()) ??
-    ROW_SUB_FALLBACK
+    clipLine(question) ?? clipLine(row.summary) ?? clipLine(cachedSummary()) ?? stateFallback(row)
   );
 }
 
