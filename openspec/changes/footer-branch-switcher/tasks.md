@@ -49,7 +49,7 @@
 
 - [x] 7.1 Run the frontend unit tests (`branchActions`, `projectGit.refreshOne`) and the Rust tests; all green.
 - [x] 7.2 Run the full pre-commit gate (`npm run check`, the scenario-coverage gate, `openspec validate --changes --strict`); all green.
-- [ ] 7.3 Manually verify against a real repo: switch a local branch, check out a remote branch (new tracking branch created), create a new branch, and a dirty-tree checkout failure surfaces git's message — confirming the footer refreshes on success.
+- [x] 7.3 Manually verify against a real repo: switch a local branch, check out a remote branch (new tracking branch created), create a new branch, and a dirty-tree checkout failure surfaces git's message — confirming the footer refreshes on success.
 - [x] 7.4 `openspec validate footer-branch-switcher --strict` passes.
 
 ## 8. Review fixes (adversarial-code-review)
