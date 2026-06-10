@@ -19,6 +19,7 @@
   import { view as topView } from '$lib/overview/view.svelte';
   import LimitBars from './LimitBars.svelte';
   import GitInfo from './GitInfo.svelte';
+  import BranchPicker from './BranchPicker.svelte';
   import ContextBar from './ContextBar.svelte';
   import { friendlyTime } from '$lib/overview/friendlyTime';
   import { tooltip } from '$lib/ui/tooltip';
@@ -67,6 +68,20 @@
   // git buttons so the sync can't be re-triggered.
   const gitSyncing = $derived(gitBusy.isBusy(gitProject?.path));
 
+  // The branch picker: the footer's branch pill becomes a button that opens an
+  // upward dropdown to switch / create branches for `gitProject`'s folder. Only
+  // wired when a real project folder with a branch backs the footer git (so the
+  // project pane's GitInfo, which gets no `onPickBranch`, stays read-only).
+  let branchOpen = $state(false);
+  let branchAnchorEl = $state<HTMLDivElement | null>(null);
+  const canPickBranch = $derived(!!gitProject?.path && !!folderGit?.branch);
+  const onPickBranch = $derived(canPickBranch ? () => (branchOpen = !branchOpen) : undefined);
+  // Close the picker if the footer's project changes out from under it.
+  $effect(() => {
+    void gitProject?.path;
+    branchOpen = false;
+  });
+
   // The terminal area's left edge as a fraction [0,1] of the surface, or null when
   // there's no terminal pane / not in grid view. A "terminal" pane is a non-claude
   // (shell) pane; agents are claude panes. Reading the active tree + registry keeps
@@ -101,7 +116,21 @@
   aria-label="Status footer"
 >
   <div class="zone left">
-    <div class="left-git"><GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} /></div>
+    <div class="left-git">
+      <div class="branch-anchor" bind:this={branchAnchorEl}>
+        <GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} {onPickBranch} />
+      </div>
+      <BranchPicker
+        open={branchOpen}
+        path={gitProject?.path ?? null}
+        name={gitProject?.name ?? ''}
+        projectId={gitProject?.id ?? null}
+        current={folderGit?.branch ?? null}
+        anchor={branchAnchorEl}
+        onClose={() => (branchOpen = false)}
+        onDone={() => void projectGit.refreshOne(gitProject?.path)}
+      />
+    </div>
     <span class="sep" aria-hidden="true"></span>
     <LimitBars fiveHour={view.fiveHour} sevenDay={view.sevenDay} {now} />
   </div>
@@ -154,6 +183,12 @@
     flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
+  }
+  /* Wraps GitInfo so the branch picker can measure a stable anchor rect; keeps
+     min-width:0 so a long branch name still shrinks + ellipsizes as before. */
+  .branch-anchor {
+    display: flex;
+    min-width: 0;
   }
   .zone.left :global(.limits) {
     flex: none;

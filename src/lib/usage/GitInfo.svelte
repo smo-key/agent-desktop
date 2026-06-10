@@ -14,6 +14,11 @@
   // as the project pane's context-menu Push/Pull); without them the indicators are
   // plain display pills. While `busy` is set (a push/pull is already running for
   // this project) BOTH buttons are disabled so the operation can't be re-triggered.
+  //
+  // When `onPickBranch` is provided (the footer only), the BRANCH pill becomes a
+  // button that opens the branch picker; without it the branch stays a read-only
+  // display pill (the project pane keeps it read-only), mirroring the push/pull
+  // span↔button switch.
   import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import type { GitStatus } from './snapshots.svelte';
@@ -24,7 +29,8 @@
     stack = false,
     onPush,
     onPull,
-    busy = false
+    busy = false,
+    onPickBranch
   }: {
     git: GitStatus | null;
     always?: boolean;
@@ -32,16 +38,29 @@
     onPush?: () => void;
     onPull?: () => void;
     busy?: boolean;
+    onPickBranch?: () => void;
   } = $props();
 </script>
 
 <div class="git" class:stacked={stack}>
   {#if git && git.branch}
     <span class="grp branchgrp">
-      <span class="pill branch" use:tooltip={`On branch ${git.branch}`}>
-        <Icon name="git-branch" size={12} />
-        <span class="txt">{git.branch}</span>
-      </span>
+      {#if onPickBranch}
+        <button
+          type="button"
+          class="pill branch action"
+          onclick={onPickBranch}
+          use:tooltip={`On branch ${git.branch} — switch branch`}
+        >
+          <Icon name="git-branch" size={12} />
+          <span class="txt">{git.branch}</span>
+        </button>
+      {:else}
+        <span class="pill branch" use:tooltip={`On branch ${git.branch}`}>
+          <Icon name="git-branch" size={12} />
+          <span class="txt">{git.branch}</span>
+        </span>
+      {/if}
     </span>
     <span class="grp ind">
       {#if always || git.behind != null}

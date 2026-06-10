@@ -22,6 +22,7 @@
     name,
     projectId = null,
     current,
+    anchor = null,
     onClose,
     onDone
   }: {
@@ -30,6 +31,10 @@
     name: string;
     projectId?: string | null;
     current: string | null;
+    // The trigger element the menu aligns to. The menu is `position: fixed`
+    // (so it escapes the footer's overflow-hidden zones) and is placed just
+    // ABOVE this element's top-left, computed from its bounding rect on open.
+    anchor?: HTMLElement | null;
     onClose: () => void;
     onDone?: () => void;
   } = $props();
@@ -59,6 +64,10 @@
   let menuEl = $state<HTMLDivElement | null>(null);
   let inputEl = $state<HTMLInputElement | null>(null);
 
+  // ── fixed-menu position (measured from the anchor on open) ─────────────────
+  let menuLeft = $state(0);
+  let menuBottom = $state(0);
+
   // ── open / load effect ────────────────────────────────────────────────────
   $effect(() => {
     if (!open) return;
@@ -66,6 +75,13 @@
     if (!path) {
       onClose();
       return;
+    }
+
+    // Anchor the fixed menu just above the trigger's top-left.
+    const rect = anchor?.getBoundingClientRect();
+    if (rect) {
+      menuLeft = rect.left;
+      menuBottom = window.innerHeight - rect.top + 6;
     }
 
     // Load branch list and reset UI state whenever the menu opens.
@@ -181,6 +197,8 @@
   <div
     class="bp-menu"
     bind:this={menuEl}
+    style:left={`${menuLeft}px`}
+    style:bottom={`${menuBottom}px`}
     onclick={(e) => e.stopPropagation()}
   >
     <!-- Filter input at the top of the menu. -->
@@ -276,10 +294,9 @@
   }
 
   .bp-menu {
-    position: absolute;
-    /* Open upward from the trigger in the footer. */
-    bottom: calc(100% + 6px);
-    left: 0;
+    /* Fixed so it escapes the footer zones' overflow:hidden; positioned just
+       above the trigger via inline left/bottom measured from the anchor rect. */
+    position: fixed;
     z-index: 3001;
     min-width: 240px;
     max-height: 320px;
