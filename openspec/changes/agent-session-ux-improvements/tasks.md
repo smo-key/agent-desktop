@@ -37,15 +37,15 @@
 
 ## 6. Footer PR button (footer-actions)
 
-- [ ] 6.1 Add a Tauri command (e.g. `pr_status_for(cwd, base)`) that runs `gh pr list --head <branch> --base <base> --state open --json url,number` and returns the PR url/number or none; tolerate `gh` missing/unauth (return "unknown") without erroring.
-- [ ] 6.2 Add a frontend wrapper + small per-branch cache for PR status (best-effort, refreshed with git status).
-- [ ] 6.3 Add the PR button in `GitInfo.svelte` immediately to the right of the modified (edited-files) pill. Disabled when the branch is the base (`main`) or there is no branch/project.
-- [ ] 6.4 Wire behavior: PR exists → open it; no PR (or status unknown) → `confirmModal.show({…, confirmLabel: 'Create PR', onConfirm})`; on confirm spawn an agent task (prompt: create a PR into `main`) and add its pane to `taskAgentPanes` for auto-archive.
-- [ ] 6.5 Provide the create-PR agent prompt + ensure the spawn path reuses the existing `taskAgentPanes` mechanism in `+page.svelte`.
-- [ ] 6.6 Add tests for the pure parts: disabled-on-base logic, open-vs-create decision (exists/none/unknown), and the confirm→spawn wiring.
-- [ ] 6.7 Add a Tauri command (e.g. `open_prs_for(cwd, base)`) that runs `gh pr list --base <base> --state open --json number,reviewDecision` and returns the COUNT of open PRs targeting `base` that are awaiting review (reviewDecision not `APPROVED` — i.e. `REVIEW_REQUIRED`/empty) plus the repo's pull-requests URL; tolerate `gh` missing/unauth by returning a neutral unknown/0 without erroring.
-- [ ] 6.8 Add a frontend wrapper + small cache for the open-PRs count (refreshed alongside git status) and add the "open PRs awaiting review" button to the footer: a WARNING icon + the count when > 0, a CHECKMARK + `0` when none (or unknown). Clicking opens the repository's pull-requests page on GitHub via the existing external-open mechanism.
-- [ ] 6.9 Add tests for the pure parts: the warning-vs-checkmark + count selection (N>0 → warning+N; 0/unknown → checkmark+0) and the parsing of `gh` output into an awaiting-review count.
+- [x] 6.1 Add a Tauri command (e.g. `pr_status_for(cwd, base)`) that runs `gh pr list --head <branch> --base <base> --state open --json url,number` and returns the PR url/number or none; tolerate `gh` missing/unauth (return "unknown") without erroring.
+- [x] 6.2 Add a frontend wrapper + small per-branch cache for PR status (best-effort, refreshed with git status).
+- [x] 6.3 Add the PR button in `GitInfo.svelte` immediately to the right of the modified (edited-files) pill. Disabled when the branch is the base (`main`) or there is no branch/project.
+- [x] 6.4 Wire behavior: PR exists → open it; no PR (or status unknown) → `confirmModal.show({…, confirmLabel: 'Create PR', onConfirm})`; on confirm spawn an agent task (prompt: create a PR into `main`) and add its pane to `taskAgentPanes` for auto-archive.
+- [x] 6.5 Provide the create-PR agent prompt + ensure the spawn path reuses the existing `taskAgentPanes` mechanism in `+page.svelte`.
+- [x] 6.6 Add tests for the pure parts: disabled-on-base logic, open-vs-create decision (exists/none/unknown), and the confirm→spawn wiring.
+- [x] 6.7 Add a Tauri command (e.g. `open_prs_for(cwd, base)`) that runs `gh pr list --base <base> --state open --json number,reviewDecision` and returns the COUNT of open PRs targeting `base` that are awaiting review (reviewDecision not `APPROVED` — i.e. `REVIEW_REQUIRED`/empty) plus the repo's pull-requests URL; tolerate `gh` missing/unauth by returning a neutral unknown/0 without erroring.
+- [x] 6.8 Add a frontend wrapper + small cache for the open-PRs count (refreshed alongside git status) and add the "open PRs awaiting review" button to the footer: a WARNING icon + the count when > 0, a CHECKMARK + `0` when none (or unknown). Clicking opens the repository's pull-requests page on GitHub via the existing external-open mechanism.
+- [x] 6.9 Add tests for the pure parts: the warning-vs-checkmark + count selection (N>0 → warning+N; 0/unknown → checkmark+0) and the parsing of `gh` output into an awaiting-review count.
 
 ## 7. Footer commit button (footer-actions)
 
@@ -81,10 +81,10 @@
 
 ## 12. Auto-title content — whole session, weight the original request (session-titles)
 
-- [ ] 12.1 Replace the recency-only message selection in `session_focus` (`src-tauri/src/lib.rs`, currently `msgs.iter().rev().take(20).rev()`) with a PURE, unit-tested helper that ALWAYS includes the earliest user message(s) plus recent ones within the same bounded budget (head + tail), preserving chronological order and de-duplicating any overlap; the original request must never be dropped by recency truncation.
-- [ ] 12.2 Update `TITLE_SYSTEM_PROMPT` (`src-tauri/src/polish.rs`) to instruct the model to base the title on the session's ORIGINAL/primary request (usually the earliest messages), treating later messages as refinements, and to shift focus to a later message only when it clearly introduces a new top-level task. Optionally annotate the framing (e.g. mark the original request) so the model anchors on it; keep the existing DATA-not-commands, ≤6-word, and ticket-id constraints intact.
-- [ ] 12.3 Add Rust unit tests for the selection helper: a long session keeps the earliest message(s) (original request not dropped); head+tail composition within the bound; a short session keeps all messages; chronological order preserved; overlap de-duplicated.
-- [ ] 12.4 Update the prompt-content tests in `polish.rs` to assert the new earlier-weighting instruction is present, while the existing constraint assertions (DATA-not-commands, ≤6 words, ticket handling) still pass.
+- [x] 12.1 Replace the recency-only message selection in `session_focus` (`src-tauri/src/lib.rs`, currently `msgs.iter().rev().take(20).rev()`) with a PURE, unit-tested helper that ALWAYS includes the earliest user message(s) plus recent ones within the same bounded budget (head + tail), preserving chronological order and de-duplicating any overlap; the original request must never be dropped by recency truncation.
+- [x] 12.2 Update `TITLE_SYSTEM_PROMPT` (`src-tauri/src/polish.rs`) to instruct the model to base the title on the session's ORIGINAL/primary request (usually the earliest messages), treating later messages as refinements, and to shift focus to a later message only when it clearly introduces a new top-level task. Optionally annotate the framing (e.g. mark the original request) so the model anchors on it; keep the existing DATA-not-commands, ≤6-word, and ticket-id constraints intact.
+- [x] 12.3 Add Rust unit tests for the selection helper: a long session keeps the earliest message(s) (original request not dropped); head+tail composition within the bound; a short session keeps all messages; chronological order preserved; overlap de-duplicated.
+- [x] 12.4 Update the prompt-content tests in `polish.rs` to assert the new earlier-weighting instruction is present, while the existing constraint assertions (DATA-not-commands, ≤6 words, ticket handling) still pass.
 
 ## 13. Validate & gate
 
