@@ -25,7 +25,7 @@ export function setGitTerminalOpener(fn: GitTerminalOpener | null): void {
 }
 
 /** Shorten git's multi-line stdout/stderr to a single tidy toast line. */
-function oneLine(text: unknown): string {
+export function oneLine(text: unknown): string {
   const s = typeof text === 'string' ? text : String(text ?? '');
   const first = s.split('\n').map((l) => l.trim()).find((l) => l.length > 0);
   return first ?? '';
@@ -38,7 +38,7 @@ function oneLine(text: unknown): string {
  * resolve a conflict, retry). Otherwise fall back to a non-blocking failure toast
  * carrying git's own error.
  */
-function surfaceFailure(
+export function surfaceFailure(
   projectId: string | null | undefined,
   command: string,
   name: string,
