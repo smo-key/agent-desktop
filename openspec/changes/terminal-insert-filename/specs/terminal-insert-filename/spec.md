@@ -53,8 +53,11 @@ byte reaches the PTY.
 On a successful selection, the system SHALL insert the chosen file's absolute path,
 wrapped in double quotes, into the target terminal pane (the pane whose menu was
 opened, or the focused pane for ⌘I) at its input cursor — using the same PTY write
-path as Paste. Any double-quote character within the path SHALL be
-escaped as `\"`. No trailing space SHALL be appended.
+path as Paste. So the inserted text is always a SINGLE literal shell token, every
+character that is special inside POSIX double quotes — backslash (`\`), double quote
+(`"`), dollar sign (`$`) and backtick (`` ` ``) — SHALL be escaped with a preceding
+backslash. A crafted filename therefore cannot break out of the quotes nor trigger
+parameter/command expansion. No trailing space SHALL be appended.
 
 #### Scenario: Plain path is quoted and inserted
 - **WHEN** the user selects the file `/Users/me/notes.txt`
@@ -65,6 +68,12 @@ escaped as `\"`. No trailing space SHALL be appended.
 - **WHEN** the selected path contains a `"` character (e.g. `/tmp/a"b.txt`)
 - **THEN** the inserted text escapes it as `\"` inside the surrounding quotes
   (e.g. `"/tmp/a\"b.txt"`)
+
+#### Scenario: Shell metacharacters in the filename are neutralized
+- **WHEN** the selected path contains shell-special characters — a backslash before a
+  quote (e.g. `/tmp/a\"b`), a `$` (e.g. `/tmp/$(id).txt`), or a backtick
+- **THEN** each of `\`, `"`, `$`, `` ` `` is backslash-escaped so the inserted text is
+  a single literal token that cannot break the quoting or run a command on Enter
 
 #### Scenario: Cancelling inserts nothing
 - **WHEN** the user cancels the file dialog (or the dialog is unavailable)

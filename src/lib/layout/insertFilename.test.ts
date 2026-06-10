@@ -24,6 +24,21 @@ describe('quotePath', () => {
     expect(quotePath('/tmp/a"b.txt')).toBe('"/tmp/a\\"b.txt"');
   });
 
+  it('escapes a backslash so an embedded \\" cannot break out of the quotes', () => {
+    // Path literally containing the chars: / t m p / a \ " b
+    // Both the backslash and the quote get a backslash, so the result is:
+    //   "  /tmp/a  \\  \"  b  "   → a single literal token.
+    expect(quotePath('/tmp/a\\"b')).toBe('"/tmp/a\\\\\\"b"');
+  });
+
+  it('escapes $ so a filename cannot trigger parameter/command expansion', () => {
+    expect(quotePath('/tmp/$(id).txt')).toBe('"/tmp/\\$(id).txt"');
+  });
+
+  it('escapes a backtick', () => {
+    expect(quotePath('/tmp/`x`.txt')).toBe('"/tmp/\\`x\\`.txt"');
+  });
+
   it('appends no trailing space', () => {
     const result = quotePath('/Users/me/notes.txt');
     expect(result.endsWith(' ')).toBe(false);
@@ -52,11 +67,13 @@ describe('insertFilenameInto', () => {
     expect(handle.paste).not.toHaveBeenCalled();
   });
 
-  it('does not throw when the handle is undefined', async () => {
+  it('opens no dialog and does nothing when the handle is undefined', async () => {
     const pick = vi.fn<() => Promise<string | null>>(() =>
       Promise.resolve('/Users/me/notes.txt')
     );
 
     await expect(insertFilenameInto(undefined, pick)).resolves.toBeUndefined();
+    // The target is checked BEFORE the picker — no live terminal → no dialog.
+    expect(pick).not.toHaveBeenCalled();
   });
 });

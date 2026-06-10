@@ -52,11 +52,17 @@ tiny module preserves the "small, mockable surface" pattern and lets tests stub 
 keep each wrapper's contract a single, obvious shape.
 
 ### D3 — Path quoting in a pure helper
-A pure `quotePath(abs)` returns `"<abs>"` with every embedded `"` replaced by `\"`
-and no trailing space. Pure + framework-free so it is unit-tested without a DOM or
-the Tauri bridge (matching how `paneMenu` is tested). Backslashes are NOT otherwise
-escaped — on macOS this is for a shell/TUI prompt and double-quote escaping is the
-one case that would break the quoting; over-escaping would corrupt normal paths.
+A pure `quotePath(abs)` returns `"<abs>"` with every character that is special inside
+POSIX double quotes — `\`, `"`, `$`, `` ` `` — backslash-escaped in one pass
+(`replace(/[\\"$`]/g, '\\$&')`), and no trailing space. Pure + framework-free so it
+is unit-tested without a DOM or the Tauri bridge (matching how `paneMenu` is tested).
+Escaping ALL FOUR (not just `"`) is required for safety, not gold-plating: the path
+goes into a live shell line the user submits with Enter, so a filename containing
+`\"` would otherwise break out of the quotes, and one containing `$(…)`/`` `…` `` would
+trigger command substitution — i.e. a maliciously- or accidentally-named file could
+run a command. Escaping `\` first (via the single-pass char class) is what makes the
+`\"` case unambiguous; escaping `$`/`` ` `` neutralizes expansion. Normal paths (no
+special chars) are unaffected — `/Users/me/notes.txt` → `"/Users/me/notes.txt"`.
 
 ### D4 — Menu item in `buildPaneMenu`
 Add `insertFilename(): void` to `PaneMenuDeps` and an item
@@ -65,8 +71,10 @@ to the **first** section, after Paste. Not disabled by selection state (it doesn
 depend on one); like Paste it simply no-ops if the PTY is dead. `PaneNode.openMenu`
 implements the dep by funneling through the shared flow:
 `insertFilename: () => { void insertFilenameInto(handle); }` (where `handle =
-getTerminal(node.paneId)`). The menu path always has a live pane, so opening the
-dialog first is fine.
+getTerminal(node.paneId)`). `insertFilenameInto` checks the handle BEFORE opening the
+picker, so right-clicking a CLOSED session (its placeholder leaf still carries the
+menu, but `getTerminal` returns undefined) offers the item yet opens no pointless
+dialog — it is a silent no-op, like Paste on a dead pane.
 
 ### D5 — ⌘I handler targets the focused terminal regardless of view
 Add a branch to `onKeydown` BEFORE the `if (!view.isGrid) return;` grid gate (that
@@ -74,13 +82,14 @@ gate makes pane shortcuts inert because the live terminal is shown in the inbox)
 The handler resolves the focused terminal pane's handle via `focusedTerminalHandle()`
 (the active workspace's focused pane — not program-filtered, mirroring the menu and
 Copy/Paste; it only ever resolves workspace panes, never the out-of-scope
-Terminals-panel shells). It `preventDefault()`s unconditionally. Crucially, it
-resolves the handle FIRST and only calls `insertFilenameInto(handle)` when a handle
-exists — so NO dialog opens when nothing is focused (the spec's "no dialog" rule).
-This is why the ⌘I path cannot just hand an undefined handle to `insertFilenameInto`,
-which opens the picker before checking the handle. The shared resolver
-(`focusedTerminalHandle`, `workspace` focused leaf id → pane id → `getTerminal`)
-lives beside the flow so `+page.svelte` doesn't duplicate the mapping.
+Terminals-panel shells) and passes it to `insertFilenameInto`. Because the helper
+guards the no-handle case (no dialog without a live terminal), the branch is simply
+`void insertFilenameInto(focusedTerminalHandle())` — no separate pre-check needed,
+and the spec's "no dialog when nothing focused" rule holds. The branch matches plain
+**⌘I only** (`meta && !alt && !e.ctrlKey`) so **Cmd-Opt-I** still reaches the
+WKWebView inspector; it `preventDefault()`s to keep the keystroke off the PTY. The
+shared resolver (`focusedTerminalHandle`, `workspace` focused leaf id → pane id →
+`getTerminal`) lives beside the flow so `+page.svelte` doesn't duplicate the mapping.
 *Alternative considered:* handle ⌘I inside `TerminalPane` per-pane — rejected; the
 global handler already centralizes ⌘-shortcuts and must work while xterm has focus.
 

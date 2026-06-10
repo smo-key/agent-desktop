@@ -20,28 +20,38 @@ import { pickFile } from '../launcher/pickFile';
 
 /**
  * PURE: wrap an absolute path so it can be pasted into a shell/agent terminal as
- * a single argument — surround it with double quotes and escape any embedded `"`
- * as `\"`. NO trailing space is appended (the caller decides spacing), so the
- * result never ends in a space.
+ * a SINGLE literal argument. We surround it with double quotes and backslash-
+ * escape every character that is special INSIDE POSIX double quotes — backslash
+ * (`\`), double quote (`"`), dollar (`$`) and backtick (`` ` ``) — in one pass.
+ * This makes a crafted filename inert: it cannot break out of the quotes (e.g. a
+ * name containing `\"`) nor trigger parameter/command expansion (`$VAR`, `$(…)`,
+ * `` `…` ``) when the user presses Enter. NO trailing space is appended (the
+ * caller decides spacing), so the result never ends in a space.
+ *
+ * One-pass `[\\"$`]` + `\\$&` prepends a single backslash to each special char,
+ * including backslashes we did not add, so escaping is unambiguous and order-free.
  */
 export function quotePath(abs: string): string {
-  return `"${abs.replace(/"/g, '\\"')}"`;
+  return `"${abs.replace(/[\\"$`]/g, '\\$&')}"`;
 }
 
 /**
- * The ONE pick→quote→paste flow. Call `pick()` (defaulting to the native
- * [`pickFile`]); if it resolves a non-null path AND `handle` is defined, paste
- * the quoted path into that terminal. If pick resolves `null` (cancel /
- * unavailable dialog) OR `handle` is undefined (no focused terminal) → do
- * nothing (never throw). The injectable `pick` makes the flow unit-testable
+ * The ONE pick→quote→paste flow. If `handle` is undefined (no live terminal) →
+ * do nothing AND open NO dialog (so ⌘I with nothing focused, or the menu on a
+ * closed session, is a clean no-op — never a pointless native dialog). Otherwise
+ * call `pick()` (defaulting to the native [`pickFile`]); on a non-null path paste
+ * its quoted form into the terminal; on `null` (cancel / unavailable dialog) do
+ * nothing. Never throws. The injectable `pick` makes the flow unit-testable
  * without the native dialog.
  */
 export async function insertFilenameInto(
   handle: TerminalHandle | undefined,
   pick: () => Promise<string | null> = pickFile
 ): Promise<void> {
+  // Check the target BEFORE opening the dialog: no live terminal → no dialog.
+  if (!handle) return;
   const path = await pick();
-  if (path == null || !handle) return;
+  if (path == null) return;
   handle.paste(quotePath(path));
 }
 

@@ -519,15 +519,14 @@
 
     // Cmd-I inserts a picked file's quoted path into the FOCUSED terminal at the
     // cursor. A global shortcut (works in every view, incl. while xterm holds
-    // focus) — placed BEFORE the grid-only gate below so it isn't made inert. We
-    // resolve the focused terminal FIRST and open no dialog when there is none, so
-    // it is a clean no-op outside an agent terminal (the menu item, which always
-    // has a live pane, goes straight through insertFilenameInto). preventDefault
-    // unconditionally so the keystroke never leaks a stray byte to a PTY.
-    if (meta && (key === 'i' || key === 'I')) {
+    // focus) — placed BEFORE the grid-only gate below so it isn't made inert.
+    // Exclude Alt/Ctrl so Cmd-Opt-I still reaches the WKWebView inspector (and a
+    // stray Cmd-Ctrl-I falls through). `insertFilenameInto` checks the focused
+    // handle BEFORE opening the picker, so this is a clean no-op (no dialog) when
+    // no terminal is focused; preventDefault keeps the keystroke off the PTY.
+    if (meta && !alt && !e.ctrlKey && (key === 'i' || key === 'I')) {
       e.preventDefault();
-      const handle = focusedTerminalHandle();
-      if (handle) void insertFilenameInto(handle);
+      void insertFilenameInto(focusedTerminalHandle());
       return;
     }
 
