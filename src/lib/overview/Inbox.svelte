@@ -981,10 +981,10 @@
           </span>
         {:else if r.coordinatorPaneId}
           <span
-            class="spec-badge coord-badge"
+            class="spec-badge coord-badge coord-badge-icon"
             use:tooltip={'Spawned by the project coordinator'}
           >
-            <Icon name="git-branch" size={9} />coordinated
+            <Icon name="compass" size={9} />
           </span>
         {/if}
         {#if r.specialist}
@@ -1300,6 +1300,10 @@
   /* Coordinator badges (the coordinator itself, and its coordinated agents) use a
      distinct orange tint so an orchestration is visible at a glance (task 6.5). */
   .row .nm .t .coord-badge { background: var(--orange-tint); color: var(--orange-200); max-width: 130px; }
+  /* The coordinated-agent badge is icon-only (a single compass glyph, no text), so
+     it collapses to a square chip: symmetric padding, no gap/max-width meant for a
+     trailing label (task 1.2). */
+  .row .nm .t .coord-badge-icon { gap: 0; max-width: none; padding: 2px; }
   .row .nm .s { font-size: 11px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
   .row .nm .s.q { color: var(--orange-300); }
   /* The tiny third row: context · cost · last activity, each an icon + value. */
