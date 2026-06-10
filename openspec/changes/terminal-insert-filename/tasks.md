@@ -1,15 +1,15 @@
 ## 1. Path quoting helper (pure)
 
-- [ ] 1.1 Add a pure `quotePath(abs: string): string` helper that wraps the path in
+- [x] 1.1 Add a pure `quotePath(abs: string): string` helper that wraps the path in
       double quotes, escapes any embedded `"` as `\"`, and appends no trailing space
       (place it where it can be imported by both the menu wiring and tests; e.g. a
       small `layout/insertFilename.ts` or alongside the picker wrapper).
-- [ ] 1.2 Unit-test `quotePath`: plain path → `"<path>"`; path containing `"` →
+- [x] 1.2 Unit-test `quotePath`: plain path → `"<path>"`; path containing `"` →
       escaped `\"`; verify no trailing space.
 
 ## 2. File picker wrapper
 
-- [ ] 2.1 Add `pickFile(defaultPath?: string): Promise<string | null>` mirroring
+- [x] 2.1 Add `pickFile(defaultPath?: string): Promise<string | null>` mirroring
       `src/lib/launcher/pick.ts`, wrapping `open({ directory: false, multiple: false })`;
       return `null` on cancel / unavailable dialog / error (no throw).
 
@@ -27,8 +27,9 @@
 
 ## 4. ⌘I global shortcut
 
-- [ ] 4.1 Add a focused-agent-terminal resolver (shared so `+page.svelte` and
+- [x] 4.1 Add a focused-agent-terminal resolver (shared so `+page.svelte` and
       `PaneNode` don't duplicate the focused-id → paneId → `getTerminal` mapping).
+      (Done in group 1's commit as `focusedTerminalHandle()` in `layout/insertFilename.ts`.)
 - [ ] 4.2 In `src/routes/+page.svelte` `onKeydown`, add a `meta && (key === 'i' ||
       key === 'I')` branch BEFORE the `if (!view.isGrid) return;` grid gate: resolve
       the focused agent terminal handle, run `pickFile()` → `handle.paste(quotePath(path))`,
