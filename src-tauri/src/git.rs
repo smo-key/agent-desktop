@@ -237,8 +237,16 @@ pub fn list_branches(dir: &str) -> BranchList {
 
 /// Check out an existing branch (or a remote-tracking branch via git's DWIM).
 /// Returns git's message on success, an error string on failure.
+///
+/// `--end-of-options` forces `branch` to be parsed as a REF, never a flag. Without
+/// it, a branch whose name begins with `-` (a ref like `refs/remotes/origin/-f`
+/// is creatable and would surface here as `-f`) would be read as a git option —
+/// e.g. `git checkout -f` force-resets the working tree, silently discarding
+/// uncommitted changes. With the guard, `-f` is treated as a ref name (and errors
+/// cleanly when no such ref exists), so a malicious/odd branch name can never
+/// trigger an option.
 pub fn checkout(dir: &str, branch: &str) -> Result<String, String> {
-    run_git_action(dir, &["checkout", branch])
+    run_git_action(dir, &["checkout", "--end-of-options", branch])
 }
 
 /// Create and check out a new branch off the current HEAD (`git checkout -b`).
@@ -949,5 +957,26 @@ mod tests {
         assert!(empty.current.is_none(), "current should be None for empty path");
         assert!(empty.local.is_empty(), "local should be empty for empty path");
         assert!(empty.remotes.is_empty(), "remotes should be empty for empty path");
+    }
+
+    #[test]
+    fn a_branch_name_starting_with_a_dash_is_treated_as_a_ref_not_a_flag() {
+        // Security regression: a branch whose name begins with `-` must be parsed
+        // as a REF, never a git flag. Without `--end-of-options`, `checkout(_, "-f")`
+        // runs `git checkout -f`, which force-resets the working tree and silently
+        // discards the dirty file written below.
+        let repo = TempRepo::new("dashref");
+        let path = repo.str();
+        // Dirty the working tree with an uncommitted edit.
+        fs::write(repo.path().join("README.md"), "uncommitted edit\n").unwrap();
+        // `-f` is not a real ref, so the checkout must fail — and, crucially, must
+        // NOT have force-reset the working tree away from the edit.
+        let res = checkout(path, "-f");
+        assert!(res.is_err(), "checkout of a nonexistent '-f' ref should Err, got {:?}", res);
+        let body = fs::read_to_string(repo.path().join("README.md")).unwrap();
+        assert_eq!(
+            body, "uncommitted edit\n",
+            "the dirty working tree must be preserved — '-f' must not be read as the force flag"
+        );
     }
 }

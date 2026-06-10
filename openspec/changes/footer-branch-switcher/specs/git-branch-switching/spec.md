@@ -100,6 +100,14 @@ surfaced like any other failure.
   terminal in the folder when available, otherwise a failure toast), and the
   project stays on its current branch
 
+#### Scenario: A branch name starting with a dash is treated as a ref not a flag
+
+- **WHEN** a branch whose name begins with `-` (e.g. `-f`, which can exist as a
+  ref such as `refs/remotes/origin/-f`) is selected
+- **THEN** the checkout treats the name strictly as a ref to switch to, never as a
+  command-line flag — so it can never force-discard the working tree — and git's
+  error is surfaced if no such ref exists
+
 ### Requirement: Checking out a remote-tracking branch
 
 Selecting a remote-tracking branch SHALL switch the project folder to a local

@@ -51,3 +51,7 @@
 - [x] 7.2 Run the full pre-commit gate (`npm run check`, the scenario-coverage gate, `openspec validate --changes --strict`); all green.
 - [ ] 7.3 Manually verify against a real repo: switch a local branch, check out a remote branch (new tracking branch created), create a new branch, and a dirty-tree checkout failure surfaces git's message — confirming the footer refreshes on success.
 - [x] 7.4 `openspec validate footer-branch-switcher --strict` passes.
+
+## 8. Review fixes (adversarial-code-review)
+
+- [x] 8.1 CRITICAL — guard `checkout` against git option injection: pass `--end-of-options` before the branch so a `-`-prefixed ref (e.g. `-f`, leaked from `refs/remotes/origin/-f`) is treated as a ref, never the force flag (which would silently discard the working tree). Add a regression test + spec scenario. (`create_branch` is unaffected — git rejects `-`-prefixed names after `-b`.)
