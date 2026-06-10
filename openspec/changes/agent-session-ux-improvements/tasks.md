@@ -50,9 +50,9 @@
 
 ## 8. Exclude archived from project counters (project-agent-counters)
 
-- [ ] 8.1 In `projectRollup.ts`, filter `!r.closed && !r.preview` in `projectCounts()` (the `mine` array) and in `unassignedCount()`.
-- [ ] 8.2 In `ProjectPanel.svelte`, base the "all agents" total on the same non-archived filter rather than raw `rows.length`.
-- [ ] 8.3 Add tests for `projectCounts`/`unassignedCount` excluding archived/previewed rows.
+- [x] 8.1 In `projectRollup.ts`, filter `!r.closed && !r.preview` in `projectCounts()` (the `mine` array) and in `unassignedCount()`.
+- [x] 8.2 In `ProjectPanel.svelte`, base the "all agents" total on the same non-archived filter rather than raw `rows.length`.
+- [x] 8.3 Add tests for `projectCounts`/`unassignedCount` excluding archived/previewed rows.
 
 ## 9. Session rename (session-titles)
 
@@ -68,9 +68,9 @@
 
 ## 11. Insert-filename shortcut → ⌘O (keyboard-shortcuts)
 
-- [ ] 11.1 In `+page.svelte`, change the insert-filename key handler from `key === 'i' || 'I'` to `key === 'o' || 'O'` (same modifier guards).
-- [ ] 11.2 Update `shortcuts.ts` (Session group label `⌘I` → `⌘O`) and `paneMenu.ts` (`shortcut: '⌘I'` → `'⌘O'`).
-- [ ] 11.3 Update/confirm the help-modal shortcut test reflects `⌘O` for insert file path.
+- [x] 11.1 In `+page.svelte`, change the insert-filename key handler from `key === 'i' || 'I'` to `key === 'o' || 'O'` (same modifier guards).
+- [x] 11.2 Update `shortcuts.ts` (Session group label `⌘I` → `⌘O`) and `paneMenu.ts` (`shortcut: '⌘I'` → `'⌘O'`).
+- [x] 11.3 Update/confirm the help-modal shortcut test reflects `⌘O` for insert file path.
 
 ## 12. Validate & gate
 
