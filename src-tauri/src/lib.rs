@@ -1041,6 +1041,18 @@ async fn pr_status_for(repo_path: String, base: String) -> Result<pr::PrStatus, 
     Ok(pr::pr_status_for(&repo_path, &base).await)
 }
 
+/// Look up the OPEN PRs targeting `base` in `repo_path` that are AWAITING REVIEW,
+/// plus the repo's pull-requests page URL, for the footer's "open PRs awaiting
+/// review" button. Runs `gh pr list --base <base> --state open --json
+/// number,reviewDecision` and counts the entries whose `reviewDecision` is NOT
+/// `APPROVED`, and `gh repo view --json url` (+`/pulls`) for the link. Returns
+/// `{ count, pullsUrl }`; degrades to the NEUTRAL `{ count: 0, pullsUrl: null }`
+/// (NOT an error) when `gh` is missing/unauthenticated/errors. Best-effort.
+#[tauri::command(async)]
+async fn open_prs_for(repo_path: String, base: String) -> Result<pr::OpenPrs, String> {
+    Ok(pr::open_prs_for(&repo_path, &base).await)
+}
+
 /// Create a fresh session worktree off `repo_path`'s HEAD (auto-worktree
 /// projects). Returns `{ path, branch, base }`; ensures `.worktrees` is gitignored
 /// and the branch is unique. `Err` when `repo_path` isn't a git repo or git fails.
@@ -1290,6 +1302,7 @@ pub fn run() {
             git_checkout,
             git_create_branch,
             pr_status_for,
+            open_prs_for,
             worktree_create,
             worktree_remove_if_clean,
             worktree_list,

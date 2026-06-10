@@ -25,6 +25,11 @@
   // PR (when `prExists`) or a create-PR confirm. It is DISABLED when `prDisabled`
   // (on the base branch, or no branch/project). Without `onPr` no PR button shows
   // (the project pane omits it), mirroring the other footer-only switches.
+  //
+  // When `onOpenPrs` is provided (the footer only), an "open PRs awaiting review"
+  // button is shown to the RIGHT of the PR button: it renders `openPrs` (a warning
+  // glyph + the count when >0, else a neutral checkmark + `0`) and clicking opens
+  // the repo's pull-requests page on GitHub. Without it no button shows.
   import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import type { GitStatus } from './snapshots.svelte';
@@ -39,7 +44,9 @@
     onPickBranch,
     onPr,
     prExists = false,
-    prDisabled = false
+    prDisabled = false,
+    onOpenPrs,
+    openPrs
   }: {
     git: GitStatus | null;
     always?: boolean;
@@ -51,6 +58,8 @@
     onPr?: () => void;
     prExists?: boolean;
     prDisabled?: boolean;
+    onOpenPrs?: () => void;
+    openPrs?: { icon: string; label: string; warning: boolean };
   } = $props();
 </script>
 
@@ -157,6 +166,20 @@
         >
           <Icon name="git-pull-request" size={12} />
           <span class="txt">PR</span>
+        </button>
+      {/if}
+      {#if onOpenPrs && openPrs}
+        <button
+          type="button"
+          class="pill openprs action"
+          class:warn={openPrs.warning}
+          onclick={onOpenPrs}
+          use:tooltip={openPrs.warning
+            ? `${openPrs.label} open pull request${openPrs.label === '1' ? '' : 's'} awaiting review — open on GitHub`
+            : 'No open pull requests awaiting review — open on GitHub'}
+        >
+          <Icon name={openPrs.icon} size={12} />
+          <span class="txt">{openPrs.label}</span>
         </button>
       {/if}
     </span>
@@ -287,6 +310,19 @@
   .pr.exists {
     background: var(--blue-tint);
     color: var(--info-500);
+    box-shadow: none;
+  }
+  /* The open-PRs-awaiting-review button sits immediately right of the PR button.
+     Neutral (checkmark + `0`) when none await review; a caution tint (warning
+     glyph + count) when one or more do. Shares `button.pill.action` hover/active. */
+  .openprs {
+    background: var(--space-750);
+    color: var(--fg-4);
+    box-shadow: inset 0 0 0 1px var(--line-subtle);
+  }
+  .openprs.warn {
+    background: var(--caution-tint);
+    color: var(--caution-500);
     box-shadow: none;
   }
 </style>

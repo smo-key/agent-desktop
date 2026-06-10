@@ -22,6 +22,12 @@
     refreshPrStatus,
     onPrButtonClick
   } from '$lib/projects/prActions';
+  import {
+    openPrsView,
+    cachedOpenPrs,
+    refreshOpenPrs,
+    onOpenPrsClick
+  } from '$lib/projects/openPrsActions';
   import { gitBusy } from '$lib/projects/projectGitBusy.svelte';
   import { view as topView } from '$lib/overview/view.svelte';
   import LimitBars from './LimitBars.svelte';
@@ -122,6 +128,27 @@
       : undefined
   );
 
+  // Open-PRs-awaiting-review button (footer only): how many OPEN PRs into `main`
+  // are still awaiting review? `openPrs` is a reactive snapshot of the per-path
+  // cache (count + pulls URL); the effect below refreshes it alongside git status
+  // (best-effort). The button shows for any project folder (it's per-repo, not
+  // per-branch) and degrades to the neutral checkmark/`0` when gh is unavailable.
+  let openPrs = $state<ReturnType<typeof cachedOpenPrs>>(null);
+  const openPrsView_ = $derived(openPrsView(openPrs));
+  $effect(() => {
+    void folderGit; // re-run when git status is re-polled
+    const path = gitProject?.path ?? null;
+    openPrs = cachedOpenPrs(path); // show the last-known state immediately
+    if (!path) return;
+    void refreshOpenPrs(path, DEFAULT_BASE).then(() => {
+      openPrs = cachedOpenPrs(path);
+    });
+  });
+  // Click: open the repo's pull-requests page on GitHub (no-op when no URL).
+  const onOpenPrs = $derived(
+    gitProject?.path ? () => void onOpenPrsClick(openPrs) : undefined
+  );
+
   // The terminal area's left edge as a fraction [0,1] of the surface, or null when
   // there's no terminal pane / not in grid view. A "terminal" pane is a non-claude
   // (shell) pane; agents are claude panes. Reading the active tree + registry keeps
@@ -158,7 +185,7 @@
   <div class="zone left">
     <div class="left-git">
       <div class="branch-anchor" bind:this={branchAnchorEl}>
-        <GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} {onPickBranch} {onPr} {prExists} {prDisabled} />
+        <GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} {onPickBranch} {onPr} {prExists} {prDisabled} {onOpenPrs} openPrs={openPrsView_} />
       </div>
       <BranchPicker
         open={branchOpen}
