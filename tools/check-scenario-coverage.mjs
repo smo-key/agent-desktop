@@ -133,6 +133,16 @@ const ENFORCED_CAPABILITIES = new Set([
   // The single headless-exempt scenario is "Not gitignored" (asserting the absence of
   // a real on-disk `.gitignore` mutation in the live app) — MANUAL below.
   'project-folder-storage',
+  // git-branch-switching: the footer branch pill opens a picker that switches local
+  // branches, checks out remote-tracking branches (as local tracking branches via
+  // git DWIM), and creates branches off HEAD. The branch QUERY (current + local +
+  // remotes, bare-remote-HEAD excluded) is Rust-tested (git.rs:
+  // branches_are_listed_with_the_current_branch_marked / repository_with_no_remote /
+  // detached_head), and the switch/create/remote/guard/filter actions are pure and
+  // unit-tested (branchActions.test.ts). The three genuinely DOM-bound scenarios —
+  // the rendered footer pill being actionable, the project-pane pill staying read-
+  // only, and the no-branch pill not opening — are MANUAL below.
+  'git-branch-switching',
 ]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by
@@ -344,6 +354,16 @@ const MANUAL_SCENARIOS = {
     'keyboard_shortcut_opens_a_bare_terminal',
     'new_terminal_button',
     'completion_toast_on_success',
+  ]),
+  // git-branch-switching: every data/action scenario is headlessly tested (Rust
+  // list_branches + branchActions.test.ts). The three rendered-pill behaviors have
+  // no pure surface to assert — the footer pill being an actionable button, the
+  // project-pane pill staying a read-only span, and the no-branch/no-repo pill not
+  // opening a picker — so they are confirmed live in-app.
+  'git-branch-switching': new Set([
+    'footer_pill_is_actionable',
+    'non_footer_pill_stays_read_only',
+    'no_branch_to_switch',
   ]),
 };
 
