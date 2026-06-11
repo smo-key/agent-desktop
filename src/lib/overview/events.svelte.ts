@@ -81,6 +81,28 @@ export class EventStore {
   }
 
   /**
+   * Record a user INTERRUPT (Esc) for a pane. Interrupting aborts the in-flight tool,
+   * but claude fires NO `PostToolUse` for the aborted tool (and no `Stop`), so the
+   * event-sourced status would stay pinned at `working` indefinitely. When the pane is
+   * currently `working`, append a synthetic turn-end (`Stop`) so `deriveEventActivity`
+   * clears the in-flight tool and the row returns to `waiting` (Needs-input).
+   *
+   * A no-op unless the pane is actually working — a stray Esc at the idle prompt (or on
+   * a non-claude pane, which never has a `working` event status) adds no timeline noise.
+   * The synthetic event is frontend-only (not delivered to the durable sink); a later
+   * real event simply appends after it.
+   */
+  markInterrupt(paneId: string): void {
+    if (this.activityFor(paneId).status !== 'working') return;
+    const prior = this.timeline(paneId);
+    const ts = prior.length > 0 ? prior[prior.length - 1].ts : 0;
+    // `synthetic: true` marks this as a frontend-only interrupt turn-end (not a real
+    // hook event): it clears the in-flight tool so the row shows Needs-input, but
+    // consumers like task auto-archive must NOT read it as a genuine "returned to user".
+    this.ingest({ paneId, sessionId: '', hookEventName: 'Stop', ts, synthetic: true });
+  }
+
+  /**
    * Seed timelines from the `events_for(panes)` command (ring → durable sink →
    * transcript backfill, resolved in Rust) for the given app panes. Called on
    * mount/resume; merges into the live map (a pane absent from the result keeps
@@ -92,10 +114,21 @@ export class EventStore {
       let total = 0;
       for (const [paneId, events] of Object.entries(map)) {
         const clean = Array.isArray(events) ? events.filter(isEvent) : [];
-        if (clean.length > 0) {
-          this.byPane[paneId] = clean;
-          total += clean.length;
-        }
+        if (clean.length === 0) continue; // nothing authoritative to seed; keep existing
+        // MERGE rather than overwrite. `clean` is authoritative for real events up to its
+        // last `ts`, but the live map may already hold things the snapshot can't reproduce:
+        // a frontend-only synthetic interrupt Stop, and live events that landed AFTER the
+        // snapshot was taken (newer `ts`). A wholesale overwrite would clobber the synthetic
+        // Stop (re-pinning an interrupted pane to `working`) or drop an in-flight live event.
+        // Preserve exactly those, appended after the snapshot in their existing order —
+        // events already in `clean` have `ts <= snapshotLastTs`, so they are never
+        // duplicated, and this keeps a (sink-empty + transcript) backfill from being lost
+        // when a live event raced ahead of this seed.
+        const existing = this.byPane[paneId] ?? [];
+        const snapshotLastTs = clean[clean.length - 1].ts;
+        const preserved = existing.filter((e) => e.synthetic === true || e.ts > snapshotLastTs);
+        this.byPane[paneId] = preserved.length > 0 ? [...clean, ...preserved] : clean;
+        total += clean.length;
       }
       return total;
     } catch (err) {

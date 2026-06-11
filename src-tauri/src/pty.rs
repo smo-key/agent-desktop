@@ -300,16 +300,14 @@ impl PtyManager {
     }
 }
 
-/// Seed the child environment. Always sets `TERM`/`COLORTERM`; for
-/// `PATH`/`HOME`/`LANG` we inherit the parent value when present, otherwise fall
-/// back to a sane default so `claude` is discoverable from a sparse GUI env.
+/// Seed the child environment. Always sets `TERM`/`COLORTERM`; for `PATH` we use
+/// the resolved login-shell PATH (see [`crate::shell_path`]) so `claude` is
+/// discoverable even from the sparse env a Finder-launched GUI app inherits.
 fn seed_env(cmd: &mut CommandBuilder) {
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
 
-    let path = std::env::var("PATH")
-        .unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string());
-    cmd.env("PATH", path);
+    cmd.env("PATH", crate::shell_path::resolved_path());
 
     if let Ok(home) = std::env::var("HOME") {
         cmd.env("HOME", home);

@@ -46,6 +46,25 @@ export function encodeInitialText(input: string | null | undefined): number[] | 
   return Array.from(new TextEncoder().encode(input));
 }
 
+/**
+ * The one-shot launch prompt a pane should deliver ON MOUNT, gated on whether this
+ * spawn is a RESUME. The initial prompt belongs to the FRESH launch only: a resumed
+ * session (`claude --resume`) already contains it in its transcript, so it must
+ * NEVER be re-sent. This matters because the prompt lives in the registry keyed by
+ * paneId and a pane RE-MOUNTS on archive→restore / preview (`{#key paneId}` with
+ * `closed` toggling) — each remount builds a fresh {@link InitialInputSender}. Without
+ * this gate the sender would re-type + re-submit the launch prompt into the resumed
+ * session, re-running it (e.g. an auto-archived "Commit and push" agent task that the
+ * inbox auto-previews would commit+push again, looping). Returns the prompt only for a
+ * fresh spawn (`resume` falsey); `undefined` for a resume.
+ */
+export function initialInputForMount(
+  initialInput: string | null | undefined,
+  resume: boolean | undefined
+): string | undefined {
+  return resume ? undefined : (initialInput ?? undefined);
+}
+
 /** The single byte a TUI reads as "submit this line": a carriage return. */
 export const SUBMIT_BYTES: number[] = [0x0d];
 
@@ -71,6 +90,118 @@ export const READY_QUIET_MS = 700;
  * output), deliver anyway so the prompt still lands rather than hanging forever.
  */
 export const READY_MAX_MS = 8000;
+
+/** Schedules a callback after `ms` and returns a cancellable handle (the app
+ *  passes `setTimeout`; tests pass a fake clock). */
+export type ScheduleAfter = (run: () => void, ms: number) => ReturnType<typeof setTimeout>;
+/** Cancels a handle from {@link ScheduleAfter} (the app passes `clearTimeout`). */
+export type CancelTimer = (handle: ReturnType<typeof setTimeout>) => void;
+
+/**
+ * Decides WHEN a freshly-spawned `claude` pane is ready to receive its initial
+ * prompt, then invokes `onReady` exactly once.
+ *
+ * `claude` emits a burst of startup/render output and then falls quiet at its
+ * ready input box; we deliver after output has been QUIET for `quietMs`. Two
+ * startup hazards this guards against:
+ *
+ *   1. Delivering BEFORE `claude` has emitted ANYTHING. A slow startup — notably
+ *      a coordinated agent loading the orchestration toolkit / MCP servers — can
+ *      leave the PTY silent for longer than `quietMs`. A quiet timer armed at
+ *      spawn would then fire into a TUI that has not started rendering, writing
+ *      the prompt into the void: the text never lands and the session shows up
+ *      blank / needs-input. The quiet window therefore only starts counting
+ *      AFTER the first output byte (see {@link noteOutput}).
+ *   2. NEVER going quiet (continuous output). A hard cap (`maxMs`) measured from
+ *      when the PTY is wired forces delivery so the prompt still lands.
+ *
+ * Framework-free so the timing rules are unit-tested without a DOM or live PTY:
+ * the app injects `setTimeout`/`clearTimeout`, tests inject a fake clock.
+ */
+export class LaunchPromptReadiness {
+  private sawOutput = false;
+  private fired = false;
+  private quiet: ReturnType<typeof setTimeout> | null = null;
+  private cap: ReturnType<typeof setTimeout> | null = null;
+  /** True once `wired()` has run — i.e. the PTY id is live and a write can land. */
+  private isWired = false;
+  /** A `fire()` that elapsed BEFORE `wired()`; replayed once the PTY is wired so the
+   *  prompt isn't dropped against a not-yet-set `ptyId`. */
+  private pendingFire = false;
+
+  constructor(
+    private readonly onReady: () => void,
+    private readonly schedule: ScheduleAfter,
+    private readonly cancel: CancelTimer,
+    private readonly quietMs: number = READY_QUIET_MS,
+    private readonly maxMs: number = READY_MAX_MS
+  ) {}
+
+  /** Call once the PTY is wired. Arms the hard cap; if output has ALREADY been
+   *  seen (a byte arrived during the spawn round-trip), also starts the quiet
+   *  window. Does NOT start the quiet window otherwise — that waits for output. */
+  wired(): void {
+    if (this.fired) return;
+    this.isWired = true;
+    if (this.cap === null) this.cap = this.schedule(() => this.fire(), this.maxMs);
+    if (this.sawOutput) this.armQuiet();
+    // Output may have already settled (or a stray cap elapsed) before the PTY id was
+    // live; deliver now that it is.
+    if (this.pendingFire) this.fire();
+  }
+
+  /** Call on every output byte: `claude` has begun rendering. (Re)starts the
+   *  quiet window so delivery follows once output settles. */
+  noteOutput(): void {
+    if (this.fired) return;
+    this.sawOutput = true;
+    this.armQuiet();
+  }
+
+  /** Stop all timers (component teardown) so a torn-down pane never delivers. */
+  dispose(): void {
+    if (this.quiet !== null) {
+      this.cancel(this.quiet);
+      this.quiet = null;
+    }
+    if (this.cap !== null) {
+      this.cancel(this.cap);
+      this.cap = null;
+    }
+    this.fired = true;
+  }
+
+  private armQuiet(): void {
+    if (this.quiet !== null) this.cancel(this.quiet);
+    this.quiet = this.schedule(() => this.fire(), this.quietMs);
+  }
+
+  private fire(): void {
+    if (this.fired) return;
+    // The settle window (or hard cap) elapsed before the PTY id is live — the spawn
+    // round-trip outran the first output byte. Delivering now would no-op against an
+    // undefined `ptyId` AND latch `fired`, silently dropping the prompt. Defer instead;
+    // `wired()` replays this once the id is set.
+    if (!this.isWired) {
+      this.pendingFire = true;
+      if (this.quiet !== null) {
+        this.cancel(this.quiet);
+        this.quiet = null;
+      }
+      return;
+    }
+    this.fired = true;
+    if (this.quiet !== null) {
+      this.cancel(this.quiet);
+      this.quiet = null;
+    }
+    if (this.cap !== null) {
+      this.cancel(this.cap);
+      this.cap = null;
+    }
+    this.onReady();
+  }
+}
 
 /** Sink that forwards encoded bytes to the PTY (TerminalPane passes `pty_write`). */
 export type WriteFn = (data: number[]) => void;

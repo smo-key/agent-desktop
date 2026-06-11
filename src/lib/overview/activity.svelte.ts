@@ -44,9 +44,21 @@ export interface Activity {
   contextPct?: number | null;
   /** Recent assistant messages (newest LAST), rendered as the transcript preview. */
   messages?: string[] | null;
-  /** A cheap hash of the user's messages — changes only when the user adds one;
-   *  gates session-title regeneration. */
+  /** A cheap hash of the user's messages — gates session-title regeneration. NOTE:
+   *  computed over a TAIL window, so it can change WITHOUT a new user message (a long
+   *  agent turn slides the window). Fine for the title heuristic; do NOT gate
+   *  pause/preview auto-resume on it — use `userMsgCount` for that. */
   userHash?: string | null;
+  /** A WHOLE-FILE count of the user's prose messages. Strictly increases ONLY when
+   *  the user sends a new message (unaffected by assistant output sliding the tail or
+   *  a `claude --resume` appending entries). The pause/preview gate auto-resumes only
+   *  when this strictly increases. `null` when not yet known (transcript unread). */
+  userMsgCount?: number | null;
+  /** Unix timestamp in SECONDS of the last transcript entry that carries a timestamp.
+   *  Stable across `claude --resume` reopens — no new entry is appended until the
+   *  user sends a message. Used as `lastTs` for closed/preview sessions so opening
+   *  an archived session does not reset the displayed time to "just now". */
+  lastMsgTs?: number | null;
 }
 
 /** The whole store state: paneId -> that pane's activity. */
@@ -109,6 +121,16 @@ export function normalizeActivity(payload: unknown): ActivityMap {
       userHash:
         typeof (value as Record<string, unknown>).userHash === 'string'
           ? ((value as { userHash: string }).userHash)
+          : null,
+      userMsgCount:
+        typeof (value as Record<string, unknown>).userMsgCount === 'number' &&
+        Number.isFinite((value as { userMsgCount: number }).userMsgCount)
+          ? ((value as { userMsgCount: number }).userMsgCount)
+          : null,
+      lastMsgTs:
+        typeof (value as Record<string, unknown>).lastMsgTs === 'number' &&
+        Number.isFinite((value as { lastMsgTs: number }).lastMsgTs)
+          ? ((value as { lastMsgTs: number }).lastMsgTs)
           : null
     };
   }

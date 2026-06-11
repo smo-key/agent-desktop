@@ -56,3 +56,17 @@ To update main specs mid-stream without archiving, use the
 `openspec-sync-specs` skill. The user can trigger close-out by running
 `/openspec-verify-change` then `/openspec-archive-change`, or by asking to
 "wrap up" / "archive" the current change — either way, apply this gate.
+
+## Git — do not auto-create branches
+
+This repo runs with `branchPerTask: false` (`.claude/workflow.yaml`). Treat that
+as a **global** preference, not just a toggle for the workflow skills: do **not**
+create a branch on the developer's behalf for any reason, including ad-hoc
+commits made outside the workflow skills. In particular, the default "if on the
+default branch, branch first" reflex does **not** apply here.
+
+When asked to commit, commit on the **current branch** (typically `main`). If
+committing directly to the default branch seems risky for a given change, **ask**
+first — never silently branch. (The `openspec` workflow skills already honor
+`branchPerTask`; this rule exists to cover manual git actions, which is where the
+gap was.)

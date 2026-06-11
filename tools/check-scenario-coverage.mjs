@@ -133,6 +133,16 @@ const ENFORCED_CAPABILITIES = new Set([
   // The single headless-exempt scenario is "Not gitignored" (asserting the absence of
   // a real on-disk `.gitignore` mutation in the live app) — MANUAL below.
   'project-folder-storage',
+  // git-branch-switching: the footer branch pill opens a picker that switches local
+  // branches, checks out remote-tracking branches (as local tracking branches via
+  // git DWIM), and creates branches off HEAD. The branch QUERY (current + local +
+  // remotes, bare-remote-HEAD excluded) is Rust-tested (git.rs:
+  // branches_are_listed_with_the_current_branch_marked / repository_with_no_remote /
+  // detached_head), and the switch/create/remote/guard/filter actions are pure and
+  // unit-tested (branchActions.test.ts). The three genuinely DOM-bound scenarios —
+  // the rendered footer pill being actionable, the project-pane pill staying read-
+  // only, and the no-branch pill not opening — are MANUAL below.
+  'git-branch-switching',
 ]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by
@@ -345,6 +355,16 @@ const MANUAL_SCENARIOS = {
     'new_terminal_button',
     'completion_toast_on_success',
   ]),
+  // git-branch-switching: every data/action scenario is headlessly tested (Rust
+  // list_branches + branchActions.test.ts). The three rendered-pill behaviors have
+  // no pure surface to assert — the footer pill being an actionable button, the
+  // project-pane pill staying a read-only span, and the no-branch/no-repo pill not
+  // opening a picker — so they are confirmed live in-app.
+  'git-branch-switching': new Set([
+    'footer_pill_is_actionable',
+    'non_footer_pill_stays_read_only',
+    'no_branch_to_switch',
+  ]),
 };
 
 // --- helpers -----------------------------------------------------------------
@@ -391,8 +411,15 @@ const scenariosByCap = new Map(); // capability -> [{ title, snake }]
 
 for (const base of specGlobs) {
   for (const file of walk(base, /\.md$/)) {
+    const unix = file.replace(/\\/g, '/');
+    // Archived changes are IMMUTABLE history whose delta specs were already
+    // promoted into openspec/specs/ — re-scanning them double-counts and, worse,
+    // couples the live gate to frozen snapshots (a legitimately removed
+    // scenario+test would still be referenced by the frozen copy). Count only
+    // ACTIVE changes' deltas + the promoted specs, per this file's header intent.
+    if (unix.includes('/changes/archive/')) continue;
     // capability = the directory name immediately under .../specs/
-    const m = file.replace(/\\/g, '/').match(/\/specs\/([^/]+)\//);
+    const m = unix.match(/\/specs\/([^/]+)\//);
     if (!m) continue;
     const capability = m[1];
     const text = readFileSync(file, 'utf8');

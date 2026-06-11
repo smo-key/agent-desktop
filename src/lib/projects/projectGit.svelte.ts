@@ -20,6 +20,13 @@ function finiteOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+/** A clean `string[]` of the changed paths: an array of strings, else `[]`
+ *  (guards a missing field / non-array / non-string entries). */
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((v): v is string => typeof v === 'string');
+}
+
 /**
  * PURE: normalize a raw `path -> git` payload into a clean `GitMap`, coercing each
  * entry's fields to the stable `GitStatus` shape and dropping any non-object value.
@@ -36,7 +43,8 @@ export function normalizeGitMap(payload: unknown): GitMap {
       dirty: typeof g.dirty === 'boolean' ? g.dirty : null,
       modified: finiteOrNull(g.modified),
       ahead: finiteOrNull(g.ahead),
-      behind: finiteOrNull(g.behind)
+      behind: finiteOrNull(g.behind),
+      files: stringArray(g.files)
     };
   }
   return out;
@@ -73,6 +81,24 @@ export class ProjectGitStore {
     } catch (err) {
       console.warn('git_status_for failed; no project git:', err);
       return 0;
+    }
+  }
+
+  /**
+   * Refresh a SINGLE folder's status and MERGE it into the map, leaving every
+   * other entry intact — unlike `refresh`, which replaces the whole map. Used to
+   * update the footer immediately after a branch switch without waiting for (or
+   * clobbering) the slow full poll. A null/empty path or a failed fetch is a
+   * no-op that leaves the existing entry untouched.
+   */
+  async refreshOne(path: string | null | undefined): Promise<void> {
+    if (!path) return;
+    try {
+      const map = await invoke<unknown>('git_status_for', { paths: [path] });
+      const entry = normalizeGitMap(map)[path];
+      if (entry) this.byPath[path] = entry;
+    } catch (err) {
+      console.warn('git_status_for (refreshOne) failed:', err);
     }
   }
 }

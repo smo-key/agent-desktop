@@ -24,6 +24,7 @@
     buildRoster,
     groupByLane,
     needsAttention,
+    isArchivedCoordinator,
     LANE_ORDER,
     laneForRow,
     type AgentLane,
@@ -37,7 +38,9 @@
     nextInQueue,
     archiveDecision,
     autoArchiveAction,
-    shouldAutoResume
+    shouldAutoResume,
+    deleteAllArchivedRequest,
+    rowSub as rowSubText
   } from './inbox';
   import { toRosterWorkspaces, toNavWorkspaces } from './rosterInputs';
   import { runtimeMap } from './runtime';
@@ -45,6 +48,8 @@
   import { activity } from './activity.svelte';
   import { events } from './events.svelte';
   import { titles } from './titles.svelte';
+  import { summaries } from './summaries.svelte';
+  import { costs } from './costs.svelte';
   import { projects } from '$lib/projects/projects.svelte';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import {
@@ -57,12 +62,13 @@
   import ProjectPanel from '$lib/projects/ProjectPanel.svelte';
   import ProjectIcon from '$lib/icons/ProjectIcon.svelte';
   import Icon from '$lib/icons/Icon.svelte';
+  import { confirmModal } from '$lib/ui/confirmStore.svelte';
   import StatusBar from '$lib/usage/StatusBar.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import { friendlyTime } from './friendlyTime';
   import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
   import TasksLauncher from '$lib/tasks/TasksLauncher.svelte';
-  import SpecialistsPanel from '$lib/specialists/SpecialistsPanel.svelte';
+  // import SpecialistsPanel from '$lib/specialists/SpecialistsPanel.svelte'; // temporarily hidden
   import { ALL, UNASSIGNED } from '$lib/projects/projectRollup';
   import {
     resolveCoordinatorPin,
@@ -72,6 +78,7 @@
   } from './coordinatorPin';
   import CoordinatorStart from '$lib/orchestration/CoordinatorStart.svelte';
   import { coordinatorNeedsInput } from '$lib/orchestration/coordinatorNeedsInput.svelte';
+  import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
 
   // --- Sessions / Tasks split (Sessions roster on top / Tasks bottom) ----------
   // The `.col-list` column splits into the Sessions roster (top, resizable) and
@@ -214,7 +221,11 @@
   // Lanes rendered BELOW the rule exclude the pinned coordinator (it never renders
   // twice). Keyboard nav uses `coordinatorNavOrder` (coordinator/affordance first),
   // not these render lanes, so the pinned coordinator stays reachable.
-  const renderGrouped = $derived(groupByLane(pin.rest));
+  const renderGrouped = $derived.by(() => {
+    const grouped = groupByLane(pin.rest);
+    grouped.done = [...grouped.done].reverse();
+    return grouped;
+  });
 
   // Group metadata (label) for the left list, in attn -> flight -> paused -> done
   // order. `done` is the Archived lane (closed sessions); `paused` sits above it.
@@ -282,6 +293,87 @@
   // The focused (shown) agent row.
   const focus = $derived(viewRows.find((r) => r.paneId === shownId) ?? null);
 
+  // --- Rename the focused session (header inline-edit) -----------------------
+  // Click the focus-pane header title (or pick "Rename" in the agent card menu) to
+  // give the session a CUSTOM title. The same inline-input shape as the session
+  // rail: `editingTitle`/`titleDraft` $state, commit on Enter or blur, cancel on
+  // Esc. Committing calls `titles.setManualTitle`, which makes the custom title
+  // STICKY — auto-generation stops for that session and it persists across restart.
+  let editingTitle = $state(false);
+  let titleDraft = $state('');
+  let titleInput = $state<HTMLInputElement | null>(null);
+  // The paneId the header edit belongs to, so switching to a DIFFERENT agent
+  // abandons the rename (but selecting THIS agent — e.g. the menu "Rename" path —
+  // does not).
+  let editingPaneId = $state<string | null>(null);
+
+  /** The app-owned Claude session id for a row's pane (keys the durable title cache),
+   *  resolved against the row's OWN workspace so it's correct even when the focused
+   *  agent lives in a non-active workspace. Null for a non-claude/shell pane. */
+  function sessionIdOf(r: AgentRow): string | null {
+    return workspace.sessionIn(r.workspaceId, r.paneId).sessionId ?? null;
+  }
+
+  /** Enter header edit mode for the focused session, seeding the draft with the
+   *  currently-shown title. The coordinator's title is pinned ("Coordinator") and
+   *  is not user-renamable, so editing is suppressed for it. */
+  async function startTitleEdit(target: AgentRow | null = focus) {
+    if (!target || isCoordinator(target)) return;
+    titleDraft = focusTitle(target);
+    editingPaneId = target.paneId;
+    editingTitle = true;
+    await tick();
+    titleInput?.focus();
+    titleInput?.select();
+  }
+
+  /** Commit the header edit: a non-empty draft becomes the session's custom title
+   *  (sticky + persisted); an empty/whitespace draft is dropped (keeps the prior
+   *  title). Idempotent — safe to call from both Enter and blur. Commits against the
+   *  pane the edit was started on (not whatever is shown now). */
+  function commitTitleEdit() {
+    if (!editingTitle) return;
+    editingTitle = false;
+    const row = viewRows.find((r) => r.paneId === editingPaneId);
+    if (row && titleDraft.trim() !== focusTitle(row)) {
+      titles.setManualTitle(row.paneId, sessionIdOf(row), titleDraft);
+    }
+    editingPaneId = null;
+    titleDraft = '';
+  }
+
+  /** Cancel the header edit (Esc): discard the draft, keep the prior title. */
+  function cancelTitleEdit() {
+    editingTitle = false;
+    editingPaneId = null;
+    titleDraft = '';
+  }
+
+  function onTitleKey(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commitTitleEdit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelTitleEdit();
+    }
+  }
+
+  /** Agent card "Rename" menu item: focus the agent (so its header is shown), then
+   *  open the SAME header inline edit. Routes through `selectAgent` so the live
+   *  terminal is the focus and the header — with its title input — is on screen. */
+  function renameAgent(row: AgentRow) {
+    selectAgent(row.paneId);
+    void startTitleEdit(row);
+  }
+
+  // Switching to a DIFFERENT agent (or the edited one going away) abandons an
+  // in-progress rename rather than committing it to the wrong agent. Selecting the
+  // edited agent itself — the menu "Rename" path — leaves the edit intact.
+  $effect(() => {
+    if (editingTitle && shownId !== editingPaneId) cancelTitleEdit();
+  });
+
   // When `shownId` is the coordinator-start SENTINEL (not a real pane), the main
   // pane shows the Start empty-state for that project instead of a terminal (10.4).
   // Resolved to a concrete project, else null (a stale sentinel falls through to the
@@ -344,10 +436,22 @@
       clearAdvance();
       return;
     }
-    // A different agent now wants focus -> advance after the grace. Schedule ONCE
-    // per target: the roster recomputes every second, so without this guard the
-    // timer would reset each tick and never fire.
+    // A grace already counting down for this same target keeps riding: the roster
+    // recomputes every second and `leftAttention` is only true on the single
+    // transition tick, so without this the timer would never survive to fire.
     if (advanceTimer && pendingTarget === wantId) return;
+    // A DIFFERENT agent now wants focus. Only auto-advance when we JUST handled the
+    // agent we were on — i.e. it LEFT attention (you finished a waiting agent, so
+    // move on to the next one) AND the user opted into auto-advance (the setting
+    // defaults OFF — inbox-auto-advance spec). NEVER yank focus off an agent you're
+    // parked on that didn't need input just because another agent now wants input;
+    // the queue indicator still shows it's waiting and you can step to it (click /
+    // ⌘↓) when you choose. Manual nav (⌘↑/↓, the next/prev buttons) bypasses this
+    // effect entirely, so it is unaffected by the setting.
+    if (!leftAttention || !autoAdvance.prefs.enabled) {
+      clearAdvance();
+      return;
+    }
     clearAdvance();
     pendingTarget = wantId;
     const next = wantId;
@@ -407,7 +511,7 @@
       void tick().then(() =>
         requestAnimationFrame(() => {
           scrollTerminalToBottom(id);
-          focusTerminal(id);
+          if (!editingTitle) focusTerminal(id);
         })
       );
     }
@@ -446,11 +550,12 @@
 
   /** PREVIEW an archived session: respawn `claude --resume` so its transcript shows
    *  live, but keep it presented as Archived (out of attention) until a message is
-   *  sent. Captures the current user-message hash as the unarchive baseline, then
-   *  watches it. `previewArchived` is a no-op for a non-resumable pane (no session
-   *  id); `selectAgent` still shows it. */
+   *  sent. Captures the current user-message COUNT as the unarchive baseline, then
+   *  watches it (unarchives only once a NEW message lifts the count). `previewArchived`
+   *  is a no-op for a non-resumable pane (no session id); `selectAgent` still shows
+   *  it. A null count (transcript unread) is established lazily by the gate effect. */
   function startPreview(paneId: string) {
-    workspace.previewArchived(paneId, activity.forPane(paneId).userHash ?? null);
+    workspace.previewArchived(paneId, activity.forPane(paneId).userMsgCount ?? null);
     selectAgent(paneId);
   }
 
@@ -493,11 +598,11 @@
   }
 
   /** PAUSE (defer) an agent: keep it live but move it to the Paused lane, out of
-   *  attention. Records the current user-message hash so a new message resumes it.
-   *  Drops the pin so focus advances. */
+   *  attention. Records the current user-message COUNT so only a NEW message resumes
+   *  it. Drops the pin so focus advances. */
   function pauseAgent(paneId: string) {
     if (userSelected === paneId) userSelected = null;
-    workspace.pauseAgent(paneId, activity.forPane(paneId).userHash ?? null);
+    workspace.pauseAgent(paneId, activity.forPane(paneId).userMsgCount ?? null);
   }
 
   /** RESUME a paused agent (manual): clear paused and watch it. */
@@ -515,6 +620,19 @@
     if (!ok) return;
     if (userSelected === paneId) userSelected = null;
     workspace.deleteAgent(paneId);
+  }
+
+  /** DELETE every Archived agent at once, behind a confirmation modal. The pure
+   *  `deleteAllArchivedRequest` builds the prompt + delete callback (targeting the
+   *  Archived/done lane shown under the header) and returns null when nothing is
+   *  archived; we just feed it the live deps and show the modal. */
+  function deleteAllArchived() {
+    const req = deleteAllArchivedRequest(pin.rest, {
+      deleteAgent: (id) => workspace.deleteAgent(id),
+      getSelected: () => userSelected,
+      setSelected: (v) => (userSelected = v)
+    });
+    if (req) confirmModal.show(req);
   }
 
   // Auto-archive on completion: when an agent's process exits CLEANLY (its task
@@ -545,24 +663,55 @@
   $effect(() => {
     const f = focus;
     if (f?.closed) {
-      workspace.previewArchived(f.paneId, activity.forPane(f.paneId).userHash ?? null);
+      workspace.previewArchived(f.paneId, activity.forPane(f.paneId).userMsgCount ?? null);
     }
   });
 
   // Auto-resume / auto-unarchive: a PAUSED agent returns to its live status, and a
   // PREVIEWING (resumed-from-Archived) agent unarchives, the moment the user sends a
-  // new message — detected when the live user-message hash differs from the baseline
-  // hash captured at pause/preview time. Runs off the activity poll (the 1s clock
-  // re-derives rows).
+  // new message — detected when the live user-message COUNT strictly exceeds the
+  // baseline captured at pause/preview time. The count (whole-file) is the signal,
+  // NOT the windowed hash: resuming a session for preview grows its transcript, which
+  // would shift the hash but never the user-message count, so a previewed session no
+  // longer unarchives itself. Runs off the activity poll (the ~1s clock re-derives
+  // rows).
+  //
+  // When the baseline is still UNKNOWN (the pane was paused/previewed before its
+  // transcript had been polled — e.g. an archived pane auto-previewed on a restored
+  // layout), establish it from the first known live count instead of comparing. This
+  // closes the cold-start race where a null baseline would read the first real count
+  // as "the user replied".
   $effect(() => {
     for (const r of allRows) {
-      const liveHash = activity.forPane(r.paneId).userHash;
-      if (r.paused && shouldAutoResume(r.pausedHash, liveHash)) {
-        workspace.resumeAgent(r.paneId);
+      const liveCount = activity.forPane(r.paneId).userMsgCount;
+      if (r.paused) {
+        if (r.pausedCount == null && typeof liveCount === 'number') {
+          workspace.establishPausedBaseline(r.paneId, liveCount);
+        } else if (shouldAutoResume(r.pausedCount, liveCount)) {
+          workspace.resumeAgent(r.paneId);
+        }
       }
-      if (r.preview && shouldAutoResume(r.previewHash, liveHash)) {
-        workspace.commitPreview(r.paneId);
+      if (r.preview) {
+        if (r.previewCount == null && typeof liveCount === 'number') {
+          workspace.establishPreviewBaseline(r.paneId, liveCount);
+        } else if (shouldAutoResume(r.previewCount, liveCount)) {
+          workspace.commitPreview(r.paneId);
+        }
       }
+    }
+  });
+
+  // Record each LIVE row's last assistant message into the durable, sessionId-keyed
+  // summary cache (mirrors the title cache). When the agent is later ARCHIVED its PTY
+  // is gone, so its live `summary` disappears — the roster sub-line then falls back to
+  // this cache (`rowSub` → `summaries.summaryFor`) so an archived row still shows the
+  // last thing it said. `record` ignores empty/closed-pane reads, so a closed row never
+  // overwrites the message it had while live. Runs off the same ~1s roster re-derive.
+  $effect(() => {
+    for (const r of allRows) {
+      if (r.closed || r.preview) continue; // a closed/previewing pane has no fresh live message
+      if (r.summary) summaries.record(sessionIdOf(r), r.summary);
+      costs.record(sessionIdOf(r), r.cost); // freeze cost before snapshot resets on reopen
     }
   });
 
@@ -609,53 +758,69 @@
     previewTimers.clear();
   });
 
-  /** Whether a row is the project COORDINATOR. The coordinator MUST NOT be pausable
-   *  or archivable by the user (it orchestrates the project's agents), but it MUST
-   *  stay deletable. We therefore omit Pause/Archive from its actions everywhere and
-   *  offer only Delete (close permanently) — task 10.9. Normal rows are unaffected. */
+  /** Whether a row is the project COORDINATOR. The coordinator follows the SAME
+   *  archive/delete rules as ordinary sessions (coordinator-lifecycle), so it is no
+   *  longer special-cased in the archive/pause paths. It IS still excluded from inline
+   *  rename (its title is pinned "Coordinator"), so the menu drops the Rename item for
+   *  it. Normal rows are unaffected. */
   function isCoordinator(r: AgentRow | null): boolean {
     return r?.role === 'coordinator';
   }
 
   /** Right-click a roster row. An Archived agent — closed OR being previewed (it's
-   *  still presented as archived until you reply) — offers only Delete; a paused agent
-   *  offers Open / Resume / Archive; a live agent offers Open / Pause / Archive. An
-   *  EMPTY live/paused session presents its archive action as Delete instead. The
-   *  COORDINATOR never offers Pause/Archive — only Open + Delete (task 10.9). */
+   *  still presented as archived until you reply) — offers only Delete (restore is the
+   *  focus-header Resume / a row click); a paused agent offers Open / Resume / Archive;
+   *  a live agent offers Open / Pause / Archive. An EMPTY live/paused session presents
+   *  its archive action as Delete instead. The COORDINATOR follows the SAME rules: a
+   *  LIVE/paused coordinator gets Open / Pause / Archive routed through `archiveAgent`
+   *  (so an empty coordinator DELETES and a non-empty one ARCHIVES); only Rename is
+   *  omitted (its title is pinned). An ARCHIVED coordinator offers Delete (and Restore
+   *  via the header), like any archived session. */
   function openAgentMenu(e: MouseEvent, row: AgentRow, name: string) {
     e.preventDefault();
     // The archive action for a live/paused row: an empty session deletes (nothing to
-    // keep) and reads as "Delete"; a session with messages archives (restorable).
+    // keep) and reads as "Delete"; a session with messages archives (restorable). This
+    // is the SAME decision for the coordinator — `archiveAgent` runs its userHash
+    // through `archiveDecision` just like any other row.
     const archiveItem: MenuItem = isEmptySession(row.paneId)
       ? { label: 'Delete', icon: 'trash-2', danger: true, onClick: () => archiveAgent(row.paneId) }
       : { label: 'Archive session', icon: 'archive', danger: true, onClick: () => archiveAgent(row.paneId) };
+    // The coordinator's title is pinned ("Coordinator"), so inline rename is suppressed
+    // — drop the Rename item for it (it would be a no-op) while keeping everything else.
+    const renameItem: MenuItem[] = isCoordinator(row)
+      ? []
+      : [{ label: 'Rename', icon: 'pencil', onClick: () => renameAgent(row) }];
     const items: MenuItem[] = row.closed || row.preview
       ? [
           { label: 'Delete', icon: 'trash-2', danger: true, onClick: () => deleteAgent(row.paneId, name) }
         ]
-      : isCoordinator(row)
-        ? // The coordinator: open + DELETE only — never Pause/Archive (task 10.9).
-          [
+      : row.paused
+        ? [
             { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
-            { label: 'Delete', icon: 'trash-2', danger: true, onClick: () => deleteAgent(row.paneId, name) }
+            ...renameItem,
+            { label: 'Resume', icon: 'play', onClick: () => resumeAgent(row.paneId) },
+            archiveItem
           ]
-        : row.paused
-          ? [
-              { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
-              { label: 'Resume', icon: 'play', onClick: () => resumeAgent(row.paneId) },
-              archiveItem
-            ]
-          : [
-              { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
-              { label: 'Pause', icon: 'pause', onClick: () => pauseAgent(row.paneId) },
-              archiveItem
-            ];
+        : [
+            { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
+            ...renameItem,
+            { label: 'Pause', icon: 'pause', onClick: () => pauseAgent(row.paneId) },
+            archiveItem
+          ];
     menu = { open: true, x: e.clientX, y: e.clientY, items };
   }
 
   /** The agent's display title (generated session title or its fallback name). */
   function displayName(paneId: string, fallback: string): string {
     return titles.titleFor(paneId) ?? fallback;
+  }
+
+  /** Title shown in the focus-pane header. The coordinator always reads
+   *  "Coordinator" — matching its pinned row title — instead of its underlying
+   *  workspace name ("Session N"); everything else uses its generated session
+   *  title, falling back to its name. */
+  function focusTitle(r: AgentRow): string {
+    return isCoordinator(r) ? 'Coordinator' : displayName(r.paneId, r.name);
   }
 
   /** New session: when a project is already selected, launch straight into it (no
@@ -717,19 +882,19 @@
     if (!e.metaKey || e.altKey || e.ctrlKey || e.shiftKey) return;
 
     // ⌘W — archive (or delete-if-empty) the focused session. preventDefault also
-    // stops ⌘W from closing the app window via the webview. The COORDINATOR is never
-    // archivable (task 10.9) — fall through so ⌘W is a no-op on it.
+    // stops ⌘W from closing the app window via the webview. The COORDINATOR follows the
+    // SAME archive/delete rule (coordinator-lifecycle) — no longer excluded here.
     if (e.key === 'w' || e.key === 'W') {
-      if (!focus || focus.closed || isCoordinator(focus)) return;
+      if (!focus || focus.closed) return;
       e.preventDefault();
       archiveAgent(focus.paneId);
       return;
     }
 
     // ⌘. — pause the focused session, or resume it if already paused. The COORDINATOR
-    // is never pausable (task 10.9) — fall through so ⌘. is a no-op on it.
+    // follows the SAME pause rule (coordinator-lifecycle) — no longer excluded here.
     if (e.key === '.') {
-      if (!focus || focus.closed || isCoordinator(focus)) return;
+      if (!focus || focus.closed) return;
       e.preventDefault();
       if (focus.paused) resumeAgent(focus.paneId);
       else pauseAgent(focus.paneId);
@@ -761,10 +926,6 @@
       : { icon: 'folder', color: '#7B8499' };
   }
 
-  function cost(value: number | null): string {
-    return value === null ? '—' : `$${value.toFixed(2)}`;
-  }
-
   /** Whether a row shows the CONTEXT-window measure (with its mini-bar) in the meta
    *  row: only LIVE agents — not archived/previewed (closed) or paused. Archived and
    *  paused rows drop context and show just cost + last activity. */
@@ -793,17 +954,14 @@
     return 'b-standby';
   }
 
-  /** The secondary line for a roster row: question / current action / cost·model. */
+  /** The secondary line for a roster row: the agent's last message or pending question,
+   *  shown for EVERY lane including archived (closed) rows. Delegates the priority +
+   *  clipping to the pure `rowSubText` (question → live summary → cached summary →
+   *  generic fallback) and injects the per-session cached last-summary lookup so a
+   *  CLOSED pane — whose live `summary` is gone with its PTY — still shows the last
+   *  thing it said (recorded into `summaries` while it was live). */
   function rowSub(r: AgentRow): string {
-    if (r.closed) return 'Archived · restore or delete';
-    if (r.paused) return 'Paused · send a message to resume';
-    if (isAttention(r.status)) {
-      if (r.status === 'error') return 'Errored — needs you';
-      if (r.questions && r.questions.length > 0) return r.questions[0].question;
-      return r.question ?? 'Needs input';
-    }
-    if (r.status === 'finished') return cost(r.cost);
-    return r.currentAction ?? r.summary ?? 'Working…';
+    return rowSubText(r, () => summaries.summaryFor(sessionIdOf(r)));
   }
 </script>
 
@@ -829,6 +987,16 @@
         {isCoordPin ? 'Coordinator' : (titles.titleFor(r.paneId) ?? r.name)}
         {#if isCoordPin}
           <!-- The pinned coordinator's own row carries no role badge (task 10.5). -->
+        {:else if isArchivedCoordinator(r)}
+          <!-- An ARCHIVED (closed) coordinator is labeled with the bot "Coordinator"
+               badge (agent-roster-display) so its archived roster row is identifiable.
+               A LIVE coordinator's presentation (below) is unchanged. -->
+          <span
+            class="spec-badge coord-badge"
+            use:tooltip={'Archived project coordinator'}
+          >
+            <Icon name="bot" size={9} />Coordinator
+          </span>
         {:else if r.role === 'coordinator'}
           <span
             class="spec-badge coord-badge"
@@ -838,10 +1006,10 @@
           </span>
         {:else if r.coordinatorPaneId}
           <span
-            class="spec-badge coord-badge"
+            class="spec-badge coord-badge coord-badge-icon"
             use:tooltip={'Spawned by the project coordinator'}
           >
-            <Icon name="git-branch" size={9} />coordinated
+            <Icon name="compass" size={9} />
           </span>
         {/if}
         {#if r.specialist}
@@ -859,7 +1027,7 @@
           </span>
         {/if}
         <span class="m" use:tooltip={'Total session cost'}>
-          <Icon name="dollar-sign" size={11} />{costMeta(r.cost)}
+          <Icon name="dollar-sign" size={11} />{costMeta((r.closed || r.preview) ? (costs.costFor(sessionIdOf(r)) ?? r.cost) : r.cost)}
         </span>
         <span class="m" use:tooltip={'Time since last activity'}>
           <Icon name="clock" size={11} />{friendlyTime(r.lastTs, nowMs)}
@@ -937,6 +1105,16 @@
               {#if items.length > 0}
                 <div class="group-h {lane}">
                   {LANES[lane].title} <span class="gn">· {items.length}</span><span class="rule"></span>
+                  {#if lane === 'done'}
+                    <button
+                      type="button"
+                      class="group-action"
+                      title="Delete all archived agents"
+                      onclick={deleteAllArchived}
+                    >
+                      Delete all
+                    </button>
+                  {/if}
                 </div>
                 {#each items as r (r.paneId)}
                   {@render sessionRow(r, lane)}
@@ -952,11 +1130,11 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="tasks-gutter" onpointerdown={startTasksResize} use:tooltip={'Drag to resize'}></div>
 
-      <!-- Bottom region: the Tasks launcher + the Agents (specialists) panel
-           (sibling surfaces), sized together to a persisted fraction and split evenly. -->
+      <!-- Bottom region: the Tasks launcher. The Agents (specialists) panel is
+           temporarily hidden — restore the commented sibling below to bring it back. -->
       <div class="tasks-region" style="flex: 0 0 {tasksFrac * 100}%">
         <div class="launch-pane"><TasksLauncher /></div>
-        <div class="launch-pane sp"><SpecialistsPanel /></div>
+        <!-- <div class="launch-pane sp"><SpecialistsPanel /></div> -->
       </div>
     </div>
 
@@ -973,7 +1151,27 @@
         {@const av = projAvatar(focus.projectId)}
         <div class="fhead">
           <ProjectIcon {...av} size={26} />
-          <span class="ttl">{titles.titleFor(focus.paneId) ?? focus.name}</span>
+          {#if editingTitle}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              class="ttl-edit"
+              bind:this={titleInput}
+              bind:value={titleDraft}
+              onkeydown={onTitleKey}
+              onblur={commitTitleEdit}
+              aria-label="Rename session"
+              autofocus
+            />
+          {:else if isCoordinator(focus)}
+            <span class="ttl">{focusTitle(focus)}</span>
+          {:else}
+            <button
+              type="button"
+              class="ttl ttl-btn"
+              onclick={() => startTitleEdit()}
+              use:tooltip={'Rename session'}
+            >{focusTitle(focus)}</button>
+          {/if}
           <span class="spc"></span>
           {#if needsAttention(focus) && queue.length > 1}
             <span class="nav">
@@ -990,17 +1188,10 @@
               onclick={() => deleteAgent(focus.paneId, displayName(focus.paneId, focus.name))}
               use:tooltip={'Delete session'}
             >Delete</button>
-          {:else if isCoordinator(focus)}
-            <!-- The COORDINATOR is never pausable or archivable (task 10.9) — it
-                 orchestrates the project's agents. It stays DELETABLE (close it
-                 permanently), so only Delete is offered here. -->
-            <button
-              type="button"
-              class="hbtn danger"
-              onclick={() => deleteAgent(focus.paneId, displayName(focus.paneId, focus.name))}
-              use:tooltip={'Delete coordinator'}
-            >Delete</button>
           {:else}
+            <!-- The COORDINATOR follows the SAME archive/delete rules as ordinary
+                 sessions (coordinator-lifecycle): Pause + Archive (non-empty) / Delete
+                 (empty), routed through the same handlers — no longer delete-only. -->
             {#if focus.paused}
               <button type="button" class="hbtn" onclick={() => resumeAgent(focus.paneId)} use:tooltip={'Resume (⌘.)'}>Resume</button>
             {:else}
@@ -1019,7 +1210,7 @@
         {@const av = projAvatar(focus.projectId)}
         <div class="fhead">
           <ProjectIcon {...av} size={26} />
-          <span class="ttl">{titles.titleFor(focus.paneId) ?? focus.name}</span>
+          <span class="ttl">{focusTitle(focus)}</span>
           <span class="spc"></span>
           <button type="button" class="hbtn" onclick={() => startPreview(focus.paneId)} use:tooltip={'Resume (claude --resume)'}>Resume</button>
           <button
@@ -1092,6 +1283,20 @@
   .group-h.done { color: var(--fg-4); }
   .group-h .gn { color: var(--fg-4); }
   .group-h .rule { flex: 1; height: 1px; background: var(--line-faint); }
+  /* Right-aligned lane action (e.g. "Delete all" on Archived). Subtle until hover,
+     where it reveals its destructive intent. Inherits the mono/uppercase header. */
+  .group-h .group-action {
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    padding: 0;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    color: var(--fg-4);
+    cursor: pointer;
+  }
+  .group-h .group-action:hover { color: var(--danger, #e5484d); }
 
   .row { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 10px 16px; cursor: pointer; border: none; border-left: 2px solid transparent; background: none; transition: background var(--dur-fast); }
   .row:hover { background: rgba(255,255,255,0.025); }
@@ -1113,6 +1318,10 @@
   /* Coordinator badges (the coordinator itself, and its coordinated agents) use a
      distinct orange tint so an orchestration is visible at a glance (task 6.5). */
   .row .nm .t .coord-badge { background: var(--orange-tint); color: var(--orange-200); max-width: 130px; }
+  /* The coordinated-agent badge is icon-only (a single compass glyph, no text), so
+     it collapses to a square chip: symmetric padding, no gap/max-width meant for a
+     trailing label (task 1.2). */
+  .row .nm .t .coord-badge-icon { gap: 0; max-width: none; padding: 2px; }
   .row .nm .s { font-size: 11px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
   .row .nm .s.q { color: var(--orange-300); }
   /* The tiny third row: context · cost · last activity, each an icon + value. */
@@ -1127,6 +1336,11 @@
   .col-focus { background: var(--space-850); min-width: 0; display: flex; flex-direction: column; min-height: 0; }
   .fhead { flex: none; display: flex; align-items: center; gap: 11px; padding: 11px 18px; border-bottom: 1px solid var(--line-subtle); background: var(--space-900); }
   .fhead .ttl { font-weight: 600; font-size: 13.5px; color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  /* The clickable title (renames on click) reads as plain text until hovered. */
+  .fhead .ttl-btn { display: inline-flex; align-items: center; max-width: 100%; padding: 2px 6px; margin: -2px -6px; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; cursor: text; text-align: left; font-family: var(--font-sans); }
+  .fhead .ttl-btn:hover { background: rgba(255, 255, 255, 0.04); border-color: var(--line-subtle); }
+  /* The inline rename input mirrors the session-rail rename affordance. */
+  .fhead .ttl-edit { flex: 0 1 auto; min-width: 0; max-width: 60%; font-weight: 600; font-size: 13.5px; font-family: var(--font-sans); color: var(--fg-1); background: var(--space-800); border: 1px solid var(--blue-500); box-shadow: var(--focus-ring); border-radius: var(--r-sm); padding: 2px 6px; outline: none; }
   .fhead .spc { flex: 1; }
   .fhead .nav { display: flex; gap: 4px; flex: none; }
   .fhead .nav button { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-sm); background: var(--space-750); border: 1px solid var(--line-subtle); color: var(--fg-3); cursor: pointer; font-size: 13px; }

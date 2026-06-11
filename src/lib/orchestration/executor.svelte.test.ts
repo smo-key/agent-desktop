@@ -183,6 +183,21 @@ describe('OrchestrationExecutor — message_agent (4.3 / 4.6 idle gating)', () =
     expect(replies[0].outcome.error).toMatch(/busy/);
     Date.now = realNow;
   });
+
+  it('refuses to deliver to a target awaiting a question (no garbled menu)', async () => {
+    // An AskUserQuestion/permission menu derives status `waiting`, which passes the
+    // busy-gate — but writing free text + Enter would select a garbage menu option and
+    // corrupt the transcript. The op must refuse, not deliver.
+    const { deps, replies, sent } = makeDeps({
+      locate: () => pane('p1'),
+      statusOf: () => 'waiting',
+      readActivity: () => ({ summary: null, messages: [], question: 'Pick one?', contextPct: null })
+    });
+    const ex = new OrchestrationExecutor(deps);
+    await ex.onRequest({ id: 1, op: 'message_agent', args: { projectId: PROJ, paneId: 'p1', text: 'use A' } });
+    expect(sent).toEqual([]);
+    expect(replies[0].outcome.error).toMatch(/question/i);
+  });
 });
 
 describe('OrchestrationExecutor — read/list/inspect (4.3/4.4)', () => {

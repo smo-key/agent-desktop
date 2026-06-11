@@ -146,6 +146,14 @@ function normalize(evt, paneId, nowMs) {
     if (msg) out.notification = msg;
   }
 
+  // SessionEnd carries a `reason` (clear / logout / prompt_input_exit / other). Forward
+  // it so the overview can tell a `/clear` (the process restarts in place) from a real
+  // end and not auto-archive a session the user is still in.
+  if (out.hookEventName === 'SessionEnd') {
+    const reason = typeof e.reason === 'string' ? e.reason : '';
+    if (reason) out.reason = reason;
+  }
+
   return out;
 }
 

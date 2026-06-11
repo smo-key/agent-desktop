@@ -1,11 +1,14 @@
 pub mod activity;
+pub mod claude_title;
 pub mod events;
 pub mod git;
 pub mod models;
 pub mod orchestration;
 pub mod polish;
+pub mod pr;
 pub mod project_store;
 pub mod pty;
+pub mod shell_path;
 pub mod specialists;
 pub mod subagents;
 pub mod task;
@@ -239,11 +242,83 @@ fn open_path(path: String, app: Option<String>) -> Result<(), String> {
         .map_err(|e| format!("open {path} (app {app:?}): {e}"))
 }
 
+/// Title-budget constants for [`select_title_messages`]. `TITLE_MAX_MSGS` caps how
+/// many user messages we feed the title model so the prompt fits the sidecar's
+/// modest 4096-token context (each message is clipped to 200 chars by
+/// [`clip_message`]). `TITLE_HEAD_MSGS` reserves the first slots for the EARLIEST
+/// messages — the session's original/primary request usually lives there, and
+/// recency-only truncation used to drop it in long sessions. The remaining
+/// `TITLE_MAX_MSGS - TITLE_HEAD_MSGS` slots take the most RECENT messages so a
+/// genuinely new later request can still surface. 8 + 12 keeps a strong anchor on
+/// the original ask while leaving room for refinements and any late pivot.
+const TITLE_MAX_MSGS: usize = 20;
+const TITLE_HEAD_MSGS: usize = 8;
+
+/// Clip `m` to at most `max` characters after whitespace-normalisation. For messages
+/// at or under the limit the full text is returned. For longer messages the beginning
+/// and end are shown, separated by a "…" ellipsis, so the reader (and the title
+/// model) sees both where the message starts and where it ends. PURE and
+/// unit-tested.
+fn clip_message(m: &str, max: usize) -> String {
+    let one = m.split_whitespace().collect::<Vec<_>>().join(" ");
+    let chars: Vec<char> = one.chars().collect();
+    if chars.len() <= max {
+        return one;
+    }
+    if max == 0 {
+        return String::new();
+    }
+    let head_len = (max - 1) / 2;
+    let tail_len = max - head_len - 1; // -1 for the "…"
+    let head: String = chars[..head_len].iter().collect();
+    let tail: String = chars[chars.len() - tail_len..].iter().collect();
+    format!("{head}…{tail}")
+}
+
+/// Select which user messages to feed the title model, weighting the EARLIEST
+/// (the original request) so recency truncation can never drop it. PURE so the
+/// selection is unit-tested apart from the model call and the I/O in
+/// [`session_focus`].
+///
+/// - When `msgs.len() <= max`, every message is returned (chronological order).
+/// - Otherwise the first `head` messages (the original request and its immediate
+///   context) PLUS the last `max - head` messages (recent activity, where a new
+///   top-level task would appear) are returned, in chronological order, with any
+///   index overlap de-duplicated (relevant only for tiny/odd `max`/`head`).
+///
+/// `head` is clamped to `max` so the tail window never has negative width.
+fn select_title_messages(msgs: &[String], max: usize, head: usize) -> Vec<&str> {
+    if msgs.len() <= max {
+        return msgs.iter().map(String::as_str).collect();
+    }
+    let head = head.min(max);
+    let tail_len = max - head;
+    // De-dup by POSITION: start the tail window at the later of (last `tail_len`
+    // messages) and (just past the head window), so a message is never emitted
+    // twice. With `len > max >= head` the tail window already begins past the head,
+    // but the `.max(head)` keeps the helper correct for tiny/odd `max`/`head` too.
+    let tail_start = (msgs.len() - tail_len).max(head);
+    let mut out: Vec<&str> = Vec::with_capacity(max);
+    // HEAD: the earliest messages (always includes the original request).
+    for m in &msgs[..head] {
+        out.push(m.as_str());
+    }
+    // TAIL: the most recent messages (chronological order preserved).
+    for m in &msgs[tail_start..] {
+        out.push(m.as_str());
+    }
+    out
+}
+
 /// Clean a raw model completion into a session-title string: drop any Qwen3
 /// `<think>…</think>` reasoning block that slipped into the content, take the first
-/// non-empty line, strip wrapping quotes / trailing periods, and clip to 60 chars.
-/// PURE so the post-processing is unit-tested apart from the model call.
-fn clean_title(raw: &str) -> String {
+/// non-empty line, strip wrapping quotes / trailing periods, drop a hallucinated
+/// ticket-id prefix (see [`strip_phantom_ticket`]), de-slugify a bare slug the model
+/// copied verbatim (see [`deslugify`]), and clip to 60 chars on a word boundary.
+/// `source` is the joined user transcript the title was generated from — the only
+/// ground truth for whether a ticket id is real. PURE so the post-processing is
+/// unit-tested apart from the model call.
+fn clean_title(raw: &str, source: &str) -> String {
     let body = strip_think_blocks(raw);
     let title = body
         .lines()
@@ -252,7 +327,127 @@ fn clean_title(raw: &str) -> String {
         .unwrap_or("")
         .trim_matches(|c| c == '"' || c == '\'' || c == '.')
         .trim();
-    title.chars().take(60).collect()
+    let title = strip_phantom_ticket(title, source);
+    let title = deslugify(&title);
+    clip_title(&title, 60)
+}
+
+/// If `title` is a bare SLUG — all-lowercase words joined by hyphens with no spaces,
+/// e.g. an OpenSpec change name like `footer-branch-switcher` that the model copied
+/// out of the transcript — turn it into spaced, sentence-cased words
+/// (`Footer branch switcher`). A title that already contains a space, or isn't
+/// slug-shaped, is returned unchanged. The prompt tells the model not to emit slugs,
+/// but the small model still does it for workflow/OpenSpec sessions, so this is the
+/// deterministic salvage. PURE for unit testing.
+fn deslugify(title: &str) -> String {
+    let t = title.trim();
+    let is_slug = t.contains('-')
+        && !t.contains(' ')
+        && t.split('-').filter(|s| !s.is_empty()).count() >= 2
+        && t.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !is_slug {
+        return title.to_string();
+    }
+    let spaced = t.replace('-', " ");
+    let mut chars = spaced.chars();
+    match chars.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+        None => spaced,
+    }
+}
+
+/// Clip `s` to at most `max` chars, backing off to the last word boundary when the
+/// cut would land mid-word (and at least half the budget is kept), so a slightly
+/// long title ends on a whole word rather than a truncated one. A single
+/// over-long word with no space is hard-cut at `max`. PURE for unit testing.
+fn clip_title(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        return s.to_string();
+    }
+    let truncated: String = chars[..max].iter().collect();
+    match truncated.rfind(' ') {
+        Some(i) if i >= max / 2 => truncated[..i].trim_end().to_string(),
+        _ => truncated.trim_end().to_string(),
+    }
+}
+
+/// Drop a leading ticket/issue id from `title` when that id does NOT appear in
+/// `source`. The local model parrots the prompt's example formats (`#45`,
+/// `PROJ-45`) into titles for sessions that reference no ticket at all; the prompt
+/// alone has not stopped it, so this is the deterministic backstop. Only a LEADING
+/// id is considered (the documented title shape is "ID: focus"); an id genuinely
+/// present in the user's messages is kept verbatim. PURE for unit testing.
+fn strip_phantom_ticket(title: &str, source: &str) -> String {
+    match split_leading_ticket(title) {
+        Some((id, rest)) if !source_contains_id(source, id) => rest.to_string(),
+        _ => title.to_string(),
+    }
+}
+
+/// If `title` begins with a ticket/issue id, return `(id, rest)` where `rest` is
+/// the title after the id and an optional `:`/whitespace separator. Recognized
+/// forms: a GitHub issue `#<digits>`, or a tracker key `<2+ UPPERCASE letters>-<digits>`
+/// (e.g. `PROJ-45`). Returns `None` when there is no leading id. The 2-letter
+/// minimum avoids treating fragments like `I-9` or `A-1` as tickets.
+fn split_leading_ticket(title: &str) -> Option<(&str, &str)> {
+    let b = title.as_bytes();
+    let id_end = if b.first() == Some(&b'#') {
+        let mut i = 1;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == 1 {
+            return None; // bare '#'
+        }
+        i
+    } else {
+        let mut i = 0;
+        while i < b.len() && b[i].is_ascii_uppercase() {
+            i += 1;
+        }
+        if i < 2 {
+            return None; // need >=2 uppercase letters
+        }
+        if b.get(i) != Some(&b'-') {
+            return None;
+        }
+        i += 1; // consume '-'
+        let digits_start = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == digits_start {
+            return None; // no digits after '-'
+        }
+        i
+    };
+    let id = &title[..id_end];
+    let mut rest = title[id_end..].trim_start();
+    if let Some(stripped) = rest.strip_prefix(':') {
+        rest = stripped.trim_start();
+    }
+    Some((id, rest))
+}
+
+/// Whether `source` contains the ticket `id` as a standalone token (ASCII
+/// case-insensitive). Boundary-checked so `#45` does NOT match inside `#456` and
+/// `PROJ-45` does NOT match inside `PROJ-456` or `MYPROJ-45`: the char before the
+/// id must not be ASCII-alphanumeric and the char after must not be an ASCII digit.
+fn source_contains_id(source: &str, id: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut from = 0;
+    while let Some(rel) = find_ascii_ci(&source[from..], id) {
+        let start = from + rel;
+        let end = start + id.len();
+        let before_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+        let after_ok = end >= bytes.len() || !bytes[end].is_ascii_digit();
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
 }
 
 /// Byte index of the first ASCII-case-insensitive occurrence of `needle` in
@@ -295,24 +490,31 @@ fn strip_think_blocks(s: &str) -> String {
     out
 }
 
-/// Generate a short session FOCUS title from the user's messages, using the LOCAL
-/// model (the `llama-server` sidecar loading the Qwen3 polish model — see
-/// `polish.rs`). Locates the session transcript, extracts the user's prose messages,
-/// and asks the local model for a <=6-word title (e.g. "SKIPA-45: Fix Feature").
-/// Returns `None` when the user has sent nothing yet; returns `Err` (so the frontend
-/// keeps the previous title) if the local model is absent or the call fails. The
-/// frontend gates calls on the `user_hash` so a title is regenerated only when the
-/// user's messages actually change.
+/// Generate a short session FOCUS title from the user's messages. The PRIMARY path
+/// is the LOCAL model (the `llama-server` sidecar loading the Qwen3 polish model —
+/// see `polish.rs`): locate the session transcript, extract the user's prose
+/// messages, and ask the local model for a <=6-word title (e.g. "Improve dialog
+/// handling"). Returns `None` when the user has sent nothing yet.
 ///
-/// `async` runs this off the main/UI thread: the local model call can take a moment,
-/// and the sidecar may need a lazy start on the first request; the UI stays
-/// responsive while the title resolves in the background.
+/// When the on-device path fails for ANY reason (model absent, sidecar won't start,
+/// HTTP error, timeout) AND `cloud_fallback` is set (the opt-in `titles.cloudFallback`
+/// setting), regenerate the title with the `claude` CLI (`claude -p --model haiku` —
+/// see `claude_title.rs`), reusing the same prompt + `clean_title` so the result is
+/// identical in shape. With `cloud_fallback` off the on-device failure returns `Err`
+/// and the frontend keeps the previous title (the original on-device-only behavior).
+/// The frontend gates calls on the `user_hash` so a title is regenerated only when
+/// the user's messages actually change.
+///
+/// `async` runs this off the main/UI thread: the model call can take a moment, and
+/// the sidecar may need a lazy start on the first request; the UI stays responsive
+/// while the title resolves in the background.
 #[tauri::command]
 async fn session_focus(
     app: AppHandle,
     state: State<'_, Arc<polish::LlamaServer>>,
     session_id: String,
     cwd: Option<String>,
+    cloud_fallback: bool,
 ) -> Result<Option<String>, String> {
     let projects_base =
         activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
@@ -324,30 +526,71 @@ async fn session_focus(
     let Some(transcript) = activity::find_transcript(&projects_base, &pane) else {
         return Ok(None);
     };
-    let msgs = activity::user_messages(&transcript);
+    // Title-specific view: drops skill/command/caveat scaffolding (isMeta preludes,
+    // slash-command markup, interrupt markers) that the small title model otherwise
+    // copies into the title. Distinct from `user_messages` so the auto-resume /
+    // empty-session gates that read `user_hash`/`user_message_count` are unaffected.
+    let msgs = activity::title_user_messages(&transcript);
     if msgs.is_empty() {
         return Ok(None);
     }
+    let asst_msgs = activity::assistant_messages(&transcript);
     // Bound the prompt to fit the local model's modest context window (the sidecar
-    // runs with a 4096-token context): the last 20 user messages, each clipped.
-    let joined: String = msgs
-        .iter()
-        .rev()
-        .take(20)
-        .rev()
-        .map(|m| {
-            let one = m.split_whitespace().collect::<Vec<_>>().join(" ");
-            one.chars().take(200).collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n- ");
-    let joined = format!("Messages:\n- {joined}");
+    // runs with a 4096-token context). Weight the EARLIEST messages so the session's
+    // original request is always included even in a long session (head + tail
+    // budget), then clip each message with head+tail ellipsis for long ones. The
+    // first selected message is the original request; label it so the model anchors
+    // on it (DATA, not a command).
+    let selected = select_title_messages(&msgs, TITLE_MAX_MSGS, TITLE_HEAD_MSGS);
+    let mut lines = selected.iter().map(|m| clip_message(m, 200));
+    let first = lines.next().unwrap_or_default(); // msgs is non-empty (checked above)
+    let rest: Vec<String> = lines.collect();
+
+    // Earliest and most recent assistant responses bookend the session and let the
+    // title model understand what was actually accomplished, not just what was asked.
+    // Clip assistant messages tighter (150 chars) since they tend to be verbose.
+    let earliest_asst = asst_msgs.first().map(|m| clip_message(m, 150));
+    let most_recent_asst = if asst_msgs.len() > 1 {
+        asst_msgs.last().map(|m| clip_message(m, 150))
+    } else {
+        None
+    };
+
+    let mut joined = format!("Original request:\n- {first}");
+    if let Some(ea) = &earliest_asst {
+        let label = if most_recent_asst.is_some() {
+            "Earliest assistant response"
+        } else {
+            "Assistant response"
+        };
+        joined.push_str(&format!("\n{label}:\n- {ea}"));
+    }
+    if !rest.is_empty() {
+        joined.push_str(&format!("\nLater messages:\n- {}", rest.join("\n- ")));
+    }
+    if let Some(mr) = &most_recent_asst {
+        joined.push_str(&format!("\nMost recent assistant response:\n- {mr}"));
+    }
 
     // Run the title completion through the shared local-model path (lazy-starts the
     // sidecar). The model id is the registry id; llama-server ignores it for routing.
     let body = polish::build_title_body(&joined, models::POLISH.id);
-    let raw = polish::chat_complete(&app, &state, body).await?;
-    let title = clean_title(&raw);
+    let raw = match polish::chat_complete(&app, &state, body).await {
+        Ok(raw) => raw,
+        Err(on_device_err) => {
+            // On-device unavailable. Fall back to the cloud (claude -p haiku) ONLY
+            // when the user opted in; otherwise keep the previous title (Err).
+            if !cloud_fallback {
+                return Err(on_device_err);
+            }
+            claude_title::claude_title(&joined).await.map_err(|cloud_err| {
+                format!(
+                    "on-device title failed ({on_device_err}); cloud fallback failed ({cloud_err})"
+                )
+            })?
+        }
+    };
+    let title = clean_title(&raw, &joined);
     Ok((!title.is_empty()).then_some(title))
 }
 
@@ -850,6 +1093,54 @@ fn git_pull(repo_path: String) -> Result<String, String> {
     git::pull(&repo_path)
 }
 
+/// List the local and remote-tracking branches for `repo_path`, plus the name
+/// of the currently checked-out branch. Never fails: an off-repo path returns an
+/// all-empty `BranchList`. Used by the footer branch-switcher UI.
+#[tauri::command(async)]
+fn git_list_branches(repo_path: String) -> Result<git::BranchList, String> {
+    Ok(git::list_branches(&repo_path))
+}
+
+/// Check out `branch` in `repo_path` (git DWIM: a remote short name creates a
+/// local tracking branch). Returns git's own message on success; `Err(message)`
+/// on failure so the frontend can surface it in a toast.
+#[tauri::command(async)]
+fn git_checkout(repo_path: String, branch: String) -> Result<String, String> {
+    git::checkout(&repo_path, &branch)
+}
+
+/// Create and check out a new branch `name` off the current HEAD in `repo_path`
+/// (`git checkout -b`). Returns git's own message on success; `Err(message)` on
+/// failure so the frontend can surface it in a toast.
+#[tauri::command(async)]
+fn git_create_branch(repo_path: String, name: String) -> Result<String, String> {
+    git::create_branch(&repo_path, &name)
+}
+
+/// Look up the OPEN PR status for `repo_path`'s current branch into `base`
+/// (default branch, typically `main`), for the footer's PR button. Resolves the
+/// branch in `repo_path`, then runs `gh pr list --head <branch> --base <base>
+/// --state open --json url,number`. Returns `{ kind: "exists", url, number }`
+/// when one exists, `{ kind: "none" }` when not, and `{ kind: "unknown" }` (NOT
+/// an error) when `gh` is missing/unauthenticated/errors — so the frontend falls
+/// back to the create-confirm path. Best-effort; never fails.
+#[tauri::command(async)]
+async fn pr_status_for(repo_path: String, base: String) -> Result<pr::PrStatus, String> {
+    Ok(pr::pr_status_for(&repo_path, &base).await)
+}
+
+/// Look up the OPEN PRs targeting `base` in `repo_path` that are AWAITING REVIEW,
+/// plus the repo's pull-requests page URL, for the footer's "open PRs awaiting
+/// review" button. Runs `gh pr list --base <base> --state open --json
+/// number,reviewDecision` and counts the entries whose `reviewDecision` is NOT
+/// `APPROVED`, and `gh repo view --json url` (+`/pulls`) for the link. Returns
+/// `{ count, pullsUrl }`; degrades to the NEUTRAL `{ count: 0, pullsUrl: null }`
+/// (NOT an error) when `gh` is missing/unauthenticated/errors. Best-effort.
+#[tauri::command(async)]
+async fn open_prs_for(repo_path: String, base: String) -> Result<pr::OpenPrs, String> {
+    Ok(pr::open_prs_for(&repo_path, &base).await)
+}
+
 /// Create a fresh session worktree off `repo_path`'s HEAD (auto-worktree
 /// projects). Returns `{ path, branch, base }`; ensures `.worktrees` is gitignored
 /// and the branch is unique. `Err` when `repo_path` isn't a git repo or git fails.
@@ -1095,6 +1386,11 @@ pub fn run() {
             git_status_for,
             git_push,
             git_pull,
+            git_list_branches,
+            git_checkout,
+            git_create_branch,
+            pr_status_for,
+            open_prs_for,
             worktree_create,
             worktree_remove_if_clean,
             worktree_list,
@@ -1105,6 +1401,8 @@ pub fn run() {
             transcribe::voice_transcribe_stream,
             models::voice_download_models,
             models::voice_models_status,
+            models::voice_models_disk_usage,
+            models::voice_delete_models,
             polish::voice_polish,
             whisper_server::voice_transcribe_partial,
             voice_bundled_model_path,
@@ -1154,26 +1452,30 @@ mod tests {
 
     #[test]
     fn clean_title_takes_first_nonempty_line_and_strips_decoration() {
-        assert_eq!(clean_title("\n  \"Fix login bug\".  \n"), "Fix login bug");
+        assert_eq!(clean_title("\n  \"Fix login bug\".  \n", ""), "Fix login bug");
         assert_eq!(
-            clean_title("Improve frontend dialog handling\nextra line"),
+            clean_title("Improve frontend dialog handling\nextra line", ""),
             "Improve frontend dialog handling"
         );
     }
 
     #[test]
     fn clean_title_drops_think_blocks() {
+        // The ticket id is in `source`, so it is kept (a real reference).
         assert_eq!(
-            clean_title("<think>let me reason\nabout this</think>\nSKIPA-45: Fix Feature"),
-            "SKIPA-45: Fix Feature"
+            clean_title(
+                "<think>let me reason\nabout this</think>\nPROJ-45: Fix login feature",
+                "Messages:\n- fix PROJ-45 the login feature"
+            ),
+            "PROJ-45: Fix login feature"
         );
         // Case-insensitive tag, title on the same trailing segment.
         assert_eq!(
-            clean_title("<THINK>hmm</THINK> Add dark mode"),
+            clean_title("<THINK>hmm</THINK> Add dark mode", ""),
             "Add dark mode"
         );
         // Unterminated think block → no title leaks out.
-        assert_eq!(clean_title("<think>never closes"), "");
+        assert_eq!(clean_title("<think>never closes", ""), "");
     }
 
     #[test]
@@ -1185,7 +1487,7 @@ mod tests {
         assert_eq!(strip_think_blocks("İİ<think>x</think>Z"), "İİZ");
         // A multi-byte char INSIDE the reasoning block is dropped with it.
         assert_eq!(
-            clean_title("<think>İİİ reasoning</think>\nFix the café page"),
+            clean_title("<think>İİİ reasoning</think>\nFix the café page", ""),
             "Fix the café page"
         );
     }
@@ -1193,13 +1495,104 @@ mod tests {
     #[test]
     fn clean_title_clips_to_60_chars() {
         let long = "a".repeat(100);
-        assert_eq!(clean_title(&long).chars().count(), 60);
+        assert_eq!(clean_title(&long, "").chars().count(), 60);
     }
 
     #[test]
     fn clean_title_empty_for_blank_input() {
-        assert_eq!(clean_title(""), "");
-        assert_eq!(clean_title("   \n  "), "");
+        assert_eq!(clean_title("", ""), "");
+        assert_eq!(clean_title("   \n  ", ""), "");
+    }
+
+    #[test]
+    fn clean_title_strips_phantom_ticket_absent_from_source() {
+        // The model invented a ticket id; the session referenced none → drop it.
+        assert_eq!(
+            clean_title("PROJ-45: Fix login", "Messages:\n- please fix the login"),
+            "Fix login"
+        );
+        assert_eq!(
+            clean_title("#45: Add dark mode", "Messages:\n- add a dark mode"),
+            "Add dark mode"
+        );
+        // No colon, just whitespace, still stripped.
+        assert_eq!(
+            clean_title("ENG-12 Refactor parser", "Messages:\n- refactor the parser"),
+            "Refactor parser"
+        );
+    }
+
+    #[test]
+    fn clean_title_keeps_real_ticket_in_source() {
+        // Id genuinely present in the user's messages → keep verbatim.
+        assert_eq!(
+            clean_title("PROJ-45: Fix login", "Messages:\n- work on PROJ-45 login"),
+            "PROJ-45: Fix login"
+        );
+        // Case-insensitive match against the source.
+        assert_eq!(
+            clean_title("ENG-7: Cache layer", "Messages:\n- start eng-7"),
+            "ENG-7: Cache layer"
+        );
+        assert_eq!(
+            clean_title("#9: Crash on boot", "Messages:\n- see #9"),
+            "#9: Crash on boot"
+        );
+    }
+
+    #[test]
+    fn strip_phantom_ticket_boundary_checks() {
+        // A different number in source must not count as the title's id.
+        assert_eq!(
+            strip_phantom_ticket("#45: Foo", "issue #456 here"),
+            "Foo"
+        );
+        assert_eq!(
+            strip_phantom_ticket("PROJ-45: Foo", "see PROJ-456"),
+            "Foo"
+        );
+        assert_eq!(
+            strip_phantom_ticket("PROJ-45: Foo", "see MYPROJ-45"),
+            "Foo"
+        );
+        // Exact match (not a longer number) is kept.
+        assert_eq!(
+            strip_phantom_ticket("#45: Foo", "issue #45 here"),
+            "#45: Foo"
+        );
+    }
+
+    #[test]
+    fn ticket_issue_numbers_of_any_length() {
+        // Issue numbers vary in length — #1, #456, #4567 are all valid and parse.
+        assert_eq!(split_leading_ticket("#1: Crash"), Some(("#1", "Crash")));
+        assert_eq!(split_leading_ticket("#456: Crash"), Some(("#456", "Crash")));
+        assert_eq!(split_leading_ticket("#4567: Crash"), Some(("#4567", "Crash")));
+
+        // Each is kept when it actually appears in the source...
+        assert_eq!(clean_title("#1: Crash", "Messages:\n- see #1"), "#1: Crash");
+        assert_eq!(
+            clean_title("#4567: Crash", "Messages:\n- see #4567"),
+            "#4567: Crash"
+        );
+
+        // ...and a different-length number in the source is NOT a match (boundary
+        // check both directions): #456 is neither a prefix nor a superset hit of #4567.
+        assert_eq!(strip_phantom_ticket("#456: Foo", "see #4567"), "Foo");
+        assert_eq!(strip_phantom_ticket("#4567: Foo", "see #456"), "Foo");
+        assert_eq!(strip_phantom_ticket("#1: Foo", "see #12"), "Foo");
+    }
+
+    #[test]
+    fn split_leading_ticket_recognizes_and_rejects() {
+        assert_eq!(split_leading_ticket("PROJ-45: Fix"), Some(("PROJ-45", "Fix")));
+        assert_eq!(split_leading_ticket("#45 Fix"), Some(("#45", "Fix")));
+        assert_eq!(split_leading_ticket("AB-1: x"), Some(("AB-1", "x")));
+        // Not tickets: single-letter key, no digits, bare '#', plain words.
+        assert_eq!(split_leading_ticket("I-9 form"), None);
+        assert_eq!(split_leading_ticket("CI-CD pipeline"), None);
+        assert_eq!(split_leading_ticket("# heading"), None);
+        assert_eq!(split_leading_ticket("Improve dialog handling"), None);
     }
 
     #[test]
@@ -1301,5 +1694,186 @@ mod tests {
             fs::read_to_string(&second.wrapper_path).unwrap(),
             STATUSLINE_WRAPPER_SRC
         );
+    }
+
+    // --- deslugify (salvage a model-copied slug into spaced words) -----------
+
+    #[test]
+    fn deslugify_converts_a_bare_slug_to_spaced_sentence_case() {
+        assert_eq!(deslugify("footer-branch-switcher"), "Footer branch switcher");
+        assert_eq!(deslugify("hide-agents-panel"), "Hide agents panel");
+        assert_eq!(deslugify("add-csv-export-2"), "Add csv export 2");
+    }
+
+    #[test]
+    fn deslugify_leaves_real_titles_untouched() {
+        // Already spaced → not a slug.
+        assert_eq!(deslugify("Fix the login bug"), "Fix the login bug");
+        // Has a space around the hyphen → not a slug.
+        assert_eq!(deslugify("Title fallback to claude-p with haiku"),
+                   "Title fallback to claude-p with haiku");
+        // Single hyphenless word → not a slug.
+        assert_eq!(deslugify("Refactor"), "Refactor");
+        // Uppercase present (e.g. a ticket title) → not a bare lowercase slug.
+        assert_eq!(deslugify("PROJ-45"), "PROJ-45");
+        // A single hyphenated pair is still salvaged.
+        assert_eq!(deslugify("drag-drop"), "Drag drop");
+    }
+
+    #[test]
+    fn clean_title_deslugifies_a_copied_change_name() {
+        // The model copied the OpenSpec change slug verbatim; no ticket in source.
+        assert_eq!(
+            clean_title("footer-branch-switcher", "Messages:\n- change the branch from the footer"),
+            "Footer branch switcher"
+        );
+    }
+
+    // --- clip_title (word-boundary 60-char clip) -----------------------------
+
+    #[test]
+    fn clip_title_backs_off_to_a_word_boundary() {
+        let s = "Adjust archived panel order to show the most recent items first";
+        let out = clip_title(s, 60);
+        assert!(out.chars().count() <= 60);
+        assert!(!out.ends_with(' '));
+        // Ends on a whole word (no mid-word cut).
+        assert!(s.starts_with(&out));
+        assert!(out.split(' ').last().unwrap().len() >= 1);
+    }
+
+    #[test]
+    fn clip_title_hard_cuts_a_single_overlong_word() {
+        let s = "a".repeat(100);
+        assert_eq!(clip_title(&s, 60).chars().count(), 60);
+    }
+
+    #[test]
+    fn clip_title_short_unchanged() {
+        assert_eq!(clip_title("Fix login bug", 60), "Fix login bug");
+    }
+
+    // --- clip_message (beginning + ellipsis + end truncation) ----------------
+
+    #[test]
+    fn clip_message_short_message_returned_unchanged() {
+        assert_eq!(clip_message("fix the bug", 200), "fix the bug");
+        assert_eq!(clip_message("a".repeat(200).as_str(), 200), "a".repeat(200));
+    }
+
+    #[test]
+    fn clip_message_long_message_shows_beginning_and_end() {
+        // 210 chars → 200 max: head = (200-1)/2 = 99, tail = 200-99-1 = 100.
+        let input = "a".repeat(105) + &"b".repeat(105);
+        let clipped = clip_message(&input, 200);
+        // Total chars = 200 (99 head + "…" + 100 tail).
+        assert_eq!(clipped.chars().count(), 200);
+        // Starts with the beginning and ends with the tail.
+        assert!(clipped.starts_with("aaaa"), "should start with head");
+        assert!(clipped.ends_with("bbbb"), "should end with tail");
+        assert!(clipped.contains('…'), "must contain the ellipsis separator");
+    }
+
+    #[test]
+    fn clip_message_normalises_whitespace() {
+        // Multiple spaces / newlines are collapsed before clipping.
+        assert_eq!(clip_message("fix   the\nbug", 200), "fix the bug");
+    }
+
+    #[test]
+    fn clip_message_zero_max_returns_empty() {
+        assert_eq!(clip_message("hello", 0), "");
+    }
+
+    #[test]
+    fn clip_message_multibyte_respected() {
+        // "…" (U+2026) is one char; ensure the count is in chars, not bytes.
+        let input = "é".repeat(210);
+        let clipped = clip_message(&input, 200);
+        assert_eq!(clipped.chars().count(), 200);
+        assert!(clipped.contains('…'));
+    }
+
+    // --- select_title_messages (HEAD + TAIL message budget) -----------------
+
+    fn owned(strs: &[&str]) -> Vec<String> {
+        strs.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn select_title_messages_keeps_all_for_a_short_session() {
+        // len <= max → every message is included, in order, none dropped.
+        let msgs = owned(&["first request", "follow up", "another tweak"]);
+        let picked = select_title_messages(&msgs, 20, 8);
+        assert_eq!(picked, vec!["first request", "follow up", "another tweak"]);
+    }
+
+    #[test]
+    fn select_title_messages_long_session_always_keeps_the_earliest() {
+        // 30 messages, budget 20 (head 8 + tail 12). The ORIGINAL request (index 0)
+        // must survive — that is the whole point: recency must not drop it.
+        let raw: Vec<String> = (0..30).map(|i| format!("m{i}")).collect();
+        let picked = select_title_messages(&raw, 20, 8);
+        assert_eq!(picked.len(), 20);
+        // The earliest message is always the first selected.
+        assert_eq!(picked[0], "m0");
+        // The first HEAD messages are the earliest ones, in order.
+        assert_eq!(&picked[..8], &["m0", "m1", "m2", "m3", "m4", "m5", "m6", "m7"]);
+        // The TAIL is the most recent (max - head = 12) messages, in order.
+        assert_eq!(picked[8], "m18");
+        assert_eq!(picked[19], "m29");
+    }
+
+    #[test]
+    fn select_title_messages_preserves_chronological_order() {
+        let raw: Vec<String> = (0..50).map(|i| format!("m{i}")).collect();
+        let picked = select_title_messages(&raw, 20, 8);
+        // Map each selected message back to its original index; indices must be
+        // strictly increasing (chronological order preserved, no reordering).
+        let idxs: Vec<usize> = picked
+            .iter()
+            .map(|p| p.trim_start_matches('m').parse::<usize>().unwrap())
+            .collect();
+        assert!(idxs.windows(2).all(|w| w[0] < w[1]), "indices must increase: {idxs:?}");
+    }
+
+    #[test]
+    fn select_title_messages_dedupes_overlapping_head_and_tail_windows() {
+        // The head window is the first `head` messages; the tail window is the last
+        // `max - head` messages. When `head` is large relative to `max` the two
+        // windows can overlap on the same indices — the helper must take the union
+        // (each message at most once) and keep chronological order.
+        //
+        // 7 messages, max 6, head 5: head=[m0..m4], tail=last (6-5)=1=[m6]. The
+        // value "m4" appears only in the head; nothing is duplicated.
+        let seven = owned(&["m0", "m1", "m2", "m3", "m4", "m5", "m6"]);
+        let picked = select_title_messages(&seven, 6, 5);
+        assert_eq!(picked, vec!["m0", "m1", "m2", "m3", "m4", "m6"]);
+
+        // True index overlap: identical message text repeated and a head window that
+        // reaches into the tail window. 6 messages, max 8 > len → keep-all path, but
+        // verify the union dedup never doubles a message even if a head index also
+        // falls in the tail window. Use repeated text to prove de-dup is by index,
+        // not by value: head still keeps each position once.
+        let dup = owned(&["x", "x", "x", "x", "x", "x"]);
+        // len 6 <= max 8 → keep all 6 positions (repeated text is fine; positions
+        // are distinct), proving no spurious extra copies are appended.
+        assert_eq!(select_title_messages(&dup, 8, 5).len(), 6);
+
+        // Overlapping windows by index: 5 messages, max 5, head 4 → head=[m0..m3],
+        // tail=last (5-4)=1=[m4]; union is all 5, each once, in order.
+        let five = owned(&["m0", "m1", "m2", "m3", "m4"]);
+        assert_eq!(
+            select_title_messages(&five, 5, 4),
+            vec!["m0", "m1", "m2", "m3", "m4"]
+        );
+
+        // No value is duplicated in the truncating path either.
+        let raw: Vec<String> = (0..40).map(|i| format!("m{i}")).collect();
+        let p = select_title_messages(&raw, 20, 8);
+        let mut sorted = p.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), p.len(), "no message may appear twice");
     }
 }

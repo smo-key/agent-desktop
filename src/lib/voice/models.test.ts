@@ -1,5 +1,23 @@
-import { describe, it, expect } from 'vitest';
-import { overallPercent, formatBytes, downloadRows, type PerModel } from './models';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// `modelsDiskUsage` / `deleteModels` are thin invoke wrappers that must DEGRADE a
+// backend/transport failure to 0 (never throw) so the Settings UI stays usable.
+const invokeMock = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (...a: unknown[]) => invokeMock(...a),
+  Channel: class {}
+}));
+
+import {
+  overallPercent,
+  formatBytes,
+  downloadRows,
+  modelsDiskUsage,
+  deleteModels,
+  type PerModel
+} from './models';
+
+beforeEach(() => invokeMock.mockReset());
 
 describe('overallPercent', () => {
   it('returns 0 for an empty map (nothing to show yet)', () => {
@@ -96,5 +114,31 @@ describe('downloadRows', () => {
     const { rows, totalBytes } = downloadRows([]);
     expect(rows).toEqual([]);
     expect(totalBytes).toBe(0);
+  });
+});
+
+describe('modelsDiskUsage', () => {
+  it('returns the backend byte count', async () => {
+    invokeMock.mockResolvedValueOnce(1_834_426_016);
+    expect(await modelsDiskUsage()).toBe(1_834_426_016);
+    expect(invokeMock).toHaveBeenCalledWith('voice_models_disk_usage');
+  });
+
+  it('degrades a backend failure to 0 (never throws)', async () => {
+    invokeMock.mockRejectedValueOnce(new Error('boom'));
+    await expect(modelsDiskUsage()).resolves.toBe(0);
+  });
+});
+
+describe('deleteModels', () => {
+  it('returns the bytes freed reported by the backend', async () => {
+    invokeMock.mockResolvedValueOnce(574_000_000);
+    expect(await deleteModels()).toBe(574_000_000);
+    expect(invokeMock).toHaveBeenCalledWith('voice_delete_models');
+  });
+
+  it('degrades a backend failure to 0 freed (never throws)', async () => {
+    invokeMock.mockRejectedValueOnce(new Error('boom'));
+    await expect(deleteModels()).resolves.toBe(0);
   });
 });

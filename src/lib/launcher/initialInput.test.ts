@@ -2,9 +2,67 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   encodeInitialInput,
   encodeInitialText,
+  initialInputForMount,
   InitialInputSender,
+  LaunchPromptReadiness,
+  READY_MAX_MS,
+  READY_QUIET_MS,
   SUBMIT_BYTES
 } from './initialInput';
+
+describe('initialInputForMount (one-shot prompt is never re-sent to a resumed pane)', () => {
+  it('delivers the launch prompt on a FRESH spawn (resume falsey)', () => {
+    expect(initialInputForMount('Commit all changes and push', false)).toBe(
+      'Commit all changes and push'
+    );
+    expect(initialInputForMount('do x', undefined)).toBe('do x');
+  });
+
+  it('NEVER re-delivers the prompt to a RESUMED pane (archive→restore / preview)', () => {
+    // The bug: an auto-archived agent task that the inbox auto-previews remounts with
+    // resume:true and the registry's initialInput still set — it must not re-run.
+    expect(initialInputForMount('Commit all changes and push', true)).toBeUndefined();
+  });
+
+  it('no prompt stays no prompt regardless of resume', () => {
+    expect(initialInputForMount(undefined, false)).toBeUndefined();
+    expect(initialInputForMount(null, true)).toBeUndefined();
+    expect(initialInputForMount('', true)).toBeUndefined();
+  });
+});
+
+/** A controllable stand-in for setTimeout/clearTimeout: tasks run only when the
+ *  test advances the clock, so the quiet-window / hard-cap timing is exercised
+ *  deterministically without real time. */
+function fakeClock() {
+  let now = 0;
+  let seq = 1;
+  type Handle = ReturnType<typeof setTimeout>;
+  const tasks = new Map<number, { at: number; run: () => void }>();
+  const schedule = (run: () => void, ms: number): Handle => {
+    const id = seq++;
+    tasks.set(id, { at: now + ms, run });
+    return id as unknown as Handle;
+  };
+  const cancel = (h: Handle): void => {
+    tasks.delete(h as unknown as number);
+  };
+  const advance = (ms: number): void => {
+    now += ms;
+    // Run every task whose deadline has passed, earliest first, re-checking after
+    // each (a task may schedule another). Capped to avoid a runaway loop.
+    for (let guard = 0; guard < 1000; guard += 1) {
+      let next: [number, { at: number; run: () => void }] | null = null;
+      for (const entry of tasks) {
+        if (entry[1].at <= now && (next === null || entry[1].at < next[1].at)) next = entry;
+      }
+      if (next === null) return;
+      tasks.delete(next[0]);
+      next[1].run();
+    }
+  };
+  return { schedule, cancel, advance, pending: () => tasks.size };
+}
 
 // Tests for the PURE initial-input delivery helper used by TerminalPane to write
 // an OPTIONAL user-supplied initial prompt to the PTY exactly ONCE after spawn.
@@ -129,5 +187,142 @@ describe('InitialInputSender (two-phase, sent-once)', () => {
     expect(sender.deliver(write, schedule)).toBe(false);
     expect(write).not.toHaveBeenCalled();
     expect(schedule).not.toHaveBeenCalled();
+  });
+});
+
+describe('LaunchPromptReadiness (deliver only once the TUI is ready)', () => {
+  const gate = (onReady: () => void, clock: ReturnType<typeof fakeClock>) =>
+    new LaunchPromptReadiness(onReady, clock.schedule, clock.cancel);
+
+  // Scenario name from session-launcher spec (Requirement: Optional Initial
+  // Prompt). The quiet/settle window starts only after the first output byte, so
+  // delivery never writes into a not-yet-rendered TUI; a hard cap is the backstop.
+  it('Initial prompt is delivered only after the TUI is ready', () => {
+    const clock = fakeClock();
+    const onReady = vi.fn();
+    const g = gate(onReady, clock);
+
+    // Wired but silent past the quiet window: NOT delivered (TUI not rendering).
+    g.wired();
+    clock.advance(READY_QUIET_MS + 100);
+    expect(onReady).not.toHaveBeenCalled();
+
+    // First output, then settle: delivered exactly once.
+    g.noteOutput();
+    clock.advance(READY_QUIET_MS);
+    expect(onReady).toHaveBeenCalledOnce();
+  });
+
+  it('does NOT deliver before claude emits its first output', () => {
+    // REGRESSION: a slow startup (e.g. a coordinated agent loading the MCP
+    // toolkit) can leave the PTY silent past the quiet window. Arming the quiet
+    // timer at spawn would fire into a TUI that hasn't started rendering — the
+    // prompt is lost and the session shows up blank / needs-input. The quiet
+    // window must NOT start until the first output byte.
+    const clock = fakeClock();
+    const onReady = vi.fn();
+    const g = gate(onReady, clock);
+
+    g.wired(); // PTY wired, but no output yet
+    clock.advance(READY_QUIET_MS + 50); // well past the quiet window
+    expect(onReady).not.toHaveBeenCalled();
+
+    // Once the first byte arrives and output then settles, it delivers.
+    g.noteOutput();
+    clock.advance(READY_QUIET_MS);
+    expect(onReady).toHaveBeenCalledOnce();
+  });
+
+  it('defers delivery when output settles BEFORE the PTY id is wired', () => {
+    // REGRESSION: the per-pane output channel is wired BEFORE `pty_spawn` resolves, so
+    // a first byte (then a quiet settle) can arrive while `ptyId` is still undefined.
+    // Firing then would no-op against the undefined id AND latch, dropping the prompt.
+    // Delivery must wait until `wired()`.
+    const clock = fakeClock();
+    const onReady = vi.fn();
+    const g = gate(onReady, clock);
+
+    // Output arrives and settles BEFORE wired() (pty_spawn not yet resolved):
+    g.noteOutput();
+    clock.advance(READY_QUIET_MS + 50);
+    expect(onReady).not.toHaveBeenCalled(); // deferred — PTY id not live yet
+
+    // The PTY is now wired (pty_spawn resolved, ptyId set): the deferred delivery fires.
+    g.wired();
+    expect(onReady).toHaveBeenCalledOnce();
+
+    // And only once, despite further output / time.
+    g.noteOutput();
+    clock.advance(READY_MAX_MS);
+    expect(onReady).toHaveBeenCalledOnce();
+  });
+
+  it('delivers once output has been quiet for READY_QUIET_MS after first byte', () => {
+    const clock = fakeClock();
+    const onReady = vi.fn();
+    const g = gate(onReady, clock);
+    g.wired();
+    g.noteOutput();
+    clock.advance(READY_QUIET_MS - 1);
+    expect(onReady).not.toHaveBeenCalled();
+    clock.advance(1);
+    expect(onReady).toHaveBeenCalledOnce();
+  });
+
+  it('resets the quiet window on every output byte', () => {
+    // A burst of output keeps deferring delivery; it fires only after the LAST
+    // byte has been quiet for the full window.
+    const clock = fakeClock();
+    const onReady = vi.fn();
+    const g = gate(onReady, clock);
+    g.wired();
+    for (let i = 0; i < 5; i += 1) {
+      g.noteOutput();
+      clock.advance(READY_QUIET_MS - 100); // never lets the window elapse
+    }
+    expect(onReady).not.toHaveBeenCalled();
+    clock.advance(READY_QUIET_MS); // now output is quiet
+    expect(onReady).toHaveBeenCalledOnce();
+  });
+
+  it('delivers at the hard cap even if output never goes quiet', () => {
+    // Continuous output (the quiet window never elapses) still delivers at the
+    // hard cap measured from when the PTY was wired, so the prompt never hangs.
+    const clock = fakeClock();
+    const onReady = vi.fn();
+    const g = gate(onReady, clock);
+    g.wired();
+    // Emit a byte every (quiet - 50)ms so the quiet timer keeps resetting.
+    for (let t = 0; t < READY_MAX_MS; t += READY_QUIET_MS - 50) {
+      g.noteOutput();
+      clock.advance(READY_QUIET_MS - 50);
+    }
+    expect(onReady).toHaveBeenCalledOnce();
+  });
+
+  it('fires onReady at most once', () => {
+    const clock = fakeClock();
+    const onReady = vi.fn();
+    const g = gate(onReady, clock);
+    g.wired();
+    g.noteOutput();
+    clock.advance(READY_QUIET_MS);
+    expect(onReady).toHaveBeenCalledOnce();
+    // Further output / time must not re-deliver.
+    g.noteOutput();
+    clock.advance(READY_MAX_MS);
+    expect(onReady).toHaveBeenCalledOnce();
+  });
+
+  it('dispose cancels pending timers so a torn-down pane never delivers', () => {
+    const clock = fakeClock();
+    const onReady = vi.fn();
+    const g = gate(onReady, clock);
+    g.wired();
+    g.noteOutput();
+    g.dispose();
+    expect(clock.pending()).toBe(0);
+    clock.advance(READY_MAX_MS);
+    expect(onReady).not.toHaveBeenCalled();
   });
 });

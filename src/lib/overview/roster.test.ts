@@ -6,7 +6,9 @@ import {
   laneOf,
   laneForRow,
   needsAttention,
+  isArchivedCoordinator,
   groupByLane,
+  archivedPaneIds,
   LANE_ORDER,
   WORKING_WINDOW_MS,
   type AgentRow,
@@ -120,6 +122,44 @@ describe('roster — Agent Roster Overview', () => {
     expect(b.contextPct).toBe(13);
     expect(b.cost).toBe(0.4);
     expect(b.status).toBe('waiting');
+  });
+
+  // A `/clear` (or `/logout`) fires a SessionEnd hook that the event pipeline maps to
+  // `finished` — but the claude PROCESS is still alive (the conversation restarts in
+  // place). A LIVE (non-exited) pane must therefore NEVER be reported `finished` from an
+  // event, or the inbox auto-archive effect would archive/delete a session the user is
+  // still using. `finished` for a live row can only come from an actual PTY exit or an
+  // explicit close — mirror of "a dead process is never working".
+  it('A live process is never finished from a SessionEnd event', () => {
+    const now = 1_000_000;
+    const map = mapOf(snap('pane-a'));
+    const workspaces = [ws('ws-1', 'P', [{ paneId: 'pane-a', cwd: '/x' }])];
+    // PTY alive and quiet past the working window → the byte heuristic reads `waiting`.
+    const runtime = runtimeOf(
+      rt('pane-a', { lastOutputAt: now - WORKING_WINDOW_MS - 1_000, exited: false })
+    );
+    // A SessionEnd hook (e.g. from `/clear`) drove the event-sourced status to `finished`.
+    const eventActivity: Record<string, EventActivity> = {
+      'pane-a': { status: 'finished', currentAction: null, question: null, questions: null }
+    };
+    const rows = buildRoster(map, workspaces, runtime, now, {}, WORKING_WINDOW_MS, eventActivity);
+    // Falls back to the live PTY status instead of the event's stale `finished`.
+    expect(rows[0].status).toBe('waiting');
+  });
+
+  // The dual guard still holds the other way: a genuine end (the PTY actually exited) IS
+  // `finished` even if the last event said the agent was mid-tool — a dead process is
+  // never working. This locks the symmetry the fix above relies on.
+  it('An exited process is finished even when an event says working', () => {
+    const now = 1_000_000;
+    const map = mapOf(snap('pane-a'));
+    const workspaces = [ws('ws-1', 'P', [{ paneId: 'pane-a', cwd: '/x' }])];
+    const runtime = runtimeOf(rt('pane-a', { exited: true, exitCode: 0 }));
+    const eventActivity: Record<string, EventActivity> = {
+      'pane-a': { status: 'working', currentAction: 'Bash:x', question: null, questions: null }
+    };
+    const rows = buildRoster(map, workspaces, runtime, now, {}, WORKING_WINDOW_MS, eventActivity);
+    expect(rows[0].status).toBe('finished');
   });
 
   // Only panes flagged as app (claude) sessions are agents; a plain shell pane in
@@ -400,6 +440,60 @@ describe('roster — control-room lanes', () => {
     expect(grouped.attn.map((r) => r.paneId)).toEqual(['w']);
     expect(grouped.done.map((r) => r.paneId)).toEqual(['p']);
   });
+
+  it('archivedPaneIds: the done-lane paneIds (closed + previewing), in roster order', () => {
+    const rows = [
+      laneRow('live', { status: 'working' }),
+      laneRow('closed', { status: 'finished', closed: true }),
+      laneRow('attn', { status: 'waiting' }),
+      laneRow('preview', { status: 'working', preview: true })
+    ];
+    // Both the closed and the previewing-archived rows count; live/attention do not.
+    expect(archivedPaneIds(rows)).toEqual(['closed', 'preview']);
+  });
+
+  it('archivedPaneIds: empty when nothing is archived', () => {
+    const rows = [
+      laneRow('a', { status: 'working' }),
+      laneRow('b', { status: 'waiting' }),
+      laneRow('c', { status: 'waiting', paused: true })
+    ];
+    expect(archivedPaneIds(rows)).toEqual([]);
+  });
+
+  // agent-roster-display: "Archived coordinator is labeled" — an archived (closed)
+  // coordinator row carries the bot "Coordinator" badge; a LIVE coordinator does not
+  // (it keeps its existing pinned-row presentation, no archived label added).
+  it('isArchivedCoordinator: only a closed coordinator row is labeled', () => {
+    // The label case: a coordinator whose session is archived (closed).
+    expect(
+      isArchivedCoordinator(laneRow('coord', { role: 'coordinator', closed: true }))
+    ).toBe(true);
+    // A LIVE coordinator is NOT labeled (no archived badge on the live presentation).
+    expect(
+      isArchivedCoordinator(laneRow('coord', { role: 'coordinator' }))
+    ).toBe(false);
+    // A preview-ed (resumed-from-archived, closed:false) coordinator is live again.
+    expect(
+      isArchivedCoordinator(laneRow('coord', { role: 'coordinator', closed: false, preview: true }))
+    ).toBe(false);
+    // A plain archived (closed) agent is NOT a coordinator → no coordinator label.
+    expect(
+      isArchivedCoordinator(laneRow('agent', { closed: true }))
+    ).toBe(false);
+    // A coordinator-spawned agent (carries coordinatorPaneId, not role) is not labeled.
+    expect(
+      isArchivedCoordinator(laneRow('spawned', { coordinatorPaneId: 'coord', closed: true }))
+    ).toBe(false);
+  });
+
+  it('an archived coordinator sits in the Archived (done) lane', () => {
+    // The closed coordinator lands in `done` like any archived row, where its label
+    // renders.
+    expect(
+      laneForRow(laneRow('coord', { role: 'coordinator', status: 'finished', closed: true }))
+    ).toBe('done');
+  });
 });
 
 // Event-sourced status integration (activity-timeline). buildRoster prefers the
@@ -524,5 +618,105 @@ describe('roster — coordinator needs-input suppression', () => {
     });
     expect(row.status).toBe('waiting');
     expect(needsAttention(row)).toBe(true);
+  });
+});
+
+// In-flight vs Needs-input override (agent-status-derivation): when Claude Code is
+// actively working but its event hooks report idle, a LIVE non-coordinator pane with
+// NO pending question is shown In flight (`working`) rather than Needs input. The
+// signal is the per-pane `terminalBusy` runtime flag (set from detectTerminalBusy).
+// The override is strictly additive: terminalBusy false/absent → exactly the prior
+// derivation; it never applies to the coordinator or to a pending-question row.
+describe('roster — terminal-busy In-flight override', () => {
+  const now = 1_000_000;
+  // PTY alive and quiet PAST the working window → the byte heuristic alone reads
+  // `waiting` (the Needs-input state the override must correct when busy).
+  const quiet = (over: Partial<PaneRuntime> = {}): [string, PaneRuntime] =>
+    rt('p', { lastOutputAt: now - WORKING_WINDOW_MS - 5_000, ...over });
+  const normalWs: RosterWorkspace = {
+    id: 'w1',
+    name: 'N',
+    panes: [{ paneId: 'p', cwd: '/x', isApp: true, projectId: 'A' }]
+  };
+
+  // Scenario 1: a foreground command running (terminal shows the interrupt /
+  // run-in-background affordance) → In flight, not Needs input.
+  it('foreground-run busy → working (would otherwise be waiting)', () => {
+    const runtime = runtimeOf(quiet({ terminalBusy: true }));
+    const [row] = buildRoster({}, [normalWs], runtime, now);
+    expect(row.status).toBe('working');
+    expect(needsAttention(row)).toBe(false);
+  });
+
+  // Scenario 3: the main turn returned but a dynamic workflow / another agent is
+  // still running. Same channel (terminalBusy true) → In flight. (The distinction
+  // between the two affordances lives in detectTerminalBusy; here the override is
+  // the same: a busy live pane stays working.)
+  it('background-workflow busy → working even when an event status says waiting', () => {
+    const runtime = runtimeOf(quiet({ terminalBusy: true }));
+    const [row] = buildRoster({}, [normalWs], runtime, now, {}, WORKING_WINDOW_MS, {
+      p: { status: 'waiting', currentAction: null, question: null, questions: null }
+    });
+    expect(row.status).toBe('working');
+  });
+
+  // Scenario 4: a pending AskUserQuestion → Needs input REGARDLESS of any
+  // active-work indicator. The override must not apply when a question is pending.
+  it('pending question → still waiting despite terminalBusy', () => {
+    const runtime = runtimeOf(quiet({ terminalBusy: true }));
+    const [row] = buildRoster({}, [normalWs], runtime, now, {}, WORKING_WINDOW_MS, {
+      p: { status: 'waiting', currentAction: null, question: 'pick one?', questions: null }
+    });
+    expect(row.status).toBe('waiting');
+    expect(needsAttention(row)).toBe(true);
+  });
+
+  it('pending structured questions → still waiting despite terminalBusy', () => {
+    const runtime = runtimeOf(quiet({ terminalBusy: true }));
+    const [row] = buildRoster({}, [normalWs], runtime, now, {}, WORKING_WINDOW_MS, {
+      p: {
+        status: 'waiting',
+        currentAction: null,
+        question: null,
+        questions: [{ header: '', question: 'q?', multiSelect: false, options: [] }]
+      }
+    });
+    expect(row.status).toBe('waiting');
+  });
+
+  // Scenario 5: no indicator present → status derived EXACTLY as before. A quiet
+  // pane with terminalBusy absent/false stays `waiting`.
+  it('no indicator (terminalBusy absent) → unchanged (waiting)', () => {
+    const runtime = runtimeOf(quiet());
+    const [row] = buildRoster({}, [normalWs], runtime, now);
+    expect(row.status).toBe('waiting');
+  });
+
+  it('terminalBusy explicitly false → unchanged (waiting)', () => {
+    const runtime = runtimeOf(quiet({ terminalBusy: false }));
+    const [row] = buildRoster({}, [normalWs], runtime, now);
+    expect(row.status).toBe('waiting');
+  });
+
+  // The override is gated on a LIVE process: an exited pane is never re-flagged
+  // working (a dead process is never working — mirrors the exit rule).
+  it('exited pane is finished even if terminalBusy lingers', () => {
+    const runtime = runtimeOf(rt('p', { exited: true, exitCode: 0, terminalBusy: true }));
+    const [row] = buildRoster({}, [normalWs], runtime, now);
+    expect(row.status).toBe('finished');
+  });
+
+  // The override must NOT change coordinator status derivation: a coordinator path
+  // is decided solely by coordinatorNeedsInput, independent of terminalBusy.
+  it('coordinator is unaffected by terminalBusy (still working with no question)', () => {
+    const coordWs: RosterWorkspace = {
+      id: 'wc',
+      name: 'C',
+      panes: [{ paneId: 'p', cwd: '/x', isApp: true, role: 'coordinator', projectId: 'A' }]
+    };
+    const runtime = runtimeOf(quiet({ terminalBusy: true }));
+    const [row] = buildRoster({}, [coordWs], runtime, now);
+    expect(row.status).toBe('working');
+    expect(needsAttention(row)).toBe(false);
   });
 });

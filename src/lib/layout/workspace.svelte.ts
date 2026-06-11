@@ -100,23 +100,26 @@ export interface PaneSession {
    */
   paused?: boolean;
   /**
-   * The user-message hash (`activity.userHash`) captured when the agent was paused.
-   * The inbox auto-resumes the agent once the live hash differs from this (a new
-   * message was sent). Persisted alongside `paused` so the baseline survives restart.
+   * The user-message COUNT (`activity.userMsgCount`) captured when the agent was
+   * paused. The inbox auto-resumes the agent once the live count strictly EXCEEDS
+   * this (a new message was sent). Persisted alongside `paused` so the baseline
+   * survives restart. `null`/absent means "not yet established" — the inbox lazily
+   * captures it from the first known reading, so a transient unknown never resumes.
    */
-  pausedHash?: string | null;
+  pausedCount?: number | null;
   /**
    * Set while an archived session is being PREVIEWED: it has been respawned with
    * `claude --resume` (so `closed:false`, `resume:true`) to show its transcript, but
    * it stays presented as Archived (pinned to `done`, out of attention) until the
    * user sends a message. RUNTIME-ONLY (persistence serializes it AS closed). The
-   * inbox UNARCHIVES it (clears `preview`) once the live user-message hash differs
-   * from `previewHash`, and RE-ARCHIVES it if the user leaves its window too long.
+   * inbox UNARCHIVES it (clears `preview`) once the live user-message count exceeds
+   * `previewCount`, and RE-ARCHIVES it if the user leaves its window too long.
    */
   preview?: boolean;
-  /** The user-message hash captured when the preview began; the inbox unarchives the
-   *  session once the live hash differs (a new message was sent). */
-  previewHash?: string | null;
+  /** The user-message COUNT captured when the preview began; the inbox unarchives the
+   *  session once the live count strictly exceeds it (a new message was sent).
+   *  `null`/absent until lazily established from the first known reading. */
+  previewCount?: number | null;
   /**
    * OPTIONAL name of the SPECIALIST (`.claude/agents/<name>.md`) this pane was
    * spawned AS by the orchestration toolkit (`spawn_agent({ specialist })`).
@@ -803,7 +806,7 @@ export class WorkspaceStore {
       // resume:false so the closed pane never tries to (re)spawn while completed;
       // previewArchived flips it back on with resume:true. Also clear any preview
       // state so re-archiving a previewing session always terminates its PTY.
-      const { preview: _pv, previewHash: _ph, ...rest } = cur;
+      const { preview: _pv, previewCount: _pc, ...rest } = cur;
       entry.registry = { ...entry.registry, [paneId]: { ...rest, closed: true, resume: false } };
       return;
     }
@@ -811,26 +814,28 @@ export class WorkspaceStore {
 
   /**
    * PAUSE (defer) the agent in pane `paneId`: mark it `paused` and record the
-   * current user-message hash as the baseline. Unlike `closeAgent` this does NOT
+   * current user-message COUNT as the baseline. Unlike `closeAgent` this does NOT
    * touch `resume`/`closed` — the pane stays LIVE (its PTY keeps running) so you can
    * resume it by sending a new message; it is only moved to the Paused lane and out
-   * of attention. No-op when the pane is gone.
+   * of attention. A `null` count (transcript not yet read) is left unestablished and
+   * the inbox captures it lazily from the first known reading. No-op when the pane is
+   * gone.
    */
-  pauseAgent(paneId: string, userHash: string | null): void {
+  pauseAgent(paneId: string, userMsgCount: number | null): void {
     for (const entry of this.workspaces) {
       if (!leafByPaneId(entry.ws.root, paneId)) continue;
       const cur = entry.registry[paneId];
       if (!cur) return;
       entry.registry = {
         ...entry.registry,
-        [paneId]: { ...cur, paused: true, pausedHash: userHash }
+        [paneId]: { ...cur, paused: true, pausedCount: userMsgCount }
       };
       return;
     }
   }
 
   /**
-   * RESUME a paused agent: clear `paused` + its baseline hash so it returns to its
+   * RESUME a paused agent: clear `paused` + its baseline count so it returns to its
    * live status lane. No-op when the pane is gone. Used by the manual "Resume"
    * button and the auto-resume-on-new-message path.
    */
@@ -839,8 +844,25 @@ export class WorkspaceStore {
       if (!leafByPaneId(entry.ws.root, paneId)) continue;
       const cur = entry.registry[paneId];
       if (!cur) return;
-      const { paused: _p, pausedHash: _h, ...rest } = cur;
+      const { paused: _p, pausedCount: _c, ...rest } = cur;
       entry.registry = { ...entry.registry, [paneId]: rest };
+      return;
+    }
+  }
+
+  /**
+   * LAZILY establish a paused agent's baseline count once activity is first known —
+   * for a pane paused before its transcript had been polled (`pausedCount` null). A
+   * no-op unless the pane is paused with no baseline yet and `count` is a real number,
+   * so it fires exactly once and never lowers an existing baseline. This is what
+   * prevents a not-yet-read count from being treated as 0 and spuriously resuming.
+   */
+  establishPausedBaseline(paneId: string, count: number): void {
+    for (const entry of this.workspaces) {
+      if (!leafByPaneId(entry.ws.root, paneId)) continue;
+      const cur = entry.registry[paneId];
+      if (!cur || !cur.paused || cur.pausedCount != null) return;
+      entry.registry = { ...entry.registry, [paneId]: { ...cur, pausedCount: count } };
       return;
     }
   }
@@ -869,7 +891,7 @@ export class WorkspaceStore {
    * to the `done` lane and out of attention) until a new message commits it via
    * `commitPreview`. No-op when the pane is gone or has no session id to resume.
    */
-  previewArchived(paneId: string, userHash: string | null): void {
+  previewArchived(paneId: string, userMsgCount: number | null): void {
     for (const entry of this.workspaces) {
       if (!leafByPaneId(entry.ws.root, paneId)) continue;
       const cur = entry.registry[paneId];
@@ -877,16 +899,19 @@ export class WorkspaceStore {
       // Only a claude pane with a session id can resume a transcript; otherwise leave
       // it archived (the caller falls back to a plain select).
       if (cur.program !== 'claude' || !cur.sessionId) return;
+      // Re-preview must NOT reset an already-established baseline (the auto-preview
+      // effect re-runs on every focus tick): only seed `previewCount` when absent.
+      const previewCount = cur.preview ? (cur.previewCount ?? userMsgCount) : userMsgCount;
       entry.registry = {
         ...entry.registry,
-        [paneId]: { ...cur, closed: false, resume: true, preview: true, previewHash: userHash }
+        [paneId]: { ...cur, closed: false, resume: true, preview: true, previewCount }
       };
       return;
     }
   }
 
   /**
-   * COMMIT a previewed agent (UNARCHIVE): clear `preview` + its baseline hash so the
+   * COMMIT a previewed agent (UNARCHIVE): clear `preview` + its baseline count so the
    * resumed session becomes a normal live agent and rejoins its status lane. Leaves
    * `closed:false` (it is already live). No-op when the pane is gone. Used by the
    * auto-unarchive-on-new-message path.
@@ -896,8 +921,26 @@ export class WorkspaceStore {
       if (!leafByPaneId(entry.ws.root, paneId)) continue;
       const cur = entry.registry[paneId];
       if (!cur) return;
-      const { preview: _p, previewHash: _h, ...rest } = cur;
+      const { preview: _p, previewCount: _c, ...rest } = cur;
       entry.registry = { ...entry.registry, [paneId]: rest };
+      return;
+    }
+  }
+
+  /**
+   * LAZILY establish a previewing agent's baseline count once activity is first known
+   * — for a session previewed before its transcript had been polled (`previewCount`
+   * null), e.g. an archived pane auto-previewed on a restored layout before the first
+   * activity poll. A no-op unless the pane is previewing with no baseline yet and
+   * `count` is a real number, so it fires once and prevents a not-yet-read count from
+   * being treated as 0 and spuriously unarchiving.
+   */
+  establishPreviewBaseline(paneId: string, count: number): void {
+    for (const entry of this.workspaces) {
+      if (!leafByPaneId(entry.ws.root, paneId)) continue;
+      const cur = entry.registry[paneId];
+      if (!cur || !cur.preview || cur.previewCount != null) return;
+      entry.registry = { ...entry.registry, [paneId]: { ...cur, previewCount: count } };
       return;
     }
   }

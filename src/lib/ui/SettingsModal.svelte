@@ -13,7 +13,16 @@
     type FileBucket
   } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
-  import { ensureModels, modelsStatus, type ModelsStatus } from '$lib/voice/models';
+  import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
+  import { titleSettings } from '$lib/settings/titles.svelte';
+  import {
+    ensureModels,
+    modelsStatus,
+    modelsDiskUsage,
+    deleteModels,
+    formatBytes,
+    type ModelsStatus
+  } from '$lib/voice/models';
   import { modelDownload } from '$lib/voice/modelStore.svelte';
 
   // Voice-model readiness line: re-query whenever the modal is open and the
@@ -21,6 +30,10 @@
   // download is delegated to the shared `ensureModels` so the panel + settings
   // share one in-flight session (progress reflected in `modelDownload`).
   let modelStatus = $state<ModelsStatus | null>(null);
+  // Reclaimable disk used by downloaded models (bytes); drives the delete control.
+  let presentBytes = $state(0);
+  // True while a delete is in flight, to disable the button and avoid double-fire.
+  let deleting = $state(false);
   $effect(() => {
     if (!settingsModal.open) return;
     const tier = voice.prefs.modelTier;
@@ -28,10 +41,26 @@
     void modelsStatus(tier, polish).then((s) => {
       modelStatus = s;
     });
+    void modelsDiskUsage().then((b) => {
+      presentBytes = b;
+    });
   });
   async function downloadModels() {
     await ensureModels(voice.prefs.modelTier, voice.prefs.polish);
     modelStatus = await modelsStatus(voice.prefs.modelTier, voice.prefs.polish);
+    presentBytes = await modelsDiskUsage();
+  }
+  // Delete all downloaded models, then refresh status + usage so the row flips to
+  // "None downloaded" and the Voice "Download" button reappears.
+  async function deleteDownloaded() {
+    deleting = true;
+    try {
+      await deleteModels();
+      presentBytes = await modelsDiskUsage();
+      modelStatus = await modelsStatus(voice.prefs.modelTier, voice.prefs.polish);
+    } finally {
+      deleting = false;
+    }
   }
 
   // Sentinel for the "Custom…" select option (reveals a free-text app-name field).
@@ -192,6 +221,55 @@
               {/if}
             </div>
           </li>
+          <li class="row">
+            <span class="desc">Downloaded models</span>
+            <div class="control">
+              {#if presentBytes > 0}
+                <button
+                  type="button"
+                  class="model-delete"
+                  disabled={deleting || modelDownload.active}
+                  onclick={deleteDownloaded}
+                >
+                  {deleting ? 'Deleting…' : `Delete (${formatBytes(presentBytes)})`}
+                </button>
+              {:else}
+                <span class="model-status">None downloaded</span>
+              {/if}
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <span class="label">Focus behavior</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Auto-advance to the next agent that needs input</span>
+            <div class="control">
+              <input
+                type="checkbox"
+                checked={autoAdvance.prefs.enabled}
+                onchange={(e) => autoAdvance.setEnabled(e.currentTarget.checked)}
+              />
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <span class="label">Session titles</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Use cloud (Haiku) when on-device titles are unavailable</span>
+            <div class="control">
+              <input
+                type="checkbox"
+                checked={titleSettings.prefs.cloudFallback}
+                onchange={(e) => titleSettings.setCloudFallback(e.currentTarget.checked)}
+              />
+            </div>
+          </li>
         </ul>
       </section>
     </div>
@@ -340,7 +418,8 @@
   }
   select:disabled,
   input[type='checkbox']:disabled,
-  .model-download:disabled {
+  .model-download:disabled,
+  .model-delete:disabled {
     opacity: 0.45;
     cursor: not-allowed;
   }
@@ -363,6 +442,21 @@
     cursor: pointer;
   }
   .model-download:not(:disabled):hover {
+    background: var(--space-600);
+  }
+
+  /* Destructive variant: same shape as the download button, danger-tinted. */
+  .model-delete {
+    font-size: 13px;
+    padding: 4px 10px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--line-default);
+    background: var(--space-650);
+    color: var(--danger, #e5484d);
+    cursor: pointer;
+  }
+  .model-delete:not(:disabled):hover {
+    border-color: var(--danger, #e5484d);
     background: var(--space-600);
   }
 </style>

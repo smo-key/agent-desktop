@@ -88,6 +88,23 @@ describe('event-hook pure core', () => {
     expect(other.summary).toBe('Bash:ls');
     expect(other.ts).toBe(2000);
   });
+
+  it('Session-end reason carried on the event', () => {
+    // The SessionEnd hook input carries a `reason` (clear / logout / prompt_input_exit /
+    // other); forward it so the overview can tell a `/clear` (process continues) from a
+    // real end and not auto-archive the live session.
+    const ended = hook.normalize(
+      { session_id: 's', hook_event_name: 'SessionEnd', reason: 'clear' },
+      PANE_ID,
+      3000
+    );
+    expect(ended.hookEventName).toBe('SessionEnd');
+    expect(ended.reason).toBe('clear');
+
+    // A non-SessionEnd event carries no reason.
+    const stop = hook.normalize({ session_id: 's', hook_event_name: 'Stop' }, PANE_ID, 3000);
+    expect(stop.reason).toBeUndefined();
+  });
 });
 
 describe('event-hook delivery', () => {

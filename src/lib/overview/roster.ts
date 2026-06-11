@@ -90,6 +90,20 @@ export function coordinatorNeedsInput(
 }
 
 /**
+ * PURE: whether a row is an ARCHIVED COORDINATOR — a `role:'coordinator'` row whose
+ * session is CLOSED (Archived). The roster labels exactly these rows with the bot
+ * "Coordinator" badge (agent-roster-display: "Archived coordinator is labeled"); a
+ * LIVE coordinator keeps its existing presentation (its own pinned-row badge), so it
+ * is deliberately NOT matched here. A `preview`-ed coordinator (resumed-from-archived,
+ * `closed:false`) is live again and likewise unmatched.
+ */
+export function isArchivedCoordinator(
+  row: Pick<AgentRow, 'role' | 'closed'>
+): boolean {
+  return row.role === 'coordinator' && row.closed === true;
+}
+
+/**
  * PURE: whether a row is actively waiting on YOU — waiting/errored AND neither
  * paused (deferred) nor archived (closed). The inbox's attention queue + focus
  * advance use this so a paused/archived agent never nags or steals focus.
@@ -114,6 +128,16 @@ export function groupByLane(rows: AgentRow[]): Record<AgentLane, AgentRow[]> {
   return grouped;
 }
 
+/**
+ * PURE: the paneIds of the ARCHIVED rows — those in the `done` lane (closed or
+ * previewing-an-archived-session), in roster order. This is exactly the set shown
+ * under the overview's "Archived" header, so it backs the "delete all archived"
+ * action. Empty when nothing is archived.
+ */
+export function archivedPaneIds(rows: AgentRow[]): string[] {
+  return rows.filter((row) => laneForRow(row) === 'done').map((row) => row.paneId);
+}
+
 /** Per-pane runtime state captured from the live terminal (framework-free). */
 export interface PaneRuntime {
   /** Epoch ms of the most recent PTY output, or null if none seen yet. */
@@ -122,6 +146,16 @@ export interface PaneRuntime {
   exited: boolean;
   /** The process exit code once exited, else null (and null for an unknown code). */
   exitCode: number | null;
+  /**
+   * Whether Claude Code is ACTIVELY WORKING per a recent-terminal indicator that
+   * the event hooks miss (a foreground command running, or in-session background
+   * work — see `detectTerminalBusy`). Optional: absent/false means "no indicator",
+   * in which case status derivation is exactly as before this flag existed. The
+   * TerminalPane sets it via `noteBusy`; `rowFor` reads it the same channel as
+   * `exited`, to keep a LIVE non-coordinator agent In flight rather than Needs
+   * input while such work is in flight.
+   */
+  terminalBusy?: boolean;
 }
 
 /** The live `pane_id -> runtime` map the Overview feeds into `buildRoster`. */
@@ -157,6 +191,9 @@ export interface RowActivity {
   questions?: PendingQuestion[] | null;
   /** Context-window usage 0..100 from the transcript, or null. */
   contextPct?: number | null;
+  /** Unix seconds of the last transcript entry's timestamp — stable across
+   *  `claude --resume` reopens. Used as `lastTs` for closed/preview rows. */
+  lastMsgTs?: number | null;
 }
 
 /** The live `pane_id -> activity` map the Overview feeds into `buildRoster`.
@@ -200,17 +237,19 @@ export interface RosterPane {
   /** Whether this agent is PAUSED (deferred): kept live, but moved to the Paused
    *  lane and out of attention until a new user message resumes it. */
   paused?: boolean;
-  /** The user-message hash captured when the agent was paused. The inbox resumes
-   *  the agent when the live hash differs from this (a new message was sent). */
-  pausedHash?: string | null;
+  /** The user-message COUNT captured when the agent was paused. The inbox resumes
+   *  the agent when the live count strictly exceeds this (a new message was sent).
+   *  `null`/absent until lazily established from the first known reading. */
+  pausedCount?: number | null;
   /** Whether this agent is being PREVIEWED: an archived session re-opened with
    *  `claude --resume` so its transcript is live + interactive, yet still presented
    *  as Archived (pinned to `done`, out of attention) until the user sends a
    *  message. Runtime-only — never persisted (serialized as `closed`). */
   preview?: boolean;
-  /** The user-message hash captured when the preview began; the inbox UNARCHIVES the
-   *  session when the live hash differs (a new message was sent). */
-  previewHash?: string | null;
+  /** The user-message COUNT captured when the preview began; the inbox UNARCHIVES the
+   *  session when the live count strictly exceeds this (a new message was sent).
+   *  `null`/absent until lazily established from the first known reading. */
+  previewCount?: number | null;
 }
 
 /** One workspace, projected to exactly what the roster reads. */
@@ -278,17 +317,17 @@ export interface AgentRow {
   /** Whether the agent is PAUSED (deferred): kept live but moved to the Paused lane
    *  and out of attention. Optional; roster fixtures may omit it (not-paused). */
   paused?: boolean;
-  /** The user-message hash captured at pause time; the inbox resumes the agent when
-   *  the live hash differs (a new message arrived). Null when paused with no
-   *  messages yet; undefined when not paused. */
-  pausedHash?: string | null;
+  /** The user-message COUNT captured at pause time; the inbox resumes the agent when
+   *  the live count strictly exceeds it (a new message arrived). Null when not yet
+   *  established; undefined when not paused. */
+  pausedCount?: number | null;
   /** Whether the agent is being PREVIEWED: an archived session resumed for viewing
    *  (live terminal), still pinned to the Archived lane and out of attention until a
    *  new message UNARCHIVES it. Optional; roster fixtures may omit it (not-preview). */
   preview?: boolean;
-  /** The user-message hash captured when the preview began; the inbox unarchives the
-   *  session when the live hash differs. Undefined when not previewing. */
-  previewHash?: string | null;
+  /** The user-message COUNT captured when the preview began; the inbox unarchives the
+   *  session when the live count strictly exceeds it. Undefined when not previewing. */
+  previewCount?: number | null;
 }
 
 /** Coerce to a finite number, else null (guards NaN/Infinity/strings). */
@@ -365,11 +404,18 @@ function rowFor(
   const closed = pane.closed === true;
   const question = event?.question ?? activity?.question ?? null;
   const questions = event?.questions ?? activity?.questions ?? null;
+  // A LIVE (non-exited) process is NEVER `finished` from an event: a `SessionEnd` hook
+  // (e.g. `/clear`, `/logout`) ends the CONVERSATION but the claude process restarts in
+  // place, so an event-sourced `finished` here is stale — fall back to the live PTY
+  // status. Only an actual PTY exit (below) or an explicit close finishes a live row, so
+  // the inbox auto-archive never fires on a session the user is still in. Mirror of the
+  // exit rule's "a dead process is never working".
+  const liveEventStatus = event?.status && event.status !== 'finished' ? event.status : null;
   let status: AgentStatus = closed
     ? 'finished'
     : runtime?.exited
       ? ptyStatus
-      : event?.status ?? ptyStatus;
+      : liveEventStatus ?? ptyStatus;
   // COORDINATOR needs-input suppression (tasks 10.11–10.12): a LIVE coordinator must
   // NOT inherit the default idle/waiting heuristic — it needs you ONLY when it asks
   // an AskUserQuestion (its pending question(s)) OR it called `request_user_input`
@@ -378,6 +424,31 @@ function rowFor(
   // exited coordinator keeps its derived (finished/error) status — it's not "live".
   if (pane.role === 'coordinator' && !closed && !runtime?.exited) {
     status = coordinatorNeedsInput({ question, questions }, coordFlag) ? 'waiting' : 'working';
+  }
+  // TERMINAL-BUSY In-flight override (agent-status-derivation): Claude Code may be
+  // actively working while its event hooks report idle — a foreground command
+  // running in the terminal, or in-session background work (a dynamic workflow /
+  // another agent still running). The TerminalPane sets `runtime.terminalBusy` from
+  // `detectTerminalBusy` in that case. For a LIVE, NON-coordinator pane with NO
+  // pending AskUserQuestion, show it In flight (`working`) rather than Needs input,
+  // so it stays out of attention until the work finishes or the user interrupts it
+  // (the affordance disappears → terminalBusy clears → normal derivation resumes).
+  //
+  // Strictly ADDITIVE and fail-safe: gated on terminalBusy === true, so when the
+  // flag is false/absent the result is byte-for-byte the prior derivation. The
+  // coordinator path is untouched (decided above by coordinatorNeedsInput), an
+  // exited/closed pane is never re-flagged working (a dead process is never
+  // working), and a pending question keeps Needs input regardless of any indicator.
+  const hasPendingQuestion =
+    question != null || (Array.isArray(questions) && questions.length > 0);
+  if (
+    runtime?.terminalBusy === true &&
+    pane.role !== 'coordinator' &&
+    !closed &&
+    !runtime.exited &&
+    !hasPendingQuestion
+  ) {
+    status = 'working';
   }
   return {
     paneId: pane.paneId,
@@ -401,7 +472,13 @@ function rowFor(
     // snapshot has no value yet.
     contextPct: finiteOrNull(snapshot?.context_pct) ?? finiteOrNull(activity?.contextPct),
     cost: finiteOrNull(snapshot?.cost),
-    lastTs: finiteOrNull(snapshot?.ts),
+    // For closed/preview sessions use the transcript's last-entry timestamp —
+    // stable across `claude --resume` reopens (no new entry until the user
+    // replies). Falls back to the snapshot ts. Live sessions use snapshot ts.
+    lastTs:
+      (pane.closed || pane.preview)
+        ? (finiteOrNull(activity?.lastMsgTs) ?? finiteOrNull(snapshot?.ts))
+        : finiteOrNull(snapshot?.ts),
     status,
     projectId: pane.projectId ?? null,
     specialist: pane.specialist ?? null,
@@ -409,9 +486,9 @@ function rowFor(
     coordinatorPaneId: pane.coordinatorPaneId ?? null,
     closed,
     paused: pane.paused === true,
-    pausedHash: pane.pausedHash ?? null,
+    pausedCount: pane.pausedCount ?? null,
     preview: pane.preview === true,
-    previewHash: pane.previewHash ?? null
+    previewCount: pane.previewCount ?? null
   };
 }
 

@@ -24,9 +24,9 @@ export function toRosterWorkspaces(entries: ReadonlyArray<WorkspaceEntry>): Rost
       coordinatorPaneId: entry.registry[leaf.paneId]?.coordinatorPaneId ?? null,
       closed: entry.registry[leaf.paneId]?.closed ?? false,
       paused: entry.registry[leaf.paneId]?.paused ?? false,
-      pausedHash: entry.registry[leaf.paneId]?.pausedHash ?? null,
+      pausedCount: entry.registry[leaf.paneId]?.pausedCount ?? null,
       preview: entry.registry[leaf.paneId]?.preview ?? false,
-      previewHash: entry.registry[leaf.paneId]?.previewHash ?? null
+      previewCount: entry.registry[leaf.paneId]?.previewCount ?? null
     }))
   }));
 }

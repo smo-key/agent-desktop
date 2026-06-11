@@ -304,6 +304,14 @@ export class OrchestrationExecutor {
           resolve({ error: `agent pane is no longer available: ${paneId}` });
           return;
         }
+        // A pane sitting on an interactive AskUserQuestion/permission menu derives
+        // status `waiting` (not `working`), so it would pass the busy-gate below — but
+        // writing free text + Enter into that menu selects a garbage option and
+        // corrupts the transcript. Refuse rather than deliver into a live menu.
+        if (this.deps.readActivity(paneId).question != null) {
+          resolve({ error: `agent is awaiting a question; message not delivered: ${paneId}` });
+          return;
+        }
         if (this.deps.statusOf(paneId) === 'working') {
           if (Date.now() >= deadline) {
             resolve({ error: `agent is busy (mid-turn); message not delivered: ${paneId}` });
@@ -481,10 +489,15 @@ function statusOfReal(paneId: string): AgentStatus {
 /** Read recent activity (summary + recent messages + pending question) for a pane. */
 function readActivityReal(paneId: string) {
   const a = activity.forPane(paneId);
+  // The event store knows a pending AskUserQuestion IMMEDIATELY (from the
+  // `PreToolUse[AskUserQuestion]` event); the transcript-polled `activity` store can lag
+  // ~1-2s. Prefer whichever has it so the `message_agent` question-gate closes the
+  // menu-garble window without waiting on the next transcript poll.
+  const question = a.question ?? events.activityFor(paneId).question ?? null;
   return {
     summary: a.summary ?? null,
     messages: Array.isArray(a.messages) ? a.messages : [],
-    question: a.question ?? null,
+    question,
     contextPct: typeof a.contextPct === 'number' ? a.contextPct : null
   };
 }

@@ -21,6 +21,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
+/// The most paths we surface for the uncommitted-files hover list. The UI only
+/// shows the first 10 (plus an "and N more" hint), so we cap collection at a sane
+/// bound — enough to drive an accurate overflow indicator without shipping a giant
+/// list when a tree has thousands of changes.
+const MAX_CHANGED_PATHS: usize = 50;
+
 /// Git status for one project folder — the frontend `GitStatus` contract. Every
 /// field is `Option` (null when git couldn't answer) so the shape is stable.
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -32,6 +38,49 @@ pub struct GitStatus {
     pub modified: Option<i64>,
     pub ahead: Option<i64>,
     pub behind: Option<i64>,
+    /// The changed file PATHS (capped at [`MAX_CHANGED_PATHS`]) for the
+    /// uncommitted-files hover list. Empty when the tree is clean; left empty
+    /// (not null) when git couldn't answer — the count (`modified`) carries the
+    /// "couldn't answer" signal, this is only the optional path detail.
+    pub files: Vec<String>,
+}
+
+/// Parse the changed file PATHS out of `git status --porcelain` output. Each line
+/// is `XY <path>` — a two-column status code, a single separating space, then the
+/// path — so the path begins at byte offset 3. For a rename the path is
+/// `old -> new`, and we keep the NEW path (where the content now lives). Capped at
+/// [`MAX_CHANGED_PATHS`] so a huge dirty tree can't balloon the payload.
+///
+/// IMPORTANT: pass the RAW (un-trimmed) porcelain. The first status column is a
+/// SPACE for any worktree-only change (e.g. ` M file` for an unstaged
+/// modification), so a leading `trim()` would shift that line and corrupt its
+/// path. Offsets are byte indices; porcelain path bytes are ASCII (git quotes
+/// non-ASCII names), so byte slicing never splits a char.
+///
+/// Quoted paths (git quotes names with special/non-ASCII bytes, wrapping them in
+/// `"…"` with C-style escapes) are passed through verbatim, including the quotes —
+/// the hover list is a best-effort hint, so an exact unescape isn't worth the
+/// complexity; the path still reads recognizably.
+pub fn parse_porcelain_paths(porcelain: &str) -> Vec<String> {
+    porcelain
+        .lines()
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| {
+            // Path starts after the 2-col status + 1 separating space (offset 3).
+            // A shorter line (no path) is skipped.
+            let rest = line.get(3..)?;
+            if rest.is_empty() {
+                return None;
+            }
+            // Rename / copy: `old -> new` — keep the destination path.
+            let path = match rest.rsplit_once(" -> ") {
+                Some((_old, new)) => new,
+                None => rest,
+            };
+            Some(path.to_string())
+        })
+        .take(MAX_CHANGED_PATHS)
+        .collect()
 }
 
 /// Run `git -C <dir> <args...>`, returning trimmed stdout on a clean exit, else
@@ -43,6 +92,17 @@ fn run_git(dir: &str, args: &[&str]) -> Option<String> {
     }
     let text = String::from_utf8(output.stdout).ok()?;
     Some(text.trim().to_string())
+}
+
+/// Run `git -C <dir> <args...>`, returning RAW (un-trimmed) stdout on a clean exit,
+/// else `None`. Used for `status --porcelain`, whose first status column can be a
+/// SPACE (` M file`) that a leading trim would eat — corrupting the path parse.
+fn run_git_raw(dir: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()
 }
 
 /// Compute the git status for a single folder. Mirrors the statusline wrapper:
@@ -58,14 +118,14 @@ pub fn status_for_dir(dir: &str) -> GitStatus {
     }
     // `--porcelain` prints one line per change; empty stdout => clean tree. The
     // line count is the number of modified paths (`dirty` is just `count > 0`).
-    if let Some(porcelain) = run_git(dir, &["status", "--porcelain"]) {
-        let count = if porcelain.is_empty() {
-            0
-        } else {
-            porcelain.lines().count() as i64
-        };
+    // Read RAW (un-trimmed): the first status column is a SPACE for worktree-only
+    // changes, so a trim would shift those lines and corrupt the path parse below.
+    if let Some(porcelain) = run_git_raw(dir, &["status", "--porcelain"]) {
+        let count = porcelain.lines().filter(|l| !l.is_empty()).count() as i64;
         out.dirty = Some(count > 0);
         out.modified = Some(count);
+        // Also collect the changed file PATHS (capped) for the hover list.
+        out.files = parse_porcelain_paths(&porcelain);
     }
     // Commits BEHIND origin/main (matches the footer / user's Claude statusline).
     if let Some(behind) = run_git(dir, &["rev-list", "HEAD..origin/main", "--count", "--no-merges"])
@@ -169,6 +229,90 @@ pub fn push(dir: &str) -> Result<String, String> {
 /// on failure.
 pub fn pull(dir: &str) -> Result<String, String> {
     run_git_action(dir, &["pull", "--ff-only"])
+}
+
+// ───────────────────────── branch operations ─────────────────────────
+//
+// Listing, checking out, and creating local branches for the footer branch-
+// switcher UI.  All operations are best-effort and mirror the null-on-failure
+// contract of `status_for_dir`: failures return empty / Err rather than panic.
+
+/// Snapshot of the branches known to a repo, returned by [`list_branches`].
+/// JS sees `current/local/remotes` (camelCase not needed — all single words —
+/// but kept consistent with `WorktreeCreated`).
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchList {
+    /// The currently checked-out branch, or `None` when HEAD is detached or the
+    /// query failed.
+    pub current: Option<String>,
+    /// Short names of every local branch (`refs/heads/**`).
+    pub local: Vec<String>,
+    /// Short names of every remote-tracking branch (`refs/remotes/**`), with
+    /// symbolic `*/HEAD` entries (e.g. `origin/HEAD`) removed.
+    pub remotes: Vec<String>,
+}
+
+/// List the branches for a repo at `dir`.  Never fails: any git error yields an
+/// all-empty `BranchList`.
+pub fn list_branches(dir: &str) -> BranchList {
+    if dir.is_empty() {
+        return BranchList::default();
+    }
+
+    // Current branch: "HEAD" means detached; empty/missing means treat as None.
+    let current = run_git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]).and_then(|s| {
+        if s.is_empty() || s == "HEAD" {
+            None
+        } else {
+            Some(s)
+        }
+    });
+
+    // Local branches.
+    let local = run_git(dir, &["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+        .map(|out| out.lines().map(str::to_string).filter(|l| !l.is_empty()).collect())
+        .unwrap_or_default();
+
+    // Remote-tracking branches as `<remote>/<branch>`. We read the FULL refname
+    // (not `%(refname:short)`) because git's short form renders a remote's
+    // symbolic HEAD `refs/remotes/origin/HEAD` as the bare remote name `origin` —
+    // which is NOT a checkout-able branch. Reading the full ref lets us drop every
+    // `*/HEAD` deterministically, then strip the `refs/remotes/` prefix, so the
+    // list only ever contains real `<remote>/<branch>` names.
+    let remotes = run_git(dir, &["for-each-ref", "--format=%(refname)", "refs/remotes"])
+        .map(|out| {
+            out.lines()
+                .filter(|l| !l.is_empty())
+                // Drop the remote's symbolic HEAD (e.g. refs/remotes/origin/HEAD).
+                .filter(|l| !l.ends_with("/HEAD"))
+                // refs/remotes/origin/main -> origin/main
+                .filter_map(|l| l.strip_prefix("refs/remotes/").map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    BranchList { current, local, remotes }
+}
+
+/// Check out an existing branch (or a remote-tracking branch via git's DWIM).
+/// Returns git's message on success, an error string on failure.
+///
+/// `--end-of-options` forces `branch` to be parsed as a REF, never a flag. Without
+/// it, a branch whose name begins with `-` (a ref like `refs/remotes/origin/-f`
+/// is creatable and would surface here as `-f`) would be read as a git option —
+/// e.g. `git checkout -f` force-resets the working tree, silently discarding
+/// uncommitted changes. With the guard, `-f` is treated as a ref name (and errors
+/// cleanly when no such ref exists), so a malicious/odd branch name can never
+/// trigger an option.
+pub fn checkout(dir: &str, branch: &str) -> Result<String, String> {
+    run_git_action(dir, &["checkout", "--end-of-options", branch])
+}
+
+/// Create and check out a new branch off the current HEAD (`git checkout -b`).
+/// Returns git's message on success, an error string on failure.
+pub fn create_branch(dir: &str, name: &str) -> Result<String, String> {
+    run_git_action(dir, &["checkout", "-b", name])
 }
 
 // ───────────────────────── git worktrees ─────────────────────────
@@ -782,6 +926,53 @@ mod tests {
     }
 
     #[test]
+    fn parse_porcelain_paths_strips_status_prefix_and_handles_renames() {
+        // A representative porcelain blob: modified, added, staged-add, untracked,
+        // a partially-staged file, and a rename (`old -> new`).
+        let porcelain = " M src/a.rs\nA  src/b.rs\n?? scratch.txt\nMM src/c.rs\nR  old/name.rs -> new/name.rs\n";
+        let paths = parse_porcelain_paths(porcelain);
+        assert_eq!(
+            paths,
+            vec![
+                "src/a.rs".to_string(),
+                "src/b.rs".to_string(),
+                "scratch.txt".to_string(),
+                "src/c.rs".to_string(),
+                // Rename keeps the NEW (destination) path.
+                "new/name.rs".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_porcelain_paths_is_empty_for_a_clean_tree() {
+        assert!(parse_porcelain_paths("").is_empty());
+    }
+
+    #[test]
+    fn parse_porcelain_paths_caps_at_the_max() {
+        // Build a porcelain blob with more than the cap of changed files.
+        let body: String = (0..(MAX_CHANGED_PATHS + 20))
+            .map(|i| format!(" M f{i}.txt\n"))
+            .collect();
+        let paths = parse_porcelain_paths(&body);
+        assert_eq!(paths.len(), MAX_CHANGED_PATHS, "should cap at MAX_CHANGED_PATHS");
+        assert_eq!(paths[0], "f0.txt");
+    }
+
+    #[test]
+    fn status_for_dir_collects_changed_paths() {
+        let repo = TempRepo::new("paths");
+        // Add a tracked-but-modified file and an untracked one.
+        fs::write(repo.path().join("README.md"), "changed\n").unwrap();
+        fs::write(repo.path().join("new.txt"), "fresh\n").unwrap();
+        let status = status_for_dir(repo.str());
+        assert!(status.files.contains(&"README.md".to_string()), "files: {:?}", status.files);
+        assert!(status.files.contains(&"new.txt".to_string()), "files: {:?}", status.files);
+        assert_eq!(status.modified, Some(2));
+    }
+
+    #[test]
     fn status_for_paths_keys_by_path_and_covers_every_input() {
         let dir = env!("CARGO_MANIFEST_DIR").to_string();
         let paths = vec![dir.clone(), "/definitely/not/a/repo".to_string()];
@@ -789,5 +980,110 @@ mod tests {
         assert_eq!(map.len(), 2);
         assert!(map[&dir].branch.is_some());
         assert_eq!(map["/definitely/not/a/repo"], GitStatus::default());
+    }
+
+    // ─────────────────── list_branches tests ───────────────────
+
+    #[test]
+    fn branches_are_listed_with_the_current_branch_marked() {
+        let repo = TempRepo::new("listbranch");
+        let path = repo.str();
+        // Create a second local branch.
+        run(path, &["branch", "feature"]);
+        // Simulate a remote-tracking ref without a real remote.
+        run(path, &["update-ref", "refs/remotes/origin/feature", "HEAD"]);
+        // Create the symbolic origin/HEAD ref (the one that must be filtered out).
+        run(path, &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/feature"]);
+
+        let bl = list_branches(path);
+        assert_eq!(bl.current, Some("main".to_string()), "current should be main");
+        assert!(bl.local.contains(&"main".to_string()), "local should contain main");
+        assert!(bl.local.contains(&"feature".to_string()), "local should contain feature");
+        assert!(
+            bl.remotes.contains(&"origin/feature".to_string()),
+            "remotes should contain origin/feature, got {:?}",
+            bl.remotes
+        );
+        assert!(
+            !bl.remotes.contains(&"origin/HEAD".to_string()),
+            "remotes must NOT contain origin/HEAD, got {:?}",
+            bl.remotes
+        );
+        // Regression: git's short form renders refs/remotes/origin/HEAD as the
+        // BARE remote name `origin`, which is not a checkout-able branch. Reading
+        // the full refname + stripping the prefix must exclude it — every remote
+        // entry is a real `<remote>/<branch>` (always contains a slash).
+        assert!(
+            !bl.remotes.contains(&"origin".to_string()),
+            "remotes must NOT contain the bare remote name 'origin', got {:?}",
+            bl.remotes
+        );
+        assert!(
+            bl.remotes.iter().all(|r| r.contains('/')),
+            "every remote must be <remote>/<branch>, got {:?}",
+            bl.remotes
+        );
+    }
+
+    #[test]
+    fn repository_with_no_remote() {
+        let repo = TempRepo::new("noremote");
+        let bl = list_branches(repo.str());
+        assert!(bl.remotes.is_empty(), "no remotes expected, got {:?}", bl.remotes);
+        assert!(
+            bl.local.contains(&"main".to_string()),
+            "local should contain main, got {:?}",
+            bl.local
+        );
+    }
+
+    #[test]
+    fn detached_head() {
+        let repo = TempRepo::new("detached");
+        let path = repo.str();
+        // Get the current HEAD sha to detach to.
+        let sha = run_git(path, &["rev-parse", "HEAD"]).expect("rev-parse should succeed");
+        run(path, &["checkout", "-q", &sha]);
+        let bl = list_branches(path);
+        assert_eq!(bl.current, None, "detached HEAD should yield current == None");
+        assert!(
+            bl.local.contains(&"main".to_string()),
+            "local should still contain main, got {:?}",
+            bl.local
+        );
+    }
+
+    #[test]
+    fn list_branches_off_repo_is_empty() {
+        let bad = list_branches("/definitely/not/a/repo");
+        assert!(bad.current.is_none(), "current should be None for non-repo");
+        assert!(bad.local.is_empty(), "local should be empty for non-repo");
+        assert!(bad.remotes.is_empty(), "remotes should be empty for non-repo");
+
+        let empty = list_branches("");
+        assert!(empty.current.is_none(), "current should be None for empty path");
+        assert!(empty.local.is_empty(), "local should be empty for empty path");
+        assert!(empty.remotes.is_empty(), "remotes should be empty for empty path");
+    }
+
+    #[test]
+    fn a_branch_name_starting_with_a_dash_is_treated_as_a_ref_not_a_flag() {
+        // Security regression: a branch whose name begins with `-` must be parsed
+        // as a REF, never a git flag. Without `--end-of-options`, `checkout(_, "-f")`
+        // runs `git checkout -f`, which force-resets the working tree and silently
+        // discards the dirty file written below.
+        let repo = TempRepo::new("dashref");
+        let path = repo.str();
+        // Dirty the working tree with an uncommitted edit.
+        fs::write(repo.path().join("README.md"), "uncommitted edit\n").unwrap();
+        // `-f` is not a real ref, so the checkout must fail — and, crucially, must
+        // NOT have force-reset the working tree away from the edit.
+        let res = checkout(path, "-f");
+        assert!(res.is_err(), "checkout of a nonexistent '-f' ref should Err, got {:?}", res);
+        let body = fs::read_to_string(repo.path().join("README.md")).unwrap();
+        assert_eq!(
+            body, "uncommitted edit\n",
+            "the dirty working tree must be preserved — '-f' must not be read as the force flag"
+        );
     }
 }

@@ -44,6 +44,18 @@ export function noteExit(paneId: string, code: number | null): void {
   r.exitCode = code;
 }
 
+/**
+ * Record whether Claude Code is ACTIVELY WORKING in this pane per a recent-terminal
+ * indicator the event hooks miss (a foreground command running, or in-session
+ * background work — see `detectTerminalBusy`). The TerminalPane recomputes this from
+ * the live xterm tail on each output chunk; `rowFor` reads it (the same channel as
+ * `exited`) to keep a live non-coordinator agent In flight rather than Needs input.
+ * Cheap: a single field write. Leaving it unset is treated as "no indicator".
+ */
+export function noteBusy(paneId: string, busy: boolean): void {
+  entryFor(paneId).terminalBusy = busy;
+}
+
 /** Drop a pane's runtime entry (on pane teardown), so a closed pane leaves none. */
 export function clearRuntime(paneId: string): void {
   runtimes.delete(paneId);

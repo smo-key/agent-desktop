@@ -61,6 +61,54 @@ describe('projectRollup — Filter agents by project', () => {
   });
 });
 
+describe('projectRollup — counters exclude archived/preview agents', () => {
+  const projects = [proj('pay'), proj('web')];
+
+  it('per-project count excludes archived (closed) agents', () => {
+    const rows = [
+      row('a', 'pay', 'working'),
+      { ...row('b', 'pay', 'finished'), closed: true }, // archived -> excluded
+      row('c', 'web', 'working')
+    ];
+    const counts = projectCounts(rows, projects);
+    expect(counts.map((c) => [c.project.id, c.count])).toEqual([
+      ['pay', 1], // b is archived, only a counts
+      ['web', 1]
+    ]);
+  });
+
+  it('per-project count excludes previewed agents', () => {
+    const rows = [
+      row('a', 'pay', 'working'),
+      { ...row('b', 'pay', 'working'), preview: true } // preview -> excluded
+    ];
+    const counts = projectCounts(rows, projects);
+    expect(counts.find((c) => c.project.id === 'pay')?.count).toBe(1);
+  });
+
+  it('unassigned count excludes archived and previewed agents', () => {
+    const rows = [
+      row('a', null, 'working'),
+      { ...row('b', null, 'finished'), closed: true }, // archived
+      { ...row('c', null, 'working'), preview: true } // preview
+    ];
+    expect(unassignedCount(rows)).toBe(1); // only a
+  });
+
+  it('archiving a live agent decrements its project counter; restoring increments again', () => {
+    const live = [row('a', 'pay', 'working'), row('b', 'pay', 'working')];
+    expect(projectCounts(live, projects).find((c) => c.project.id === 'pay')?.count).toBe(2);
+
+    // Archive b -> counter drops to 1.
+    const archived = [live[0], { ...live[1], closed: true }];
+    expect(projectCounts(archived, projects).find((c) => c.project.id === 'pay')?.count).toBe(1);
+
+    // Restore b (no longer closed) -> counter back to 2.
+    const restored = [live[0], { ...archived[1], closed: false }];
+    expect(projectCounts(restored, projects).find((c) => c.project.id === 'pay')?.count).toBe(2);
+  });
+});
+
 describe('projectRollup — keyboard filter nav', () => {
   const projects = [proj('pay'), proj('web')];
 

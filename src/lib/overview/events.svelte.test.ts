@@ -62,4 +62,71 @@ describe('EventStore', () => {
     // A malformed session value is ignored, not stored.
     expect(store.timeline('bad')).toHaveLength(0);
   });
+
+  // INTERRUPT: pressing Esc aborts the in-flight tool, but claude fires NO PostToolUse
+  // for the aborted tool (and no Stop), so the event-sourced status would otherwise stay
+  // pinned at `working` forever. `markInterrupt` records a synthetic turn-end so the row
+  // returns to `waiting` (Needs-input).
+  it('Interrupt returns a mid-tool working pane to waiting', () => {
+    const store = new EventStore();
+    store.ingest(ev('UserPromptSubmit'));
+    store.ingest(ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:sleep 999' }));
+    expect(store.activityFor('p1').status).toBe('working');
+
+    store.markInterrupt('p1');
+
+    expect(store.activityFor('p1').status).toBe('waiting');
+    expect(store.activityFor('p1').currentAction).toBeNull();
+    // The injected turn-end is marked SYNTHETIC so task auto-archive can tell a user
+    // interrupt from a genuine "returned to user".
+    expect(store.timeline('p1').at(-1)?.synthetic).toBe(true);
+  });
+
+  it('Seed merge preserves a synthetic interrupt Stop', async () => {
+    // REGRESSION: seed re-runs on every session-set change. A wholesale per-pane replace
+    // would clobber the frontend-only synthetic interrupt Stop (the Rust ring can't
+    // reproduce it), re-pinning the interrupted pane back to `working`.
+    const store = new EventStore();
+    store.ingest(ev('UserPromptSubmit'));
+    store.ingest(ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:x' }));
+    store.markInterrupt('p1'); // frontend-only synthetic Stop → waiting
+    expect(store.activityFor('p1').status).toBe('waiting');
+
+    // The Rust ring snapshot lacks the synthetic Stop; the merge must keep it.
+    invokeMock.mockResolvedValueOnce({
+      p1: [ev('UserPromptSubmit'), ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:x' })]
+    });
+    await store.seed([{ paneId: 'p1', sessionId: 's1', cwd: null }]);
+    expect(store.activityFor('p1').status).toBe('waiting'); // synthetic Stop survived
+    expect(store.timeline('p1').at(-1)?.synthetic).toBe(true); // and is still the last event
+  });
+
+  it('Seed merge preserves a live event newer than the snapshot', async () => {
+    // A live turn-ending Stop lands at ts 100 (during the `events_for` round-trip) while
+    // the snapshot was taken earlier (only the UserPromptSubmit at ts 50). The merge must
+    // not drop the newer live Stop, which would otherwise leave the pane stuck `working`.
+    const store = new EventStore();
+    store.ingest(ev('UserPromptSubmit', { ts: 50 }));
+    store.ingest(ev('Stop', { ts: 100 }));
+    invokeMock.mockResolvedValueOnce({ p1: [ev('UserPromptSubmit', { ts: 50 })] });
+    await store.seed([{ paneId: 'p1', sessionId: 's1', cwd: null }]);
+    expect(store.timeline('p1').map((e) => e.hookEventName)).toEqual(['UserPromptSubmit', 'Stop']);
+  });
+
+  it('Interrupt is a no-op when the pane is not working', () => {
+    const store = new EventStore();
+    // No events at all → nothing to interrupt; status stays unknown (→ PTY fallback).
+    store.markInterrupt('ghost');
+    expect(store.activityFor('ghost').status).toBeNull();
+    expect(store.timeline('ghost')).toHaveLength(0);
+
+    // An idle, waiting pane (turn already ended) gets no extra synthetic turn-end — a
+    // stray Esc at the prompt must not add timeline noise.
+    store.ingest(ev('UserPromptSubmit'));
+    store.ingest(ev('Stop'));
+    expect(store.activityFor('p1').status).toBe('waiting');
+    const before = store.timeline('p1').length;
+    store.markInterrupt('p1');
+    expect(store.timeline('p1').length).toBe(before);
+  });
 });

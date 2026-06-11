@@ -7,6 +7,7 @@ function makeDeps(over: Partial<PaneMenuDeps> = {}): PaneMenuDeps {
     newSession: vi.fn(),
     copy: vi.fn(),
     paste: vi.fn(),
+    insertFilename: vi.fn(),
     canClose: true,
     hasSelection: true,
     ...over
@@ -32,6 +33,17 @@ describe('Pane Context Menu', () => {
     expect(d.copy).toHaveBeenCalledOnce();
     item(m, 'paste').run();
     expect(d.paste).toHaveBeenCalledOnce();
+    item(m, 'insert-filename').run();
+    expect(d.insertFilename).toHaveBeenCalledOnce();
+  });
+
+  it('Context menu has an always-enabled Insert Filename item in the first section', () => {
+    const m = buildPaneMenu(makeDeps());
+    const insert = item(m, 'insert-filename');
+    expect(insert.shortcut).toBe('⌘O');
+    expect(insert.disabled).toBeFalsy();
+    // It lives in the first section alongside Copy/Paste.
+    expect(m[0].some((i) => i.id === 'insert-filename')).toBe(true);
   });
 
   it('Context menu disables copy without a selection and close on the only pane', () => {

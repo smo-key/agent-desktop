@@ -90,6 +90,35 @@ export function findCoordinatorPane(
 }
 
 /**
+ * PURE: find the ARCHIVED (closed) coordinator pane for `projectId`, or null. The
+ * EXACT mirror of {@link findCoordinatorPane} — same `claude` program, `role:'coordinator'`,
+ * and `projectId` predicates, FIRST match wins — except it matches `closed === true`
+ * (a completed coordinator the user archived) instead of `closed !== true`. Used by
+ * the single-coordinator invariant: "Start coordinator" RESTORES this archived pane
+ * rather than spawning a second `role:'coordinator'` pane for the project.
+ *
+ * @param panes      every pane across all workspaces (the caller flattens the registry).
+ * @param projectId  the project to find the archived coordinator for.
+ */
+export function archivedCoordinatorPane(
+  panes: ReadonlyArray<CoordinatorPaneView>,
+  projectId: string
+): CoordinatorPaneView | null {
+  if (typeof projectId !== 'string' || projectId.trim() === '') return null;
+  for (const p of panes) {
+    if (
+      p.program === 'claude' &&
+      p.role === 'coordinator' &&
+      (p.projectId ?? null) === projectId &&
+      p.closed === true
+    ) {
+      return p;
+    }
+  }
+  return null;
+}
+
+/**
  * PURE: compose the coordinator's extra `claude` CLI args (task 6.2). Ready to pass
  * as the launch plan's `extraArgs` (PREPENDED before the spawn override's own
  * `--session-id` / `--settings`):

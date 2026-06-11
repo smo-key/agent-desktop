@@ -84,9 +84,11 @@ pub struct Activity {
     /// still waiting), or `null` — a compact one-line form for the callout.
     #[serde(default)]
     pub question: Option<String>,
-    /// The full structured pending question(s) — header, options, multi-select — so
-    /// the overview can render the choices and answer on the user's behalf. `null`
-    /// when nothing is pending.
+    /// The full structured pending question(s) — header, options, multi-select. The
+    /// transcript-derived activity does NOT populate this (a pending question is not
+    /// on disk), so it is `null` here; the overview's live structured question comes
+    /// from the activity-event pipeline (`PreToolUse[AskUserQuestion]`) on the
+    /// frontend. Retained on the wire shape as the frontend's typed fallback slot.
     #[serde(default)]
     pub questions: Option<Vec<PendingQuestion>>,
     /// Context-window usage 0..100 derived from the newest assistant message's
@@ -102,8 +104,32 @@ pub struct Activity {
     /// a message. The overview uses it to regenerate the session title (which
     /// is derived from the user's messages) ONLY when it actually changed, rather
     /// than on every poll. `null` when the user has sent nothing yet.
+    ///
+    /// NOTE: this is computed over the TAIL window (with a head fallback), so it is
+    /// NOT guaranteed to change ONLY on a new user message — a long agentic turn can
+    /// slide the window and change it. That is fine for the title heuristic (a stray
+    /// regen is cheap), but it must NOT gate pause/preview auto-resume; use
+    /// [`Self::user_msg_count`] for that — see its note.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_hash: Option<String>,
+    /// The number of genuine USER prose messages in the transcript, counted over the
+    /// WHOLE file (not the tail window). Unlike `user_hash` this is strictly monotonic
+    /// — it increases ONLY when the user sends a new message and is unaffected by
+    /// assistant/tool output sliding the tail window or by a `claude --resume` that
+    /// appends non-user entries. The overview's pause/preview gate auto-resumes ONLY
+    /// when this strictly increases, so previewing an archived session (which resumes
+    /// it and grows its transcript) can no longer masquerade as a user reply. `null`
+    /// when the transcript is unreadable; `0` for a session with no real user message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_msg_count: Option<usize>,
+    /// Unix timestamp in SECONDS of the last transcript entry that carries a
+    /// `timestamp` field — "when the agent last did anything". Stable across
+    /// `claude --resume` reopens (the transcript already has the entries; no new
+    /// entry is appended until the user sends a message). Used by the roster as
+    /// the authoritative `lastTs` for closed/preview sessions so that opening an
+    /// archived session does not reset the displayed time to "just now".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_msg_ts: Option<i64>,
 }
 
 /// One pane the frontend wants activity for: its frontend `pane_id` (the map key),
@@ -127,6 +153,36 @@ pub struct PaneRef {
 // ---------------------------------------------------------------------------
 // PURE transcript parse.
 // ---------------------------------------------------------------------------
+
+/// Best-effort ISO-8601 (`2026-06-03T12:00:00.000Z`) → unix millis. Returns
+/// `None` for anything that doesn't match the expected shape (Z-suffix only).
+/// Mirrors the same helper in `events.rs` — no chrono dependency.
+fn parse_iso_millis(s: &str) -> Option<i64> {
+    let bytes = s.as_bytes();
+    if bytes.len() < 20 || !s.ends_with('Z') {
+        return None;
+    }
+    let num = |a: usize, b: usize| s.get(a..b)?.parse::<i64>().ok();
+    let year = num(0, 4)?;
+    let month = num(5, 7)?;
+    let day = num(8, 10)?;
+    let hour = num(11, 13)?;
+    let min = num(14, 16)?;
+    let sec = num(17, 19)?;
+    let millis = if s.len() > 20 && bytes[19] == b'.' {
+        let frac: String = s[20..s.len() - 1].chars().take(3).collect();
+        format!("{frac:0<3}").parse::<i64>().ok()?
+    } else {
+        0
+    };
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = y - era * 400;
+    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some(((days * 86400 + hour * 3600 + min * 60 + sec) * 1000) + millis)
+}
 
 /// Collapse every whitespace run (incl. newlines) to a single space, trimmed.
 fn collapse(s: &str) -> String {
@@ -156,6 +212,25 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
     if start > 0 {
         return Some(match text.find('\n') {
             Some(i) => text[i + 1..].to_string(),
+            None => String::new(),
+        });
+    }
+    Some(text)
+}
+
+/// Read the FIRST `max_bytes` of a file as (lossy) UTF-8, dropping a possibly-
+/// truncated LAST line when the file exceeded the window. `None` on any IO error.
+/// The HEAD holds a session's OPENING entries — where the user's first prompt
+/// lives — which the tail loses in a long agent turn.
+fn read_head(path: &Path, max_bytes: u64) -> Option<String> {
+    let mut f = std::fs::File::open(path).ok()?;
+    let size = f.metadata().ok()?.len();
+    let mut buf = vec![0u8; max_bytes.min(size) as usize];
+    f.read_exact(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if size > max_bytes {
+        return Some(match text.rfind('\n') {
+            Some(i) => text[..i].to_string(),
             None => String::new(),
         });
     }
@@ -288,6 +363,103 @@ pub fn user_messages(path: &Path) -> Vec<String> {
     out
 }
 
+/// User prose for TITLING — like [`user_messages`] but additionally drops
+/// skill/command/caveat SCAFFOLDING that pollutes a title. A transcript records
+/// several things with the `user` role that the user did not actually type: the
+/// "Base directory for this skill: …" prelude a `Skill` invocation injects (marked
+/// `isMeta`), `<command-name>` / `<command-message>` slash-command markup, the
+/// `[Request interrupted by user]` marker, and `<local-command-…>` wrappers. The
+/// small (1.7B) title model otherwise latches onto these — copying a skill path or
+/// an OpenSpec change slug into the title instead of naming the real work.
+///
+/// Title-only: [`user_messages`], [`Activity::user_hash`] and [`user_message_count`]
+/// are deliberately left UNCHANGED so the overview's auto-resume and empty-session
+/// gates keep their existing semantics; only the title prompt sees this cleaned view.
+/// Tolerant of malformed lines; empty when none / unreadable.
+pub fn title_user_messages(path: &Path) -> Vec<String> {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in body.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(t) else {
+            continue;
+        };
+        // Skill/meta scaffolding (e.g. the "Base directory for this skill: …" prelude)
+        // is recorded with `isMeta: true` — never the user's own prose.
+        if v.get("isMeta").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        if let Some(text) = user_text(&v) {
+            if !is_title_noise(&text) {
+                out.push(text);
+            }
+        }
+    }
+    out
+}
+
+/// Whether `t` is title-irrelevant SCAFFOLDING rather than the user's own prose:
+/// slash-command markup, the interrupt marker, a local-command wrapper, or a skill
+/// "Base directory" prelude that wasn't flagged `isMeta`. `t` is already trimmed.
+fn is_title_noise(t: &str) -> bool {
+    let s = t.trim();
+    s.starts_with("<command-name>")
+        || s.starts_with("<command-message>")
+        || s.starts_with("<local-command-caveat>")
+        || s.starts_with("<local-command-stdout>")
+        || s.starts_with("<local-command-stderr>")
+        || s.starts_with("[Request interrupted")
+        || s.starts_with("Base directory for this skill:")
+}
+
+/// The number of genuine USER prose messages in a transcript, counted over the
+/// WHOLE file (not the tail window). Stable under assistant/tool appends — so a
+/// strictly-increasing count is a reliable "the user sent a new message" signal,
+/// which the windowed [`Activity::user_hash`] is NOT. Tolerant of malformed lines;
+/// `0` when none / unreadable.
+pub fn user_message_count(path: &Path) -> usize {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return 0;
+    };
+    body.lines()
+        .filter_map(|l| {
+            let t = l.trim();
+            if t.is_empty() {
+                return None;
+            }
+            serde_json::from_str::<Value>(t).ok()
+        })
+        .filter(|v| user_text(v).is_some())
+        .count()
+}
+
+/// Every ASSISTANT text message in a transcript, in order (oldest first). Reads
+/// the WHOLE file so the title model can see what was actually accomplished in
+/// the session. Tolerant of malformed lines; empty when none / unreadable.
+pub fn assistant_messages(path: &Path) -> Vec<String> {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in body.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<Value>(t) {
+            if let Some(text) = assistant_text(&v) {
+                out.push(text);
+            }
+        }
+    }
+    out
+}
+
 /// The content blocks of an `assistant` entry, or empty.
 fn assistant_content(entry: &Value) -> &[Value] {
     if entry.get("type").and_then(Value::as_str) != Some("assistant") {
@@ -401,14 +573,37 @@ pub fn summarize_transcript(path: &Path) -> Activity {
         out.messages = Some(msgs);
     }
 
-    // USER-FOCUS hash: a cheap signal that the user's messages changed, so the
-    // overview regenerates the session title only on a real change. Tail-based
-    // (the newest user message is always in the tail), which is all the change
-    // detector needs.
-    let user_msgs: Vec<String> = entries.iter().filter_map(user_text).collect();
+    // USER-FOCUS hash: a cheap signal that the user's messages changed (so the
+    // overview regenerates the session title only on a real change) AND that the
+    // session has any real user message at all (one with none is EMPTY: its
+    // archive action is a Delete, not a restorable Archive).
+    //
+    // The tail holds the NEWEST user messages, so the hash changes when the user
+    // adds one. But in a long agentic run the last TAIL_BYTES can be ALL
+    // assistant/tool output, with the user's prompts sitting earlier in the file;
+    // a tail-only scan then finds NO user message and would wrongly mark a busy,
+    // content-rich session empty ("Delete"). So when the tail carries none, fall
+    // back to the HEAD — a real session always opens with the user's first prompt.
+    let mut user_msgs: Vec<String> = entries.iter().filter_map(user_text).collect();
+    if user_msgs.is_empty() {
+        if let Some(head) = read_head(path, TAIL_BYTES) {
+            user_msgs = head
+                .lines()
+                .filter_map(|l| serde_json::from_str::<Value>(l.trim()).ok())
+                .filter_map(|v| user_text(&v))
+                .collect();
+        }
+    }
     if !user_msgs.is_empty() {
         out.user_hash = Some(hash_strings(&user_msgs));
     }
+
+    // USER-MESSAGE COUNT: a whole-file count of genuine user prose messages — the
+    // STABLE signal the pause/preview auto-resume gate uses (the windowed `user_hash`
+    // above can change without a new user message, which spuriously unarchived a
+    // previewed session). Read separately from the file (the tail above can't see the
+    // whole conversation); cheap enough at the poll cadence.
+    out.user_msg_count = Some(user_message_count(path));
 
     // QUESTION: the LAST AskUserQuestion tool_use, pending iff no later tool_result
     // references its id. Tracked across ALL entries (not just the newest turn) so
@@ -440,6 +635,18 @@ pub fn summarize_transcript(path: &Path) -> Activity {
         if entry.get("type").and_then(Value::as_str) == Some("assistant") {
             if let Some(pct) = context_pct_from(entry) {
                 out.context_pct = Some(pct);
+                break;
+            }
+        }
+    }
+
+    // LAST-MSG-TS: the timestamp of the last entry that carries one — unix SECONDS.
+    // Stable across `claude --resume` reopens: no new entry is added until the user
+    // sends a message, so the displayed "time since last activity" does not reset.
+    for entry in entries.iter().rev() {
+        if let Some(ts_str) = entry.get("timestamp").and_then(Value::as_str) {
+            if let Some(millis) = parse_iso_millis(ts_str) {
+                out.last_msg_ts = Some(millis / 1000);
                 break;
             }
         }
@@ -490,69 +697,24 @@ pub fn find_transcript(projects_base: &Path, pane: &PaneRef) -> Option<PathBuf> 
     None
 }
 
-/// The PENDING-question sidecar next to a transcript: `<dir>/<session_id>.question.json`.
-/// The app's `question-hook.js` writes it on `PreToolUse[AskUserQuestion]` (as
-/// `{"questions":[{header, question, multiSelect, options:[{label, description}]}]}`)
-/// and deletes it once answered (`PostToolUse`/`Stop`). This is the ONLY reliable
-/// source for a *pending* question: the assistant turn carrying the `AskUserQuestion`
-/// is not written to the transcript until it's answered, so by the time it's on disk
-/// it's no longer pending. Returns the structured question(s) when valid + non-empty.
-fn read_pending_questions(transcript: &Path, session_id: &str) -> Option<Vec<PendingQuestion>> {
-    let sidecar = transcript
-        .parent()?
-        .join(format!("{session_id}.question.json"));
-    let body = std::fs::read_to_string(&sidecar).ok()?;
-    let v: Value = serde_json::from_str(&body).ok()?;
-    let arr = v.get("questions")?.as_array()?;
-    let questions: Vec<PendingQuestion> = arr
-        .iter()
-        .filter_map(|q| serde_json::from_value(q.clone()).ok())
-        .filter(|q: &PendingQuestion| !q.question.trim().is_empty())
-        .collect();
-    if questions.is_empty() {
-        None
-    } else {
-        Some(questions)
-    }
-}
-
-/// The compact one-line form of the pending question(s): each question's text,
-/// collapsed and joined, truncated for the callout.
-fn question_summary(questions: &[PendingQuestion]) -> Option<String> {
-    let joined = questions
-        .iter()
-        .map(|q| collapse(&q.question))
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" • ");
-    if joined.is_empty() {
-        None
-    } else {
-        Some(truncate(&joined, QUESTION_MAX))
-    }
-}
-
 /// Build the `pane_id -> Activity` map for a set of panes rooted at
 /// `projects_base`. Each pane's transcript is its EXACT `<session_id>.jsonl` — so
 /// two agents in the same folder never cross-contaminate. A pane with no session
 /// id, or whose transcript doesn't exist yet, is simply absent. Never panics.
 ///
-/// A PENDING question is taken from the hook-written `<session_id>.question.json`
-/// sidecar (it can't be read from the transcript — see [`read_pending_question`]);
-/// it overrides the transcript's question, which is `None` while pending.
+/// The activity (summary + any transcript-derived question) comes wholly from the
+/// transcript. A live PENDING `AskUserQuestion` is NOT read here: it is sourced from
+/// the activity-event pipeline (`PreToolUse[AskUserQuestion]`) on the frontend (see
+/// the `activity-timeline` capability), which became the authoritative source. The
+/// former `<session_id>.question.json` sidecar — written by a now-deleted question
+/// hook — and its `read_pending_questions` reader were retired with that migration.
 pub fn activity_for_panes(projects_base: &Path, panes: &[PaneRef]) -> HashMap<String, Activity> {
     let mut map = HashMap::new();
     for pane in panes {
         let Some(transcript) = find_transcript(projects_base, pane) else {
             continue;
         };
-        let mut activity = summarize_transcript(&transcript);
-        if let Some(sid) = pane.session_id.as_deref().and_then(safe_component) {
-            if let Some(questions) = read_pending_questions(&transcript, sid) {
-                activity.question = question_summary(&questions);
-                activity.questions = Some(questions);
-            }
-        }
+        let activity = summarize_transcript(&transcript);
         map.insert(pane.pane_id.clone(), activity);
     }
     map
@@ -742,57 +904,6 @@ mod tests {
         assert!(!map.contains_key("pane-none"), "no session id -> omitted");
     }
 
-    /// A PENDING question lives in the hook-written `<session_id>.question.json`
-    /// sidecar (the transcript never carries it while pending). `activity_for_panes`
-    /// reads that sidecar and uses it as the row's question; removing the sidecar
-    /// (the hook's clear-on-answer) drops the question again.
-    #[test]
-    fn pending_question_comes_from_the_sidecar() {
-        let tmp = TempDir::new("sidecar");
-        let base = tmp.path();
-        let cwd = "/work/q";
-        let project = project_dir_for_cwd(cwd);
-        // A transcript with assistant text but NO AskUserQuestion (the pending turn
-        // isn't on disk) — exactly the live "agent is asking" shape.
-        let path = write_transcript(
-            base,
-            &project,
-            "sess-Q",
-            &[assistant(serde_json::json!([{"type":"text","text":"thinking"}]))],
-        );
-        let sidecar = path.with_file_name("sess-Q.question.json");
-        std::fs::write(
-            &sidecar,
-            r#"{"questions":[{"header":"DB","question":"Postgres or MySQL?","multiSelect":false,"options":[{"label":"Postgres","description":"relational"},{"label":"MySQL","description":""}]}]}"#,
-        )
-        .unwrap();
-
-        let panes = vec![PaneRef {
-            pane_id: "pane-Q".into(),
-            session_id: Some("sess-Q".into()),
-            cwd: Some(cwd.into()),
-        }];
-        let map = activity_for_panes(base, &panes);
-        let a = map.get("pane-Q").unwrap();
-        assert_eq!(a.summary.as_deref(), Some("thinking"));
-        // Compact one-line form for the callout.
-        assert_eq!(a.question.as_deref(), Some("Postgres or MySQL?"));
-        // Structured options surfaced for the answer UI.
-        let qs = a.questions.as_ref().unwrap();
-        assert_eq!(qs.len(), 1);
-        assert_eq!(qs[0].header, "DB");
-        assert_eq!(qs[0].options.len(), 2);
-        assert_eq!(qs[0].options[0].label, "Postgres");
-        assert_eq!(qs[0].options[0].description, "relational");
-        assert!(!qs[0].multi_select);
-
-        // Hook clears it on answer -> no pending question.
-        std::fs::remove_file(&sidecar).unwrap();
-        let map2 = activity_for_panes(base, &panes);
-        assert!(map2.get("pane-Q").unwrap().question.is_none());
-        assert!(map2.get("pane-Q").unwrap().questions.is_none());
-    }
-
     /// The recent assistant TEXT messages surface newest-LAST with newlines
     /// preserved (the overview renders them as the Markdown transcript preview).
     #[test]
@@ -847,6 +958,76 @@ mod tests {
         assert_eq!(act.user_hash, summarize_transcript(&path).user_hash);
     }
 
+    #[test]
+    fn assistant_messages_extracts_text_blocks_in_order() {
+        let tmp = TempDir::new("asstmsgs");
+        let path = write_transcript(
+            tmp.path(),
+            "proj",
+            "sess-A",
+            &[
+                serde_json::json!({"type":"user","message":{"role":"user","content":"Fix the bug"}}),
+                assistant(serde_json::json!([{"type":"text","text":"I'll fix it now"}])),
+                serde_json::json!({"type":"user","message":{"role":"user","content":"Add tests"}}),
+                // Tool-only assistant entry (no text block) — not included.
+                assistant(serde_json::json!([{"type":"tool_use","id":"t1","name":"Bash","input":{}}])),
+                assistant(serde_json::json!([{"type":"text","text":"Done, tests added"}])),
+            ],
+        );
+        let msgs = assistant_messages(&path);
+        assert_eq!(
+            msgs,
+            vec!["I'll fix it now".to_string(), "Done, tests added".to_string()]
+        );
+    }
+
+    #[test]
+    fn title_user_messages_drops_skill_and_command_scaffolding() {
+        let tmp = TempDir::new("titlemsgs");
+        // A real request, a `Skill`-injected meta prelude (isMeta), a slash-command
+        // markup entry, an interrupt marker, a local-command caveat, then a refinement.
+        let mut meta_prelude = serde_json::json!({"type":"user","message":{"role":"user",
+            "content":"Base directory for this skill: /Users/x/.claude/skills/workflow-build\n\n# Workflow"}});
+        meta_prelude["isMeta"] = serde_json::json!(true);
+        let path = write_transcript(
+            tmp.path(),
+            "proj",
+            "sess-T",
+            &[
+                serde_json::json!({"type":"user","message":{"role":"user","content":"Allow changing the branch from the footer"}}),
+                meta_prelude,
+                serde_json::json!({"type":"user","message":{"role":"user","content":"<command-message>workflow-build</command-message> <command-name>/workflow-build</command-name>"}}),
+                serde_json::json!({"type":"user","message":{"role":"user","content":"[Request interrupted by user]"}}),
+                serde_json::json!({"type":"user","message":{"role":"user","content":"<local-command-caveat>Caveat: the messages below ...</local-command-caveat>"}}),
+                serde_json::json!({"type":"user","message":{"role":"user","content":"also add a confirm dialog"}}),
+            ],
+        );
+        // Only the two genuine prose messages survive — all scaffolding is dropped.
+        assert_eq!(
+            title_user_messages(&path),
+            vec![
+                "Allow changing the branch from the footer".to_string(),
+                "also add a confirm dialog".to_string(),
+            ]
+        );
+        // The UNFILTERED `user_messages` still sees the command/caveat entries (only
+        // exit/quit/clear/compact are filtered there) — proving the title view is a
+        // separate, stricter filter that does not change the existing semantics.
+        assert!(user_messages(&path).len() > 2);
+    }
+
+    #[test]
+    fn assistant_messages_empty_when_no_assistant_entries() {
+        let tmp = TempDir::new("asstmsgs-empty");
+        let path = write_transcript(
+            tmp.path(),
+            "proj",
+            "sess-empty",
+            &[serde_json::json!({"type":"user","message":{"role":"user","content":"hi"}})],
+        );
+        assert!(assistant_messages(&path).is_empty());
+    }
+
     /// Exit/quit/clear/compact entries are NOT the user "saying something" — a
     /// session whose only user entries are these is EMPTY (deleted on archive, no
     /// title). They are dropped from `user_messages` so `user_hash` stays None.
@@ -893,5 +1074,100 @@ mod tests {
         );
         assert_eq!(user_messages(&real), vec!["Fix the parser bug".to_string()]);
         assert!(summarize_transcript(&real).user_hash.is_some());
+    }
+
+    /// A long, content-rich session whose newest `TAIL_BYTES` are ALL assistant/
+    /// tool output (a single long agent turn) STILL reports a `user_hash`: the
+    /// user's first prompt lives at the HEAD of the transcript, so the session
+    /// reads as Archive — not the empty-session "Delete". Regression: a tail-only
+    /// scan found no user message here and wrongly marked busy sessions empty.
+    #[test]
+    fn long_agent_turn_keeps_user_hash_from_head() {
+        let tmp = TempDir::new("longturn");
+        // The user's real prompt at the HEAD, then > TAIL_BYTES of assistant output
+        // so the last window holds no user entry at all.
+        let big = "x".repeat(70_000);
+        let mut lines = vec![serde_json::json!(
+            {"type":"user","message":{"role":"user","content":"Refactor the auth module"}}
+        )];
+        for _ in 0..6 {
+            lines.push(assistant(serde_json::json!([{"type":"text","text": big}])));
+        }
+        let path = write_transcript(tmp.path(), "proj", "sess-long", &lines);
+        assert!(
+            std::fs::metadata(&path).unwrap().len() > TAIL_BYTES,
+            "fixture must exceed the tail window to exercise the bug"
+        );
+        let act = summarize_transcript(&path);
+        assert!(
+            act.user_hash.is_some(),
+            "a content-rich session must read as Archive (user_hash present), not empty Delete"
+        );
+    }
+
+    /// REGRESSION (the spurious auto-unarchive bug): the overview's pause/preview
+    /// auto-resume gate must fire ONLY when the user sends a NEW message. The old gate
+    /// keyed on `user_hash`, which is computed over a sliding `TAIL_BYTES` window —
+    /// appending ASSISTANT-ONLY output (exactly what `claude --resume` does when a
+    /// session is PREVIEWED, with no new user message) can push an older user message
+    /// OUT of the window and change the hash, so the gate read it as "user replied"
+    /// and unarchived. The fix gates on `user_msg_count` instead, a WHOLE-FILE count
+    /// that is invariant under such appends. This test pins that invariance.
+    ///
+    /// It needs MULTIPLE user messages: the head-fallback in
+    /// `long_agent_turn_keeps_user_hash_from_head` masks the single-message case,
+    /// which is why the bug was intermittent (only larger, multi-prompt sessions hit
+    /// it). We assert here that `user_hash` DID change (proving the fixture exercises
+    /// the window slide) while `user_msg_count` did NOT (proving the new gate signal
+    /// is immune).
+    #[test]
+    fn user_msg_count_invariant_under_assistant_only_appends() {
+        use std::io::Write;
+        let tmp = TempDir::new("usercount-invariance");
+        // ~40 KiB assistant padding entry (no user text → never counts as a message).
+        let pad = || assistant(serde_json::json!([{"type":"text","text":"x".repeat(40 * 1024)}]));
+        let user = |t: &str| {
+            serde_json::json!({"type":"user","message":{"role":"user",
+                "content":[{"type":"text","text":t}]}})
+        };
+
+        // Layout: U1, ~120 KiB pad (P1), U2, ~40 KiB pad (P2). Initial file ~160 KiB
+        // < TAIL_BYTES, so the whole file is the window: user set = {U1, U2}.
+        let mut lines: Vec<Value> = vec![user("the first real question")];
+        for _ in 0..3 {
+            lines.push(pad()); // P1 ≈ 120 KiB
+        }
+        lines.push(user("the second real question"));
+        lines.push(pad()); // P2 ≈ 40 KiB
+        let path = write_transcript(tmp.path(), "-work-big", "sess-big", &lines);
+
+        let before = summarize_transcript(&path);
+        assert_eq!(before.user_msg_count, Some(2), "fixture has two real user messages");
+
+        // Append ~160 KiB of assistant-only output (P3) — the resumed/previewing
+        // session writing turns with NO new user message. Now bytes-below-U2 = P2+P3
+        // ≈ 200 KiB (< TAIL_BYTES, so U2 stays in the window) while bytes-below-U1 =
+        // P1+U2+P2+P3 ≈ 320 KiB (> TAIL_BYTES, so U1 drops OUT). The windowed user set
+        // collapses from {U1, U2} to {U2}.
+        let extra: String =
+            (0..4).map(|_| pad().to_string()).collect::<Vec<_>>().join("\n") + "\n";
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(extra.as_bytes()).unwrap();
+
+        let after = summarize_transcript(&path);
+
+        // The windowed hash DID change (the fixture really does slide the window)...
+        assert_ne!(
+            before.user_hash, after.user_hash,
+            "fixture should slide the tail window (user_hash changes) — else it is not \
+             exercising the bug"
+        );
+        // ...but the whole-file count did NOT: no new user message ⇒ same count. This
+        // is what keeps a previewed session from unarchiving itself.
+        assert_eq!(
+            after.user_msg_count, Some(2),
+            "user_msg_count must be invariant under assistant-only appends (no new \
+             user message)"
+        );
     }
 }

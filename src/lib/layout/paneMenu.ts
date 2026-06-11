@@ -13,6 +13,8 @@ export interface PaneMenuDeps {
   copy(): void;
   /** Paste the clipboard into the pane's PTY. */
   paste(): void;
+  /** Open a file picker and insert the chosen file's quoted path at the terminal cursor. */
+  insertFilename(): void;
   /** Whether closing is allowed (false when this is the workspace's only pane). */
   canClose: boolean;
   /** Whether there is a selection to copy. */
@@ -36,7 +38,8 @@ export interface PaneMenuItem {
 export type PaneMenuSection = PaneMenuItem[];
 
 /**
- * Build the pane context menu: Copy/Paste, then Close / New Session. Disabled
+ * Build the pane context menu: Copy/Paste/Insert Filename, then Close / New
+ * Session. Disabled
  * state for Copy (no selection) and Close (only pane) comes from `deps`. (Pane
  * splitting was removed from the context menu.)
  */
@@ -50,7 +53,13 @@ export function buildPaneMenu(deps: PaneMenuDeps): PaneMenuSection[] {
         disabled: !deps.hasSelection,
         run: () => deps.copy()
       },
-      { id: 'paste', label: 'Paste', shortcut: '⌘V', run: () => deps.paste() }
+      { id: 'paste', label: 'Paste', shortcut: '⌘V', run: () => deps.paste() },
+      {
+        id: 'insert-filename',
+        label: 'Insert Filename…',
+        shortcut: '⌘O',
+        run: () => deps.insertFilename()
+      }
     ],
     [
       {

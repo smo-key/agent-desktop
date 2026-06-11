@@ -1,0 +1,8 @@
+{
+  "provider": "local",
+  "taskRef": "agent-session-ux-improvements",
+  "url": "",
+  "lastEvent": "review",
+  "baseBranch": "main",
+  "worktreePath": "/Users/arthur.pachachura/git/agent-desktop-worktrees/agent-session-ux-improvements"
+}

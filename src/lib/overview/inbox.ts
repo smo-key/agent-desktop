@@ -6,7 +6,93 @@
 // the queue. Framework-free so it is trivially unit-tested; Inbox.svelte is the
 // thin reactive shell that feeds it the live roster and renders the result.
 
-import { needsAttention, type AgentRow, type AgentStatus } from './roster';
+import { archivedPaneIds, needsAttention, type AgentRow, type AgentStatus } from './roster';
+import type { ConfirmOptions } from '$lib/ui/confirmStore.svelte';
+
+/** Max characters of the roster sub-line (a one-line display); longer messages are
+ *  clipped with a trailing ellipsis. Sized for the narrow inbox column + its tooltip
+ *  so a multi-paragraph assistant message doesn't render a giant tooltip. */
+export const ROW_SUB_MAX_LEN = 140;
+
+/**
+ * PURE: collapse a (possibly multi-line) message to a single trimmed line and clip it
+ * to `ROW_SUB_MAX_LEN` for the one-line roster sub-line. Returns null for an
+ * empty/whitespace-only/absent input so callers can fall through to the next source.
+ * Internal runs of whitespace (incl. newlines/tabs) collapse to single spaces.
+ */
+export function clipLine(
+  text: string | null | undefined,
+  maxLen: number = ROW_SUB_MAX_LEN
+): string | null {
+  if (!text) return null;
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  if (oneLine.length === 0) return null;
+  return oneLine.length > maxLen ? oneLine.slice(0, maxLen) + '…' : oneLine;
+}
+
+/** PURE: total session cost as a compact label — `$1.50`, or an em dash when unknown.
+ *  Used as the FINISHED-state sub-line fallback (a finished row with no message shows
+ *  what it cost). Mirrors the formatting of the old inline `cost` helper. */
+export function cost(value: number | null | undefined): string {
+  return value === null || value === undefined ? '—' : `$${value.toFixed(2)}`;
+}
+
+/**
+ * PURE: the STATE-APPROPRIATE generic sub-line for a row that has NO pending question
+ * and NO (live or cached) last message — the per-lane words restored from the old
+ * inline `rowSub`. The more-specific lifecycle states win, in precedence order:
+ *   - closed (Archived)        → 'Archived'
+ *   - paused                   → 'Paused · send a message to resume'
+ *   - error                    → 'Errored — needs you'
+ *   - attention (waiting, etc) → 'Needs input'
+ *   - finished                 → the formatted `cost`
+ *   - working / idle / other   → `currentAction`, else 'Working…'
+ * Only ever reached as the LAST resort by `rowSub` (a real message always wins first),
+ * so e.g. an archived row WITH a (cached) message shows the message, not 'Archived'.
+ */
+export function stateFallback(
+  row: Pick<AgentRow, 'closed' | 'paused' | 'status' | 'currentAction' | 'cost'>
+): string {
+  if (row.closed) return 'Archived';
+  if (row.paused) return 'Paused · send a message to resume';
+  if (isAttention(row.status)) {
+    if (row.status === 'error') return 'Errored — needs you';
+    return 'Needs input';
+  }
+  if (row.status === 'finished') return cost(row.cost);
+  return row.currentAction ?? 'Working…';
+}
+
+/**
+ * PURE: the secondary "what it last said / is asking" line for a roster row, used for
+ * EVERY lane — including archived (closed) and previewing rows. Priority:
+ *   1. a pending question — the structured `questions[0].question`, else the compact
+ *      `question` string (this is what the agent is waiting on YOU for);
+ *   2. the last assistant message — the live `summary`, else the per-session cached
+ *      summary the caller injects via `cachedSummary` (a closed pane has no live PTY,
+ *      so its `summary` is gone — the cache, recorded while it was live, supplies it);
+ *   3. a STATE-APPROPRIATE generic fallback (`stateFallback`) when none of the above
+ *      exists — the per-lane word for the row's state (Archived / Paused / Errored /
+ *      Needs input / the cost / the current action), NOT a single flat string.
+ * Each candidate is clipped to one line; an empty/whitespace candidate is skipped.
+ *
+ * `cachedSummary` is an injected lookup (`() => string | null`) so this stays a pure
+ * function of its inputs and is unit-testable without a live component. Resolving the
+ * session id (to key the cache) is the caller's job.
+ */
+export function rowSub(
+  row: Pick<
+    AgentRow,
+    'question' | 'questions' | 'summary' | 'closed' | 'paused' | 'status' | 'currentAction' | 'cost'
+  >,
+  cachedSummary: () => string | null = () => null
+): string {
+  const question =
+    row.questions && row.questions.length > 0 ? row.questions[0].question : row.question;
+  return (
+    clipLine(question) ?? clipLine(row.summary) ?? clipLine(cachedSummary()) ?? stateFallback(row)
+  );
+}
 
 /** Whether a status means the agent is waiting on YOU (waiting or errored). This is
  *  the STATUS-only check (used for badge/label styling); the attention QUEUE uses
@@ -97,15 +183,52 @@ export function autoArchiveAction(
 }
 
 /**
- * PURE: whether a paused agent should auto-resume — true once the LIVE user-message
- * hash is present and differs from the hash captured when it was paused (the user
- * sent a new message). A missing/empty live hash never resumes, so a transient poll
- * gap can't un-pause an agent.
+ * PURE: whether a paused/previewing agent should auto-resume — true only once the
+ * LIVE user-message COUNT strictly EXCEEDS the baseline captured when it was paused /
+ * previewed (the user sent a genuinely new message). Both must be known numbers: an
+ * unknown live count (a transient poll gap) or an unestablished baseline never
+ * resumes — the caller lazily establishes the baseline from the first known reading.
+ *
+ * This replaces the old `user_hash` comparison, which keyed on a TAIL-windowed hash
+ * that could change WITHOUT a new user message (a `claude --resume` for preview grows
+ * the transcript and slides the window), spuriously unarchiving a previewed session.
+ * A strictly-increasing whole-file count cannot be moved by assistant output.
  */
 export function shouldAutoResume(
-  pausedHash: string | null | undefined,
-  liveHash: string | null | undefined
+  baselineCount: number | null | undefined,
+  liveCount: number | null | undefined
 ): boolean {
-  if (!liveHash) return false;
-  return liveHash !== (pausedHash ?? null);
+  if (typeof liveCount !== 'number' || typeof baselineCount !== 'number') return false;
+  return liveCount > baselineCount;
+}
+
+/**
+ * PURE: build the confirmation request for "delete all archived agents", or `null`
+ * when nothing is archived (so the caller hides the action). The returned
+ * `onConfirm` deletes every archived pane (`archivedPaneIds`) via `deleteAgent`,
+ * clearing the selection first if it points at one of them — so the agents are
+ * removed ONLY when the user confirms, and never the agents in other lanes.
+ */
+export function deleteAllArchivedRequest(
+  rows: AgentRow[],
+  deps: {
+    deleteAgent: (paneId: string) => void;
+    getSelected: () => string | null;
+    setSelected: (paneId: string | null) => void;
+  }
+): ConfirmOptions | null {
+  const ids = archivedPaneIds(rows);
+  if (ids.length === 0) return null;
+  const noun = ids.length === 1 ? 'agent' : 'agents';
+  return {
+    title: 'Delete archived agents',
+    message: `Delete all ${ids.length} archived ${noun}? This permanently removes their sessions and cannot be undone.`,
+    confirmLabel: 'Delete',
+    onConfirm: () => {
+      for (const id of ids) {
+        if (deps.getSelected() === id) deps.setSelected(null);
+        deps.deleteAgent(id);
+      }
+    }
+  };
 }

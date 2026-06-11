@@ -18,6 +18,7 @@
   import { buildPaneMenu } from './paneMenu';
   import { contextMenu } from './contextmenu.svelte';
   import { getTerminal } from './terminals';
+  import { insertFilenameInto } from './insertFilename';
   import { leavesInOrder, type Node } from './tree';
   import { launcher } from '$lib/launcher/launcherStore.svelte';
 
@@ -100,6 +101,9 @@
           ?.readText()
           .then((t) => handle?.paste(t))
           .catch(() => {});
+      },
+      insertFilename: () => {
+        void insertFilenameInto(handle);
       },
       canClose,
       hasSelection: handle?.hasSelection() ?? false

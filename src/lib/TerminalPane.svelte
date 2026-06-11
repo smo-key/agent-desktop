@@ -11,12 +11,15 @@
   import { buildSpawnOverride } from './usage/spawn';
   import {
     InitialInputSender,
+    initialInputForMount,
+    LaunchPromptReadiness,
     SUBMIT_DELAY_MS,
-    READY_QUIET_MS,
     READY_MAX_MS
   } from './launcher/initialInput';
   import { LaunchSpinner, spinnerLabel } from './launcher/spinner';
-  import { noteOutput, noteExit, clearRuntime } from './overview/runtime';
+  import { noteOutput, noteExit, noteBusy, clearRuntime } from './overview/runtime';
+  import { detectTerminalBusy } from './overview/terminalBusy';
+  import { events } from './overview/events.svelte';
 
   // PtyEvent — the exact wire shape the Rust backend streams over the per-pane
   // Channel (internally tagged on `event`):
@@ -113,9 +116,9 @@
   // re-renders so the prompt is delivered at most once (guard against
   // double-send). The app never synthesizes a command — only the user's text.
   let initialInputSender: InitialInputSender | undefined;
-  // Initial-prompt delivery timers (component-scoped so teardown can clear them).
-  let quietTimer: ReturnType<typeof setTimeout> | undefined;
-  let maxTimer: ReturnType<typeof setTimeout> | undefined;
+  // Gates initial-prompt delivery on the TUI being ready (output seen, then
+  // quiet). Component-scoped so teardown can cancel its pending timers.
+  let readiness: LaunchPromptReadiness | undefined;
   // Launch-spinner readiness backstop: clears the overlay even if a promptless
   // pane spawns but emits no output and never exits (the prompt-bearing path is
   // already capped by maxTimer). Component-scoped so teardown can clear it.
@@ -240,8 +243,11 @@
     if (webgl || !term || !opened) return;
     try {
       const { WebglAddon } = await import('@xterm/addon-webgl');
-      // The term may have been disposed (or we lost focus) while awaiting.
-      if (!term || !opened || webgl) return;
+      // The term may have been disposed (or we lost focus) while awaiting. The
+      // `!active` re-check is load-bearing: WebGL contexts are capped (~16/page), so
+      // attaching one to a pane that went inactive during the dynamic import would
+      // pin a context on an off-screen pane and starve the genuinely-active one.
+      if (!term || !opened || webgl || !active) return;
       const addon = new WebglAddon();
       contextLossSub = addon.onContextLoss(() => {
         addon.dispose();
@@ -284,6 +290,32 @@
     const { cols, rows } = term;
     if (!cols || !rows || rect.width === 0 || rect.height === 0) return undefined;
     return { screen, rect, cellW: rect.width / cols, cellH: rect.height / rows };
+  }
+
+  // How many lines from the BOTTOM of the live buffer to scan for the active-work
+  // affordance. Claude renders its running-spinner / "Waiting for N dynamic
+  // workflow(s)" line at/near the bottom of the viewport, so a small tail is both
+  // sufficient and cheap (no full-scrollback scan on every output chunk).
+  const BUSY_SCAN_LINES = 40;
+
+  /**
+   * A bounded tail of the live terminal text (the last `BUSY_SCAN_LINES` rendered
+   * lines), joined with newlines. Reads xterm's active buffer directly — the same
+   * `getLine().translateToString()` path the file-link hit-test uses. Returns ''
+   * when the terminal isn't ready. Used ONLY to feed `detectTerminalBusy`.
+   */
+  function recentTerminalText(): string {
+    if (!term) return '';
+    const buf = term.buffer.active;
+    // `baseY + rows` is one past the last viewport row; scan the tail up to there.
+    const end = buf.baseY + term.rows;
+    const start = Math.max(0, end - BUSY_SCAN_LINES);
+    const lines: string[] = [];
+    for (let i = start; i < end; i++) {
+      const line = buf.getLine(i)?.translateToString(true);
+      if (line) lines.push(line);
+    }
+    return lines.join('\n');
   }
 
   // Re-evaluate the hover at `lastPointer`: when ⌘ is held and the pointer sits on a
@@ -407,8 +439,11 @@
     let disposed = false;
 
     // Capture the launch-time initial prompt once (an initial prompt is a
-    // spawn-time value; later prop changes must not re-send it).
-    initialInputSender = new InitialInputSender(initialInput);
+    // spawn-time value; later prop changes must not re-send it). A RESUMED pane
+    // (archive→restore / preview re-mounts this component with the registry's
+    // initialInput still set) must NOT re-send the launch prompt — its transcript
+    // already has it — so the prompt is gated on `resume` here.
+    initialInputSender = new InitialInputSender(initialInputForMount(initialInput, resume));
 
     // Arm the launch spinner from the same launch-time values: agent panes
     // (claude) show it; a prompt-bearing pane holds it until the prompt lands.
@@ -431,24 +466,17 @@
     // Initial-prompt delivery waits for claude's startup output to go QUIET — the
     // TUI emits a burst of setup/render output on launch and is NOT yet accepting
     // input during it; writing then left the text garbled and the Enter swallowed
-    // (the "work never starts, shows as needs attention" symptom). We arm a quiet
-    // timer that each output byte resets; once output is quiet for READY_QUIET_MS
-    // (claude is idle at the ready input box) we write the verbatim text, then the
-    // submitting Enter as a SEPARATE write after a settle. A hard cap forces
-    // delivery if output never goes quiet. Delivered at most once.
-    let initialDelivered = false;
-
+    // (the "work never starts, shows as needs attention" symptom). The readiness
+    // gate (constructed below, once the sender is known to carry a prompt) only
+    // begins its quiet window AFTER the first output byte — so a slow startup that
+    // stays silent past the window (e.g. a coordinated agent loading the MCP
+    // toolkit) can't deliver into a TUI that hasn't started rendering. Once output
+    // settles (or a hard cap fires) we write the verbatim text, then the
+    // submitting Enter as a SEPARATE write after a settle. Delivered at most once.
     const deliverInitial = () => {
-      if (initialDelivered) return;
-      // Not wired yet — re-arm and wait (the quiet timer may have fired between
-      // spawn round-trips before ptyId was set).
-      if (ptyId === undefined) {
-        armInitial();
-        return;
-      }
-      initialDelivered = true;
-      if (quietTimer) clearTimeout(quietTimer);
-      if (maxTimer) clearTimeout(maxTimer);
+      // Defensive: the gate only fires after `wired()`, but never write to a PTY
+      // that isn't (or is no longer) live.
+      if (ptyId === undefined) return;
       initialInputSender?.deliver(
         (data) => {
           if (ptyId === undefined) return;
@@ -462,15 +490,13 @@
       loading = spinner?.loading ?? false;
     };
 
-    // (Re)start the quiet window; start the hard cap once. Called when the PTY is
-    // wired and on every output byte (so a fresh byte defers delivery until the
-    // output settles). No-op once delivered or when there is no prompt to send.
-    const armInitial = () => {
-      if (initialDelivered || !initialInputSender?.hasPrompt) return;
-      if (quietTimer) clearTimeout(quietTimer);
-      quietTimer = setTimeout(deliverInitial, READY_QUIET_MS);
-      if (maxTimer === undefined) maxTimer = setTimeout(deliverInitial, READY_MAX_MS);
-    };
+    if (initialInputSender.hasPrompt) {
+      readiness = new LaunchPromptReadiness(
+        deliverInitial,
+        (run, ms) => setTimeout(run, ms),
+        (h) => clearTimeout(h)
+      );
+    }
 
     (async () => {
       // Dynamic-import the heavy/DOM-only modules so SSR + the static build stay
@@ -524,8 +550,18 @@
           // and, on the first byte, deliver any pending initial prompt now that
           // claude's TUI has begun rendering.
           noteOutput(paneId, Date.now());
-          // Defer initial-prompt delivery until output settles (TUI ready).
-          armInitial();
+          // Re-detect the "actively working" affordance from the live terminal tail
+          // (a foreground command running, or in-session background work) — the
+          // event hooks miss these, so the roster reads it via `runtime.terminalBusy`
+          // to keep the agent In flight rather than Needs input. The spinner line is
+          // re-rendered continuously while work runs, so per-chunk sampling tracks it
+          // closely and clears the instant the affordance disappears. `term.write`
+          // above is async; reading the buffer now reflects the PRIOR frame, which is
+          // fine for a persistent indicator (at worst a one-chunk lag).
+          noteBusy(paneId, detectTerminalBusy(recentTerminalText()));
+          // First/each output byte (re)starts the readiness quiet window; the
+          // gate delivers the initial prompt once output settles (TUI ready).
+          readiness?.noteOutput();
           // First output means the TUI is rendering — clear the launch spinner
           // for a promptless/resumed pane (a prompt-bearing pane stays covered
           // until the prompt is injected; see deliverInitial).
@@ -584,10 +620,10 @@
         return;
       }
       ptyId = id;
-      // Arm the initial-prompt quiet timer now the PTY is wired (output may have
-      // already begun arriving while we awaited the spawn round-trip). Delivery
-      // happens once claude's startup output goes quiet.
-      armInitial();
+      // PTY wired: arm the readiness hard-cap backstop now. The quiet window only
+      // starts once output is seen (handled in the data channel above), so a slow
+      // startup that stays silent can't deliver the prompt prematurely.
+      readiness?.wired();
 
       // Expose a Copy/Paste handle for the pane context menu (decoupled from the
       // xterm instance). Unregistered in onDestroy.
@@ -645,6 +681,36 @@
         }).catch(() => {});
       });
 
+      // Shift+Enter: xterm emits the same byte (\r) for Enter and Shift+Enter, so a
+      // TUI like claude can't tell them apart and submits on both. We intercept the
+      // keydown and inject \n instead — the byte Ctrl+J sends, which claude treats as
+      // "insert newline" in every terminal (no kitty/CSI-u negotiation required).
+      //
+      // Returning false alone is NOT enough: it suppresses xterm's keydown handling
+      // but the follow-up `keypress` still emits the submitting \r. preventDefault()
+      // on the keydown cancels that keypress, so the \r never reaches the PTY.
+      term.attachCustomKeyEventHandler((e) => {
+        if (e.type === 'keydown' && e.key === 'Enter' && e.shiftKey) {
+          e.preventDefault();
+          if (ptyId !== undefined) {
+            void invoke('pty_write', {
+              id: ptyId,
+              data: Array.from(enc.encode('\n'))
+            }).catch(() => {});
+          }
+          return false;
+        }
+        // Esc INTERRUPT (claude panes): claude aborts the in-flight tool but fires no
+        // PostToolUse/Stop for it, so the event-sourced status would stay pinned at
+        // "working". Record a synthetic turn-end (a no-op unless this pane is actually
+        // working) so the row returns to "waiting". The keystroke still flows to the PTY
+        // unchanged (return true) so claude performs the interrupt itself.
+        if (e.type === 'keydown' && e.key === 'Escape' && program === 'claude') {
+          events.markInterrupt(paneId);
+        }
+        return true;
+      });
+
       // Title: surface xterm title changes (OSC 0/2) to an interested parent (the
       // Terminals panel labels a terminal with the running command). Only wired when
       // a callback is supplied (agent panes pass none).
@@ -694,8 +760,7 @@
     clearRuntime(paneId);
 
     // Cancel any pending initial-prompt delivery timers and the spinner backstop.
-    if (quietTimer) clearTimeout(quietTimer);
-    if (maxTimer) clearTimeout(maxTimer);
+    readiness?.dispose();
     if (spinnerCapTimer) clearTimeout(spinnerCapTimer);
 
     ro?.disconnect();

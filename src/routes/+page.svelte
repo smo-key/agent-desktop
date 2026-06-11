@@ -8,9 +8,13 @@
   import HelpModal from '$lib/ui/HelpModal.svelte';
   import { help } from '$lib/ui/helpStore.svelte';
   import SettingsModal from '$lib/ui/SettingsModal.svelte';
+  import ConfirmModal from '$lib/ui/ConfirmModal.svelte';
+  import { confirmModal } from '$lib/ui/confirmStore.svelte';
   import { settingsModal } from '$lib/ui/settingsStore.svelte';
   import { openWith } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
+  import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
+  import { titleSettings } from '$lib/settings/titles.svelte';
   import VoicePanel from '$lib/voice/VoicePanel.svelte';
   import ModelOnboarding from '$lib/onboarding/ModelOnboarding.svelte';
   import { onboarding } from '$lib/onboarding/onboarding.svelte';
@@ -19,6 +23,7 @@
   import { tooltip } from '$lib/ui/tooltip';
   import { startNewSession } from '$lib/launcher/newSession';
   import { workspace } from '$lib/layout/workspace.svelte';
+  import { insertFilenameInto, focusedTerminalHandle } from '$lib/layout/insertFilename';
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
   import { restorePersistedLayout, watchAndPersist } from '$lib/layout/store-backend.svelte';
   import { snapshots } from '$lib/usage/snapshots.svelte';
@@ -43,6 +48,7 @@
   import { activeProjectId } from '$lib/tasks/activeProject';
   import { projectForId } from '$lib/projects/projects';
   import { setGitTerminalOpener } from '$lib/projects/projectGitActions';
+  import { setAgentTaskLauncher } from '$lib/projects/prActions';
   import { buildLaunchPlan } from '$lib/launcher/plan';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import { ALL, UNASSIGNED } from '$lib/projects/projectRollup';
@@ -73,11 +79,18 @@
   onMount(() => {
     // Load the user's open-with preferences (seeds defaults on first run).
     void openWith.load();
-    // Load voice-input preferences from the shared settings blob (seeds defaults),
-    // then check whether the on-device models that selection needs are present. When
-    // they're missing, the onboarding store goes `visible` and the full-screen gate
-    // (rendered below) prompts a one-time download (model-onboarding spec).
-    void voice.load()
+    // Load session-title preferences (the opt-in cloud title fallback).
+    void titleSettings.load();
+    // Load the auto-advance focus preference (opt-in; defaults OFF).
+    void autoAdvance.load();
+    // Load the persisted one-time onboarding flag FIRST so a returning user who has
+    // already seen the gate never sees a flash of it, then load voice-input
+    // preferences and check whether the on-device models that selection needs are
+    // present. When they're missing AND the gate has never been seen, the onboarding
+    // store goes `visible` and the full-screen gate (rendered below) prompts a
+    // one-time download (model-onboarding spec).
+    void onboarding.load()
+      .then(() => voice.load())
       .then(() => onboarding.check(voice.prefs.modelTier, voice.prefs.polish))
       .catch(() => {});
     // Agent-kind tasks open a normal Claude session in the workspace + Agents rail
@@ -97,6 +110,24 @@
       );
       // Remember this session was spawned by a task: once it finishes its turn and
       // returns to the user, an $effect (below) auto-archives it (project-tasks spec).
+      if (paneId) taskAgentPanes.add(paneId);
+    });
+    // Footer actions (PR button, and later the commit button) spawn an
+    // AUTO-ARCHIVING agent task via a generic `(projectId, prompt)` launcher —
+    // EXACTLY mirroring the project-tasks agent launcher above so the same
+    // auto-archive $effect (below) closes the fire-and-forget session once it
+    // returns to the user. Shared on purpose; not PR-specific.
+    setAgentTaskLauncher((projectId, prompt) => {
+      const proj = projectForId(projects.list, projectId);
+      if (!proj) return;
+      const paneId = workspace.launch(
+        buildLaunchPlan({
+          folder: proj.path,
+          prompt,
+          placement: 'tab',
+          projectId: proj.id
+        })
+      );
       if (paneId) taskAgentPanes.add(paneId);
     });
     // A terminal task that succeeds (exit 0) pops a "<name> completed" toast.
@@ -393,6 +424,13 @@
         const rt = projectTasks.runtime[t.id];
         if (rt?.running) list.push(rt.paneId);
       }
+      // Bare ⌘Y shells are running terminals too — the panel shows them and the badge
+      // counts them — so the cycle must reach them, not only command-backed task-defs.
+      // (Every "new terminal" entry point — ⌘Y, the panel ＋, the git-failure opener —
+      // creates a bare shell, so omitting these left the ring with just the agent.)
+      for (const b of projectTasks.bareForProject(pid)) {
+        if (b.running) list.push(b.paneId);
+      }
     }
     return list;
   }
@@ -425,6 +463,18 @@
     const meta = e.metaKey;
     const alt = e.altKey;
     const key = e.key;
+
+    // A confirmation modal is the TOPMOST surface and owns the keyboard while open:
+    // Esc cancels it (its own handler only fires when focus is inside the dialog, so
+    // cover it here too) and we block every shortcut beneath so nothing fires under
+    // the "are you sure?" dialog. Checked first since it can sit over any other view.
+    if (confirmModal.open) {
+      if (key === 'Escape') {
+        e.preventDefault();
+        confirmModal.close();
+      }
+      return;
+    }
 
     // Help overlay: Cmd-/ toggles it from anywhere; bare ? opens it too, but only
     // when NOT typing into a field/terminal, so a literal "?" still reaches prompts
@@ -493,6 +543,20 @@
     if (meta && key === 'Tab') {
       e.preventDefault();
       cycleFocus();
+      return;
+    }
+
+    // Cmd-O inserts a picked file's quoted path into the FOCUSED terminal at the
+    // cursor. A global shortcut (works in every view, incl. while xterm holds
+    // focus) — placed BEFORE the grid-only gate below so it isn't made inert.
+    // Exclude Alt/Ctrl so only the bare Cmd-O combo fires (stray Cmd-Opt-O /
+    // Cmd-Ctrl-O fall through). `insertFilenameInto` checks the focused
+    // handle BEFORE opening the picker, so this is a clean no-op (no dialog) when
+    // no terminal is focused; preventDefault keeps the keystroke off the PTY and
+    // suppresses the webview's native "Open file" accelerator.
+    if (meta && !alt && !e.ctrlKey && (key === 'o' || key === 'O')) {
+      e.preventDefault();
+      void insertFilenameInto(focusedTerminalHandle());
       return;
     }
 
@@ -692,6 +756,7 @@
 <Toast />
 <HelpModal />
 <SettingsModal />
+<ConfirmModal />
 <VoicePanel />
 <!-- First-launch model download gate: a full-screen takeover shown only while the
      on-device models the current voice selection needs are missing (and not skipped

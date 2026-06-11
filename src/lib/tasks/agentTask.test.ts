@@ -25,4 +25,23 @@ describe('project-tasks — agent task auto-archive', () => {
     expect(taskAgentReturnedToUser('waiting', [{ hookEventName: 'SessionStart' }])).toBe(false);
     expect(taskAgentReturnedToUser('waiting', [])).toBe(false);
   });
+
+  it('Agent task is not archived after a user interrupt', () => {
+    // Esc on a task-spawned agent injects a SYNTHETIC Stop (→ waiting) so the user can
+    // take the session over. That must NOT auto-archive the pane out from under them.
+    const interrupted = [
+      { hookEventName: 'SessionStart' },
+      { hookEventName: 'UserPromptSubmit' },
+      { hookEventName: 'PreToolUse' },
+      { hookEventName: 'Stop', synthetic: true }
+    ];
+    expect(taskAgentReturnedToUser('waiting', interrupted)).toBe(false);
+    // A GENUINE turn-end (real Stop, no synthetic flag) still archives.
+    expect(
+      taskAgentReturnedToUser('waiting', [
+        { hookEventName: 'UserPromptSubmit' },
+        { hookEventName: 'Stop' }
+      ])
+    ).toBe(true);
+  });
 });

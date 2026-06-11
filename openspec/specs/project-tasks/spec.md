@@ -136,7 +136,9 @@ workspace and Agents rail, seeded with the task's `prompt` as initial input, and
 SHALL NOT create a pane in the right-docked running surface. Once that session
 FINISHES the turn it was launched for and returns to the user (it is awaiting
 input again after having started its turn), the system SHALL archive it
-automatically.
+automatically. A return-to-user caused by a USER INTERRUPT (Esc), which the event
+store records as a SYNTHETIC turn-end, SHALL NOT trigger auto-archive — the user
+is taking the session over, so it must stay open.
 
 #### Scenario: Agent task opens a workspace session
 - **WHEN** an agent task is started
@@ -149,6 +151,10 @@ automatically.
 #### Scenario: Agent task archives when it returns to the user
 - **WHEN** a task-spawned agent session has started its turn (a prompt was submitted) and then returns to awaiting the user (status waiting/finished)
 - **THEN** the session is archived automatically
+
+#### Scenario: Agent task is not archived after a user interrupt
+- **WHEN** a task-spawned agent session's most recent turn-end is a SYNTHETIC `Stop` (a user Esc interrupt), even though its status is now waiting
+- **THEN** the session is NOT auto-archived; it stays open for the user to take over
 
 ### Requirement: Bare interactive terminals are not tasks
 

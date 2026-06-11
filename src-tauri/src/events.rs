@@ -70,6 +70,11 @@ pub struct AgentEvent {
     /// The message text on a `Notification` event.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notification: Option<String>,
+    /// The end reason on a `SessionEnd` event (`clear` / `logout` / `prompt_input_exit`
+    /// / `other`). `clear` keeps the claude PROCESS alive (the conversation restarts in
+    /// place), so the overview must NOT treat that SessionEnd as a finished session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Parse one socket payload (the hook writes exactly one newline-terminated JSON
@@ -321,6 +326,7 @@ pub fn backfill_from_transcript(transcript: &Path, pane_id: &str, session_id: &s
                         summary: Some(summarize_tool(name, block.get("input"))),
                         question: None,
                         notification: None,
+                        reason: None,
                     });
                 }
                 Some("tool_result") => {
@@ -333,6 +339,7 @@ pub fn backfill_from_transcript(transcript: &Path, pane_id: &str, session_id: &s
                         summary: None,
                         question: None,
                         notification: None,
+                        reason: None,
                     });
                 }
                 _ => {}
@@ -462,6 +469,7 @@ mod tests {
             summary: None,
             question: None,
             notification: None,
+            reason: None,
         }
     }
 
@@ -499,6 +507,27 @@ mod tests {
         assert_eq!(ring.len(), 1);
         assert_eq!(ring[0].hook_event_name, "PreToolUse");
         drop(server);
+    }
+
+    /// A SessionEnd line's `reason` is parsed off the wire (the exact struct handed to
+    /// `on_event` / emitted to the UI) and survives the durable-sink round-trip, so the
+    /// frontend — and a resumed timeline — can tell a `/clear` from a real session end.
+    #[test]
+    fn session_end_reason_is_carried() {
+        let parsed = parse_event(
+            r#"{"paneId":"p1","sessionId":"s1","hookEventName":"SessionEnd","ts":7,"reason":"clear"}"#,
+        )
+        .expect("well-formed");
+        assert_eq!(parsed.hook_event_name, "SessionEnd");
+        assert_eq!(parsed.reason.as_deref(), Some("clear"));
+
+        // And it persists through the durable sink (a resume re-reads it).
+        let tmp = TempDir::new("reason");
+        let state = EventState::new(tmp.path().join("events"));
+        state.record(&parsed);
+        let persisted = state.sink_for("s1");
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].reason.as_deref(), Some("clear"));
     }
 
     /// A malformed line fires no callback and the accept loop keeps serving.

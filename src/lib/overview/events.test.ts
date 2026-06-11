@@ -49,6 +49,26 @@ describe('deriveEventActivity', () => {
     expect(resumed.status).toBe('waiting');
   });
 
+  it('Clear does not finish the session', () => {
+    // `/clear` fires SessionEnd(reason:"clear") but the claude PROCESS continues (a
+    // SessionStart follows), so it is idle at the freshly-cleared prompt — `waiting`,
+    // NOT `finished` (which would let the inbox auto-archive it out from under the user).
+    const cleared = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('Stop'),
+      ev('SessionEnd', { reason: 'clear' })
+    ]);
+    expect(cleared.status).toBe('waiting');
+
+    // A REAL end still finishes: logout / prompt-input-exit / other, or an unknown
+    // (absent) reason from an older event.
+    expect(deriveEventActivity([ev('SessionEnd', { reason: 'logout' })]).status).toBe('finished');
+    expect(deriveEventActivity([ev('SessionEnd', { reason: 'prompt_input_exit' })]).status).toBe(
+      'finished'
+    );
+    expect(deriveEventActivity([ev('SessionEnd')]).status).toBe('finished');
+  });
+
   it('Current action reflects running tool', () => {
     const a = deriveEventActivity([
       ev('UserPromptSubmit'),
