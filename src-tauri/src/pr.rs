@@ -266,10 +266,11 @@ pub fn awaiting_review_count_non_draft(prs: &[OpenPr]) -> i64 {
         .count() as i64
 }
 
-/// PURE: parse `gh repo view --json url` stdout into the repo's pull-requests
-/// page URL (`<url>/pulls`). Returns `None` when the output isn't the expected
-/// `{"url": "https://github.com/o/r"}` object (non-JSON, missing/empty url).
-pub fn parse_pulls_url(stdout: &str) -> Option<String> {
+/// PURE: parse `gh repo view --json url` stdout into the repo's BASE web URL
+/// (`https://github.com/o/r`, trailing slash stripped). Returns `None` when the
+/// output isn't the expected `{"url": "…"}` object (non-JSON, missing/empty url).
+/// The shared extractor behind [`parse_pulls_url`] and the commit-link path.
+pub fn parse_repo_url(stdout: &str) -> Option<String> {
     let trimmed = stdout.trim();
     if trimmed.is_empty() {
         return None;
@@ -279,9 +280,15 @@ pub fn parse_pulls_url(stdout: &str) -> Option<String> {
     if url.is_empty() {
         return None;
     }
-    // Append `/pulls`, tolerating a trailing slash on the repo url.
-    let base = url.trim_end_matches('/');
-    Some(format!("{base}/pulls"))
+    // Strip a trailing slash so callers can append `/pulls`, `/commit/<sha>`, etc.
+    Some(url.trim_end_matches('/').to_string())
+}
+
+/// PURE: parse `gh repo view --json url` stdout into the repo's pull-requests
+/// page URL (`<url>/pulls`). Returns `None` when the output isn't the expected
+/// `{"url": "https://github.com/o/r"}` object (non-JSON, missing/empty url).
+pub fn parse_pulls_url(stdout: &str) -> Option<String> {
+    parse_repo_url(stdout).map(|base| format!("{base}/pulls"))
 }
 
 // --- Environment seeding ----------------------------------------------------
@@ -423,10 +430,12 @@ async fn open_pr_list_for(repo_path: &str, base: &str) -> Option<Vec<OpenPr>> {
     Some(parse_open_pr_list(trimmed))
 }
 
-/// Run `gh repo view --json url` in `repo_path` and derive the pull-requests page
-/// URL (`<url>/pulls`), or `None` when the lookup can't be completed. Degrades
-/// independently of the count so a failed URL never zeroes a real count.
-async fn pulls_url_for(repo_path: &str) -> Option<String> {
+/// Run `gh repo view --json url` in `repo_path` and parse the repo's BASE web URL
+/// (`https://github.com/o/r`), or `None` when the lookup can't be completed (gh
+/// missing/unauthenticated/non-zero/timeout/malformed, or the repo isn't on a
+/// host gh recognizes). Best-effort; the seam for both the pulls link and the
+/// per-commit diff links.
+pub async fn repo_url_for(repo_path: &str) -> Option<String> {
     let mut cmd = tokio::process::Command::new("gh");
     cmd.args(["repo", "view", "--json", "url"])
         .current_dir(repo_path)
@@ -445,7 +454,14 @@ async fn pulls_url_for(repo_path: &str) -> Option<String> {
         return None;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_pulls_url(&stdout)
+    parse_repo_url(&stdout)
+}
+
+/// Run `gh repo view --json url` in `repo_path` and derive the pull-requests page
+/// URL (`<url>/pulls`), or `None` when the lookup can't be completed. Degrades
+/// independently of the count so a failed URL never zeroes a real count.
+async fn pulls_url_for(repo_path: &str) -> Option<String> {
+    repo_url_for(repo_path).await.map(|base| format!("{base}/pulls"))
 }
 
 /// Resolve the current branch name in `dir` via `git rev-parse --abbrev-ref
