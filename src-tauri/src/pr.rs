@@ -218,15 +218,12 @@ pub fn parse_pulls_url(stdout: &str) -> Option<String> {
 // --- Environment seeding ----------------------------------------------------
 
 /// Seed a minimal environment for the `gh` child so it is discoverable from a
-/// sparse GUI process: inherit `PATH`/`HOME` when present, else fall back to a
-/// sane `PATH` default. Mirrors [`crate::claude_title`]'s `seed_claude_env` — the
-/// same fallback that lets a child find a Homebrew-installed binary when the app
+/// sparse GUI process. Uses the resolved login-shell `PATH` (see
+/// [`crate::shell_path`]) so a Homebrew-installed `gh` is found even when the app
 /// was launched from Finder with a stripped environment. `HOME` is forwarded so
 /// `gh` can read its auth/config under `~`.
 fn seed_gh_env(cmd: &mut tokio::process::Command) {
-    let path = std::env::var("PATH")
-        .unwrap_or_else(|_| "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin".to_string());
-    cmd.env("PATH", path);
+    cmd.env("PATH", crate::shell_path::resolved_path());
     if let Ok(home) = std::env::var("HOME") {
         cmd.env("HOME", home);
     }

@@ -57,14 +57,11 @@ pub fn claude_title_args(model: &str) -> Vec<String> {
 // --- Environment seeding ----------------------------------------------------
 
 /// Seed a minimal environment for the `claude` child so it is discoverable from a
-/// sparse GUI process: inherit `PATH`/`HOME` when present, else fall back to a
-/// sane `PATH` default. Mirrors [`crate::pty`]'s `seed_env` — the same fallback
-/// that lets the terminal panes find `claude` when launched from Finder with a
-/// stripped environment.
+/// sparse GUI process. Uses the resolved login-shell `PATH` (see
+/// [`crate::shell_path`]) — the same resolver [`crate::pty`]'s `seed_env` uses —
+/// so `claude` is found when launched from Finder with a stripped environment.
 fn seed_claude_env(cmd: &mut tokio::process::Command) {
-    let path = std::env::var("PATH")
-        .unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string());
-    cmd.env("PATH", path);
+    cmd.env("PATH", crate::shell_path::resolved_path());
     if let Ok(home) = std::env::var("HOME") {
         cmd.env("HOME", home);
     }

@@ -8,6 +8,7 @@ pub mod polish;
 pub mod pr;
 pub mod project_store;
 pub mod pty;
+pub mod shell_path;
 pub mod specialists;
 pub mod subagents;
 pub mod task;
