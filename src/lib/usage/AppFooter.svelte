@@ -93,7 +93,8 @@
   // PR button (footer only): an open PR from the current branch into `main`?
   // `prStatus` is a reactive snapshot of the per-branch cache; the effect below
   // refreshes it alongside git status (best-effort) and re-reads after a click.
-  // The button is disabled on the base branch / when there's no branch or project.
+  // The bubble is HIDDEN on the base branch (PR status is never queried there, so it
+  // stays `unknown`), on a non-GitHub repo, and when there's no branch/project.
   let prStatus = $state<ReturnType<typeof cachedPrStatus>>({ kind: 'unknown' });
   const prBranch = $derived(folderGit?.branch ?? null);
   const prExists = $derived(prStatus.kind === 'exists');
@@ -114,8 +115,9 @@
       prStatus = cachedPrStatus(branch);
     });
   });
-  // Click: open the existing PR, else open the create-confirm. Clickable on any
-  // repo+branch (the bubble itself is hidden when PR status is unknown / non-GitHub).
+  // Click: open the existing PR, else open the create-confirm. `onPr` is wired
+  // whenever there's a repo+branch; the bubble's own `prVisible` gate hides it when PR
+  // status is `unknown` (the base branch — never queried — or a non-GitHub repo).
   const onPr = $derived(
     gitProject?.path && prBranch
       ? () =>

@@ -134,9 +134,9 @@
 
 ## 20. Footer follow-ups: PR #N bubble, orange buttons, review tooltips (footer-actions)
 
-- [ ] 20.1 Per-branch PR bubble: enhance the existing footer PR button (to the right of the uncommitted pill, SEPARATE from the open-PRs-awaiting-review button) so it ALWAYS shows on a GitHub repo (hidden when PR existence is `unknown` / non-GitHub): `PR #<number>` highlighted when a PR exists (click → open it); gray `PR` when none (click → create-PR confirm → agent task). Remove the base-branch `disabled`. Thread the PR number + visibility from AppFooter.
-- [ ] 20.2 Revert the three popover primary-action buttons ("Push now"/"Commit now"/"Open PRs page") to ORANGE (`--caution-tint` / `--caution-500`), consistently.
-- [ ] 20.3 Tooltips: the CLICKABLE push pill and CLICKABLE uncommitted-files pill say "Click to review" (drop "push to publish"); the inert push pill no longer says "push to publish".
+- [x] 20.1 Per-branch PR bubble: enhance the existing footer PR button (to the right of the uncommitted pill, SEPARATE from the open-PRs-awaiting-review button) so it ALWAYS shows on a GitHub repo (hidden when PR existence is `unknown` / non-GitHub): `PR #<number>` highlighted when a PR exists (click → open it); gray `PR` when none (click → create-PR confirm → agent task). Remove the base-branch `disabled`. Thread the PR number + visibility from AppFooter.
+- [x] 20.2 Revert the three popover primary-action buttons ("Push now"/"Commit now"/"Open PRs page") to ORANGE (`--caution-tint` / `--caution-500`), consistently.
+- [x] 20.3 Tooltips: the CLICKABLE push pill and CLICKABLE uncommitted-files pill say "Click to review" (drop "push to publish"); the inert push pill no longer says "push to publish".
 
 ## 21. Validate & gate
 
