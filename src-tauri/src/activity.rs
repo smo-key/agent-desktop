@@ -363,6 +363,60 @@ pub fn user_messages(path: &Path) -> Vec<String> {
     out
 }
 
+/// User prose for TITLING — like [`user_messages`] but additionally drops
+/// skill/command/caveat SCAFFOLDING that pollutes a title. A transcript records
+/// several things with the `user` role that the user did not actually type: the
+/// "Base directory for this skill: …" prelude a `Skill` invocation injects (marked
+/// `isMeta`), `<command-name>` / `<command-message>` slash-command markup, the
+/// `[Request interrupted by user]` marker, and `<local-command-…>` wrappers. The
+/// small (1.7B) title model otherwise latches onto these — copying a skill path or
+/// an OpenSpec change slug into the title instead of naming the real work.
+///
+/// Title-only: [`user_messages`], [`Activity::user_hash`] and [`user_message_count`]
+/// are deliberately left UNCHANGED so the overview's auto-resume and empty-session
+/// gates keep their existing semantics; only the title prompt sees this cleaned view.
+/// Tolerant of malformed lines; empty when none / unreadable.
+pub fn title_user_messages(path: &Path) -> Vec<String> {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in body.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(t) else {
+            continue;
+        };
+        // Skill/meta scaffolding (e.g. the "Base directory for this skill: …" prelude)
+        // is recorded with `isMeta: true` — never the user's own prose.
+        if v.get("isMeta").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        if let Some(text) = user_text(&v) {
+            if !is_title_noise(&text) {
+                out.push(text);
+            }
+        }
+    }
+    out
+}
+
+/// Whether `t` is title-irrelevant SCAFFOLDING rather than the user's own prose:
+/// slash-command markup, the interrupt marker, a local-command wrapper, or a skill
+/// "Base directory" prelude that wasn't flagged `isMeta`. `t` is already trimmed.
+fn is_title_noise(t: &str) -> bool {
+    let s = t.trim();
+    s.starts_with("<command-name>")
+        || s.starts_with("<command-message>")
+        || s.starts_with("<local-command-caveat>")
+        || s.starts_with("<local-command-stdout>")
+        || s.starts_with("<local-command-stderr>")
+        || s.starts_with("[Request interrupted")
+        || s.starts_with("Base directory for this skill:")
+}
+
 /// The number of genuine USER prose messages in a transcript, counted over the
 /// WHOLE file (not the tail window). Stable under assistant/tool appends — so a
 /// strictly-increasing count is a reliable "the user sent a new message" signal,
@@ -925,6 +979,41 @@ mod tests {
             msgs,
             vec!["I'll fix it now".to_string(), "Done, tests added".to_string()]
         );
+    }
+
+    #[test]
+    fn title_user_messages_drops_skill_and_command_scaffolding() {
+        let tmp = TempDir::new("titlemsgs");
+        // A real request, a `Skill`-injected meta prelude (isMeta), a slash-command
+        // markup entry, an interrupt marker, a local-command caveat, then a refinement.
+        let mut meta_prelude = serde_json::json!({"type":"user","message":{"role":"user",
+            "content":"Base directory for this skill: /Users/x/.claude/skills/workflow-build\n\n# Workflow"}});
+        meta_prelude["isMeta"] = serde_json::json!(true);
+        let path = write_transcript(
+            tmp.path(),
+            "proj",
+            "sess-T",
+            &[
+                serde_json::json!({"type":"user","message":{"role":"user","content":"Allow changing the branch from the footer"}}),
+                meta_prelude,
+                serde_json::json!({"type":"user","message":{"role":"user","content":"<command-message>workflow-build</command-message> <command-name>/workflow-build</command-name>"}}),
+                serde_json::json!({"type":"user","message":{"role":"user","content":"[Request interrupted by user]"}}),
+                serde_json::json!({"type":"user","message":{"role":"user","content":"<local-command-caveat>Caveat: the messages below ...</local-command-caveat>"}}),
+                serde_json::json!({"type":"user","message":{"role":"user","content":"also add a confirm dialog"}}),
+            ],
+        );
+        // Only the two genuine prose messages survive — all scaffolding is dropped.
+        assert_eq!(
+            title_user_messages(&path),
+            vec![
+                "Allow changing the branch from the footer".to_string(),
+                "also add a confirm dialog".to_string(),
+            ]
+        );
+        // The UNFILTERED `user_messages` still sees the command/caveat entries (only
+        // exit/quit/clear/compact are filtered there) — proving the title view is a
+        // separate, stricter filter that does not change the existing semantics.
+        assert!(user_messages(&path).len() > 2);
     }
 
     #[test]
