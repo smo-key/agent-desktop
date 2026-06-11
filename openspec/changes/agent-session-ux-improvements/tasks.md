@@ -169,3 +169,9 @@
 - [x] 25.3 Drop `onOpenPrsClick` (openPrsActions.ts) — GitInfo opens the pulls page inline via its own `handleOpenPrsPage` (group 18). 
 - [x] 25.4 Drop `parse_awaiting_review_count` (pr.rs) — replaced by `parse_open_pr_list` + `awaiting_review_count_non_draft` (group 18). Remove its tests; the `non_draft_*` tests cover the production path.
 - [x] 25.5 Confirm no production regression: vitest 965, svelte-check 0/0, `cargo test` usage/pr/git all green; coverage gate PASS.
+
+## 26. Adversarial-review fixes (close-out)
+
+- [x] 26.1 CRITICAL — `everPrompted` ring-eviction regression: `deriveEventActivity` recomputed `everPrompted` from the bounded ring, so a coordinator's single long turn (>`EVENT_RING_CAP` events) evicted its original `UserPromptSubmit` and wrongly flipped the busy coordinator into the Needs-you lane. Fix: make `everPrompted` a DURABLE sticky latch in `EventStore` (set from live ingest AND seed via a new pure `impliesEverPrompted` — a prompt or any tool/Stop event proves a turn ran — never cleared), passed into `deriveEventActivity(events, stickyEverPrompted)`. Add the `agent-status-derivation` scenario "A long-running coordinator stays Working after its prompt ages out".
+- [x] 26.2 Tests: `deriveEventActivity` honors the sticky override (true even with a prompt-less ring; false without it); `impliesEverPrompted` truth table; `EventStore` regression — everPrompted survives the prompt being evicted from the ring, and latches from seeded turn activity with no prompt event.
+- [x] 26.3 WARNING — `resetClause`/`usageLimitTooltip` rendered a NON-FUTURE reset (already elapsed, equal-to-now, or a 0/epoch value) as a misleading past/1969 clock time. Fix: omit the clause unless `resetsAt > nowSeconds`, matching `timeRemainingShort`'s "—". Add tests for elapsed / equal-to-now / epoch.

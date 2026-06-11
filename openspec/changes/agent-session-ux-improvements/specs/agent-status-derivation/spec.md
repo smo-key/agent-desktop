@@ -55,3 +55,7 @@ regardless.
 #### Scenario: Engaged but quiet coordinator stays Working
 - **WHEN** a coordinator has started at least one turn and is now quiet, with no pending question and no request_user_input flag
 - **THEN** it is shown as Working (out of attention), not Waiting
+
+#### Scenario: A long-running coordinator stays Working after its prompt ages out
+- **WHEN** a coordinator has started its first turn and then runs a single long turn whose events push the original `UserPromptSubmit` out of the bounded activity ring
+- **THEN** it still reads Working — the "has started a turn" signal is latched DURABLY (it survives ring eviction) rather than recomputed from the ring contents — not Waiting

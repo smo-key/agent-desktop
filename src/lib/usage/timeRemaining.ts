@@ -41,15 +41,19 @@ export const DEFAULT_CLOCK: ClockFormat = {
  * The "when does this window reset" clause for a tooltip, as an ABSOLUTE local
  * time: "resets at 3:45 PM" when the reset is later TODAY, or "resets Jun 12 at
  * 3:45 PM" when it falls on a different calendar day (so a far-off 7-day reset is
- * unambiguous). A null/non-finite `resetsAt` returns null so the caller can omit
- * the clause. The same-day test and string composition are PURE given `fmt`.
+ * unambiguous). Returns null (caller omits the clause) when there is no known FUTURE
+ * reset: a null/non-finite `resetsAt`, OR one that is not still ahead of `nowSeconds`
+ * (already elapsed, or a 0/epoch/stale value) — which would otherwise render a
+ * misleading past or 1969-epoch clock time. This matches `timeRemainingShort`, which
+ * shows "—" for the same inputs. The same-day test and string composition are PURE
+ * given `fmt`.
  */
 export function resetClause(
   resetsAt: number | null,
   nowSeconds: number,
   fmt: ClockFormat = DEFAULT_CLOCK
 ): string | null {
-  if (resetsAt === null || !Number.isFinite(resetsAt)) return null;
+  if (resetsAt === null || !Number.isFinite(resetsAt) || resetsAt <= nowSeconds) return null;
   const when = new Date(resetsAt * 1000);
   const now = new Date(nowSeconds * 1000);
   const sameDay =

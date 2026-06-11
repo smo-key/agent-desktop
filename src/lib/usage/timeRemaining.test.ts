@@ -58,6 +58,14 @@ describe('resetClause', () => {
     expect(resetClause(null, NOW, FMT)).toBeNull();
     expect(resetClause(Number.NaN, NOW, FMT)).toBeNull();
   });
+
+  it('null for a non-future reset (elapsed, equal-to-now, or a 0/epoch value)', () => {
+    // An already-elapsed reset must not render a misleading past time — omit the clause,
+    // matching `timeRemainingShort`, which shows "—" for the same inputs.
+    expect(resetClause(NOW - 600, NOW, FMT)).toBeNull(); // 10 min ago
+    expect(resetClause(NOW, NOW, FMT)).toBeNull(); // exactly now
+    expect(resetClause(0, NOW, FMT)).toBeNull(); // 0/epoch (never the 1969 clock time)
+  });
 });
 
 // `it(...)` titles match the usage-dashboard spec `#### Scenario:` names so the

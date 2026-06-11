@@ -12,7 +12,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
 
 import { EventStore } from './events.svelte';
-import type { AgentEvent } from './events';
+import { EVENT_RING_CAP, type AgentEvent } from './events';
 
 function ev(name: string, over: Partial<AgentEvent> = {}): AgentEvent {
   return { paneId: 'p1', sessionId: 's1', hookEventName: name, ts: 0, ...over };
@@ -61,6 +61,35 @@ describe('EventStore', () => {
     expect(store.timeline('p1')).toHaveLength(2);
     // A malformed session value is ignored, not stored.
     expect(store.timeline('bad')).toHaveLength(0);
+  });
+
+  // REGRESSION: a coordinator prompted once then running a single long turn emits more
+  // than the ring cap of events, evicting its original UserPromptSubmit from the bounded
+  // ring. The sticky latch must keep everPrompted true so the busy coordinator stays
+  // Working (out of the Needs-you lane) rather than flipping back to Waiting.
+  it('everPrompted survives the prompt being evicted from the ring', () => {
+    const store = new EventStore();
+    store.ingest(ev('UserPromptSubmit', { ts: 0 }));
+    for (let i = 0; i < EVENT_RING_CAP + 50; i++) {
+      store.ingest(
+        ev(i % 2 === 0 ? 'PreToolUse' : 'PostToolUse', { toolName: 'Bash', summary: `b${i}`, ts: i + 1 })
+      );
+    }
+    // The bounded ring no longer holds the UserPromptSubmit…
+    expect(store.timeline('p1').some((e) => e.hookEventName === 'UserPromptSubmit')).toBe(false);
+    // …but the sticky latch keeps everPrompted true.
+    expect(store.activityFor('p1').everPrompted).toBe(true);
+  });
+
+  it('everPrompted latches from seeded turn activity without a prompt event', async () => {
+    // A resume whose seeded slice holds only later turn activity (no UserPromptSubmit)
+    // still proves the session was prompted, so the latch is set.
+    invokeMock.mockResolvedValueOnce({
+      p1: [ev('PostToolUse', { toolName: 'Bash', ts: 5 }), ev('Stop', { ts: 6 })]
+    });
+    const store = new EventStore();
+    await store.seed([{ paneId: 'p1', sessionId: 's1', cwd: null }]);
+    expect(store.activityFor('p1').everPrompted).toBe(true);
   });
 
   // INTERRUPT: pressing Esc aborts the in-flight tool, but claude fires NO PostToolUse

@@ -57,7 +57,12 @@ export interface EventActivity {
    *  has ever been observed (the user typed, or an escalation was injected). A session
    *  with NONE is sitting at the freshly-launched prompt awaiting its first instruction.
    *  The roster reads this for the coordinator: a never-prompted coordinator is shown
-   *  `waiting` (awaiting you), not the default `working` suppression. Absent ≡ false. */
+   *  `waiting` (awaiting you), not the default `working` suppression. Absent ≡ false.
+   *  NOTE: deriving this from the bounded ring ALONE is unsafe — a single long turn can
+   *  emit >`EVENT_RING_CAP` events and EVICT the original `UserPromptSubmit`, which would
+   *  wrongly flip a busy coordinator back to `waiting`. `EventStore` therefore keeps a
+   *  durable per-pane latch and passes it as `stickyEverPrompted` to `deriveEventActivity`
+   *  (see `events.svelte.ts` + `impliesEverPrompted`), so the signal survives eviction. */
   everPrompted?: boolean;
 }
 
@@ -134,14 +139,22 @@ function questionText(questions: PendingQuestion[]): string | null {
  * `currentAction` is the latest PreToolUse summary with no matching PostToolUse,
  * cleared when that tool's PostToolUse or a turn-ending Stop arrives.
  */
-export function deriveEventActivity(events: AgentEvent[]): EventActivity {
-  if (events.length === 0) return EMPTY;
+export function deriveEventActivity(
+  events: AgentEvent[],
+  stickyEverPrompted = false
+): EventActivity {
+  if (events.length === 0) {
+    return stickyEverPrompted ? { ...EMPTY, everPrompted: true } : EMPTY;
+  }
 
   // Has this session ever started a turn? A `UserPromptSubmit` fires whenever a prompt
   // is submitted — typed by the user OR injected (e.g. an escalation to a coordinator).
   // Until one arrives the session is idle at the freshly-launched prompt (see the
-  // coordinator handling in `roster.ts`).
-  const everPrompted = events.some((ev) => ev.hookEventName === 'UserPromptSubmit');
+  // coordinator handling in `roster.ts`). `stickyEverPrompted` is the store's durable
+  // latch (events.svelte.ts): it survives the original prompt aging out of the bounded
+  // ring during a long turn, so we OR it in rather than trusting the ring contents alone.
+  const everPrompted =
+    stickyEverPrompted || events.some((ev) => ev.hookEventName === 'UserPromptSubmit');
 
   // Track the in-flight tool: a PreToolUse clears on its PostToolUse or a turn end.
   let inFlight: AgentEvent | null = null;
@@ -216,4 +229,25 @@ export function deriveEventActivity(events: AgentEvent[]): EventActivity {
 export function appendBounded(list: AgentEvent[], ev: AgentEvent): AgentEvent[] {
   const next = [...list, ev];
   return next.length > EVENT_RING_CAP ? next.slice(next.length - EVENT_RING_CAP) : next;
+}
+
+/**
+ * PURE: does this event PROVE the session has begun a turn? A `UserPromptSubmit` is the
+ * direct signal, but any tool-use or turn-boundary event (`PreToolUse`/`PostToolUse`/
+ * `Stop`/`SubagentStop`) also implies a turn ran — a session cannot run a tool or end a
+ * turn without first being prompted. `EventStore` feeds BOTH live ingestion and seeded
+ * history through this to set its sticky `everPrompted` latch, so the signal is robust
+ * even after the original `UserPromptSubmit` has aged out of the bounded ring.
+ */
+export function impliesEverPrompted(ev: AgentEvent): boolean {
+  switch (ev.hookEventName) {
+    case 'UserPromptSubmit':
+    case 'PreToolUse':
+    case 'PostToolUse':
+    case 'Stop':
+    case 'SubagentStop':
+      return true;
+    default:
+      return false;
+  }
 }

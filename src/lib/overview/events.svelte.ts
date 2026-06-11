@@ -17,6 +17,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import {
   appendBounded,
   deriveEventActivity,
+  impliesEverPrompted,
   type AgentEvent,
   type EventActivity
 } from './events';
@@ -55,14 +56,27 @@ export class EventStore {
    */
   onEvent?: (ev: AgentEvent) => void;
 
+  /**
+   * Sticky per-pane "has ever begun a turn" latch. The bounded ring (`appendBounded`,
+   * `EVENT_RING_CAP`) drops the OLDEST events, so a single long turn (>cap events) can
+   * EVICT the original `UserPromptSubmit`. Recomputing `everPrompted` from the ring
+   * alone would then report `false` and wrongly flip a busy coordinator into the
+   * Needs-you lane. We set this latch the moment ANY turn activity is ingested or seeded
+   * (a prompt, or any tool/Stop event that PROVES a turn ran — see `impliesEverPrompted`)
+   * and NEVER clear it, so the signal survives ring eviction. Keyed by paneId. Not
+   * `$state`: every mutation accompanies a `byPane` mutation, whose reactivity already
+   * re-runs `activityFor`/`activityMap`. */
+  private everPromptedPanes = new Set<string>();
+
   /** The ordered timeline for a pane (empty when none / not yet seeded). */
   timeline(paneId: string): AgentEvent[] {
     return this.byPane[paneId] ?? [];
   }
 
-  /** The derived event activity (status + currentAction + question) for a pane. */
+  /** The derived event activity (status + currentAction + question) for a pane. The
+   *  sticky `everPrompted` latch is overlaid so it survives ring eviction (see above). */
   activityFor(paneId: string): EventActivity {
-    return deriveEventActivity(this.timeline(paneId));
+    return deriveEventActivity(this.timeline(paneId), this.everPromptedPanes.has(paneId));
   }
 
   /** The derived `paneId -> EventActivity` map for every pane with events, for the
@@ -76,6 +90,7 @@ export class EventStore {
   /** Ingest one live event, appending it to its pane's bounded ring, then firing
    *  the optional `onEvent` side-effect hook. */
   ingest(ev: AgentEvent): void {
+    if (impliesEverPrompted(ev)) this.everPromptedPanes.add(ev.paneId);
     this.byPane[ev.paneId] = appendBounded(this.byPane[ev.paneId] ?? [], ev);
     this.onEvent?.(ev);
   }
@@ -115,6 +130,10 @@ export class EventStore {
       for (const [paneId, events] of Object.entries(map)) {
         const clean = Array.isArray(events) ? events.filter(isEvent) : [];
         if (clean.length === 0) continue; // nothing authoritative to seed; keep existing
+        // Latch everPrompted from seeded history too, so a resume of a long-running
+        // session keeps a busy coordinator out of the Needs-you lane even when the
+        // seeded slice no longer contains the original prompt (only later turn activity).
+        if (clean.some(impliesEverPrompted)) this.everPromptedPanes.add(paneId);
         // MERGE rather than overwrite. `clean` is authoritative for real events up to its
         // last `ts`, but the live map may already hold things the snapshot can't reproduce:
         // a frontend-only synthetic interrupt Stop, and live events that landed AFTER the

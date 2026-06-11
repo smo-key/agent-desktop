@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { appendBounded, deriveEventActivity, EVENT_RING_CAP, type AgentEvent } from './events';
+import {
+  appendBounded,
+  deriveEventActivity,
+  EVENT_RING_CAP,
+  impliesEverPrompted,
+  type AgentEvent
+} from './events';
 
 // PURE event-derivation tests. The `it(...)` titles are the EXACT `#### Scenario:`
 // names from the activity-timeline spec (Requirement: Derive Session Status From
@@ -66,6 +72,23 @@ describe('deriveEventActivity', () => {
     expect(
       deriveEventActivity([ev('UserPromptSubmit'), ev('Stop'), ev('SessionStart')]).everPrompted
     ).toBe(true);
+    // The store's sticky latch (`stickyEverPrompted`) forces it true even when the ring
+    // no longer holds a UserPromptSubmit (the original prompt was evicted in a long turn).
+    expect(deriveEventActivity([ev('PostToolUse')], true).everPrompted).toBe(true);
+    expect(deriveEventActivity([], true).everPrompted).toBe(true);
+    // Without the latch, a ring with no prompt reads false.
+    expect(deriveEventActivity([ev('PostToolUse')]).everPrompted).toBe(false);
+  });
+
+  it('impliesEverPrompted treats any turn activity as proof of a prompt', () => {
+    // A prompt, or any tool-use / turn-boundary event, proves a turn ran; SessionStart /
+    // SessionEnd / Notification do not (a freshly launched session has only SessionStart).
+    for (const name of ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'SubagentStop']) {
+      expect(impliesEverPrompted(ev(name))).toBe(true);
+    }
+    for (const name of ['SessionStart', 'SessionEnd', 'Notification']) {
+      expect(impliesEverPrompted(ev(name))).toBe(false);
+    }
   });
 
   it('Clear does not finish the session', () => {
