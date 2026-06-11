@@ -115,7 +115,7 @@
             <!-- svelte-ignore a11y_autofocus -->
             <input
               class="rename"
-              style="top: {anchorRect.top}px; left: {anchorRect.left}px; height: {anchorRect.height}px; width: min(440px, calc(100vw - {anchorRect.left}px - 16px));"
+              style="top: {anchorRect.top}px; left: {anchorRect.left}px; height: {anchorRect.height}px; width: min(720px, calc(100vw - {anchorRect.left}px - 16px));"
               bind:value={draft}
               onkeydown={onRenameKey}
               onblur={commitRename}
