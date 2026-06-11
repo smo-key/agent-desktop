@@ -25,6 +25,7 @@
     groupByLane,
     needsAttention,
     isArchivedCoordinator,
+    showContext,
     LANE_ORDER,
     laneForRow,
     type AgentLane,
@@ -919,14 +920,8 @@
       : { icon: 'folder', color: '#7B8499' };
   }
 
-  /** Whether a row shows the CONTEXT-window measure (with its mini-bar) in the meta
-   *  row: only LIVE agents — not archived/previewed (closed) or paused. Archived and
-   *  paused rows drop context and show just cost + last activity. */
-  function showMeta(r: AgentRow): boolean {
-    return !r.closed && !r.preview && !r.paused;
-  }
-
-  /** Context-window usage as a compact percent, or an em dash when unknown. */
+  /** Context-window usage as a compact percent. Only rendered when known (the meta
+   *  span is gated on `showContext`), so this never sees a null. */
   function ctxLabel(pct: number | null): string {
     return pct === null ? '—' : `${Math.round(pct)}%`;
   }
@@ -1008,7 +1003,7 @@
       </span>
       <span class="s" class:q={needsAttention(r)} use:tooltip={rowSub(r)}>{rowSub(r)}</span>
       <span class="meta">
-        {#if showMeta(r)}
+        {#if showContext(r)}
           <span class="m ctx" use:tooltip={'Context window used by this agent'}>
             <span class="ctxbar"><StatusBar pct={r.contextPct} /></span>
             {ctxLabel(r.contextPct)}

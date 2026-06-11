@@ -118,6 +118,19 @@ export function needsAttention(row: AgentRow): boolean {
 }
 
 /**
+ * PURE: whether a roster row should show the CONTEXT-window measure (mini-bar +
+ * percent) in its meta line. Only a LIVE agent — not archived/previewed (closed)
+ * or paused — AND only once a context size is actually known: a row with no
+ * context percentage yet (`null`) shows NOTHING rather than a placeholder dash /
+ * striped bar, so a just-spawned agent's card stays clean until real data lands.
+ */
+export function showContext(
+  row: Pick<AgentRow, 'closed' | 'preview' | 'paused' | 'contextPct'>
+): boolean {
+  return !row.closed && !row.preview && !row.paused && row.contextPct !== null;
+}
+
+/**
  * PURE: partition the roster into its lanes, preserving the original roster order
  * within each lane. Always returns all keys (empty arrays when a lane has no
  * agents) so the Overview can decide whether to render each lane.
@@ -423,8 +436,16 @@ function rowFor(
   // (the `coordFlag`). When it does, force `waiting` (→ the Needs-you lane); when it
   // doesn't, force `working` so a quiet coordinator stays out of attention. A closed/
   // exited coordinator keeps its derived (finished/error) status — it's not "live".
+  //
+  // EXCEPTION — a FRESHLY LAUNCHED coordinator: it spawns at an empty prompt
+  // (`startCoordinator` launches with `prompt:''`) and does nothing until you give it
+  // its first instruction, so before its first turn (`everPrompted === false`) it is
+  // genuinely `waiting` on YOU, not `working`. Once it has started a turn (you typed,
+  // or an escalation was injected) the quiet-stays-working suppression resumes.
   if (pane.role === 'coordinator' && !closed && !runtime?.exited) {
-    status = coordinatorNeedsInput({ question, questions }, coordFlag) ? 'waiting' : 'working';
+    const everPrompted = event?.everPrompted === true;
+    const needsYou = coordinatorNeedsInput({ question, questions }, coordFlag) || !everPrompted;
+    status = needsYou ? 'waiting' : 'working';
   }
   // TERMINAL-BUSY In-flight override (agent-status-derivation): Claude Code may be
   // actively working while its event hooks report idle — a foreground command

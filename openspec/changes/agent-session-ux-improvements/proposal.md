@@ -82,6 +82,20 @@ are one click away.
   a genuinely new later task can still take over the title.
 - **Insert-filename shortcut → ⌘O** — the insert-file-path shortcut moves from ⌘I
   to ⌘O (help modal and pane menu updated to match).
+- **Freshly launched coordinator reads Waiting** — a just-launched coordinator
+  spawns at an empty prompt and does nothing until prompted, so until its first turn
+  it now reads **Waiting** (Needs you), awaiting your first instruction — instead of
+  the misleading **Working**. Once it has started a turn, the existing
+  quiet-stays-Working suppression resumes (a quiet, engaged coordinator stays out of
+  attention unless it asks a question or sets `request_user_input`).
+- **Agent card hides context until known** — an agent card shows the context-window
+  mini-bar and percent only once a context size is actually known; a just-spawned
+  agent whose first snapshot has not landed shows nothing there (no placeholder dash
+  or empty/striped bar) rather than a misleading `—`.
+- **Footer usage tooltips show the reset time** — each footer rate-limit bar's
+  tooltip now states WHEN that window resets as an absolute local time: just the time
+  on the same day (e.g. "resets at 3:45 PM"), or the date and time on a different day
+  (e.g. "resets Jun 12 at 3:45 PM"); omitted when the reset time is unknown.
 
 ## Capabilities
 

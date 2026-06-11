@@ -53,13 +53,25 @@ export interface EventActivity {
   question: string | null;
   /** The full structured pending question(s) the user can answer, or null. */
   questions: PendingQuestion[] | null;
+  /** Whether this session has begun its FIRST turn — true once a `UserPromptSubmit`
+   *  has ever been observed (the user typed, or an escalation was injected). A session
+   *  with NONE is sitting at the freshly-launched prompt awaiting its first instruction.
+   *  The roster reads this for the coordinator: a never-prompted coordinator is shown
+   *  `waiting` (awaiting you), not the default `working` suppression. Absent ≡ false. */
+  everPrompted?: boolean;
 }
 
 /** Max events retained per pane in the reactive store (mirrors the Rust ring cap). */
 export const EVENT_RING_CAP = 500;
 
 /** An empty activity (no events / nothing determined). */
-const EMPTY: EventActivity = { status: null, currentAction: null, question: null, questions: null };
+const EMPTY: EventActivity = {
+  status: null,
+  currentAction: null,
+  question: null,
+  questions: null,
+  everPrompted: false
+};
 
 /** PURE: coerce a raw `{questions:[...]}` payload into clean `PendingQuestion[]`, or
  *  null. Drops malformed entries; a question with no prompt text is skipped. */
@@ -125,6 +137,12 @@ function questionText(questions: PendingQuestion[]): string | null {
 export function deriveEventActivity(events: AgentEvent[]): EventActivity {
   if (events.length === 0) return EMPTY;
 
+  // Has this session ever started a turn? A `UserPromptSubmit` fires whenever a prompt
+  // is submitted — typed by the user OR injected (e.g. an escalation to a coordinator).
+  // Until one arrives the session is idle at the freshly-launched prompt (see the
+  // coordinator handling in `roster.ts`).
+  const everPrompted = events.some((ev) => ev.hookEventName === 'UserPromptSubmit');
+
   // Track the in-flight tool: a PreToolUse clears on its PostToolUse or a turn end.
   let inFlight: AgentEvent | null = null;
   for (const ev of events) {
@@ -151,13 +169,14 @@ export function deriveEventActivity(events: AgentEvent[]): EventActivity {
       status: 'waiting',
       currentAction,
       question: questions ? questionText(questions) : null,
-      questions
+      questions,
+      everPrompted
     };
   }
 
   // Any other tool in flight → working.
   if (inFlight) {
-    return { status: 'working', currentAction, question: null, questions: null };
+    return { status: 'working', currentAction, question: null, questions: null, everPrompted };
   }
 
   // No tool in flight: classify from the most recent event.
@@ -190,7 +209,7 @@ export function deriveEventActivity(events: AgentEvent[]): EventActivity {
     default:
       status = null;
   }
-  return { status, currentAction: null, question: null, questions: null };
+  return { status, currentAction: null, question: null, questions: null, everPrompted };
 }
 
 /** PURE: append an event to a pane's list, bounded to the ring cap (oldest dropped). */

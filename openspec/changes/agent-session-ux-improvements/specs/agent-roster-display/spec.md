@@ -75,3 +75,20 @@ the per-agent dollar amount (cost remains tracked and surfaced in the aggregate 
 #### Scenario: No per-agent cost on the card
 - **WHEN** an agent card renders
 - **THEN** no per-agent dollar cost is shown on the card
+
+### Requirement: The agent card hides context until a size is known
+
+An agent card SHALL show the context-window measure (the mini-bar and percent) ONLY
+when a context size is actually known for that agent. WHEN the agent has no context
+percentage yet (the value is unknown/null — e.g. a just-spawned agent whose first
+snapshot has not landed), the card SHALL OMIT the context bar and percent entirely
+rather than render a placeholder dash or an empty/striped bar. Archived, previewed,
+and paused agents continue to omit the context measure as before.
+
+#### Scenario: Context shown once known
+- **WHEN** an agent card renders for a live agent whose context percentage is known
+- **THEN** the card shows the context mini-bar and percent
+
+#### Scenario: Context hidden when unknown
+- **WHEN** an agent card renders for an agent that has no context percentage yet (unknown/null)
+- **THEN** the card shows neither the context bar nor a percent (no placeholder dash or empty bar)

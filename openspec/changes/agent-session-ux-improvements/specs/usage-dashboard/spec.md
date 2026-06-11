@@ -42,3 +42,25 @@ SHALL be clickable.
 #### Scenario: Pills are display-only
 - **WHEN** the user clicks a footer model or effort pill
 - **THEN** nothing happens (the pills are not interactive)
+
+### Requirement: Footer usage tooltips show when each window resets
+
+Each footer rate-limit bar (the 5-hour and 7-day windows) SHALL expose a tooltip that
+states the percent used AND WHEN that window resets, given as an ABSOLUTE local time:
+just the time-of-day (e.g. "resets at 3:45 PM") when the reset falls later on the same
+calendar day, or the date and time (e.g. "resets Jun 12 at 3:45 PM") when it falls on a
+different day. WHEN the reset time is unknown, the tooltip SHALL omit the reset clause
+and show only the percent used. The reset time SHALL be rendered in the user's local
+timezone and locale.
+
+#### Scenario: Tooltip shows a same-day reset as a time
+- **WHEN** a rate-limit window resets later on the same calendar day and its tooltip is shown
+- **THEN** the tooltip includes the percent used and the absolute reset time (e.g. "resets at 3:45 PM")
+
+#### Scenario: Tooltip shows a different-day reset as date and time
+- **WHEN** a rate-limit window resets on a different calendar day and its tooltip is shown
+- **THEN** the tooltip includes the reset date and time (e.g. "resets Jun 12 at 3:45 PM")
+
+#### Scenario: Tooltip omits an unknown reset
+- **WHEN** a rate-limit window's reset time is unknown
+- **THEN** its tooltip shows only the percent used, with no reset clause

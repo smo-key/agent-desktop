@@ -49,6 +49,25 @@ describe('deriveEventActivity', () => {
     expect(resumed.status).toBe('waiting');
   });
 
+  it('Tracks whether the session has ever been prompted', () => {
+    // No events / only a SessionStart → never prompted (sitting at the launch prompt).
+    expect(deriveEventActivity([]).everPrompted).toBe(false);
+    expect(deriveEventActivity([ev('SessionStart')]).everPrompted).toBe(false);
+    // The first UserPromptSubmit (typed or injected) flips it on, and it stays on
+    // across later turns — including while a tool is in flight and after a Stop.
+    expect(deriveEventActivity([ev('UserPromptSubmit')]).everPrompted).toBe(true);
+    expect(
+      deriveEventActivity([
+        ev('SessionStart'),
+        ev('UserPromptSubmit'),
+        ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:x' })
+      ]).everPrompted
+    ).toBe(true);
+    expect(
+      deriveEventActivity([ev('UserPromptSubmit'), ev('Stop'), ev('SessionStart')]).everPrompted
+    ).toBe(true);
+  });
+
   it('Clear does not finish the session', () => {
     // `/clear` fires SessionEnd(reason:"clear") but the claude PROCESS continues (a
     // SessionStart follows), so it is idle at the freshly-cleared prompt — `waiting`,

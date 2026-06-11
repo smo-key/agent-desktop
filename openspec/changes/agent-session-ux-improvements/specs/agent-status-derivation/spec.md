@@ -35,3 +35,23 @@ before (fail-safe).
 #### Scenario: No indicator means unchanged behavior
 - **WHEN** no active-work indicator is present in the terminal
 - **THEN** the agent's status is derived exactly as it was before this change
+
+### Requirement: A freshly launched coordinator reads Waiting, not Working
+
+A LIVE project coordinator that has NEVER started a turn SHALL be shown as **Waiting**
+(Needs you): it spawned at an empty prompt and has not yet been prompted (no
+`UserPromptSubmit`, whether typed by the user or injected by an escalation), so it is
+idle awaiting its first instruction. This is an EXCEPTION to the coordinator's
+quiet-stays-Working suppression: ONCE the coordinator has started its first turn, a
+quiet/between-turns coordinator with no pending question and no `request_user_input`
+flag SHALL continue to read **Working** (out of attention) as before. A coordinator
+that asks an AskUserQuestion or sets the `request_user_input` flag SHALL read Waiting
+regardless.
+
+#### Scenario: Just-launched coordinator awaits the first instruction
+- **WHEN** a coordinator has just been launched and has never been prompted (no turn has started)
+- **THEN** it is shown as Waiting (Needs you), awaiting your first instruction
+
+#### Scenario: Engaged but quiet coordinator stays Working
+- **WHEN** a coordinator has started at least one turn and is now quiet, with no pending question and no request_user_input flag
+- **THEN** it is shown as Working (out of attention), not Waiting

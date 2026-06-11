@@ -2,10 +2,11 @@
   // The combined account-wide rate-limit bars (5h + 7d) grouped as one unit. Each
   // reads, left to right: the TIME REMAINING until that window resets (compact
   // "12M"/"5H"/"6D", colored the SAME as its bar), then the StatusBar (fill colored
-  // by fullness), then the USED percentage in plain white. A dash when unknown.
+  // by fullness), then the USED percentage in plain white. A dash when unknown. The
+  // StatusBar tooltip spells out the used percent AND when the window resets.
   import StatusBar from './StatusBar.svelte';
   import { barColor } from './barColor';
-  import { timeRemainingShort } from './timeRemaining';
+  import { timeRemainingShort, usageLimitTooltip } from './timeRemaining';
   import type { RateWindow } from './rollup';
 
   let {
@@ -25,14 +26,20 @@
     <span class="time" style:color={barColor(fiveHour.usedPct)}>
       {timeRemainingShort(fiveHour.resetsAt, now)}
     </span>
-    <StatusBar pct={fiveHour.usedPct} label={`5-hour limit — ${usedLabel(fiveHour.usedPct)} used`} />
+    <StatusBar
+      pct={fiveHour.usedPct}
+      label={usageLimitTooltip('5-hour', fiveHour.usedPct, fiveHour.resetsAt, now)}
+    />
     <span class="pct">{usedLabel(fiveHour.usedPct)}</span>
   </div>
   <div class="limit">
     <span class="time" style:color={barColor(sevenDay.usedPct)}>
       {timeRemainingShort(sevenDay.resetsAt, now)}
     </span>
-    <StatusBar pct={sevenDay.usedPct} label={`7-day limit — ${usedLabel(sevenDay.usedPct)} used`} />
+    <StatusBar
+      pct={sevenDay.usedPct}
+      label={usageLimitTooltip('7-day', sevenDay.usedPct, sevenDay.resetsAt, now)}
+    />
     <span class="pct">{usedLabel(sevenDay.usedPct)}</span>
   </div>
 </div>
