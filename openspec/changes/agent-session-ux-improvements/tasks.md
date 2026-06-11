@@ -88,11 +88,11 @@
 
 ## 13. Snapshot `model_id` + `effort` + label helpers (usage-dashboard)
 
-- [ ] 13.1 In `src-tauri/resources/statusline-wrapper.cjs`, extend the derived snapshot object to also emit `model_id` (from `data.model?.id`) and `effort` (from `data.effort?.level`), defensively (absent → null), mirroring how `model` is derived; update `statusline-wrapper.test.ts` for the two new fields.
-- [ ] 13.2 In `src-tauri/src/usage.rs`, add `model_id: Option<String>` and `effort: Option<String>` to `Snapshot` (`#[serde(default)]`); update the snapshot (de)serialization/round-trip tests and the snapshot-shape assertions.
-- [ ] 13.3 In `src/lib/usage/snapshots.svelte.ts`, add `model_id: string | null` and `effort: string | null` to the `Snapshot` interface (and wherever snapshots are mapped).
-- [ ] 13.4 Add pure helpers in a new `src/lib/usage/modelLabel.ts`: `modelLabel(id, displayName)` → a versioned label (e.g. `claude-opus-4-8` → "Opus 4.8"), falling back to `displayName`, then `—`; `effortLabel(level)` → a capitalized label ("low"→"Low", "xhigh"→"XHigh", "max"→"Max"), null/empty → null.
-- [ ] 13.5 Tests for `modelLabel`/`effortLabel`: id parsing for opus/sonnet/haiku incl. a dated suffix; unrecognized id → display-name fallback; null → "—"; each effort level incl. `xhigh`; null/absent effort → null.
+- [x] 13.1 In `src-tauri/resources/statusline-wrapper.cjs`, extend the derived snapshot object to also emit `model_id` (from `data.model?.id`) and `effort` (from `data.effort?.level`), defensively (absent → null), mirroring how `model` is derived; update `statusline-wrapper.test.ts` for the two new fields.
+- [x] 13.2 In `src-tauri/src/usage.rs`, add `model_id: Option<String>` and `effort: Option<String>` to `Snapshot` (`#[serde(default)]`); update the snapshot (de)serialization/round-trip tests and the snapshot-shape assertions.
+- [x] 13.3 In `src/lib/usage/snapshots.svelte.ts`, add `model_id: string | null` and `effort: string | null` to the `Snapshot` interface (and wherever snapshots are mapped).
+- [x] 13.4 Add pure helpers in a new `src/lib/usage/modelLabel.ts`: `modelLabel(id, displayName)` → a versioned label (e.g. `claude-opus-4-8` → "Opus 4.8"), falling back to `displayName`, then `—`; `effortLabel(level)` → a capitalized label ("low"→"Low", "xhigh"→"XHigh", "max"→"Max"), null/empty → null.
+- [x] 13.5 Tests for `modelLabel`/`effortLabel`: id parsing for opus/sonnet/haiku incl. a dated suffix; unrecognized id → display-name fallback; null → "—"; each effort level incl. `xhigh`; null/absent effort → null.
 
 ## 14. Footer model + effort pills (usage-dashboard)
 
