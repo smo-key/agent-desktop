@@ -650,6 +650,31 @@ mod tests {
         assert_eq!(parse_pulls_url(r#"{"url":""}"#), None);
     }
 
+    #[test]
+    fn parse_repo_url_returns_the_base_url() {
+        assert_eq!(
+            parse_repo_url(r#"{"url":"https://github.com/o/r"}"#),
+            Some("https://github.com/o/r".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_repo_url_strips_trailing_slash() {
+        // A trailing slash is stripped so callers can append `/commit/<sha>` cleanly.
+        assert_eq!(
+            parse_repo_url(r#"{"url":"https://github.com/o/r/"}"#),
+            Some("https://github.com/o/r".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_repo_url_none_for_missing_or_bad_output() {
+        assert_eq!(parse_repo_url(""), None);
+        assert_eq!(parse_repo_url("not json"), None);
+        assert_eq!(parse_repo_url("{}"), None);
+        assert_eq!(parse_repo_url(r#"{"url":""}"#), None);
+    }
+
     // ── open-PRs list parser ─────────────────────────────────────────────────
 
     #[test]

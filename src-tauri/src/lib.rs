@@ -1141,6 +1141,16 @@ async fn open_prs_for(repo_path: String, base: String) -> Result<pr::OpenPrs, St
     Ok(pr::open_prs_for(&repo_path, &base).await)
 }
 
+/// Resolve the repo's BASE web URL for `repo_path` via `gh repo view --json url`
+/// (e.g. `https://github.com/o/r`), for the footer push popover's per-commit diff
+/// links. Returns `null` (NOT an error) when the repo isn't on a host gh
+/// recognizes or `gh` is missing/unauthenticated/errors. Best-effort; the
+/// frontend treats `null` as "no link" and keeps the commit rows inert.
+#[tauri::command(async)]
+async fn repo_web_url(repo_path: String) -> Result<Option<String>, String> {
+    Ok(pr::repo_url_for(&repo_path).await)
+}
+
 /// Create a fresh session worktree off `repo_path`'s HEAD (auto-worktree
 /// projects). Returns `{ path, branch, base }`; ensures `.worktrees` is gitignored
 /// and the branch is unique. `Err` when `repo_path` isn't a git repo or git fails.
@@ -1392,6 +1402,7 @@ pub fn run() {
             git_create_branch,
             pr_status_for,
             open_prs_for,
+            repo_web_url,
             worktree_create,
             worktree_remove_if_clean,
             worktree_list,

@@ -50,7 +50,12 @@
   import type { CommitProject } from './commitPopover';
   import { spawnCommitFromPopover } from './commitPopover';
   import type { PushCommit } from '$lib/projects/projectGitActions';
-  import { commitsToPush, pushProject as doPushProject } from '$lib/projects/projectGitActions';
+  import {
+    commitsToPush,
+    pushProject as doPushProject,
+    repoWebUrl,
+    commitWebUrl
+  } from '$lib/projects/projectGitActions';
   import { pushPopoverOpen as canPushPopover } from './pushPopover';
   import { invoke } from '@tauri-apps/api/core';
   import { sortPrsForPopover, type OpenPr } from '$lib/projects/openPrsActions';
@@ -159,21 +164,45 @@
   let pushPillEl = $state<HTMLButtonElement | null>(null);
   let pushCommits = $state<PushCommit[]>([]);
   let pushCommitsLoading = $state(false);
+  // The repo's GitHub base URL, resolved when the popover opens so each commit
+  // row can link to its diff view. Null (non-GitHub / gh unavailable) → rows
+  // stay inert display rows, mirroring how the PR bubble hides off GitHub.
+  let pushRepoUrl = $state<string | null>(null);
 
   function openPushPopover() {
     if (!pushable) return;
     pushPopoverOpenState = true;
+    pushRepoUrl = null;
     // Lazily fetch the commit list when the popover opens.
     pushCommitsLoading = true;
     void commitsToPush(pushProject?.path).then((commits) => {
       pushCommits = commits;
       pushCommitsLoading = false;
     });
+    // Resolve the repo's GitHub base URL in parallel so commit rows become
+    // clickable links to each commit's diff view (best-effort; null off GitHub).
+    void repoWebUrl(pushProject?.path).then((url) => {
+      pushRepoUrl = url;
+    });
   }
 
   function closePushPopover() {
     pushPopoverOpenState = false;
     pushCommits = [];
+    pushRepoUrl = null;
+  }
+
+  async function handleOpenCommit(hash: string) {
+    // Close first so the popover dismisses immediately on click (mirrors the PR
+    // rows), then open the commit's diff view on GitHub in the default browser.
+    const url = commitWebUrl(pushRepoUrl, hash);
+    closePushPopover();
+    if (!url) return;
+    try {
+      await invoke('open_path', { path: url, app: null });
+    } catch (err) {
+      console.warn('open_path (open commit url) failed', err);
+    }
   }
 
   async function handlePushNow() {
@@ -424,10 +453,28 @@
     {:else if pushCommits.length > 0}
       <ul class="cp-file-list">
         {#each pushCommits as commit (commit.hash)}
-          <li class="cp-file pp-commit-row">
-            <span class="pp-hash">{commit.hash.slice(0, 7)}</span>
-            <span class="pp-subject">{commit.subject}</span>
-          </li>
+          {#if pushRepoUrl}
+            <!-- Repo is on GitHub: the row links to the commit's diff view.
+                 Clicking closes the popover and opens it in the browser. -->
+            <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <li
+              class="cp-file pp-commit-row pp-commit-clickable"
+              role="button"
+              tabindex="0"
+              use:tooltip={'Open this commit on GitHub'}
+              onclick={() => handleOpenCommit(commit.hash)}
+              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleOpenCommit(commit.hash); } }}
+            >
+              <span class="pp-hash">{commit.hash.slice(0, 7)}</span>
+              <span class="pp-subject">{commit.subject}</span>
+            </li>
+          {:else}
+            <li class="cp-file pp-commit-row">
+              <span class="pp-hash">{commit.hash.slice(0, 7)}</span>
+              <span class="pp-subject">{commit.subject}</span>
+            </li>
+          {/if}
         {/each}
       </ul>
     {:else}
@@ -757,6 +804,19 @@
   .pp-commit-row {
     display: flex;
     align-items: center;
+  }
+
+  /* A clickable commit row (repo on GitHub): opens the commit's diff view.
+     Pointer + a focus ring so it reads as actionable and is keyboard-reachable
+     (matches the PR-row affordance). */
+  .pp-commit-clickable {
+    cursor: pointer;
+  }
+
+  .pp-commit-clickable:focus {
+    outline: none;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--fg-1);
   }
 
   /* Primary action button — "Push now" — full-width, orange (caution) accent (mirrors

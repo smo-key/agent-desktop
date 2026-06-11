@@ -115,6 +115,12 @@ action that pushes the focused project's current branch to its remote. WHEN ther
 nothing to push, the indicator SHALL be inert (or present an empty state) and SHALL
 NOT push.
 
+WHEN the project's repository is hosted on GitHub (its web URL is resolvable), each
+listed commit row SHALL be a clickable link that opens that commit's diff view on
+GitHub (`<repo url>/commit/<hash>`) in the default browser and dismisses the popover.
+WHEN the repository is not on GitHub (or its web URL cannot be resolved), the commit
+rows SHALL remain inert display rows.
+
 #### Scenario: Popover lists the commits to push
 - **WHEN** the current branch is ahead of its upstream and the user clicks the push indicator
 - **THEN** a popover lists the commits that the push would send
@@ -126,6 +132,14 @@ NOT push.
 #### Scenario: Nothing to push
 - **WHEN** the current branch is not ahead of its upstream
 - **THEN** clicking the push indicator does not push (it is inert or shows an empty state)
+
+#### Scenario: Clicking a commit opens its diff on GitHub
+- **WHEN** the push popover is open for a GitHub-hosted repository and the user clicks one of the listed commits
+- **THEN** that commit's diff view opens on GitHub (`<repo url>/commit/<hash>`) in the default browser and the popover is dismissed
+
+#### Scenario: Commit rows are inert off GitHub
+- **WHEN** the push popover is open for a repository whose GitHub web URL cannot be resolved (not on GitHub, or `gh` is unavailable)
+- **THEN** the listed commit rows are plain display rows and clicking them does nothing
 
 ### Requirement: Open PRs awaiting review button
 

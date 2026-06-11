@@ -104,6 +104,37 @@ export async function commitsToPush(repoPath: string | null | undefined): Promis
 }
 
 /**
+ * Resolve the repo's BASE web (GitHub) URL for `repoPath` via `repo_web_url`
+ * (which shells out to `gh repo view --json url`), e.g. `https://github.com/o/r`.
+ * Best-effort: no repo path / not on GitHub / gh missing-or-unauthenticated /
+ * backend error → `null`. Never throws. The push popover uses it to build each
+ * commit's diff-view link; `null` keeps the commit rows inert.
+ */
+export async function repoWebUrl(repoPath: string | null | undefined): Promise<string | null> {
+  if (!repoPath) return null;
+  try {
+    return (await invoke<string | null>('repo_web_url', { repoPath })) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * PURE: build a commit's GitHub diff-view URL (`<base>/commit/<hash>`) from the
+ * repo's base web URL and a commit hash. Returns `null` when either is missing —
+ * so a non-GitHub repo (no `base`) yields no link and the commit row stays inert.
+ * A trailing slash on `base` is tolerated (the backend already strips it, but the
+ * builder guards anyway so a stray slash can't produce `//commit`).
+ */
+export function commitWebUrl(
+  base: string | null | undefined,
+  hash: string | null | undefined
+): string | null {
+  if (!base || !hash) return null;
+  return `${base.replace(/\/+$/, '')}/commit/${hash}`;
+}
+
+/**
  * Pull the project's current branch from its remote via `git_pull`. On success a
  * toast confirms (echoing git's message); on failure it opens an interactive
  * terminal in the folder running `git pull` (so the user can see the error and
