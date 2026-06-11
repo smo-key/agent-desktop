@@ -35,17 +35,19 @@ are one click away.
   message or pending question (not just the generic "Needs input"), including for
   archived agents. A short generic fallback remains only when there is genuinely
   no message or question yet.
-- **PR button (footer)** — a PR button sits to the right of the edited-files count.
-  When no PR targets `main` from the current branch, clicking it opens a confirm
-  dialog; on confirm it spawns an agent session (task) that creates the PR into
-  `main` and auto-archives (exactly how agent tasks run today). When a PR already
-  exists, clicking opens it. The button is disabled when the current branch is the
-  base branch (`main`), where there is nothing to PR.
+- **Per-branch PR bubble (footer)** — a PR bubble sits to the right of the edited-files
+  count, SEPARATE from the open-PRs-awaiting-review button. On a GitHub repo it ALWAYS
+  shows: `PR #<number>` (highlighted) when a PR from the current branch into `main`
+  exists — clicking opens it — or a gray `PR` when none, where clicking opens a confirm
+  dialog that, on confirm, spawns an agent session (task) creating the PR into `main`
+  and auto-archiving (exactly how agent tasks run today). It is HIDDEN when PR existence
+  cannot be determined (no GitHub remote / `gh` unavailable — including the base branch
+  `main`, where PR status is never queried), rather than shown-but-disabled.
 - **Commit popover (footer)** — clicking the uncommitted-files indicator when there
   are changes opens a popover listing the uncommitted files with a pinned "Commit now"
   action that spawns an agent session (task) to commit them (auto-archiving as before).
-  The indicator's hover tooltip shows only the COUNT of uncommitted files — the file
-  list moved into the popover.
+  The clickable indicator's hover tooltip reads "Click to review" (the file list moved
+  into the popover); an inert indicator with no changes shows the plain uncommitted count.
 - **Push popover (footer)** — clicking the push (ahead) indicator opens a popover
   listing the commits a push would send, with a pinned "Push now" action that pushes
   the focused project's branch. Inert when there is nothing to push.
