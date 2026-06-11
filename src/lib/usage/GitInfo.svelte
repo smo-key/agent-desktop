@@ -221,7 +221,11 @@
             <Icon name="arrow-up" size={12} />
             <span class="txt">{git.ahead ?? 0}</span>
           </button>
-        {:else if onPush}
+        {:else if onPush && !pushProject}
+          <!-- Direct-push fallback for a surface that wires onPush WITHOUT a
+               pushProject (no popover). In the footer both are wired together, so
+               this never fires there — footer `ahead === 0` falls through to the
+               inert span below (nothing to push → SHALL NOT push). -->
           <button
             type="button"
             class="pill ahead action"
