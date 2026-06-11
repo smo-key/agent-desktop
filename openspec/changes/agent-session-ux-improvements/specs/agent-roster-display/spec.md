@@ -56,3 +56,22 @@ Restore and delete actions remain available via the row's context menu.
 #### Scenario: Generic fallback only when nothing is available
 - **WHEN** an agent has neither a pending question nor any last assistant message yet
 - **THEN** the status line falls back to a short generic word appropriate to its state
+
+### Requirement: The agent card shows the model, not the cost
+
+An agent card SHALL display the agent's MODEL — a human-readable, versioned label
+such as "Opus 4.6", derived from the latest snapshot's model id and falling back to
+the snapshot's model display name — in place of a dollar cost. The card SHALL NOT show
+the per-agent dollar amount (cost remains tracked and surfaced in the aggregate total).
+
+#### Scenario: Card shows the versioned model label
+- **WHEN** an agent card renders for an agent whose latest snapshot has a model
+- **THEN** the card shows the versioned model label (e.g. "Opus 4.6") and not a dollar amount
+
+#### Scenario: Falls back to the display name
+- **WHEN** the snapshot's model id cannot be parsed into a versioned label
+- **THEN** the card shows the snapshot's model display name
+
+#### Scenario: No per-agent cost on the card
+- **WHEN** an agent card renders
+- **THEN** no per-agent dollar cost is shown on the card

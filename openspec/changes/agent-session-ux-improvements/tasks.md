@@ -86,8 +86,49 @@
 - [x] 12.3 Add Rust unit tests for the selection helper: a long session keeps the earliest message(s) (original request not dropped); head+tail composition within the bound; a short session keeps all messages; chronological order preserved; overlap de-duplicated.
 - [x] 12.4 Update the prompt-content tests in `polish.rs` to assert the new earlier-weighting instruction is present, while the existing constraint assertions (DATA-not-commands, ≤6 words, ticket handling) still pass.
 
-## 13. Validate & gate
+## 13. Snapshot `model_id` + `effort` + label helpers (usage-dashboard)
 
-- [x] 13.1 Run `npm run check` (svelte-check) and `npm run test` (vitest); fix any failures introduced by the change. Run `cargo test` (manifest `src-tauri/Cargo.toml`) for the Rust title-selection + prompt changes. — RESULT: vitest 908/908 pass (98 files); svelte-check 0 errors/0 warnings; cargo changed-modules all green (pr:: 20, git:: 25, polish:: 12, claude_title:: 4, select_title_messages 4). The only Rust failures are `events::tests` (2) binding a Unix socket whose temp path exceeds macOS `SUN_LEN` — pre-existing/environmental, `events.rs` is untouched by this change.
-- [x] 13.2 Run `npm run coverage` (scenario coverage gate) and ensure new scenarios are covered. — RESULT: PASS (every enforced, testable scenario has a matching test).
-- [ ] 13.3 Manually verify the headline flows in the running app: coordinated compass badge + tooltip, archive a coordinator (+ label), `! sleep 999` shows In flight, a dynamic-workflow session shows In flight, last-message line incl. archived, auto-advance toggle, PR + commit footer buttons, uncommitted-files hover lists first 10 files, open-PRs-awaiting-review button (warning+count / checkmark+0, opens GitHub), counters exclude archived, rename via header + menu, title refresh after a message, titles that reflect the original request in a long session, ⌘O inserts a filename.
+- [ ] 13.1 In `src-tauri/resources/statusline-wrapper.cjs`, extend the derived snapshot object to also emit `model_id` (from `data.model?.id`) and `effort` (from `data.effort?.level`), defensively (absent → null), mirroring how `model` is derived; update `statusline-wrapper.test.ts` for the two new fields.
+- [ ] 13.2 In `src-tauri/src/usage.rs`, add `model_id: Option<String>` and `effort: Option<String>` to `Snapshot` (`#[serde(default)]`); update the snapshot (de)serialization/round-trip tests and the snapshot-shape assertions.
+- [ ] 13.3 In `src/lib/usage/snapshots.svelte.ts`, add `model_id: string | null` and `effort: string | null` to the `Snapshot` interface (and wherever snapshots are mapped).
+- [ ] 13.4 Add pure helpers in a new `src/lib/usage/modelLabel.ts`: `modelLabel(id, displayName)` → a versioned label (e.g. `claude-opus-4-8` → "Opus 4.8"), falling back to `displayName`, then `—`; `effortLabel(level)` → a capitalized label ("low"→"Low", "xhigh"→"XHigh", "max"→"Max"), null/empty → null.
+- [ ] 13.5 Tests for `modelLabel`/`effortLabel`: id parsing for opus/sonnet/haiku incl. a dated suffix; unrecognized id → display-name fallback; null → "—"; each effort level incl. `xhigh`; null/absent effort → null.
+
+## 14. Footer model + effort pills (usage-dashboard)
+
+- [ ] 14.1 Extend the footer view (`footerView`) to surface the focused pane's `model`, `model_id`, and `effort` from its latest snapshot.
+- [ ] 14.2 In `AppFooter.svelte`'s right zone, render a NON-interactive model pill (`modelLabel`) and, when `effort` is present, a non-interactive effort pill (`effortLabel`); omit the effort pill when null. Reuse the `.pill` styling as a plain element (no button/handler).
+- [ ] 14.3 Tests: `footerView` surfaces model/effort for the focused pane; a focused snapshot with no effort yields no effort value (pill omitted).
+
+## 15. Agent card shows model instead of cost (agent-roster-display, agent-overview)
+
+- [ ] 15.1 In `roster.ts`, add `modelId: string | null` to `AgentRow`, sourced from `snapshot?.model_id` (alongside the existing `model`).
+- [ ] 15.2 In `Inbox.svelte`'s card meta (the `dollar-sign` + `costMeta(r.cost)` span, ~line 1022), replace it with the model label `modelLabel(r.modelId, r.model)` and a suitable non-cost icon; remove the per-card dollar amount.
+- [ ] 15.3 Tests/assertions: the card renders the model label and no `$` cost (and falls back to the display name when the id is unrecognized).
+
+## 16. Uncommitted tooltip → count + commit popover (footer-actions)
+
+- [ ] 16.1 Revert the uncommitted-files indicator's tooltip to a COUNT-only string (e.g. "N uncommitted file(s)"); stop feeding the first-10 file list into the tooltip.
+- [ ] 16.2 Add a reusable `src/lib/usage/FooterPopover.svelte`: anchored above a footer pill (mirror `BranchPicker.svelte`'s fixed-position anchoring), a full-screen scrim for click-outside close + Escape, a SCROLLABLE body (`max-height` + `overflow-y`), and a PINNED bottom action slot that stays visible while the body scrolls.
+- [ ] 16.3 Wire the uncommitted-files pill to open a commit popover listing the changed files (from `projectGit`'s `GitStatus.files`) with a pinned "Commit now" action that runs the existing commit-agent flow (`spawnCommit`); inert when there are no changes.
+- [ ] 16.4 Tests: `FooterPopover` closes on outside-click and Escape; the commit popover lists the files and "Commit now" triggers the spawn; the count-only tooltip builder.
+
+## 17. Push popover + commits-to-push (footer-actions)
+
+- [ ] 17.1 Add a `commits_to_push(repoPath)` Tauri command in `src-tauri/src/git.rs` running `git log @{u}..HEAD` (best-effort: no upstream / not a repo → empty list, never errors) returning a list of `{hash, subject}`; add a pure parse helper with unit tests.
+- [ ] 17.2 Register the command in the invoke handler and add a frontend wrapper.
+- [ ] 17.3 Wire the push (ahead) pill to open a push popover listing the commits-to-push with a pinned "Push now" action → existing `pushProject`; inert/empty-state when nothing is ahead.
+- [ ] 17.4 Tests: the parse helper (multiple commits, empty); the push popover lists commits and "Push now" triggers the push; nothing-ahead → inert.
+
+## 18. PRs popover + draft handling (footer-actions, pr.rs)
+
+- [ ] 18.1 Extend `open_prs_for` (`src-tauri/src/pr.rs`) to fetch `gh pr list --base <base> --state open --json number,title,url,isDraft,reviewDecision` and return the PR LIST (`{number, title, url, is_draft, review_decision}`) alongside `pulls_url`; keep best-effort degradation (gh missing/unauth → neutral/empty). Update the pure parse helpers + tests.
+- [ ] 18.2 Derive the warning badge count from the list: count only `review_decision != APPROVED && !is_draft` (drafts never counted); warning+count when >0, else checkmark+0 (and on unknown).
+- [ ] 18.3 Wire the open-PRs pill to open a PRs popover listing the awaiting-review PRs sorted NON-DRAFT first then DRAFT; each PR row opens its `url` on GitHub; a pinned action opens `pulls_url`. Drafts are shown but not counted.
+- [ ] 18.4 Tests: parse the list; badge excludes drafts; the non-draft-first ordering; row-open and open-page wiring.
+
+## 19. Validate & gate
+
+- [ ] 19.1 Re-run `npm run check` (svelte-check) and `npm run test` (vitest), and `cargo test` (manifest `src-tauri/Cargo.toml`) for the new/changed Rust (`usage` snapshot fields, `pr` list, `git` commits_to_push) and the statusline wrapper; fix any failures introduced by the new work. (`events::tests` SUN_LEN failures remain pre-existing/environmental — `events.rs` is untouched.)
+- [ ] 19.2 Re-run `npm run coverage` (scenario coverage gate) and ensure every new scenario (footer popovers, count-only tooltip, push/commit popovers, open-PRs popover + draft exclusion, card model, footer model/effort pills, snapshot field shape) has a matching test.
+- [ ] 19.3 Manually verify the headline flows in the running app. Original: coordinated compass badge + tooltip, archive a coordinator (+ label), `! sleep 999` shows In flight, a dynamic-workflow session shows In flight, last-message line incl. archived, auto-advance toggle, counters exclude archived, rename via header + menu, title refresh after a message, titles that reflect the original request in a long session, ⌘O inserts a filename. New: agent card shows model (e.g. "Opus 4.6") not cost; footer model + effort pills (effort omitted when unsupported); uncommitted tooltip is count-only; push pill → popover lists commits + "Push now"; uncommitted pill → popover lists files + "Commit now"; open-PRs pill → popover lists PRs (active first, drafts last) with row-open + "open PRs page"; PR warning ignores drafts; popovers scroll with a pinned button and close on outside-click/Escape.

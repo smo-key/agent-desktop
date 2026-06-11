@@ -37,66 +37,116 @@ back to the create-confirm path rather than silently doing nothing.
 - **WHEN** PR existence cannot be determined for the current branch
 - **THEN** clicking the button opens the create-PR confirmation rather than doing nothing
 
-### Requirement: Commit action on the uncommitted-files indicator
+### Requirement: Footer git popovers are scrollable, pinned, and dismissable
+
+A footer git popover (push, uncommitted files, or open PRs) SHALL anchor to its
+indicator, SHALL make its body SCROLLABLE when the content overflows, and SHALL pin its
+PRIMARY ACTION button to the bottom so it stays visible while the body scrolls. The
+popover SHALL close when the user clicks OUTSIDE it or presses Escape.
+
+#### Scenario: Long list scrolls under a pinned action
+- **WHEN** a footer popover's list is taller than the popover's maximum height
+- **THEN** the list area scrolls while the bottom action button stays pinned and visible
+
+#### Scenario: Clicking outside closes the popover
+- **WHEN** a footer popover is open and the user clicks outside it
+- **THEN** the popover closes
+
+#### Scenario: Escape closes the popover
+- **WHEN** a footer popover is open and the user presses Escape
+- **THEN** the popover closes
+
+### Requirement: Uncommitted-files indicator opens a commit popover
 
 Clicking the uncommitted-files indicator when there are uncommitted changes SHALL
-open a confirmation dialog; confirming SHALL spawn an agent session (task) that
-commits the changes and auto-archives when it returns to the user. WHEN there are
-no uncommitted changes, the indicator SHALL be inert (clicking does nothing).
+open a popover LISTING the uncommitted file paths with a pinned "Commit now" action;
+the action SHALL spawn an agent session (task) that commits the changes and
+auto-archives when it returns to the user. WHEN there are no uncommitted changes, the
+indicator SHALL be inert (clicking does nothing).
 
-#### Scenario: Commit pending changes
-- **WHEN** there are uncommitted changes and the user clicks the uncommitted-files indicator and confirms
+#### Scenario: Popover lists the uncommitted files
+- **WHEN** there are uncommitted changes and the user clicks the uncommitted-files indicator
+- **THEN** a popover lists the uncommitted file paths
+
+#### Scenario: Commit now spawns the commit task
+- **WHEN** the commit popover is open and the user clicks "Commit now"
 - **THEN** an agent session (task) is spawned that commits the changes and auto-archives when it returns to the user
 
 #### Scenario: No changes means an inert indicator
 - **WHEN** there are no uncommitted changes
-- **THEN** clicking the uncommitted-files indicator does nothing (no dialog)
+- **THEN** clicking the uncommitted-files indicator does nothing (no popover)
 
-#### Scenario: Cancelling the confirm spawns nothing
-- **WHEN** the commit confirmation dialog is shown and the user cancels
-- **THEN** no agent session is spawned
+### Requirement: The uncommitted-files indicator tooltip shows only the count
 
-### Requirement: The uncommitted-files indicator lists files on hover
+Hovering the uncommitted-files indicator SHALL show a tooltip stating only the NUMBER
+of uncommitted files — it SHALL NOT enumerate the file paths. The file list SHALL
+appear in the click popover instead.
 
-Hovering the uncommitted-files indicator SHALL show a tooltip listing the
-uncommitted file paths, capped at the FIRST 10, with an indication when more files
-exist beyond the first 10. WHEN there are no uncommitted changes, no file list is
-shown on hover.
+#### Scenario: Hover shows the count
+- **WHEN** there are N uncommitted changes and the user hovers the uncommitted-files indicator
+- **THEN** the tooltip states the count N and does not enumerate the individual files
 
-#### Scenario: Hover shows up to ten changed files
-- **WHEN** there are uncommitted changes and the user hovers the uncommitted-files indicator
-- **THEN** a tooltip lists the changed file paths, at most the first 10
+#### Scenario: File list lives in the popover, not the tooltip
+- **WHEN** the user hovers the uncommitted-files indicator
+- **THEN** the tooltip does not list individual file paths (the list is shown on click, in the popover)
 
-#### Scenario: More than ten files indicates the overflow
-- **WHEN** there are more than 10 uncommitted files and the user hovers the indicator
-- **THEN** the tooltip lists the first 10 and indicates that more files exist
+### Requirement: Push indicator opens a push popover
 
-#### Scenario: No changes shows no file list
-- **WHEN** there are no uncommitted changes
-- **THEN** hovering the indicator shows no file list
+Clicking the push (ahead) indicator SHALL open a popover LISTING the commits that a
+push would send (the commits ahead of the upstream branch) with a pinned "Push now"
+action that pushes the focused project's current branch to its remote. WHEN there is
+nothing to push, the indicator SHALL be inert (or present an empty state) and SHALL
+NOT push.
+
+#### Scenario: Popover lists the commits to push
+- **WHEN** the current branch is ahead of its upstream and the user clicks the push indicator
+- **THEN** a popover lists the commits that the push would send
+
+#### Scenario: Push now pushes the branch
+- **WHEN** the push popover is open and the user clicks "Push now"
+- **THEN** the focused project's current branch is pushed to its remote
+
+#### Scenario: Nothing to push
+- **WHEN** the current branch is not ahead of its upstream
+- **THEN** clicking the push indicator does not push (it is inert or shows an empty state)
 
 ### Requirement: Open PRs awaiting review button
 
-The footer SHALL show a button indicating the number of OPEN pull requests targeting
-`main` that are awaiting review. WHEN one or more such PRs exist, the button SHALL
-show a WARNING icon together with the count; WHEN there are none, it SHALL show a
-CHECKMARK icon together with `0`. Clicking the button SHALL open the repository's
-pull-requests page on GitHub. WHEN the PR count cannot be determined (e.g. `gh` is
-unavailable or fails), the button SHALL degrade gracefully — showing the checkmark/`0`
-neutral state — without erroring.
+The footer SHALL show a button indicating the number of OPEN, NON-DRAFT pull requests
+targeting `main` that are awaiting review. Draft PRs SHALL NOT be counted. WHEN one or
+more such PRs exist, the button SHALL show a WARNING icon together with the count; WHEN
+there are none, it SHALL show a CHECKMARK icon together with `0`. Clicking the button
+SHALL open a popover LISTING the awaiting-review PRs targeting `main`, with NON-DRAFT
+PRs shown FIRST and DRAFT PRs shown LAST; each PR row SHALL open that PR on GitHub when
+clicked, and the popover SHALL have a pinned action that opens the repository's
+pull-requests page on GitHub. WHEN the PR information cannot be determined (e.g. `gh`
+is unavailable or fails), the button SHALL degrade gracefully — showing the
+checkmark/`0` neutral state — without erroring.
 
-#### Scenario: Open PRs awaiting review show a warning and a count
-- **WHEN** there are N (N > 0) open PRs targeting `main` awaiting review
+#### Scenario: Non-draft PRs awaiting review show a warning and a count
+- **WHEN** there are N (N > 0) open, non-draft PRs targeting `main` awaiting review
 - **THEN** the button shows a warning icon and the number N
 
+#### Scenario: Draft PRs are excluded from the count
+- **WHEN** the only open PRs targeting `main` awaiting review are drafts
+- **THEN** the button shows a checkmark icon and `0` (drafts are not counted)
+
 #### Scenario: No open PRs shows a checkmark and zero
-- **WHEN** there are no open PRs targeting `main` awaiting review
+- **WHEN** there are no open, non-draft PRs targeting `main` awaiting review
 - **THEN** the button shows a checkmark icon and `0`
 
-#### Scenario: Clicking opens the GitHub pull-requests page
+#### Scenario: Popover lists PRs with drafts last
 - **WHEN** the user clicks the open-PRs button
+- **THEN** a popover lists the awaiting-review PRs targeting `main`, with non-draft PRs first and draft PRs last (drafts are shown even though they are not counted)
+
+#### Scenario: Clicking a PR opens it on GitHub
+- **WHEN** the user clicks a PR row in the popover
+- **THEN** that pull request is opened on GitHub
+
+#### Scenario: Pinned action opens the pull-requests page
+- **WHEN** the user clicks the popover's pinned action to open the PRs page
 - **THEN** the repository's pull-requests page is opened on GitHub
 
 #### Scenario: Detection unavailable degrades gracefully
-- **WHEN** the open-PR count cannot be determined (e.g. `gh` is unavailable)
+- **WHEN** the open-PR information cannot be determined (e.g. `gh` is unavailable)
 - **THEN** the button shows the neutral checkmark/`0` state and does not error

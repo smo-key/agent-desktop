@@ -41,14 +41,32 @@ are one click away.
   `main` and auto-archives (exactly how agent tasks run today). When a PR already
   exists, clicking opens it. The button is disabled when the current branch is the
   base branch (`main`), where there is nothing to PR.
-- **Commit button (footer)** — clicking the uncommitted-files indicator when there
-  are changes opens a confirm dialog; on confirm it spawns an agent session (task)
-  that commits the changes and auto-archives. Hovering the indicator lists the first
-  10 uncommitted file paths (with an overflow hint when there are more).
-- **Open-PRs-awaiting-review button (footer)** — a footer button shows the number of
-  open PRs targeting `main` that await review: a warning icon + count when any exist,
-  a checkmark + `0` when none. Clicking it opens the repository's pull-requests page
-  on GitHub. It degrades to the neutral checkmark/`0` state when `gh` is unavailable.
+- **Commit popover (footer)** — clicking the uncommitted-files indicator when there
+  are changes opens a popover listing the uncommitted files with a pinned "Commit now"
+  action that spawns an agent session (task) to commit them (auto-archiving as before).
+  The indicator's hover tooltip shows only the COUNT of uncommitted files — the file
+  list moved into the popover.
+- **Push popover (footer)** — clicking the push (ahead) indicator opens a popover
+  listing the commits a push would send, with a pinned "Push now" action that pushes
+  the focused project's branch. Inert when there is nothing to push.
+- **Open-PRs popover (footer)** — the open-PRs button still shows the number of open
+  PRs targeting `main` awaiting review (warning + count, else checkmark + `0`), but now
+  EXCLUDES draft PRs from that count. Clicking it opens a popover listing the
+  awaiting-review PRs (non-draft first, drafts last — drafts are shown but not counted);
+  each PR row opens that PR on GitHub, and a pinned action opens the repo's
+  pull-requests page. Degrades to the neutral checkmark/`0` state when `gh` is unavailable.
+- **Footer popovers** — the push, uncommitted-files, and open-PRs popovers share one
+  behavior: a scrollable body with the primary action pinned at the bottom, dismissed
+  by clicking outside or pressing Escape.
+- **Agent card shows the model, not the cost** — each agent card displays the agent's
+  model as a versioned label (e.g. "Opus 4.6", parsed from the snapshot model id,
+  falling back to the display name) instead of its dollar amount. Cost stays in the
+  aggregate total / footer.
+- **Footer model + effort pills** — the footer's right side gains two non-interactive
+  pills showing the focused session's model (versioned label) and reasoning effort
+  level; the effort pill is omitted when the model reports no effort. Backed by two new
+  snapshot fields (`model_id`, `effort`) the statusline wrapper parses from Claude
+  Code's statusline JSON.
 - **Project counters exclude archived** — archived (closed/previewed) agents are no
   longer counted in the per-project, unassigned, or all-agents counters.
 - **Rename a session** — the user can rename a session by clicking its title in the
@@ -69,7 +87,8 @@ are one click away.
 
 ### New Capabilities
 - `agent-roster-display`: how an agent card renders its role/coordination badge,
-  archived-coordinator label, and the status sub-line (last message / question).
+  archived-coordinator label, the status sub-line (last message / question), and the
+  per-agent model label shown in place of the dollar cost.
 - `coordinator-lifecycle`: archiving vs deleting the project coordinator, including
   the empty-session rule and the archived-coordinator label.
 - `agent-status-derivation`: classifying an agent as In flight vs Needs input,
@@ -77,10 +96,12 @@ are one click away.
   dynamic workflow or another agent still running while the main loop looks idle).
 - `inbox-auto-advance`: the opt-in setting that gates auto-advancing focus to the
   next Needs-Input agent.
-- `footer-actions`: the footer PR button and the commit action on the
-  uncommitted-files indicator, each gated by a confirm dialog and run as an
-  auto-archiving agent task; plus a hover list of the first 10 uncommitted files
-  and an "open PRs awaiting review" count button linking to GitHub.
+- `footer-actions`: the footer git indicators — the per-branch PR button (create/open),
+  and the push, uncommitted-files, and open-PRs indicators that each open a popover
+  (commits-to-push + "Push now"; uncommitted files + "Commit now"; awaiting-review PRs
+  with drafts last + open-on-GitHub + a pull-requests-page action). The uncommitted
+  tooltip shows only the count; the open-PRs warning count excludes drafts; popovers
+  scroll with a pinned action and dismiss on outside-click/Escape.
 - `project-agent-counters`: which agents count toward project/unassigned/all-agents
   counters (archived excluded).
 
@@ -89,23 +110,36 @@ are one click away.
   re-derive auto-titles after each user message, and derive auto-titles from the whole
   session weighted to the original request (earliest messages always included).
 - `keyboard-shortcuts`: the insert-file-path binding is ⌘O (was ⌘I).
+- `usage-dashboard`: the per-pane snapshot gains `model_id` and `effort` fields (parsed
+  from Claude Code's statusline JSON), and the footer surfaces the focused session's
+  model + effort as non-interactive pills.
+- `agent-overview`: a per-agent card surfaces the model and context instead of the
+  dollar cost (cost remains in the aggregate total).
 
 ## Impact
 
 - **UI (Svelte):** `src/lib/overview/Inbox.svelte` (badges, status sub-line,
-  context menu, header rename, auto-advance gate), `src/lib/overview/roster.ts`
-  + `src/lib/overview/events.ts` (status derivation), `src/lib/overview/titles.svelte.ts`
-  (rename + cadence), `src/lib/usage/AppFooter.svelte` + `src/lib/usage/GitInfo.svelte`
-  (PR + commit buttons), `src/lib/projects/projectRollup.ts` +
+  context menu, header rename, auto-advance gate, card model-not-cost),
+  `src/lib/overview/roster.ts` + `src/lib/overview/events.ts` (status derivation,
+  `modelId`), `src/lib/overview/titles.svelte.ts` (rename + cadence),
+  `src/lib/usage/AppFooter.svelte` + `src/lib/usage/GitInfo.svelte` (model/effort
+  pills + push/commit/open-PRs popovers), new `src/lib/usage/FooterPopover.svelte`
+  (scrollable popover with a pinned action) + `src/lib/usage/modelLabel.ts`
+  (versioned model + effort labels), `src/lib/projects/projectRollup.ts` +
   `src/lib/projects/ProjectPanel.svelte` (counters), `src/lib/ui/SettingsModal.svelte`
   + new `src/lib/settings/*.svelte.ts` (auto-advance setting),
   `src/lib/icons/projectIcons.ts` (compass already present), `src/routes/+page.svelte`
   (⌘O handler, task-agent spawning), `src/lib/ui/shortcuts.ts` +
   `src/lib/layout/paneMenu.ts` (⌘O label).
-- **External dependency:** the PR button uses the `gh` CLI for PR detection/open;
-  the spawned agent task creates the PR. Requires an authenticated `gh` and a
-  GitHub remote.
-- **No backend (Rust) changes expected** for most items; the foreground-process
-  status detection reads existing terminal/PTY signals already available to the UI.
-- **No data migrations.** New settings slice persists alongside existing settings;
-  custom titles persist in the existing title cache.
+- **Backend (Rust) + wrapper:** `src-tauri/resources/statusline-wrapper.cjs` emits the
+  new `model_id` + `effort` snapshot fields; `src-tauri/src/usage.rs` adds them to the
+  `Snapshot` struct; `src-tauri/src/pr.rs` extends the open-PRs lookup to return the PR
+  list (number/title/url/isDraft/reviewDecision); `src-tauri/src/git.rs` adds a
+  `commits_to_push` command (`git log @{u}..HEAD`). The In-flight status detection still
+  reads existing terminal/PTY signals already available to the UI (no new backend).
+- **External dependency:** the PR button + open-PRs popover use the `gh` CLI for PR
+  detection/open; the spawned agent task creates the PR. Requires an authenticated `gh`
+  and a GitHub remote.
+- **No data migrations.** New snapshot fields default to null so older snapshots still
+  parse; the new settings slice persists alongside existing settings; custom titles
+  persist in the existing title cache.
