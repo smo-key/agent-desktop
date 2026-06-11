@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { WorkspaceStore } from './workspace.svelte';
 import { leavesInOrder } from './tree';
+import { findCoordinatorPane, type CoordinatorPaneView } from '../orchestration/coordinator';
 
 // `invoke` is mocked so the worktree-cleanup wiring (fired fire-and-forget on a
 // PERMANENT session close) can be asserted without a live Tauri backend. Mock
@@ -251,5 +252,138 @@ describe('workspace — worktree cleanup on permanent close', () => {
 
     expect(store.session(paneId).closed).toBe(true); // archived, still resumable
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+});
+
+// The COORDINATOR follows the SAME archive/delete rules as ordinary sessions
+// (coordinator-lifecycle: "The coordinator can be archived or deleted"). A NON-empty
+// coordinator archives (closed, retained, restorable); an EMPTY one deletes outright;
+// restoring an archived coordinator resumes it as the project's LIVE coordinator, so
+// `findCoordinatorPane` finds it again and the "Start coordinator" affordance hides.
+describe('workspace — coordinator archive / delete / restore (coordinator-lifecycle)', () => {
+  /** A fresh store with one single-pane COORDINATOR workspace for `projectId`. */
+  function withCoordinator(projectId = 'proj-A'): {
+    store: WorkspaceStore;
+    paneId: string;
+  } {
+    const store = new WorkspaceStore();
+    // makeEntry via newWorkspace(program, cwd, initialInput, projectId, …, role).
+    const wsId = store.newWorkspace(
+      'claude',
+      '/proj',
+      undefined,
+      projectId,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'coordinator'
+    );
+    const entry = store.workspaces.find((w) => w.id === wsId)!;
+    const paneId = leavesInOrder(entry.ws.root)[0].paneId;
+    return { store, paneId };
+  }
+
+  /** The framework-free coordinator view of every pane in the store (mirrors the
+   *  Inbox's `allCoordinatorPanes` projection) so `findCoordinatorPane` can run. */
+  function coordinatorPanes(store: WorkspaceStore): CoordinatorPaneView[] {
+    const out: CoordinatorPaneView[] = [];
+    for (const entry of store.workspaces) {
+      for (const leaf of leavesInOrder(entry.ws.root)) {
+        const s = entry.registry[leaf.paneId];
+        if (!s) continue;
+        out.push({
+          paneId: leaf.paneId,
+          program: s.program,
+          projectId: s.projectId ?? null,
+          role: s.role,
+          closed: s.closed
+        });
+      }
+    }
+    return out;
+  }
+
+  it('archiving a NON-empty coordinator closes it (retained, restorable)', () => {
+    const { store, paneId } = withCoordinator();
+    // A non-empty session archives via closeAgent (the inbox routes a non-empty
+    // userHash through archiveDecision → 'archive' → closeAgent).
+    store.closeAgent(paneId);
+    const s = store.session(paneId);
+    expect(s.closed).toBe(true); // archived, not deleted
+    expect(s.role).toBe('coordinator'); // still a coordinator entry, retained
+    expect(s.sessionId).toBeTruthy(); // resumable transcript kept
+    // Still present in the registry → restorable.
+    expect(store.allPaneIds().has(paneId)).toBe(true);
+  });
+
+  it('archiving an EMPTY coordinator deletes it outright', () => {
+    const { store, paneId } = withCoordinator();
+    // An empty session (falsy userHash) deletes via deleteAgent (archiveDecision →
+    // 'delete'). The coordinator follows the same empty-session rule.
+    store.deleteAgent(paneId);
+    // Gone from the registry across all workspaces.
+    expect(store.allPaneIds().has(paneId)).toBe(false);
+  });
+
+  it('an archived coordinator is NOT the live coordinator → Start affordance shows', () => {
+    const { store, paneId } = withCoordinator('proj-A');
+    // Live before archiving.
+    expect(findCoordinatorPane(coordinatorPanes(store), 'proj-A')?.paneId).toBe(paneId);
+
+    store.closeAgent(paneId);
+    // findCoordinatorPane ignores closed panes, so the project has no live coordinator
+    // (the "Start coordinator" affordance is shown again).
+    expect(findCoordinatorPane(coordinatorPanes(store), 'proj-A')).toBeNull();
+  });
+
+  it('restoring an archived coordinator resumes it as the project LIVE coordinator', () => {
+    const { store, paneId } = withCoordinator('proj-A');
+    const sessionId = store.session(paneId).sessionId;
+
+    // Archive → restore round-trip.
+    store.closeAgent(paneId);
+    expect(findCoordinatorPane(coordinatorPanes(store), 'proj-A')).toBeNull();
+
+    store.restoreAgent(paneId);
+    const s = store.session(paneId);
+    expect(s.closed).toBe(false); // live again
+    expect(s.resume).toBe(true); // claude --resume <sessionId>
+    expect(s.sessionId).toBe(sessionId); // same transcript continued
+    expect(s.role).toBe('coordinator'); // role marker preserved
+    // findCoordinatorPane finds it again → the project no longer offers "Start".
+    expect(findCoordinatorPane(coordinatorPanes(store), 'proj-A')?.paneId).toBe(paneId);
+  });
+
+  // The REAL UI restore path for an ARCHIVED session is previewArchived → commitPreview
+  // (the inbox's resume-on-select), NOT restoreAgent. This proves that path also brings
+  // the coordinator back as the project's LIVE coordinator (findCoordinatorPane re-finds
+  // it), so the single-coordinator invariant holds however the user un-archives it.
+  it('the UI preview/commit restore path makes the coordinator live again', () => {
+    const { store, paneId } = withCoordinator('proj-A');
+    const sessionId = store.session(paneId).sessionId;
+
+    // Archive it: no live coordinator for the project.
+    store.closeAgent(paneId);
+    expect(findCoordinatorPane(coordinatorPanes(store), 'proj-A')).toBeNull();
+
+    // Selecting it for preview respawns `claude --resume`, but it stays presented as
+    // Archived until a new message — yet it IS live (closed:false), so the project's
+    // single-coordinator invariant already re-binds to it.
+    store.previewArchived(paneId, 0);
+    expect(store.session(paneId).closed).toBe(false);
+    expect(store.session(paneId).preview).toBe(true);
+    expect(findCoordinatorPane(coordinatorPanes(store), 'proj-A')?.paneId).toBe(paneId);
+
+    // Committing the preview (a new message) unarchives it into a normal live agent.
+    store.commitPreview(paneId);
+    const s = store.session(paneId);
+    expect(s.closed).toBe(false); // live
+    expect(s.preview).toBeUndefined(); // no longer pinned to Archived
+    expect(s.resume).toBe(true); // resumed the same transcript
+    expect(s.sessionId).toBe(sessionId);
+    expect(s.role).toBe('coordinator');
+    // The project's live coordinator is this same pane — no second coordinator exists.
+    expect(findCoordinatorPane(coordinatorPanes(store), 'proj-A')?.paneId).toBe(paneId);
   });
 });

@@ -13,6 +13,7 @@
   import { settingsModal } from '$lib/ui/settingsStore.svelte';
   import { openWith } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
+  import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
   import VoicePanel from '$lib/voice/VoicePanel.svelte';
   import ModelOnboarding from '$lib/onboarding/ModelOnboarding.svelte';
@@ -47,6 +48,7 @@
   import { activeProjectId } from '$lib/tasks/activeProject';
   import { projectForId } from '$lib/projects/projects';
   import { setGitTerminalOpener } from '$lib/projects/projectGitActions';
+  import { setAgentTaskLauncher } from '$lib/projects/prActions';
   import { buildLaunchPlan } from '$lib/launcher/plan';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import { ALL, UNASSIGNED } from '$lib/projects/projectRollup';
@@ -79,6 +81,8 @@
     void openWith.load();
     // Load session-title preferences (the opt-in cloud title fallback).
     void titleSettings.load();
+    // Load the auto-advance focus preference (opt-in; defaults OFF).
+    void autoAdvance.load();
     // Load the persisted one-time onboarding flag FIRST so a returning user who has
     // already seen the gate never sees a flash of it, then load voice-input
     // preferences and check whether the on-device models that selection needs are
@@ -106,6 +110,24 @@
       );
       // Remember this session was spawned by a task: once it finishes its turn and
       // returns to the user, an $effect (below) auto-archives it (project-tasks spec).
+      if (paneId) taskAgentPanes.add(paneId);
+    });
+    // Footer actions (PR button, and later the commit button) spawn an
+    // AUTO-ARCHIVING agent task via a generic `(projectId, prompt)` launcher —
+    // EXACTLY mirroring the project-tasks agent launcher above so the same
+    // auto-archive $effect (below) closes the fire-and-forget session once it
+    // returns to the user. Shared on purpose; not PR-specific.
+    setAgentTaskLauncher((projectId, prompt) => {
+      const proj = projectForId(projects.list, projectId);
+      if (!proj) return;
+      const paneId = workspace.launch(
+        buildLaunchPlan({
+          folder: proj.path,
+          prompt,
+          placement: 'tab',
+          projectId: proj.id
+        })
+      );
       if (paneId) taskAgentPanes.add(paneId);
     });
     // A terminal task that succeeds (exit 0) pops a "<name> completed" toast.
@@ -524,14 +546,15 @@
       return;
     }
 
-    // Cmd-I inserts a picked file's quoted path into the FOCUSED terminal at the
+    // Cmd-O inserts a picked file's quoted path into the FOCUSED terminal at the
     // cursor. A global shortcut (works in every view, incl. while xterm holds
     // focus) — placed BEFORE the grid-only gate below so it isn't made inert.
-    // Exclude Alt/Ctrl so Cmd-Opt-I still reaches the WKWebView inspector (and a
-    // stray Cmd-Ctrl-I falls through). `insertFilenameInto` checks the focused
+    // Exclude Alt/Ctrl so only the bare Cmd-O combo fires (stray Cmd-Opt-O /
+    // Cmd-Ctrl-O fall through). `insertFilenameInto` checks the focused
     // handle BEFORE opening the picker, so this is a clean no-op (no dialog) when
-    // no terminal is focused; preventDefault keeps the keystroke off the PTY.
-    if (meta && !alt && !e.ctrlKey && (key === 'i' || key === 'I')) {
+    // no terminal is focused; preventDefault keeps the keystroke off the PTY and
+    // suppresses the webview's native "Open file" accelerator.
+    if (meta && !alt && !e.ctrlKey && (key === 'o' || key === 'O')) {
       e.preventDefault();
       void insertFilenameInto(focusedTerminalHandle());
       return;

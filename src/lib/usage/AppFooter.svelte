@@ -15,6 +15,21 @@
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import { projectGit } from '$lib/projects/projectGit.svelte';
   import { pushProject, pullProject } from '$lib/projects/projectGitActions';
+  import {
+    DEFAULT_BASE,
+    prButtonDisabled,
+    cachedPrStatus,
+    refreshPrStatus,
+    onPrButtonClick,
+    onCommitButtonClick
+  } from '$lib/projects/prActions';
+  import { uncommittedFilesTooltip } from './gitFilesTooltip';
+  import {
+    openPrsView,
+    cachedOpenPrs,
+    refreshOpenPrs,
+    onOpenPrsClick
+  } from '$lib/projects/openPrsActions';
   import { gitBusy } from '$lib/projects/projectGitBusy.svelte';
   import { view as topView } from '$lib/overview/view.svelte';
   import LimitBars from './LimitBars.svelte';
@@ -82,6 +97,77 @@
     branchOpen = false;
   });
 
+  // PR button (footer only): an open PR from the current branch into `main`?
+  // `prStatus` is a reactive snapshot of the per-branch cache; the effect below
+  // refreshes it alongside git status (best-effort) and re-reads after a click.
+  // The button is disabled on the base branch / when there's no branch or project.
+  let prStatus = $state<ReturnType<typeof cachedPrStatus>>({ kind: 'unknown' });
+  const prBranch = $derived(folderGit?.branch ?? null);
+  const prDisabled = $derived(prButtonDisabled(gitProject?.id, prBranch, DEFAULT_BASE));
+  const prExists = $derived(prStatus.kind === 'exists');
+  // Refresh PR status whenever the footer's project/branch (or the polled git
+  // status) changes: query gh in the background, then re-read the cache snapshot.
+  $effect(() => {
+    void folderGit; // re-run when git status is re-polled
+    const path = gitProject?.path ?? null;
+    const branch = prBranch;
+    prStatus = cachedPrStatus(branch); // show the last-known intent immediately
+    if (prButtonDisabled(gitProject?.id, branch, DEFAULT_BASE)) return;
+    void refreshPrStatus(path, branch, DEFAULT_BASE).then(() => {
+      prStatus = cachedPrStatus(branch);
+    });
+  });
+  // Click: open the existing PR, else open the create-confirm (also for unknown).
+  const onPr = $derived(
+    !prDisabled && gitProject?.path && prBranch
+      ? () =>
+          void onPrButtonClick(
+            { id: gitProject.id, path: gitProject.path, name: gitProject.name },
+            prBranch,
+            DEFAULT_BASE,
+            prStatus
+          )
+      : undefined
+  );
+
+  // Open-PRs-awaiting-review button (footer only): how many OPEN PRs into `main`
+  // are still awaiting review? `openPrs` is a reactive snapshot of the per-path
+  // cache (count + pulls URL); the effect below refreshes it alongside git status
+  // (best-effort). The button shows for any project folder (it's per-repo, not
+  // per-branch) and degrades to the neutral checkmark/`0` when gh is unavailable.
+  let openPrs = $state<ReturnType<typeof cachedOpenPrs>>(null);
+  const openPrsView_ = $derived(openPrsView(openPrs));
+  $effect(() => {
+    void folderGit; // re-run when git status is re-polled
+    const path = gitProject?.path ?? null;
+    openPrs = cachedOpenPrs(path); // show the last-known state immediately
+    if (!path) return;
+    void refreshOpenPrs(path, DEFAULT_BASE).then(() => {
+      openPrs = cachedOpenPrs(path);
+    });
+  });
+  // Click: open the repo's pull-requests page on GitHub (no-op when no URL).
+  const onOpenPrs = $derived(
+    gitProject?.path ? () => void onOpenPrsClick(openPrs) : undefined
+  );
+
+  // Commit button (footer only): clicking the uncommitted-files pill (WHEN there
+  // are changes) opens a confirm dialog that, on confirm, spawns an auto-archiving
+  // agent task committing the pending changes on the current branch. Reuses the
+  // SAME launcher + `taskAgentPanes` wiring as the PR button (via prActions). Only
+  // wired when a real project folder backs the footer git; GitInfo keeps the pill
+  // INERT unless this is present AND modified > 0, so a clean tree stays unclickable.
+  const onCommit = $derived(
+    gitProject?.path
+      ? () => onCommitButtonClick({ id: gitProject.id, path: gitProject.path, name: gitProject.name })
+      : undefined
+  );
+
+  // The hover-tooltip text for the uncommitted-files pill: the changed file paths
+  // (first 10, with an "…and N more" hint), or null (no tooltip) when the tree is
+  // clean. Built from the pure `uncommittedFilesTooltip` over the git status' paths.
+  const filesTip = $derived(uncommittedFilesTooltip(folderGit?.files));
+
   // The terminal area's left edge as a fraction [0,1] of the surface, or null when
   // there's no terminal pane / not in grid view. A "terminal" pane is a non-claude
   // (shell) pane; agents are claude panes. Reading the active tree + registry keeps
@@ -118,7 +204,7 @@
   <div class="zone left">
     <div class="left-git">
       <div class="branch-anchor" bind:this={branchAnchorEl}>
-        <GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} {onPickBranch} />
+        <GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} {onPickBranch} {onPr} {prExists} {prDisabled} {onOpenPrs} openPrs={openPrsView_} {onCommit} {filesTip} />
       </div>
       <BranchPicker
         open={branchOpen}

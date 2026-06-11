@@ -10,8 +10,12 @@ import {
   archiveDecision,
   autoArchiveAction,
   shouldAutoResume,
-  deleteAllArchivedRequest
+  deleteAllArchivedRequest,
+  rowSub,
+  clipLine,
+  ROW_SUB_MAX_LEN
 } from './inbox';
+import type { PendingQuestion } from './roster';
 
 // Minimal AgentRow factory — only the fields the inbox cores read.
 function row(paneId: string, status: AgentStatus, over: Partial<AgentRow> = {}): AgentRow {
@@ -224,6 +228,14 @@ describe('Archiving an empty session deletes it instead', () => {
   });
 });
 
+// NOTE: The coordinator follows the SAME archive/delete rule as ordinary sessions
+// (an EMPTY coordinator deletes, a NON-empty one archives, restorable). That generic
+// rule is already covered by `archiveDecision` above; the COORDINATOR-SPECIFIC store
+// wiring — archive → restore brings it back as the project's live coordinator — is
+// exercised at the store level in `layout/workspace.svelte.test.ts` (which involves a
+// real coordinator pane), so the former tautological `archiveDecision('coord-hash')`
+// re-assertions here were redundant illusory coverage and have been removed.
+
 describe('A new message resumes a paused session', () => {
   it('resumes only when the live user-message COUNT strictly exceeds the paused-at count', () => {
     expect(shouldAutoResume(1, 2)).toBe(true);
@@ -269,5 +281,173 @@ describe('Sending a message unarchives a previewing session', () => {
     expect(shouldAutoResume(3, undefined)).toBe(false);
     // An unestablished baseline never unarchives (lazily established instead).
     expect(shouldAutoResume(null, 3)).toBe(false);
+  });
+});
+
+// clipLine collapses a (possibly multi-line) message to a single line and trims it
+// to a sensible length for the one-line roster sub-line + its tooltip.
+describe('clipLine', () => {
+  it('returns the text unchanged when short and single-line', () => {
+    expect(clipLine('All done')).toBe('All done');
+  });
+
+  it('collapses internal newlines/whitespace to single spaces', () => {
+    expect(clipLine('line one\nline two\t  three')).toBe('line one line two three');
+  });
+
+  it('trims leading/trailing whitespace', () => {
+    expect(clipLine('  hello  ')).toBe('hello');
+  });
+
+  it('clips an over-long message to the max length with an ellipsis', () => {
+    const long = 'x'.repeat(ROW_SUB_MAX_LEN + 50);
+    const out = clipLine(long);
+    expect(out).not.toBeNull();
+    expect(out!.length).toBeLessThanOrEqual(ROW_SUB_MAX_LEN + 1); // + the ellipsis char
+    expect(out!.endsWith('…')).toBe(true);
+  });
+
+  it('returns null for empty/whitespace-only/null input', () => {
+    expect(clipLine('   ')).toBeNull();
+    expect(clipLine('')).toBeNull();
+    expect(clipLine(null)).toBeNull();
+    expect(clipLine(undefined)).toBeNull();
+  });
+});
+
+// rowSub is the PURE sub-line text for a roster row: a pending question, else the
+// last assistant message (live `summary`, else the per-session cached summary the
+// caller injects for an archived/closed pane whose live activity is gone), else a
+// STATE-APPROPRIATE generic fallback (`stateFallback`) — closed → 'Archived',
+// paused → the resume hint, error/attention → 'Errored — needs you' / 'Needs input',
+// finished → the formatted cost, working/idle → currentAction ?? 'Working…'. The
+// message (question/summary/cached) always WINS over the state word, including for an
+// archived (closed) row that still has a cached summary.
+describe('rowSub — last message/question on every row', () => {
+  const q = (question: string): PendingQuestion => ({
+    header: '',
+    question,
+    multiSelect: false,
+    options: []
+  });
+
+  it('shows a pending structured question first', () => {
+    const r = row('a', 'waiting', {
+      questions: [q('Which database should I use?')],
+      summary: 'last assistant message'
+    });
+    expect(rowSub(r)).toBe('Which database should I use?');
+  });
+
+  it('shows the compact pending question string when there is no structured one', () => {
+    const r = row('a', 'waiting', { question: 'Pick a branch', summary: 'msg' });
+    expect(rowSub(r)).toBe('Pick a branch');
+  });
+
+  it('shows the last assistant message when there is no pending question', () => {
+    const r = row('a', 'working', { summary: 'I refactored the parser.' });
+    expect(rowSub(r)).toBe('I refactored the parser.');
+  });
+
+  it('an ARCHIVED row with a live summary shows that summary, NOT "Archived · restore or delete"', () => {
+    const r = row('a', 'finished', { closed: true, summary: 'Shipped the fix.' });
+    expect(rowSub(r)).toBe('Shipped the fix.');
+    expect(rowSub(r)).not.toContain('Archived');
+  });
+
+  it('an ARCHIVED row with NO live summary falls back to the injected cached summary', () => {
+    // A closed pane has no live activity (`summary` is null), so the caller injects
+    // the last summary it recorded while the pane was live.
+    const r = row('a', 'finished', { closed: true, summary: null });
+    expect(rowSub(r, () => 'Last thing it said before archiving')).toBe(
+      'Last thing it said before archiving'
+    );
+    expect(rowSub(r, () => 'Last thing it said before archiving')).not.toContain('Archived');
+  });
+
+  it('prefers a pending question over both the live summary and the cached one', () => {
+    const r = row('a', 'waiting', {
+      question: 'Need your call here',
+      summary: 'older message'
+    });
+    expect(rowSub(r, () => 'cached')).toBe('Need your call here');
+  });
+
+  it('prefers the live summary over the cached one', () => {
+    const r = row('a', 'working', { summary: 'live message' });
+    expect(rowSub(r, () => 'cached message')).toBe('live message');
+  });
+
+  it('clips a very long last message for the one-line display', () => {
+    const long = 'y'.repeat(ROW_SUB_MAX_LEN + 80);
+    const r = row('a', 'working', { summary: long });
+    const out = rowSub(r);
+    expect(out.length).toBeLessThanOrEqual(ROW_SUB_MAX_LEN + 1);
+    expect(out.endsWith('…')).toBe(true);
+  });
+});
+
+// When a row has NO pending question and NO (live or cached) summary, the sub-line
+// falls back to a STATE-APPROPRIATE word — the per-lane strings restored from the old
+// inline rowSub. The more-specific lifecycle states win, in order: closed → paused →
+// error/attention → finished → working/idle.
+describe('rowSub — state-appropriate fallback when there is no message', () => {
+  it('a CLOSED row with no message falls back to "Archived"', () => {
+    const r = row('a', 'finished', { closed: true, summary: null, question: null, questions: null });
+    expect(rowSub(r, () => null)).toBe('Archived');
+  });
+
+  it('a PAUSED row with no message falls back to the resume hint', () => {
+    const r = row('a', 'working', { paused: true, summary: null, question: null, questions: null });
+    expect(rowSub(r, () => null)).toBe('Paused · send a message to resume');
+  });
+
+  it('an ERROR row with no question/summary falls back to "Errored — needs you"', () => {
+    const r = row('a', 'error', { summary: null, question: null, questions: null });
+    expect(rowSub(r, () => null)).toBe('Errored — needs you');
+  });
+
+  it('a WAITING row with no question/summary falls back to "Needs input"', () => {
+    const r = row('a', 'waiting', { summary: null, question: null, questions: null });
+    expect(rowSub(r, () => null)).toBe('Needs input');
+  });
+
+  it('a FINISHED row with no summary falls back to the formatted cost', () => {
+    const withCost = row('a', 'finished', { summary: null, cost: 1.5 });
+    expect(rowSub(withCost, () => null)).toBe('$1.50');
+    // Unknown cost renders an em dash.
+    const noCost = row('a', 'finished', { summary: null, cost: null });
+    expect(rowSub(noCost, () => null)).toBe('—');
+  });
+
+  it('a WORKING/idle row with no summary falls back to currentAction, else "Working…"', () => {
+    const acting = row('a', 'working', { summary: null, currentAction: 'Bash:npm test' });
+    expect(rowSub(acting, () => null)).toBe('Bash:npm test');
+    // No current action -> the generic working word.
+    const idleish = row('a', 'idle', { summary: null, currentAction: null });
+    expect(rowSub(idleish, () => null)).toBe('Working…');
+    expect(rowSub(idleish)).toBe('Working…');
+  });
+
+  it('ignores a whitespace-only summary and cache, then uses the state fallback', () => {
+    const r = row('a', 'idle', { summary: '   ', currentAction: null });
+    expect(rowSub(r, () => '  ')).toBe('Working…');
+  });
+
+  // The message ALWAYS wins over the state word — including a CLOSED row whose only
+  // message is the injected cached summary (shows the summary, NOT 'Archived').
+  it('a message (question/summary/cached) wins over the state word for every lane', () => {
+    // Closed + cached summary -> summary, not 'Archived'.
+    const closedCached = row('a', 'finished', { closed: true, summary: null });
+    expect(rowSub(closedCached, () => 'Shipped it')).toBe('Shipped it');
+    // Paused + live summary -> summary, not the resume hint.
+    const pausedMsg = row('b', 'working', { paused: true, summary: 'Mid-task note' });
+    expect(rowSub(pausedMsg)).toBe('Mid-task note');
+    // Error + question -> the question, not 'Errored — needs you'.
+    const errQ = row('c', 'error', { question: 'Retry or abort?' });
+    expect(rowSub(errQ)).toBe('Retry or abort?');
+    // Finished + summary -> summary, not the cost.
+    const finMsg = row('d', 'finished', { summary: 'All tests green', cost: 2 });
+    expect(rowSub(finMsg)).toBe('All tests green');
   });
 });

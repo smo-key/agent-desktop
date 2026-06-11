@@ -15,6 +15,16 @@ export const UNASSIGNED = '__unassigned__' as const;
 /** A project filter selection: ALL, UNASSIGNED, or a concrete project id. */
 export type ProjectFilter = typeof ALL | typeof UNASSIGNED | string;
 
+/**
+ * PURE: whether a row counts as a LIVE agent for the project counters — neither
+ * archived (`closed`) nor previewing an archived session (`preview`). The panel's
+ * per-project / unassigned / all-agents tallies count only these, so archiving an
+ * agent decrements its project's counter and restoring it increments again.
+ */
+function isLiveAgent(row: AgentRow): boolean {
+  return !row.closed && !row.preview;
+}
+
 /** One project's live rollup, as the panel renders it. */
 export interface ProjectCount {
   project: Project;
@@ -34,7 +44,7 @@ export function projectCounts(
   projects: ReadonlyArray<Project>
 ): ProjectCount[] {
   return projects.map((project) => {
-    const mine = rows.filter((r) => r.projectId === project.id);
+    const mine = rows.filter((r) => r.projectId === project.id && isLiveAgent(r));
     return {
       project,
       count: mine.length,
@@ -43,9 +53,18 @@ export function projectCounts(
   });
 }
 
+/**
+ * How many LIVE agents there are in total (the panel's "All agents" tally),
+ * excluding archived (`closed`) and previewed agents — the same non-archived
+ * predicate the per-project and unassigned counts use, so all three agree.
+ */
+export function allAgentsCount(rows: ReadonlyArray<AgentRow>): number {
+  return rows.filter(isLiveAgent).length;
+}
+
 /** How many agents have no project assigned (registry entry without a projectId). */
 export function unassignedCount(rows: ReadonlyArray<AgentRow>): number {
-  return rows.filter((r) => r.projectId === null).length;
+  return rows.filter((r) => r.projectId === null && isLiveAgent(r)).length;
 }
 
 /**

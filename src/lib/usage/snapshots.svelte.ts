@@ -25,6 +25,13 @@ export interface GitStatus {
   modified?: number | null;
   ahead?: number | null;
   behind?: number | null;
+  /**
+   * The changed file PATHS (capped backend-side at 50) for the uncommitted-files
+   * hover list. Additive + OPTIONAL: the statusline snapshot omits it, and a
+   * legacy `git_status_for` payload without it still types. Absent/empty means no
+   * list (a clean tree, or git couldn't answer).
+   */
+  files?: string[] | null;
 }
 
 /**

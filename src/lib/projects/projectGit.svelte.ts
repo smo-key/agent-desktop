@@ -20,6 +20,13 @@ function finiteOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+/** A clean `string[]` of the changed paths: an array of strings, else `[]`
+ *  (guards a missing field / non-array / non-string entries). */
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((v): v is string => typeof v === 'string');
+}
+
 /**
  * PURE: normalize a raw `path -> git` payload into a clean `GitMap`, coercing each
  * entry's fields to the stable `GitStatus` shape and dropping any non-object value.
@@ -36,7 +43,8 @@ export function normalizeGitMap(payload: unknown): GitMap {
       dirty: typeof g.dirty === 'boolean' ? g.dirty : null,
       modified: finiteOrNull(g.modified),
       ahead: finiteOrNull(g.ahead),
-      behind: finiteOrNull(g.behind)
+      behind: finiteOrNull(g.behind),
+      files: stringArray(g.files)
     };
   }
   return out;

@@ -13,6 +13,7 @@
     type FileBucket
   } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
+  import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
   import {
     ensureModels,
@@ -235,6 +236,22 @@
               {:else}
                 <span class="model-status">None downloaded</span>
               {/if}
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <span class="label">Focus behavior</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Auto-advance to the next agent that needs input</span>
+            <div class="control">
+              <input
+                type="checkbox"
+                checked={autoAdvance.prefs.enabled}
+                onchange={(e) => autoAdvance.setEnabled(e.currentTarget.checked)}
+              />
             </div>
           </li>
         </ul>

@@ -57,7 +57,7 @@ export function buildPaneMenu(deps: PaneMenuDeps): PaneMenuSection[] {
       {
         id: 'insert-filename',
         label: 'Insert Filename…',
-        shortcut: '⌘I',
+        shortcut: '⌘O',
         run: () => deps.insertFilename()
       }
     ],

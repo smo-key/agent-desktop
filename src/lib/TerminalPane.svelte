@@ -17,7 +17,8 @@
     READY_MAX_MS
   } from './launcher/initialInput';
   import { LaunchSpinner, spinnerLabel } from './launcher/spinner';
-  import { noteOutput, noteExit, clearRuntime } from './overview/runtime';
+  import { noteOutput, noteExit, noteBusy, clearRuntime } from './overview/runtime';
+  import { detectTerminalBusy } from './overview/terminalBusy';
   import { events } from './overview/events.svelte';
 
   // PtyEvent — the exact wire shape the Rust backend streams over the per-pane
@@ -291,6 +292,32 @@
     return { screen, rect, cellW: rect.width / cols, cellH: rect.height / rows };
   }
 
+  // How many lines from the BOTTOM of the live buffer to scan for the active-work
+  // affordance. Claude renders its running-spinner / "Waiting for N dynamic
+  // workflow(s)" line at/near the bottom of the viewport, so a small tail is both
+  // sufficient and cheap (no full-scrollback scan on every output chunk).
+  const BUSY_SCAN_LINES = 40;
+
+  /**
+   * A bounded tail of the live terminal text (the last `BUSY_SCAN_LINES` rendered
+   * lines), joined with newlines. Reads xterm's active buffer directly — the same
+   * `getLine().translateToString()` path the file-link hit-test uses. Returns ''
+   * when the terminal isn't ready. Used ONLY to feed `detectTerminalBusy`.
+   */
+  function recentTerminalText(): string {
+    if (!term) return '';
+    const buf = term.buffer.active;
+    // `baseY + rows` is one past the last viewport row; scan the tail up to there.
+    const end = buf.baseY + term.rows;
+    const start = Math.max(0, end - BUSY_SCAN_LINES);
+    const lines: string[] = [];
+    for (let i = start; i < end; i++) {
+      const line = buf.getLine(i)?.translateToString(true);
+      if (line) lines.push(line);
+    }
+    return lines.join('\n');
+  }
+
   // Re-evaluate the hover at `lastPointer`: when ⌘ is held and the pointer sits on a
   // token that `resolve_path` confirms exists, arm it (underline + pointer cursor +
   // store the absolute path for ⌘-click). Otherwise clear. Async-safe via resolveSeq.
@@ -523,6 +550,15 @@
           // and, on the first byte, deliver any pending initial prompt now that
           // claude's TUI has begun rendering.
           noteOutput(paneId, Date.now());
+          // Re-detect the "actively working" affordance from the live terminal tail
+          // (a foreground command running, or in-session background work) — the
+          // event hooks miss these, so the roster reads it via `runtime.terminalBusy`
+          // to keep the agent In flight rather than Needs input. The spinner line is
+          // re-rendered continuously while work runs, so per-chunk sampling tracks it
+          // closely and clears the instant the affordance disappears. `term.write`
+          // above is async; reading the buffer now reflects the PRIOR frame, which is
+          // fine for a persistent indicator (at worst a one-chunk lag).
+          noteBusy(paneId, detectTerminalBusy(recentTerminalText()));
           // First/each output byte (re)starts the readiness quiet window; the
           // gate delivers the initial prompt once output settles (TUI ready).
           readiness?.noteOutput();

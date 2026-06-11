@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ORCHESTRATOR_SYSTEM_PROMPT,
+  archivedCoordinatorPane,
   coordinatorLaunchArgs,
   findCoordinatorPane,
   type CoordinatorPaneView
@@ -43,6 +44,65 @@ describe('findCoordinatorPane (single-coordinator reuse, task 6.3)', () => {
   it('returns null for a blank projectId', () => {
     expect(findCoordinatorPane(panes, '')).toBeNull();
     expect(findCoordinatorPane(panes, '   ')).toBeNull();
+  });
+});
+
+describe('archivedCoordinatorPane / findCoordinatorPane are complementary (coordinator-lifecycle)', () => {
+  it('finds an ARCHIVED coordinator that findCoordinatorPane ignores, and vice versa', () => {
+    const live: CoordinatorPaneView = {
+      paneId: 'coord-live',
+      program: 'claude',
+      projectId: 'A',
+      role: 'coordinator'
+    };
+    const archived: CoordinatorPaneView = {
+      paneId: 'coord-archived',
+      program: 'claude',
+      projectId: 'A',
+      role: 'coordinator',
+      closed: true
+    };
+
+    // A LIVE coordinator: found by findCoordinatorPane, NOT by archivedCoordinatorPane.
+    expect(findCoordinatorPane([live], 'A')?.paneId).toBe('coord-live');
+    expect(archivedCoordinatorPane([live], 'A')).toBeNull();
+
+    // An ARCHIVED coordinator: found by archivedCoordinatorPane, NOT by findCoordinatorPane.
+    expect(archivedCoordinatorPane([archived], 'A')?.paneId).toBe('coord-archived');
+    expect(findCoordinatorPane([archived], 'A')).toBeNull();
+  });
+
+  it('mirrors findCoordinatorPane EXACTLY except for the closed flag', () => {
+    // Same non-closed predicates: claude program, coordinator role, matching project.
+    const shellCoord: CoordinatorPaneView = {
+      paneId: 'shell',
+      program: '/bin/zsh',
+      projectId: 'A',
+      role: 'coordinator',
+      closed: true
+    };
+    const plainClaude: CoordinatorPaneView = {
+      paneId: 'plain',
+      program: 'claude',
+      projectId: 'A',
+      closed: true
+    };
+    const otherProject: CoordinatorPaneView = {
+      paneId: 'coord-B',
+      program: 'claude',
+      projectId: 'B',
+      role: 'coordinator',
+      closed: true
+    };
+    // None qualify for project A: not claude / not coordinator / wrong project.
+    expect(archivedCoordinatorPane([shellCoord, plainClaude, otherProject], 'A')).toBeNull();
+    // A blank projectId is rejected, exactly like findCoordinatorPane.
+    expect(
+      archivedCoordinatorPane(
+        [{ paneId: 'x', program: 'claude', projectId: 'A', role: 'coordinator', closed: true }],
+        ''
+      )
+    ).toBeNull();
   });
 });
 

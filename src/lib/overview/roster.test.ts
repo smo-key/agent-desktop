@@ -6,6 +6,7 @@ import {
   laneOf,
   laneForRow,
   needsAttention,
+  isArchivedCoordinator,
   groupByLane,
   archivedPaneIds,
   LANE_ORDER,
@@ -459,6 +460,40 @@ describe('roster — control-room lanes', () => {
     ];
     expect(archivedPaneIds(rows)).toEqual([]);
   });
+
+  // agent-roster-display: "Archived coordinator is labeled" — an archived (closed)
+  // coordinator row carries the bot "Coordinator" badge; a LIVE coordinator does not
+  // (it keeps its existing pinned-row presentation, no archived label added).
+  it('isArchivedCoordinator: only a closed coordinator row is labeled', () => {
+    // The label case: a coordinator whose session is archived (closed).
+    expect(
+      isArchivedCoordinator(laneRow('coord', { role: 'coordinator', closed: true }))
+    ).toBe(true);
+    // A LIVE coordinator is NOT labeled (no archived badge on the live presentation).
+    expect(
+      isArchivedCoordinator(laneRow('coord', { role: 'coordinator' }))
+    ).toBe(false);
+    // A preview-ed (resumed-from-archived, closed:false) coordinator is live again.
+    expect(
+      isArchivedCoordinator(laneRow('coord', { role: 'coordinator', closed: false, preview: true }))
+    ).toBe(false);
+    // A plain archived (closed) agent is NOT a coordinator → no coordinator label.
+    expect(
+      isArchivedCoordinator(laneRow('agent', { closed: true }))
+    ).toBe(false);
+    // A coordinator-spawned agent (carries coordinatorPaneId, not role) is not labeled.
+    expect(
+      isArchivedCoordinator(laneRow('spawned', { coordinatorPaneId: 'coord', closed: true }))
+    ).toBe(false);
+  });
+
+  it('an archived coordinator sits in the Archived (done) lane', () => {
+    // The closed coordinator lands in `done` like any archived row, where its label
+    // renders.
+    expect(
+      laneForRow(laneRow('coord', { role: 'coordinator', status: 'finished', closed: true }))
+    ).toBe('done');
+  });
 });
 
 // Event-sourced status integration (activity-timeline). buildRoster prefers the
@@ -583,5 +618,105 @@ describe('roster — coordinator needs-input suppression', () => {
     });
     expect(row.status).toBe('waiting');
     expect(needsAttention(row)).toBe(true);
+  });
+});
+
+// In-flight vs Needs-input override (agent-status-derivation): when Claude Code is
+// actively working but its event hooks report idle, a LIVE non-coordinator pane with
+// NO pending question is shown In flight (`working`) rather than Needs input. The
+// signal is the per-pane `terminalBusy` runtime flag (set from detectTerminalBusy).
+// The override is strictly additive: terminalBusy false/absent → exactly the prior
+// derivation; it never applies to the coordinator or to a pending-question row.
+describe('roster — terminal-busy In-flight override', () => {
+  const now = 1_000_000;
+  // PTY alive and quiet PAST the working window → the byte heuristic alone reads
+  // `waiting` (the Needs-input state the override must correct when busy).
+  const quiet = (over: Partial<PaneRuntime> = {}): [string, PaneRuntime] =>
+    rt('p', { lastOutputAt: now - WORKING_WINDOW_MS - 5_000, ...over });
+  const normalWs: RosterWorkspace = {
+    id: 'w1',
+    name: 'N',
+    panes: [{ paneId: 'p', cwd: '/x', isApp: true, projectId: 'A' }]
+  };
+
+  // Scenario 1: a foreground command running (terminal shows the interrupt /
+  // run-in-background affordance) → In flight, not Needs input.
+  it('foreground-run busy → working (would otherwise be waiting)', () => {
+    const runtime = runtimeOf(quiet({ terminalBusy: true }));
+    const [row] = buildRoster({}, [normalWs], runtime, now);
+    expect(row.status).toBe('working');
+    expect(needsAttention(row)).toBe(false);
+  });
+
+  // Scenario 3: the main turn returned but a dynamic workflow / another agent is
+  // still running. Same channel (terminalBusy true) → In flight. (The distinction
+  // between the two affordances lives in detectTerminalBusy; here the override is
+  // the same: a busy live pane stays working.)
+  it('background-workflow busy → working even when an event status says waiting', () => {
+    const runtime = runtimeOf(quiet({ terminalBusy: true }));
+    const [row] = buildRoster({}, [normalWs], runtime, now, {}, WORKING_WINDOW_MS, {
+      p: { status: 'waiting', currentAction: null, question: null, questions: null }
+    });
+    expect(row.status).toBe('working');
+  });
+
+  // Scenario 4: a pending AskUserQuestion → Needs input REGARDLESS of any
+  // active-work indicator. The override must not apply when a question is pending.
+  it('pending question → still waiting despite terminalBusy', () => {
+    const runtime = runtimeOf(quiet({ terminalBusy: true }));
+    const [row] = buildRoster({}, [normalWs], runtime, now, {}, WORKING_WINDOW_MS, {
+      p: { status: 'waiting', currentAction: null, question: 'pick one?', questions: null }
+    });
+    expect(row.status).toBe('waiting');
+    expect(needsAttention(row)).toBe(true);
+  });
+
+  it('pending structured questions → still waiting despite terminalBusy', () => {
+    const runtime = runtimeOf(quiet({ terminalBusy: true }));
+    const [row] = buildRoster({}, [normalWs], runtime, now, {}, WORKING_WINDOW_MS, {
+      p: {
+        status: 'waiting',
+        currentAction: null,
+        question: null,
+        questions: [{ header: '', question: 'q?', multiSelect: false, options: [] }]
+      }
+    });
+    expect(row.status).toBe('waiting');
+  });
+
+  // Scenario 5: no indicator present → status derived EXACTLY as before. A quiet
+  // pane with terminalBusy absent/false stays `waiting`.
+  it('no indicator (terminalBusy absent) → unchanged (waiting)', () => {
+    const runtime = runtimeOf(quiet());
+    const [row] = buildRoster({}, [normalWs], runtime, now);
+    expect(row.status).toBe('waiting');
+  });
+
+  it('terminalBusy explicitly false → unchanged (waiting)', () => {
+    const runtime = runtimeOf(quiet({ terminalBusy: false }));
+    const [row] = buildRoster({}, [normalWs], runtime, now);
+    expect(row.status).toBe('waiting');
+  });
+
+  // The override is gated on a LIVE process: an exited pane is never re-flagged
+  // working (a dead process is never working — mirrors the exit rule).
+  it('exited pane is finished even if terminalBusy lingers', () => {
+    const runtime = runtimeOf(rt('p', { exited: true, exitCode: 0, terminalBusy: true }));
+    const [row] = buildRoster({}, [normalWs], runtime, now);
+    expect(row.status).toBe('finished');
+  });
+
+  // The override must NOT change coordinator status derivation: a coordinator path
+  // is decided solely by coordinatorNeedsInput, independent of terminalBusy.
+  it('coordinator is unaffected by terminalBusy (still working with no question)', () => {
+    const coordWs: RosterWorkspace = {
+      id: 'wc',
+      name: 'C',
+      panes: [{ paneId: 'p', cwd: '/x', isApp: true, role: 'coordinator', projectId: 'A' }]
+    };
+    const runtime = runtimeOf(quiet({ terminalBusy: true }));
+    const [row] = buildRoster({}, [coordWs], runtime, now);
+    expect(row.status).toBe('working');
+    expect(needsAttention(row)).toBe(false);
   });
 });

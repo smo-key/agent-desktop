@@ -19,6 +19,23 @@
   // button that opens the branch picker; without it the branch stays a read-only
   // display pill (the project pane keeps it read-only), mirroring the push/pull
   // span↔button switch.
+  //
+  // When `onPr` is provided (the footer only), a PR button is shown immediately
+  // to the RIGHT of the modified (edited-files) pill: clicking opens the existing
+  // PR (when `prExists`) or a create-PR confirm. It is DISABLED when `prDisabled`
+  // (on the base branch, or no branch/project). Without `onPr` no PR button shows
+  // (the project pane omits it), mirroring the other footer-only switches.
+  //
+  // When `onOpenPrs` is provided (the footer only), an "open PRs awaiting review"
+  // button is shown to the RIGHT of the PR button: it renders `openPrs` (a warning
+  // glyph + the count when >0, else a neutral checkmark + `0`) and clicking opens
+  // the repo's pull-requests page on GitHub. Without it no button shows.
+  //
+  // When `onCommit` is provided (the footer only), the MODIFIED (uncommitted-files)
+  // pill becomes a BUTTON whenever `modified > 0` — clicking opens a commit confirm.
+  // It stays INERT (a plain display pill, no action) when `modified` is 0/null, so
+  // a clean tree can't be clicked. `filesTip` carries the hover-tooltip text for
+  // that pill (the changed file paths, capped) — null/empty ⇒ no tooltip.
   import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import type { GitStatus } from './snapshots.svelte';
@@ -30,7 +47,14 @@
     onPush,
     onPull,
     busy = false,
-    onPickBranch
+    onPickBranch,
+    onPr,
+    prExists = false,
+    prDisabled = false,
+    onOpenPrs,
+    openPrs,
+    onCommit,
+    filesTip = null
   }: {
     git: GitStatus | null;
     always?: boolean;
@@ -39,7 +63,19 @@
     onPull?: () => void;
     busy?: boolean;
     onPickBranch?: () => void;
+    onPr?: () => void;
+    prExists?: boolean;
+    prDisabled?: boolean;
+    onOpenPrs?: () => void;
+    openPrs?: { icon: string; label: string; warning: boolean };
+    onCommit?: () => void;
+    filesTip?: string | null;
   } = $props();
+
+  // The modified (uncommitted-files) pill is a clickable COMMIT button only when
+  // the footer wired `onCommit` AND there are actually changes (`modified > 0`).
+  // Otherwise it stays an inert display pill — a clean tree must not be clickable.
+  const commitable = $derived(!!onCommit && (git?.modified ?? 0) > 0);
 </script>
 
 <div class="git" class:stacked={stack}>
@@ -112,10 +148,35 @@
         {/if}
       {/if}
       {#if git.modified != null}
-        <span class="pill modified" class:zero={git.modified === 0} use:tooltip={`${git.modified} uncommitted file${git.modified === 1 ? '' : 's'} changed`}>
-          <Icon name="pencil" size={12} />
-          <span class="txt">{git.modified}</span>
-        </span>
+        {#if commitable}
+          <!-- Changes present + footer wired a commit action: a clickable COMMIT
+               button. Hover lists the changed file paths (filesTip); when paths
+               weren't surfaced, fall back to the count summary so a hint always
+               shows while there are changes. -->
+          <button
+            type="button"
+            class="pill modified action"
+            onclick={onCommit}
+            use:tooltip={filesTip ?? `${git.modified} uncommitted file${git.modified === 1 ? '' : 's'} changed — commit`}
+          >
+            <Icon name="pencil" size={12} />
+            <span class="txt">{git.modified}</span>
+          </button>
+        {:else}
+          <!-- INERT: a clean tree (modified === 0) or no commit action wired. A
+               clean tree shows NO tooltip (no file list); a non-zero count with no
+               action falls back to the count summary. -->
+          <span
+            class="pill modified"
+            class:zero={git.modified === 0}
+            use:tooltip={git.modified === 0
+              ? ''
+              : (filesTip ?? `${git.modified} uncommitted file${git.modified === 1 ? '' : 's'} changed`)}
+          >
+            <Icon name="pencil" size={12} />
+            <span class="txt">{git.modified}</span>
+          </span>
+        {/if}
       {:else if always}
         <span class="pill modified zero" use:tooltip={'No uncommitted changes'}>
           <Icon name="pencil" size={12} />
@@ -129,6 +190,37 @@
         <span class="pill clean" use:tooltip={'Working tree clean'}>
           <Icon name="check" size={12} />
         </span>
+      {/if}
+      {#if onPr}
+        <button
+          type="button"
+          class="pill pr action"
+          class:exists={prExists}
+          onclick={onPr}
+          disabled={prDisabled}
+          use:tooltip={prDisabled
+            ? 'Open a pull request — switch off the base branch first'
+            : prExists
+              ? 'Open this branch’s pull request on GitHub'
+              : 'Create a pull request into main'}
+        >
+          <Icon name="git-pull-request" size={12} />
+          <span class="txt">PR</span>
+        </button>
+      {/if}
+      {#if onOpenPrs && openPrs}
+        <button
+          type="button"
+          class="pill openprs action"
+          class:warn={openPrs.warning}
+          onclick={onOpenPrs}
+          use:tooltip={openPrs.warning
+            ? `${openPrs.label} open pull request${openPrs.label === '1' ? '' : 's'} awaiting review — open on GitHub`
+            : 'No open pull requests awaiting review — open on GitHub'}
+        >
+          <Icon name={openPrs.icon} size={12} />
+          <span class="txt">{openPrs.label}</span>
+        </button>
       {/if}
     </span>
   {:else}
@@ -246,5 +338,31 @@
     color: var(--nominal-500);
     box-shadow: none;
     padding: 0 6px;
+  }
+  /* The PR button sits immediately right of the modified pill. Neutral by default
+     (create intent); a brighter accent tint when an open PR already exists (open
+     intent). The shared `button.pill.action` rules above carry hover/active/disabled. */
+  .pr {
+    background: var(--space-750);
+    color: var(--fg-2);
+    box-shadow: inset 0 0 0 1px var(--line-subtle);
+  }
+  .pr.exists {
+    background: var(--blue-tint);
+    color: var(--info-500);
+    box-shadow: none;
+  }
+  /* The open-PRs-awaiting-review button sits immediately right of the PR button.
+     Neutral (checkmark + `0`) when none await review; a caution tint (warning
+     glyph + count) when one or more do. Shares `button.pill.action` hover/active. */
+  .openprs {
+    background: var(--space-750);
+    color: var(--fg-4);
+    box-shadow: inset 0 0 0 1px var(--line-subtle);
+  }
+  .openprs.warn {
+    background: var(--caution-tint);
+    color: var(--caution-500);
+    box-shadow: none;
   }
 </style>
