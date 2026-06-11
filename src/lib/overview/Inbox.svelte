@@ -49,6 +49,7 @@
   import { events } from './events.svelte';
   import { titles } from './titles.svelte';
   import { summaries } from './summaries.svelte';
+  import { costs } from './costs.svelte';
   import { projects } from '$lib/projects/projects.svelte';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import {
@@ -220,7 +221,11 @@
   // Lanes rendered BELOW the rule exclude the pinned coordinator (it never renders
   // twice). Keyboard nav uses `coordinatorNavOrder` (coordinator/affordance first),
   // not these render lanes, so the pinned coordinator stays reachable.
-  const renderGrouped = $derived(groupByLane(pin.rest));
+  const renderGrouped = $derived.by(() => {
+    const grouped = groupByLane(pin.rest);
+    grouped.done = [...grouped.done].reverse();
+    return grouped;
+  });
 
   // Group metadata (label) for the left list, in attn -> flight -> paused -> done
   // order. `done` is the Archived lane (closed sessions); `paused` sits above it.
@@ -330,7 +335,9 @@
     if (!editingTitle) return;
     editingTitle = false;
     const row = viewRows.find((r) => r.paneId === editingPaneId);
-    if (row) titles.setManualTitle(row.paneId, sessionIdOf(row), titleDraft);
+    if (row && titleDraft.trim() !== focusTitle(row)) {
+      titles.setManualTitle(row.paneId, sessionIdOf(row), titleDraft);
+    }
     editingPaneId = null;
     titleDraft = '';
   }
@@ -504,7 +511,7 @@
       void tick().then(() =>
         requestAnimationFrame(() => {
           scrollTerminalToBottom(id);
-          focusTerminal(id);
+          if (!editingTitle) focusTerminal(id);
         })
       );
     }
@@ -704,6 +711,7 @@
     for (const r of allRows) {
       if (r.closed || r.preview) continue; // a closed/previewing pane has no fresh live message
       if (r.summary) summaries.record(sessionIdOf(r), r.summary);
+      costs.record(sessionIdOf(r), r.cost); // freeze cost before snapshot resets on reopen
     }
   });
 
@@ -1019,7 +1027,7 @@
           </span>
         {/if}
         <span class="m" use:tooltip={'Total session cost'}>
-          <Icon name="dollar-sign" size={11} />{costMeta(r.cost)}
+          <Icon name="dollar-sign" size={11} />{costMeta((r.closed || r.preview) ? (costs.costFor(sessionIdOf(r)) ?? r.cost) : r.cost)}
         </span>
         <span class="m" use:tooltip={'Time since last activity'}>
           <Icon name="clock" size={11} />{friendlyTime(r.lastTs, nowMs)}

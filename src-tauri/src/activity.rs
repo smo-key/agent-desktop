@@ -122,6 +122,14 @@ pub struct Activity {
     /// when the transcript is unreadable; `0` for a session with no real user message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_msg_count: Option<usize>,
+    /// Unix timestamp in SECONDS of the last transcript entry that carries a
+    /// `timestamp` field — "when the agent last did anything". Stable across
+    /// `claude --resume` reopens (the transcript already has the entries; no new
+    /// entry is appended until the user sends a message). Used by the roster as
+    /// the authoritative `lastTs` for closed/preview sessions so that opening an
+    /// archived session does not reset the displayed time to "just now".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_msg_ts: Option<i64>,
 }
 
 /// One pane the frontend wants activity for: its frontend `pane_id` (the map key),
@@ -145,6 +153,36 @@ pub struct PaneRef {
 // ---------------------------------------------------------------------------
 // PURE transcript parse.
 // ---------------------------------------------------------------------------
+
+/// Best-effort ISO-8601 (`2026-06-03T12:00:00.000Z`) → unix millis. Returns
+/// `None` for anything that doesn't match the expected shape (Z-suffix only).
+/// Mirrors the same helper in `events.rs` — no chrono dependency.
+fn parse_iso_millis(s: &str) -> Option<i64> {
+    let bytes = s.as_bytes();
+    if bytes.len() < 20 || !s.ends_with('Z') {
+        return None;
+    }
+    let num = |a: usize, b: usize| s.get(a..b)?.parse::<i64>().ok();
+    let year = num(0, 4)?;
+    let month = num(5, 7)?;
+    let day = num(8, 10)?;
+    let hour = num(11, 13)?;
+    let min = num(14, 16)?;
+    let sec = num(17, 19)?;
+    let millis = if s.len() > 20 && bytes[19] == b'.' {
+        let frac: String = s[20..s.len() - 1].chars().take(3).collect();
+        format!("{frac:0<3}").parse::<i64>().ok()?
+    } else {
+        0
+    };
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = y - era * 400;
+    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some(((days * 86400 + hour * 3600 + min * 60 + sec) * 1000) + millis)
+}
 
 /// Collapse every whitespace run (incl. newlines) to a single space, trimmed.
 fn collapse(s: &str) -> String {
@@ -346,6 +384,28 @@ pub fn user_message_count(path: &Path) -> usize {
         .count()
 }
 
+/// Every ASSISTANT text message in a transcript, in order (oldest first). Reads
+/// the WHOLE file so the title model can see what was actually accomplished in
+/// the session. Tolerant of malformed lines; empty when none / unreadable.
+pub fn assistant_messages(path: &Path) -> Vec<String> {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in body.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<Value>(t) {
+            if let Some(text) = assistant_text(&v) {
+                out.push(text);
+            }
+        }
+    }
+    out
+}
+
 /// The content blocks of an `assistant` entry, or empty.
 fn assistant_content(entry: &Value) -> &[Value] {
     if entry.get("type").and_then(Value::as_str) != Some("assistant") {
@@ -521,6 +581,18 @@ pub fn summarize_transcript(path: &Path) -> Activity {
         if entry.get("type").and_then(Value::as_str) == Some("assistant") {
             if let Some(pct) = context_pct_from(entry) {
                 out.context_pct = Some(pct);
+                break;
+            }
+        }
+    }
+
+    // LAST-MSG-TS: the timestamp of the last entry that carries one — unix SECONDS.
+    // Stable across `claude --resume` reopens: no new entry is added until the user
+    // sends a message, so the displayed "time since last activity" does not reset.
+    for entry in entries.iter().rev() {
+        if let Some(ts_str) = entry.get("timestamp").and_then(Value::as_str) {
+            if let Some(millis) = parse_iso_millis(ts_str) {
+                out.last_msg_ts = Some(millis / 1000);
                 break;
             }
         }
@@ -830,6 +902,41 @@ mod tests {
         let act = summarize_transcript(&path);
         assert!(act.user_hash.is_some());
         assert_eq!(act.user_hash, summarize_transcript(&path).user_hash);
+    }
+
+    #[test]
+    fn assistant_messages_extracts_text_blocks_in_order() {
+        let tmp = TempDir::new("asstmsgs");
+        let path = write_transcript(
+            tmp.path(),
+            "proj",
+            "sess-A",
+            &[
+                serde_json::json!({"type":"user","message":{"role":"user","content":"Fix the bug"}}),
+                assistant(serde_json::json!([{"type":"text","text":"I'll fix it now"}])),
+                serde_json::json!({"type":"user","message":{"role":"user","content":"Add tests"}}),
+                // Tool-only assistant entry (no text block) — not included.
+                assistant(serde_json::json!([{"type":"tool_use","id":"t1","name":"Bash","input":{}}])),
+                assistant(serde_json::json!([{"type":"text","text":"Done, tests added"}])),
+            ],
+        );
+        let msgs = assistant_messages(&path);
+        assert_eq!(
+            msgs,
+            vec!["I'll fix it now".to_string(), "Done, tests added".to_string()]
+        );
+    }
+
+    #[test]
+    fn assistant_messages_empty_when_no_assistant_entries() {
+        let tmp = TempDir::new("asstmsgs-empty");
+        let path = write_transcript(
+            tmp.path(),
+            "proj",
+            "sess-empty",
+            &[serde_json::json!({"type":"user","message":{"role":"user","content":"hi"}})],
+        );
+        assert!(assistant_messages(&path).is_empty());
     }
 
     /// Exit/quit/clear/compact entries are NOT the user "saying something" — a
