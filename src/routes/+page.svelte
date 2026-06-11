@@ -120,14 +120,18 @@
     setAgentTaskLauncher((projectId, prompt) => {
       const proj = projectForId(projects.list, projectId);
       if (!proj) return;
-      const paneId = workspace.launch(
-        buildLaunchPlan({
+      const paneId = workspace.launch({
+        ...buildLaunchPlan({
           folder: proj.path,
           prompt,
           placement: 'tab',
           projectId: proj.id
-        })
-      );
+        }),
+        // The footer Commit + Create-PR tasks ALWAYS run on Sonnet — they are
+        // mechanical git chores (stage/commit, push/open-PR) that don't need the
+        // default model, so force `--model sonnet` for cost/speed.
+        extraArgs: ['--model', 'sonnet']
+      });
       if (paneId) taskAgentPanes.add(paneId);
     });
     // A terminal task that succeeds (exit 0) pops a "<name> completed" toast.
