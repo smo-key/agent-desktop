@@ -150,7 +150,6 @@
     gitProject?.path ? () => void onOpenPrsClick(openPrs) : undefined
   );
 
-  // Commit button (footer only): clicking the uncommitted-files pill (WHEN there
   // Commit popover (footer only): GitInfo opens a popover listing the changed files
   // and a "Commit now" button that spawns the agent directly (no confirm dialog).
   // `onCommit` is the presence signal — when set, GitInfo makes the pill clickable.

@@ -102,9 +102,9 @@
 
 ## 15. Agent card shows model instead of cost (agent-roster-display, agent-overview)
 
-- [ ] 15.1 In `roster.ts`, add `modelId: string | null` to `AgentRow`, sourced from `snapshot?.model_id` (alongside the existing `model`).
-- [ ] 15.2 In `Inbox.svelte`'s card meta (the `dollar-sign` + `costMeta(r.cost)` span, ~line 1022), replace it with the model label `modelLabel(r.modelId, r.model)` and a suitable non-cost icon; remove the per-card dollar amount.
-- [ ] 15.3 Tests/assertions: the card renders the model label and no `$` cost (and falls back to the display name when the id is unrecognized).
+- [x] 15.1 In `roster.ts`, add `modelId: string | null` to `AgentRow`, sourced from `snapshot?.model_id` (alongside the existing `model`).
+- [x] 15.2 In `Inbox.svelte`'s card meta (the `dollar-sign` + `costMeta(r.cost)` span, ~line 1022), replace it with the model label `modelLabel(r.modelId, r.model)` and a suitable non-cost icon; remove the per-card dollar amount.
+- [x] 15.3 Tests/assertions: the card renders the model label and no `$` cost (and falls back to the display name when the id is unrecognized).
 
 ## 16. Uncommitted tooltip → count + commit popover (footer-actions)
 

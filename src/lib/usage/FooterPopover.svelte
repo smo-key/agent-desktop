@@ -60,7 +60,12 @@
   });
 
   // ── Keyboard handler ──────────────────────────────────────────────────────
+  // Bound at the window level (see <svelte:window> below) so Escape closes the
+  // popover regardless of where focus is — the panel itself is never focused
+  // (unlike BranchPicker, which autofocuses its filter input), so a panel-local
+  // handler would never fire. Guarded by `open` so closed instances are inert.
   function onKeyDown(e: KeyboardEvent) {
+    if (!open) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
@@ -68,6 +73,8 @@
     }
   }
 </script>
+
+<svelte:window onkeydown={onKeyDown} />
 
 {#if open}
   <!-- Full-screen transparent scrim: outside click closes the popover.
@@ -84,7 +91,6 @@
     style:left={`${panelLeft}px`}
     style:bottom={`${panelBottom}px`}
     onclick={(e) => e.stopPropagation()}
-    onkeydown={onKeyDown}
     role="dialog"
     aria-modal="true"
     tabindex="-1"
