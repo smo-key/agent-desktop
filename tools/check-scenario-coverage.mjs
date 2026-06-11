@@ -319,6 +319,14 @@ const MANUAL_SCENARIOS = {
     // (and ⌘Tab is additionally subject to the macOS app-switcher reservation).
     'new_terminal_shortcut_opens_an_empty_shell',
     'focus_cycle_shortcut_moves_between_agent_and_terminals',
+    // Always-on per-terminal trash button: the PRESENCE + state-aware label of the
+    // rendered button is a DOM-render assertion with no component-render harness in
+    // this repo — confirmed live (like the other rendered-affordance scenarios). The
+    // BEHAVIOR it triggers (kill + close a running task / bare shell) is headlessly
+    // covered by projectTasks.svelte.test.ts ("Clicking kills and closes a running
+    // task" / "…bare shell").
+    'trash_button_is_shown_on_a_running_terminal',
+    'trash_button_is_shown_on_a_stopped_terminal',
   ]),
   // project-tasks: every scenario has a REAL headless test (model + store), so the
   // MANUAL set is intentionally empty.

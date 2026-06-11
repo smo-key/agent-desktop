@@ -271,7 +271,7 @@ describe('project-tasks — persistence & lifecycle', () => {
     expect(store.forProject('p').some((t) => t.id === id)).toBe(true);
   });
 
-  it('Trash kills and closes a running terminal task', async () => {
+  it('Clicking kills and closes a running task', async () => {
     // The panel's always-on trash button calls dismiss for BOTH running and stopped
     // tasks. Dismissing a still-RUNNING task must drop its runtime — the panel then
     // unmounts its TerminalPane, whose onDestroy kills+reaps the live PTY — while the
@@ -487,7 +487,7 @@ describe('project-tasks — bare terminals', () => {
     expect(bare?.exitCode).toBe(1);
   });
 
-  it('Trash kills and closes a running bare shell', () => {
+  it('Clicking kills and closes a running bare shell', () => {
     // The panel's always-on trash button calls removeBareTerminal for a running bare
     // shell too. Removing it while RUNNING drops the slot — the panel unmounts its
     // TerminalPane, whose onDestroy kills+reaps the live PTY.
