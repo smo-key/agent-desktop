@@ -32,13 +32,17 @@
   // the repo's pull-requests page on GitHub. Without it no button shows.
   //
   // When `onCommit` is provided (the footer only), the MODIFIED (uncommitted-files)
-  // pill becomes a BUTTON whenever `modified > 0` — clicking opens a commit confirm.
-  // It stays INERT (a plain display pill, no action) when `modified` is 0/null, so
-  // a clean tree can't be clicked. `filesTip` carries the hover-tooltip text for
-  // that pill (the changed file paths, capped) — null/empty ⇒ no tooltip.
+  // pill becomes a BUTTON whenever `modified > 0` — clicking opens the commit
+  // popover. It stays INERT (a plain display pill, no action) when `modified` is
+  // 0/null, so a clean tree can't be clicked. The hover tooltip shows only the
+  // COUNT of changed files (e.g. "3 uncommitted files").
   import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import type { GitStatus } from './snapshots.svelte';
+  import { uncommittedCountTooltip } from './uncommittedTooltip';
+  import FooterPopover from './FooterPopover.svelte';
+  import type { CommitProject } from './commitPopover';
+  import { spawnCommitFromPopover } from './commitPopover';
 
   let {
     git,
@@ -54,7 +58,7 @@
     onOpenPrs,
     openPrs,
     onCommit,
-    filesTip = null
+    commitProject = null
   }: {
     git: GitStatus | null;
     always?: boolean;
@@ -68,14 +72,37 @@
     prDisabled?: boolean;
     onOpenPrs?: () => void;
     openPrs?: { icon: string; label: string; warning: boolean };
+    /** When provided (footer only), the modified pill becomes a button that opens
+     *  the commit popover. Without it the pill stays inert (project pane). */
     onCommit?: () => void;
-    filesTip?: string | null;
+    /** The project to commit to — used by the in-component popover to spawn the
+     *  agent. Required whenever `onCommit` is wired; ignored otherwise. */
+    commitProject?: CommitProject | null;
   } = $props();
 
   // The modified (uncommitted-files) pill is a clickable COMMIT button only when
   // the footer wired `onCommit` AND there are actually changes (`modified > 0`).
   // Otherwise it stays an inert display pill — a clean tree must not be clickable.
   const commitable = $derived(!!onCommit && (git?.modified ?? 0) > 0);
+
+  // ── Commit popover state ───────────────────────────────────────────────────
+  let commitPopoverOpen = $state(false);
+  let commitPillEl = $state<HTMLButtonElement | null>(null);
+
+  function openCommitPopover() {
+    if (commitable) commitPopoverOpen = true;
+  }
+
+  function closeCommitPopover() {
+    commitPopoverOpen = false;
+  }
+
+  function handleCommitNow() {
+    if (commitProject) {
+      spawnCommitFromPopover(commitProject);
+    }
+    closeCommitPopover();
+  }
 </script>
 
 <div class="git" class:stacked={stack}>
@@ -150,28 +177,26 @@
       {#if git.modified != null}
         {#if commitable}
           <!-- Changes present + footer wired a commit action: a clickable COMMIT
-               button. Hover lists the changed file paths (filesTip); when paths
-               weren't surfaced, fall back to the count summary so a hint always
-               shows while there are changes. -->
+               button. Hover shows the count-only tooltip; clicking opens the commit
+               popover which lists the file paths and pins a "Commit now" action. -->
           <button
             type="button"
             class="pill modified action"
-            onclick={onCommit}
-            use:tooltip={filesTip ?? `${git.modified} uncommitted file${git.modified === 1 ? '' : 's'} changed — commit`}
+            bind:this={commitPillEl}
+            onclick={openCommitPopover}
+            use:tooltip={uncommittedCountTooltip(git.modified)}
           >
             <Icon name="pencil" size={12} />
             <span class="txt">{git.modified}</span>
           </button>
         {:else}
           <!-- INERT: a clean tree (modified === 0) or no commit action wired. A
-               clean tree shows NO tooltip (no file list); a non-zero count with no
-               action falls back to the count summary. -->
+               clean tree shows NO tooltip; a non-zero count with no action shows
+               the count-only summary. -->
           <span
             class="pill modified"
             class:zero={git.modified === 0}
-            use:tooltip={git.modified === 0
-              ? ''
-              : (filesTip ?? `${git.modified} uncommitted file${git.modified === 1 ? '' : 's'} changed`)}
+            use:tooltip={git.modified === 0 ? '' : uncommittedCountTooltip(git.modified)}
           >
             <Icon name="pencil" size={12} />
             <span class="txt">{git.modified}</span>
@@ -230,6 +255,38 @@
     </span>
   {/if}
 </div>
+
+<!-- Commit popover: opens above the modified pill when it is clicked and there
+     are uncommitted changes. Lists the changed file paths in a scrollable body
+     with a pinned "Commit now" action that spawns the agent directly (no confirm
+     dialog — the user already saw the files and chose to act). -->
+<FooterPopover
+  open={commitPopoverOpen}
+  anchor={commitPillEl}
+  onClose={closeCommitPopover}
+>
+  {#snippet title()}
+    Uncommitted changes
+  {/snippet}
+
+  {#snippet body()}
+    {#if git?.files && git.files.length > 0}
+      <ul class="cp-file-list">
+        {#each git.files as file (file)}
+          <li class="cp-file">{file}</li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="cp-empty">No file paths available</p>
+    {/if}
+  {/snippet}
+
+  {#snippet action()}
+    <button type="button" class="cp-commit-btn" onclick={handleCommitNow}>
+      Commit now
+    </button>
+  {/snippet}
+</FooterPopover>
 
 <style>
   .git {
@@ -364,5 +421,62 @@
     background: var(--caution-tint);
     color: var(--caution-500);
     box-shadow: none;
+  }
+
+  /* ── Commit popover content (rendered inside FooterPopover's snippets) ── */
+
+  /* File list inside the scrollable body: no bullet, tight spacing, monospace
+     so paths are easy to read. */
+  .cp-file-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .cp-file {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-2);
+    padding: 5px 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .cp-file:hover {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--fg-1);
+  }
+
+  .cp-empty {
+    font-family: var(--font-sans);
+    font-size: 12px;
+    color: var(--fg-4);
+    padding: 10px 12px;
+    font-style: italic;
+    margin: 0;
+  }
+
+  /* Primary action button — "Commit now" — full-width, caution accent. */
+  .cp-commit-btn {
+    width: 100%;
+    background: var(--caution-tint);
+    color: var(--caution-500);
+    border: 1px solid color-mix(in srgb, var(--caution-500) 30%, transparent);
+    border-radius: var(--r-sm);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 7px 12px;
+    cursor: pointer;
+    text-align: center;
+  }
+
+  .cp-commit-btn:hover {
+    filter: brightness(1.15);
+  }
+
+  .cp-commit-btn:active {
+    transform: translateY(0.5px);
   }
 </style>

@@ -20,10 +20,8 @@
     prButtonDisabled,
     cachedPrStatus,
     refreshPrStatus,
-    onPrButtonClick,
-    onCommitButtonClick
+    onPrButtonClick
   } from '$lib/projects/prActions';
-  import { uncommittedFilesTooltip } from './gitFilesTooltip';
   import {
     openPrsView,
     cachedOpenPrs,
@@ -153,21 +151,17 @@
   );
 
   // Commit button (footer only): clicking the uncommitted-files pill (WHEN there
-  // are changes) opens a confirm dialog that, on confirm, spawns an auto-archiving
-  // agent task committing the pending changes on the current branch. Reuses the
-  // SAME launcher + `taskAgentPanes` wiring as the PR button (via prActions). Only
-  // wired when a real project folder backs the footer git; GitInfo keeps the pill
-  // INERT unless this is present AND modified > 0, so a clean tree stays unclickable.
-  const onCommit = $derived(
+  // Commit popover (footer only): GitInfo opens a popover listing the changed files
+  // and a "Commit now" button that spawns the agent directly (no confirm dialog).
+  // `onCommit` is the presence signal — when set, GitInfo makes the pill clickable.
+  // `commitProject` carries the project info needed to spawn the agent. Only wired
+  // when a real project folder backs the footer git.
+  const onCommit = $derived(gitProject?.path ? (() => {}) : undefined);
+  const commitProject = $derived(
     gitProject?.path
-      ? () => onCommitButtonClick({ id: gitProject.id, path: gitProject.path, name: gitProject.name })
-      : undefined
+      ? { id: gitProject.id, path: gitProject.path, name: gitProject.name }
+      : null
   );
-
-  // The hover-tooltip text for the uncommitted-files pill: the changed file paths
-  // (first 10, with an "…and N more" hint), or null (no tooltip) when the tree is
-  // clean. Built from the pure `uncommittedFilesTooltip` over the git status' paths.
-  const filesTip = $derived(uncommittedFilesTooltip(folderGit?.files));
 
   // The terminal area's left edge as a fraction [0,1] of the surface, or null when
   // there's no terminal pane / not in grid view. A "terminal" pane is a non-claude
@@ -205,7 +199,7 @@
   <div class="zone left">
     <div class="left-git">
       <div class="branch-anchor" bind:this={branchAnchorEl}>
-        <GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} {onPickBranch} {onPr} {prExists} {prDisabled} {onOpenPrs} openPrs={openPrsView_} {onCommit} {filesTip} />
+        <GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} {onPickBranch} {onPr} {prExists} {prDisabled} {onOpenPrs} openPrs={openPrsView_} {onCommit} {commitProject} />
       </div>
       <BranchPicker
         open={branchOpen}

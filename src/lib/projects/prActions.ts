@@ -186,8 +186,11 @@ function spawnCreatePr(project: PrProject, base: string): void {
  * `project`, reusing the SAME `agentTaskLauncher` (and thus the same `+page.svelte`
  * `taskAgentPanes` auto-archive wiring) as the PR action — NOT a second launcher.
  * No-op (warns) when no launcher is wired or the project has no folder.
+ *
+ * Exported so the commit popover (FooterPopover + GitInfo wiring) can spawn
+ * directly on "Commit now" without going through the old ConfirmModal path.
  */
-function spawnCommit(project: PrProject): void {
+export function spawnCommit(project: PrProject): void {
   if (!project.path) return;
   if (!agentTaskLauncher) {
     console.warn('commit: no agent-task launcher wired');
