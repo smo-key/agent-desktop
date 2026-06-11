@@ -108,10 +108,10 @@
 
 ## 16. Uncommitted tooltip → count + commit popover (footer-actions)
 
-- [ ] 16.1 Revert the uncommitted-files indicator's tooltip to a COUNT-only string (e.g. "N uncommitted file(s)"); stop feeding the first-10 file list into the tooltip.
-- [ ] 16.2 Add a reusable `src/lib/usage/FooterPopover.svelte`: anchored above a footer pill (mirror `BranchPicker.svelte`'s fixed-position anchoring), a full-screen scrim for click-outside close + Escape, a SCROLLABLE body (`max-height` + `overflow-y`), and a PINNED bottom action slot that stays visible while the body scrolls.
-- [ ] 16.3 Wire the uncommitted-files pill to open a commit popover listing the changed files (from `projectGit`'s `GitStatus.files`) with a pinned "Commit now" action that runs the existing commit-agent flow (`spawnCommit`); inert when there are no changes.
-- [ ] 16.4 Tests: `FooterPopover` closes on outside-click and Escape; the commit popover lists the files and "Commit now" triggers the spawn; the count-only tooltip builder.
+- [x] 16.1 Revert the uncommitted-files indicator's tooltip to a COUNT-only string (e.g. "N uncommitted file(s)"); stop feeding the first-10 file list into the tooltip.
+- [x] 16.2 Add a reusable `src/lib/usage/FooterPopover.svelte`: anchored above a footer pill (mirror `BranchPicker.svelte`'s fixed-position anchoring), a full-screen scrim for click-outside close + Escape, a SCROLLABLE body (`max-height` + `overflow-y`), and a PINNED bottom action slot that stays visible while the body scrolls.
+- [x] 16.3 Wire the uncommitted-files pill to open a commit popover listing the changed files (from `projectGit`'s `GitStatus.files`) with a pinned "Commit now" action that runs the existing commit-agent flow (`spawnCommit`); inert when there are no changes.
+- [x] 16.4 Tests: `FooterPopover` closes on outside-click and Escape; the commit popover lists the files and "Commit now" triggers the spawn; the count-only tooltip builder.
 
 ## 17. Push popover + commits-to-push (footer-actions)
 
