@@ -88,11 +88,11 @@ The system SHALL surface subagents that an app agent spawns (Task-tool agents an
 - **THEN** that record is skipped or shown with only its available fields, and the rest of the roster is unaffected
 
 ### Requirement: Agent Usage Tracking
-The system SHALL track usage per agent (cost, context percentage, and token counts where available) and SHALL show an aggregate usage total across all agents and their subagents.
+The system SHALL track usage per agent (cost, context percentage, and token counts where available) and SHALL show an aggregate usage total across all agents and their subagents. A per-agent CARD SHALL surface the agent's MODEL and context — NOT its dollar cost; the dollar cost SHALL be surfaced in the aggregate total (and the footer) rather than on each card.
 
-#### Scenario: Per-agent usage reflects the snapshot
+#### Scenario: Per-agent card reflects the snapshot model and context
 - **WHEN** an agent has a latest snapshot
-- **THEN** its displayed usage reflects that snapshot's cost and context percentage
+- **THEN** its card reflects that snapshot's model and context percentage, and does not show the per-agent dollar cost
 
 #### Scenario: Aggregate usage sums agents and subagents
 - **WHEN** the overview computes the usage total

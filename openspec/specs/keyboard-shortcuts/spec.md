@@ -13,6 +13,10 @@ updated to match. Bindings whose handler is permanently inert (e.g. gated behind
 view state that never activates) SHALL NOT be listed, since they cannot be
 triggered.
 
+The insert-file-path binding SHALL be `⌘O` (it opens the native file picker and
+pastes the chosen path into the focused terminal). `⌘I` SHALL NOT be bound to
+insert-file-path.
+
 #### Scenario: Global shortcuts are listed
 - **WHEN** the user opens the help modal
 - **THEN** the Global section lists `⌘N` (new session), `⌘T` (create task), `⌘J` (toggle Terminals panel), `⌘Y` (new terminal), `⌘Tab` (cycle focus), `⌘/` and bare `?` (show shortcuts), and `Esc` (close dialog)
@@ -23,7 +27,7 @@ triggered.
 
 #### Scenario: Session and launcher shortcuts are listed
 - **WHEN** the user opens the help modal
-- **THEN** the Session section lists `⌘W` (archive) and `⌘.` (pause/resume), and the Launcher section lists `⌘Enter` (confirm) and `Esc` (cancel)
+- **THEN** the Session section lists `⌘W` (archive), `⌘.` (pause/resume), and `⌘O` (insert file path), and the Launcher section lists `⌘Enter` (confirm) and `Esc` (cancel)
 
 #### Scenario: Inert grid-only bindings are not listed
 - **WHEN** the user opens the help modal
