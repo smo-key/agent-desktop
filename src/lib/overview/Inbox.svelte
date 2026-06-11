@@ -229,6 +229,12 @@
     return grouped;
   });
 
+  // The Archived lane collapses to its latest 2 rows (it's reversed above, so the
+  // first 2 are the most recent) with a "Show all / Collapse" toggle below; long
+  // archives don't bury the live lanes. Default collapsed.
+  const ARCHIVED_PREVIEW = 2;
+  let showAllArchived = $state(false);
+
   // Group metadata (label) for the left list, in attn -> flight -> paused -> done
   // order. `done` is the Archived lane (closed sessions); `paused` sits above it.
   const LANES: Record<AgentLane, { title: string }> = {
@@ -1093,6 +1099,8 @@
           {:else}
             {#each LANE_ORDER as lane (lane)}
               {@const items = renderGrouped[lane]}
+              {@const collapsedArchive = lane === 'done' && !showAllArchived}
+              {@const visible = collapsedArchive ? items.slice(0, ARCHIVED_PREVIEW) : items}
               {#if items.length > 0}
                 <div class="group-h {lane}">
                   {LANES[lane].title} <span class="gn">· {items.length}</span><span class="rule"></span>
@@ -1107,9 +1115,18 @@
                     </button>
                   {/if}
                 </div>
-                {#each items as r (r.paneId)}
+                {#each visible as r (r.paneId)}
                   {@render sessionRow(r, lane)}
                 {/each}
+                {#if lane === 'done' && items.length > ARCHIVED_PREVIEW}
+                  <button
+                    type="button"
+                    class="show-all"
+                    onclick={() => (showAllArchived = !showAllArchived)}
+                  >
+                    {showAllArchived ? 'Collapse' : `Show all (${items.length})`}
+                  </button>
+                {/if}
               {/if}
             {/each}
           {/if}
@@ -1288,6 +1305,26 @@
     cursor: pointer;
   }
   .group-h .group-action:hover { color: var(--danger, #e5484d); }
+
+  /* "Show all / Collapse" toggle under the Archived lane's preview rows. Mono/
+     uppercase to read as a lane affordance, full-width row indent to align with
+     the rows above it. */
+  .show-all {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: none;
+    background: transparent;
+    padding: 6px 16px 8px 16px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-label);
+    color: var(--fg-4);
+    cursor: pointer;
+    transition: color var(--dur-fast);
+  }
+  .show-all:hover { color: var(--fg-2); }
 
   .row { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 10px 16px; cursor: pointer; border: none; border-left: 2px solid transparent; background: none; transition: background var(--dur-fast); }
   .row:hover { background: rgba(255,255,255,0.025); }
