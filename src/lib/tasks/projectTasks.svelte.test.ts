@@ -271,6 +271,20 @@ describe('project-tasks — persistence & lifecycle', () => {
     expect(store.forProject('p').some((t) => t.id === id)).toBe(true);
   });
 
+  it('Trash kills and closes a running terminal task', async () => {
+    // The panel's always-on trash button calls dismiss for BOTH running and stopped
+    // tasks. Dismissing a still-RUNNING task must drop its runtime — the panel then
+    // unmounts its TerminalPane, whose onDestroy kills+reaps the live PTY — while the
+    // def survives as an idle task in the launcher.
+    const store = new ProjectTasksStore();
+    const id = await store.create('p', { kind: 'terminal', command: 'npm run dev' });
+    store.startTask(id);
+    expect(store.runtime[id].running).toBe(true);
+    store.dismiss(id);
+    expect(store.runtime[id]).toBeUndefined();
+    expect(store.forProject('p').some((t) => t.id === id)).toBe(true);
+  });
+
   it('Long-runner persists', async () => {
     const store = new ProjectTasksStore();
     const id = await store.create('p', { kind: 'terminal', command: 'npm run dev' });
@@ -471,6 +485,17 @@ describe('project-tasks — bare terminals', () => {
     expect(bare).toBeDefined();
     expect(bare?.running).toBe(false);
     expect(bare?.exitCode).toBe(1);
+  });
+
+  it('Trash kills and closes a running bare shell', () => {
+    // The panel's always-on trash button calls removeBareTerminal for a running bare
+    // shell too. Removing it while RUNNING drops the slot — the panel unmounts its
+    // TerminalPane, whose onDestroy kills+reaps the live PTY.
+    const store = new ProjectTasksStore();
+    const id = store.launchBareTerminal('p');
+    expect(store.bareForProject('p').find((b) => b.id === id)?.running).toBe(true);
+    store.removeBareTerminal(id);
+    expect(store.bareForProject('p').find((b) => b.id === id)).toBeUndefined();
   });
 
   it('Bare shell runs an initial command', () => {
