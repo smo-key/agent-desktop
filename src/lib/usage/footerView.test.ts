@@ -142,6 +142,14 @@ describe('footerGitProjectId', () => {
     expect(footerGitProjectId(null, 'p2')).toBe('p2');
   });
 
+  it('Footer follows the panel selection when no agent panes are visible', () => {
+    // A pane is still focused underneath (p1), but the agent grid is hidden
+    // (paneVisible=false), so the footer follows the panel selection (p2).
+    expect(footerGitProjectId('p1', 'p2', false)).toBe('p2');
+    // A non-project selection while hidden still yields no project git.
+    expect(footerGitProjectId('p1', ALL, false)).toBeNull();
+  });
+
   it('No project git for a non-project selection', () => {
     expect(footerGitProjectId(null, ALL)).toBeNull();
     expect(footerGitProjectId(null, UNASSIGNED)).toBeNull();

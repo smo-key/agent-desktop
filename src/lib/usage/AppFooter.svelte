@@ -53,11 +53,16 @@
   );
 
   // The FOLDER git shown on the left (before the limit bars): the focused pane's
-  // project, else the panel's current selection (so it stays meaningful in the
-  // overview, where no pane is focused). Folder-based via `projectGit`, so it
-  // shows a project's branch + ahead/behind/modified even with no agent running.
+  // project while the agent grid is showing, else the panel's current selection (so
+  // selecting a project updates the footer git even in the overview, where the agent
+  // panes are hidden but a pane is still focused underneath). Folder-based via
+  // `projectGit`, so it shows a project's branch + ahead/behind/modified even with
+  // no agent running.
   const gitProject = $derived(
-    projectForId(projects.list, footerGitProjectId(projectId, projectFilter.selected))
+    projectForId(
+      projects.list,
+      footerGitProjectId(projectId, projectFilter.selected, topView.isGrid)
+    )
   );
   const folderGit = $derived(projectGit.forPath(gitProject?.path ?? null));
 

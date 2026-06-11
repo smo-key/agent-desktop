@@ -36,17 +36,23 @@ export interface FooterView {
 
 /**
  * The id of the project whose FOLDER git the footer's left zone shows: the focused
- * pane's project when it has one, else the project-panel's current selection when
- * that is a concrete project (not the ALL / UNASSIGNED buckets). Null when neither
- * yields a concrete project — the footer then shows no project git. This keeps the
- * git meaningful in overview (no focused pane) by tracking the selected project.
- * Pure + unit-tested.
+ * pane's project ONLY while that pane is actually visible (`paneVisible` — the agent
+ * grid is showing), else the project-panel's current selection when that is a
+ * concrete project (not the ALL / UNASSIGNED buckets). Null when neither yields a
+ * concrete project — the footer then shows no project git.
+ *
+ * `paneVisible` matters because the active workspace ALWAYS has a focused leaf, so
+ * `focusedProjectId` is non-null even in the overview (where no agent pane is on
+ * screen). Gating on visibility lets the overview track the panel SELECTION — so
+ * picking a project there updates the footer git even with no agents visible — while
+ * the grid still tracks whichever agent pane you're looking at. Pure + unit-tested.
  */
 export function footerGitProjectId(
   focusedProjectId: string | null,
-  panelSelection: string
+  panelSelection: string,
+  paneVisible = true
 ): string | null {
-  if (focusedProjectId) return focusedProjectId;
+  if (paneVisible && focusedProjectId) return focusedProjectId;
   if (panelSelection === ALL || panelSelection === UNASSIGNED) return null;
   return panelSelection || null;
 }

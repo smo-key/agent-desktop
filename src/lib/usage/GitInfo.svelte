@@ -54,6 +54,7 @@
   import { pushPopoverOpen as canPushPopover } from './pushPopover';
   import { invoke } from '@tauri-apps/api/core';
   import { sortPrsForPopover, type OpenPr } from '$lib/projects/openPrsActions';
+  import { openInEditor } from '$lib/overview/editor';
 
   /** Minimal project info needed to open the push popover and execute a push. */
   export interface PushProject {
@@ -138,6 +139,14 @@
     if (commitProject) {
       spawnCommitFromPopover(commitProject);
     }
+  }
+
+  // Clicking a file row in the commit popover opens that file in the user's
+  // configured editor (the open-with preferences, resolved against the project
+  // folder since git reports repo-relative paths). The popover stays OPEN so the
+  // user can review several files (and still reach "Commit now") without reopening.
+  function handleOpenFile(file: string) {
+    void openInEditor(commitProject?.path ?? null, file);
   }
 
   // ── Push popover state ────────────────────────────────────────────────────
@@ -315,14 +324,15 @@
       {#if git.modified != null}
         {#if commitable}
           <!-- Changes present + footer wired a commit action: a clickable COMMIT
-               button. Hover shows the count-only tooltip; clicking opens the commit
-               popover which lists the file paths and pins a "Commit now" action. -->
+               button. Hover shows the count-only tooltip (matching the other
+               indicators' count tooltips); clicking opens the commit popover which
+               lists the file paths and pins a "Commit now" action. -->
           <button
             type="button"
             class="pill modified action"
             bind:this={commitPillEl}
             onclick={openCommitPopover}
-            use:tooltip={'Click to review'}
+            use:tooltip={uncommittedCountTooltip(git.modified)}
           >
             <Icon name="pencil" size={12} />
             <span class="txt">{git.modified}</span>
@@ -449,7 +459,15 @@
     {#if git?.files && git.files.length > 0}
       <ul class="cp-file-list">
         {#each git.files as file (file)}
-          <li class="cp-file">{file}</li>
+          <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <li
+            class="cp-file cp-file-row"
+            role="button"
+            tabindex="0"
+            onclick={() => handleOpenFile(file)}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleOpenFile(file); } }}
+          >{file}</li>
         {/each}
       </ul>
     {:else}
@@ -668,6 +686,18 @@
 
   .cp-file:hover {
     background: rgba(255, 255, 255, 0.04);
+    color: var(--fg-1);
+  }
+
+  /* A clickable file row (commit popover): opens the file in the configured editor.
+     Pointer + a focus ring so it reads as actionable and is keyboard-reachable. */
+  .cp-file-row {
+    cursor: pointer;
+  }
+
+  .cp-file-row:focus {
+    outline: none;
+    background: rgba(255, 255, 255, 0.06);
     color: var(--fg-1);
   }
 
