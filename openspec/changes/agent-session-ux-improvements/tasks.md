@@ -122,10 +122,10 @@
 
 ## 18. PRs popover + draft handling (footer-actions, pr.rs)
 
-- [ ] 18.1 Extend `open_prs_for` (`src-tauri/src/pr.rs`) to fetch `gh pr list --base <base> --state open --json number,title,url,isDraft,reviewDecision` and return the PR LIST (`{number, title, url, is_draft, review_decision}`) alongside `pulls_url`; keep best-effort degradation (gh missing/unauth → neutral/empty). Update the pure parse helpers + tests.
-- [ ] 18.2 Derive the warning badge count from the list: count only `review_decision != APPROVED && !is_draft` (drafts never counted); warning+count when >0, else checkmark+0 (and on unknown).
-- [ ] 18.3 Wire the open-PRs pill to open a PRs popover listing the awaiting-review PRs sorted NON-DRAFT first then DRAFT; each PR row opens its `url` on GitHub; a pinned action opens `pulls_url`. Drafts are shown but not counted.
-- [ ] 18.4 Tests: parse the list; badge excludes drafts; the non-draft-first ordering; row-open and open-page wiring.
+- [x] 18.1 Extend `open_prs_for` (`src-tauri/src/pr.rs`) to fetch `gh pr list --base <base> --state open --json number,title,url,isDraft,reviewDecision` and return the PR LIST (`{number, title, url, is_draft, review_decision}`) alongside `pulls_url`; keep best-effort degradation (gh missing/unauth → neutral/empty). Update the pure parse helpers + tests.
+- [x] 18.2 Derive the warning badge count from the list: count only `review_decision != APPROVED && !is_draft` (drafts never counted); warning+count when >0, else checkmark+0 (and on unknown).
+- [x] 18.3 Wire the open-PRs pill to open a PRs popover listing the awaiting-review PRs sorted NON-DRAFT first then DRAFT; each PR row opens its `url` on GitHub; a pinned action opens `pulls_url`. Drafts are shown but not counted.
+- [x] 18.4 Tests: parse the list; badge excludes drafts; the non-draft-first ordering; row-open and open-page wiring.
 
 ## 19. Validate & gate
 

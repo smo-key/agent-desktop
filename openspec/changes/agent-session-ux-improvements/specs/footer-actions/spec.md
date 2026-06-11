@@ -116,10 +116,11 @@ The footer SHALL show a button indicating the number of OPEN, NON-DRAFT pull req
 targeting `main` that are awaiting review. Draft PRs SHALL NOT be counted. WHEN one or
 more such PRs exist, the button SHALL show a WARNING icon together with the count; WHEN
 there are none, it SHALL show a CHECKMARK icon together with `0`. Clicking the button
-SHALL open a popover LISTING the awaiting-review PRs targeting `main`, with NON-DRAFT
-PRs shown FIRST and DRAFT PRs shown LAST; each PR row SHALL open that PR on GitHub when
-clicked, and the popover SHALL have a pinned action that opens the repository's
-pull-requests page on GitHub. WHEN the PR information cannot be determined (e.g. `gh`
+SHALL open a popover LISTING the open PRs targeting `main`, with NON-DRAFT
+(active) PRs shown FIRST and DRAFT PRs shown LAST; each PR row SHALL open that PR on
+GitHub when clicked, and the popover SHALL have a pinned action that opens the
+repository's pull-requests page on GitHub. The popover lists ALL open PRs (including
+approved ones); only the BADGE count excludes drafts and approved PRs. WHEN the PR information cannot be determined (e.g. `gh`
 is unavailable or fails), the button SHALL degrade gracefully — showing the
 checkmark/`0` neutral state — without erroring.
 
@@ -137,7 +138,7 @@ checkmark/`0` neutral state — without erroring.
 
 #### Scenario: Popover lists PRs with drafts last
 - **WHEN** the user clicks the open-PRs button
-- **THEN** a popover lists the awaiting-review PRs targeting `main`, with non-draft PRs first and draft PRs last (drafts are shown even though they are not counted)
+- **THEN** a popover lists the open PRs targeting `main`, with non-draft PRs first and draft PRs last (drafts are shown even though they are not counted)
 
 #### Scenario: Clicking a PR opens it on GitHub
 - **WHEN** the user clicks a PR row in the popover

@@ -265,7 +265,9 @@ pub fn parse_open_pr_list(stdout: &str) -> Vec<OpenPr> {
             Some(d) => d,
             None => continue,
         };
-        // reviewDecision is optional: absent → None; present (even null/empty) → Some.
+        // reviewDecision is optional: absent or JSON null → None; a JSON string (incl.
+        // empty "") → Some. None and Some("") are both treated as "awaiting review"
+        // downstream (only Some("APPROVED") is excluded from the count).
         let review_decision = entry
             .get("reviewDecision")
             .and_then(|d| d.as_str())
