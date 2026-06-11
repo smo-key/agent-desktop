@@ -22,6 +22,12 @@ export interface FooterView {
   cost: number | null;
   /** The focused pane's last-snapshot time (unix SECONDS), or null when none. */
   lastTs: number | null;
+  /** The focused pane's model display name (e.g. "Claude Opus 4.8"), or null. */
+  model: string | null;
+  /** The focused pane's model id (e.g. "claude-opus-4-8"), or null. */
+  model_id: string | null;
+  /** The focused pane's reasoning effort level (e.g. "high"), or null. */
+  effort: string | null;
   /** Account-wide 5-hour rate-limit window. */
   fiveHour: RateWindow;
   /** Account-wide 7-day rate-limit window. */
@@ -67,6 +73,9 @@ export function footerView(
   const context = focused ? finiteOrNull(focused.context_pct) : null;
   const cost = focused ? finiteOrNull(focused.cost) : null;
   const lastTs = focused ? finiteOrNull(focused.ts) : null;
+  const model = focused ? (focused.model ?? null) : null;
+  const model_id = focused ? (focused.model_id ?? null) : null;
+  const effort = focused ? (focused.effort ?? null) : null;
   const account = accountSummary(map, git);
   return {
     project: projectForId(projects, projectId),
@@ -74,6 +83,9 @@ export function footerView(
     context,
     cost,
     lastTs,
+    model,
+    model_id,
+    effort,
     fiveHour: account.fiveHour,
     sevenDay: account.sevenDay,
   };

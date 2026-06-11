@@ -75,6 +75,53 @@ describe('footerView', () => {
     const map: SnapshotMap = { a: snap({ pane_id: 'a', context_pct: Number.NaN }) };
     expect(footerView(map, 'a', null, PROJECTS).context).toBeNull();
   });
+
+  it('surfaces model, model_id, and effort from the focused pane snapshot', () => {
+    const map: SnapshotMap = {
+      a: snap({
+        pane_id: 'a',
+        model: 'Claude Opus 4.8',
+        model_id: 'claude-opus-4-8',
+        effort: 'high',
+      }),
+    };
+    const view = footerView(map, 'a', null, PROJECTS);
+    expect(view.model).toBe('Claude Opus 4.8');
+    expect(view.model_id).toBe('claude-opus-4-8');
+    expect(view.effort).toBe('high');
+  });
+
+  it('returns null model/model_id/effort when the focused snapshot has effort: null', () => {
+    const map: SnapshotMap = {
+      a: snap({
+        pane_id: 'a',
+        model: 'Claude Sonnet 4.6',
+        model_id: 'claude-sonnet-4-6',
+        effort: null,
+      }),
+    };
+    const view = footerView(map, 'a', null, PROJECTS);
+    expect(view.model).toBe('Claude Sonnet 4.6');
+    expect(view.model_id).toBe('claude-sonnet-4-6');
+    expect(view.effort).toBeNull();
+  });
+
+  it('returns null model/model_id/effort when no pane is focused', () => {
+    const view = footerView({}, null, null, PROJECTS);
+    expect(view.model).toBeNull();
+    expect(view.model_id).toBeNull();
+    expect(view.effort).toBeNull();
+  });
+
+  it('returns null model/model_id/effort when the focused pane has no snapshot', () => {
+    const map: SnapshotMap = {
+      other: snap({ pane_id: 'other', model: 'Claude Opus 4', model_id: 'claude-opus-4', effort: 'max' }),
+    };
+    const view = footerView(map, 'missing', null, PROJECTS);
+    expect(view.model).toBeNull();
+    expect(view.model_id).toBeNull();
+    expect(view.effort).toBeNull();
+  });
 });
 
 describe('footerGitProjectId', () => {

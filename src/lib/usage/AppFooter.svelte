@@ -38,6 +38,7 @@
   import ContextBar from './ContextBar.svelte';
   import { friendlyTime } from '$lib/overview/friendlyTime';
   import { tooltip } from '$lib/ui/tooltip';
+  import { modelLabel, effortLabel } from './modelLabel';
 
   /** Total session cost as "$1.24", or an em dash when unknown. */
   function costLabel(value: number | null): string {
@@ -224,6 +225,12 @@
   <div class="zone right">
     <ContextBar pct={view.context} />
     <span class="sep" aria-hidden="true"></span>
+    {#if view.model !== null || view.model_id !== null}
+      <span class="pill model-pill" use:tooltip={'Model of the focused session'}>{modelLabel(view.model_id, view.model)}</span>
+      {#if effortLabel(view.effort) !== null}
+        <span class="pill effort-pill" use:tooltip={'Reasoning effort of the focused session'}>{effortLabel(view.effort)}</span>
+      {/if}
+    {/if}
     <span class="metric" use:tooltip={'Total cost of the focused session'}>{costLabel(view.cost)}</span>
     <span class="metric dim" use:tooltip={'Time since the last message in the focused session'}>{friendlyTime(view.lastTs, now * 1000)}</span>
   </div>
@@ -315,5 +322,24 @@
   .metric.dim {
     color: var(--fg-4);
     font-weight: 500;
+  }
+  /* Non-interactive model + effort pills — small rounded chips matching GitInfo pill style. */
+  .pill {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    border-radius: var(--r-full);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    background: var(--space-750);
+    color: var(--fg-2);
+    box-shadow: inset 0 0 0 1px var(--line-subtle);
+  }
+  .effort-pill {
+    color: var(--fg-3);
   }
 </style>
