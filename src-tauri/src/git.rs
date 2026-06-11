@@ -611,6 +611,75 @@ fn delete_branch(dir: &str, branch: &str) {
     let _ = run_git(dir, &["branch", "-D", branch]);
 }
 
+// ───────────────────────── commits-to-push ─────────────────────────
+//
+// Lists the commits that a `git push` would send — i.e. commits on HEAD that
+// are NOT yet on the upstream tracking branch. Used by the footer's push pill
+// popover to show the user exactly what they are about to push.
+//
+// Best-effort: no upstream / not a repo / git error → empty vec, never an error.
+// The output is parsed from `git log @{u}..HEAD --format=%H%x1f%s`, splitting
+// each line on the ASCII unit-separator (0x1f) to separate the full hash from
+// the commit subject. The 0x1f byte never appears in commit subjects, so the
+// parse is robust against colons, slashes, parens, etc.
+
+/// One commit record returned by [`commits_to_push`]: full hash + one-line subject.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct PushCommit {
+    pub hash: String,
+    pub subject: String,
+}
+
+/// Parse the output of `git log @{u}..HEAD --format=%H%x1f%s` into a vec of
+/// [`PushCommit`]. Each non-empty line must contain a 0x1f separator; lines
+/// without one are silently skipped (malformed or blank). Pure function so it
+/// can be unit-tested without a real repo.
+pub fn parse_push_commits(stdout: &str) -> Vec<PushCommit> {
+    stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| {
+            let (hash, subject) = line.split_once('\x1f')?;
+            if hash.is_empty() {
+                return None;
+            }
+            Some(PushCommit {
+                hash: hash.to_string(),
+                subject: subject.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// List the commits that would be sent by a `git push` — commits on HEAD not yet
+/// on the upstream tracking branch. Runs `git log @{u}..HEAD --format=%H%x1f%s`
+/// and parses the output. Best-effort: no upstream / off-repo / git failure →
+/// empty vec, never an error. Mirrors the null-on-failure style of the other
+/// best-effort git helpers in this module.
+pub fn commits_to_push_for(dir: &str) -> Vec<PushCommit> {
+    if dir.is_empty() {
+        return vec![];
+    }
+    // run_git trims output, which is fine here: each commit record is on its own
+    // line and there is no leading-space significance (unlike porcelain status).
+    // We use run_git_raw to preserve newlines between records; trimming the overall
+    // output would coalesce everything into one unparseable blob.
+    let stdout = match run_git_raw(dir, &["log", "@{u}..HEAD", "--format=%H\x1f%s"]) {
+        Some(s) => s,
+        None => return vec![],
+    };
+    parse_push_commits(&stdout)
+}
+
+/// Tauri command: list the commits that a push would send for the repo at
+/// `repo_path`. Best-effort — no upstream / off-repo / git failure → `[]`.
+/// Never returns an error; the frontend treats `[]` as "nothing to push" or
+/// "couldn't determine".
+#[tauri::command(async)]
+pub fn commits_to_push(repo_path: String) -> Vec<PushCommit> {
+    commits_to_push_for(&repo_path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1085,5 +1154,55 @@ mod tests {
             body, "uncommitted edit\n",
             "the dirty working tree must be preserved — '-f' must not be read as the force flag"
         );
+    }
+
+    // ── parse_push_commits unit tests (task 17.4) ─────────────────────────
+
+    #[test]
+    fn parse_push_commits_multiple() {
+        // Two commits: hash\x1fsubject, one per line.
+        let stdout = "abc123\x1ffirst commit\ndef456\x1fsecond commit\n";
+        let commits = parse_push_commits(stdout);
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].hash, "abc123");
+        assert_eq!(commits[0].subject, "first commit");
+        assert_eq!(commits[1].hash, "def456");
+        assert_eq!(commits[1].subject, "second commit");
+    }
+
+    #[test]
+    fn parse_push_commits_empty_stdout() {
+        // Empty stdout → empty vec (no upstream or nothing to push).
+        let commits = parse_push_commits("");
+        assert!(commits.is_empty(), "empty stdout should yield empty vec");
+    }
+
+    #[test]
+    fn parse_push_commits_subject_with_special_chars() {
+        // Subject with spaces, colons, slashes — 0x1f separator never appears in
+        // commit subjects so the parse is robust.
+        let stdout = "ff00aa\x1ffeat(footer): push pill opens popover / lists commits-to-push\n";
+        let commits = parse_push_commits(stdout);
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].hash, "ff00aa");
+        assert_eq!(commits[0].subject, "feat(footer): push pill opens popover / lists commits-to-push");
+    }
+
+    #[test]
+    fn parse_push_commits_whitespace_only_lines_skipped() {
+        // Lines that are blank or only whitespace (e.g. trailing newline) are ignored.
+        let stdout = "\nabc123\x1fsome commit\n\n";
+        let commits = parse_push_commits(stdout);
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].subject, "some commit");
+    }
+
+    #[test]
+    fn parse_push_commits_missing_separator_skipped() {
+        // A malformed line (no 0x1f separator) is silently skipped.
+        let stdout = "badhash nousep\nabc123\x1fgood commit\n";
+        let commits = parse_push_commits(stdout);
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].hash, "abc123");
     }
 }

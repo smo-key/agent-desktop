@@ -1298,6 +1298,7 @@ pub fn run() {
             git_status_for,
             git_push,
             git_pull,
+            git::commits_to_push,
             git_list_branches,
             git_checkout,
             git_create_branch,

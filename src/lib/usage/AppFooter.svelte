@@ -162,6 +162,16 @@
       : null
   );
 
+  // Push popover (footer only): GitInfo opens a popover listing the commits that
+  // would be sent, with a "Push now" action. `pushProject` carries the project info
+  // (path/name/id) needed to call pushProject() from inside the popover. Only wired
+  // when a real project folder backs the footer git (mirrors commitProject).
+  const pushProjectInfo = $derived(
+    gitProject?.path
+      ? { id: gitProject.id, path: gitProject.path, name: gitProject.name }
+      : null
+  );
+
   // The terminal area's left edge as a fraction [0,1] of the surface, or null when
   // there's no terminal pane / not in grid view. A "terminal" pane is a non-claude
   // (shell) pane; agents are claude panes. Reading the active tree + registry keeps
@@ -198,7 +208,7 @@
   <div class="zone left">
     <div class="left-git">
       <div class="branch-anchor" bind:this={branchAnchorEl}>
-        <GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} {onPickBranch} {onPr} {prExists} {prDisabled} {onOpenPrs} openPrs={openPrsView_} {onCommit} {commitProject} />
+        <GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} {onPickBranch} {onPr} {prExists} {prDisabled} {onOpenPrs} openPrs={openPrsView_} {onCommit} {commitProject} pushProject={pushProjectInfo} />
       </div>
       <BranchPicker
         open={branchOpen}

@@ -83,6 +83,26 @@ export async function pushProject(
   }
 }
 
+/** One commit record returned by the `commits_to_push` Tauri command. */
+export interface PushCommit {
+  hash: string;
+  subject: string;
+}
+
+/**
+ * Return the commits that a `git push` would send for `repoPath` — i.e. commits
+ * on HEAD not yet on the upstream tracking branch. Best-effort: no upstream /
+ * off-repo / backend error → empty array. Never throws.
+ */
+export async function commitsToPush(repoPath: string | null | undefined): Promise<PushCommit[]> {
+  if (!repoPath) return [];
+  try {
+    return await invoke<PushCommit[]>('commits_to_push', { repoPath });
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Pull the project's current branch from its remote via `git_pull`. On success a
  * toast confirms (echoing git's message); on failure it opens an interactive

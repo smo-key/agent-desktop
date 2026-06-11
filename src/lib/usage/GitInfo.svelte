@@ -36,6 +36,11 @@
   // popover. It stays INERT (a plain display pill, no action) when `modified` is
   // 0/null, so a clean tree can't be clicked. The hover tooltip shows only the
   // COUNT of changed files (e.g. "3 uncommitted files").
+  //
+  // When `pushProject` is provided (the footer only), the AHEAD (↑) pill becomes
+  // a BUTTON that opens the push popover whenever `ahead > 0`, listing the commits
+  // that would be sent with a pinned "Push now" action. It stays INERT when
+  // `ahead === 0`/null so a clean (nothing-to-push) state can't be clicked.
   import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import type { GitStatus } from './snapshots.svelte';
@@ -43,6 +48,16 @@
   import FooterPopover from './FooterPopover.svelte';
   import type { CommitProject } from './commitPopover';
   import { spawnCommitFromPopover } from './commitPopover';
+  import type { PushCommit } from '$lib/projects/projectGitActions';
+  import { commitsToPush, pushProject as doPushProject } from '$lib/projects/projectGitActions';
+  import { pushPopoverOpen as canPushPopover } from './pushPopover';
+
+  /** Minimal project info needed to open the push popover and execute a push. */
+  export interface PushProject {
+    id: string | null;
+    path: string | null;
+    name: string;
+  }
 
   let {
     git,
@@ -58,7 +73,8 @@
     onOpenPrs,
     openPrs,
     onCommit,
-    commitProject = null
+    commitProject = null,
+    pushProject = null
   }: {
     git: GitStatus | null;
     always?: boolean;
@@ -78,6 +94,10 @@
     /** The project to commit to — used by the in-component popover to spawn the
      *  agent. Required whenever `onCommit` is wired; ignored otherwise. */
     commitProject?: CommitProject | null;
+    /** When provided (footer only), the ahead pill opens the push popover whenever
+     *  `ahead > 0`, listing the commits to push and offering a "Push now" action.
+     *  Without it the ahead pill calls `onPush` directly (or is inert). */
+    pushProject?: PushProject | null;
   } = $props();
 
   // The modified (uncommitted-files) pill is a clickable COMMIT button only when
@@ -102,6 +122,40 @@
       spawnCommitFromPopover(commitProject);
     }
     closeCommitPopover();
+  }
+
+  // ── Push popover state ────────────────────────────────────────────────────
+  // The ahead (↑) pill opens the push popover when `pushProject` is wired AND
+  // `ahead > 0`. Otherwise the pill calls `onPush` directly (project pane) or
+  // is inert. The popover lazily fetches the commit list on open.
+  const pushable = $derived(canPushPopover(git?.ahead, !!pushProject));
+
+  let pushPopoverOpenState = $state(false);
+  let pushPillEl = $state<HTMLButtonElement | null>(null);
+  let pushCommits = $state<PushCommit[]>([]);
+  let pushCommitsLoading = $state(false);
+
+  function openPushPopover() {
+    if (!pushable) return;
+    pushPopoverOpenState = true;
+    // Lazily fetch the commit list when the popover opens.
+    pushCommitsLoading = true;
+    void commitsToPush(pushProject?.path).then((commits) => {
+      pushCommits = commits;
+      pushCommitsLoading = false;
+    });
+  }
+
+  function closePushPopover() {
+    pushPopoverOpenState = false;
+    pushCommits = [];
+  }
+
+  async function handlePushNow() {
+    if (pushProject) {
+      await doPushProject(pushProject.path, pushProject.name, pushProject.id);
+    }
+    closePushPopover();
   }
 </script>
 
@@ -151,7 +205,23 @@
         {/if}
       {/if}
       {#if always || (git.ahead != null && git.ahead > 0)}
-        {#if onPush}
+        {#if pushable}
+          <!-- Commits to push present + footer wired a pushProject: a clickable PUSH
+               button. Clicking opens the push popover which lists the commits and
+               pins a "Push now" action. INERT when ahead === 0/null. -->
+          <button
+            type="button"
+            class="pill ahead action"
+            class:zero={(git.ahead ?? 0) === 0}
+            bind:this={pushPillEl}
+            onclick={openPushPopover}
+            disabled={busy}
+            use:tooltip={busy ? 'Sync in progress…' : `${git.ahead ?? 0} commit${(git.ahead ?? 0) === 1 ? '' : 's'} to push — click to review`}
+          >
+            <Icon name="arrow-up" size={12} />
+            <span class="txt">{git.ahead ?? 0}</span>
+          </button>
+        {:else if onPush}
           <button
             type="button"
             class="pill ahead action"
@@ -255,6 +325,43 @@
     </span>
   {/if}
 </div>
+
+<!-- Push popover: opens above the ahead (↑) pill when it is clicked and there
+     are commits to push. Lists the unpushed commit hashes + subjects in a
+     scrollable body with a pinned "Push now" action that calls pushProject
+     directly (the user already saw the commit list and chose to act). -->
+<FooterPopover
+  open={pushPopoverOpenState}
+  anchor={pushPillEl}
+  onClose={closePushPopover}
+>
+  {#snippet title()}
+    Commits to push
+  {/snippet}
+
+  {#snippet body()}
+    {#if pushCommitsLoading}
+      <p class="cp-empty">Loading…</p>
+    {:else if pushCommits.length > 0}
+      <ul class="cp-file-list">
+        {#each pushCommits as commit (commit.hash)}
+          <li class="cp-file pp-commit-row">
+            <span class="pp-hash">{commit.hash.slice(0, 7)}</span>
+            <span class="pp-subject">{commit.subject}</span>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="cp-empty">No commits found</p>
+    {/if}
+  {/snippet}
+
+  {#snippet action()}
+    <button type="button" class="pp-push-btn" onclick={handlePushNow}>
+      Push now
+    </button>
+  {/snippet}
+</FooterPopover>
 
 <!-- Commit popover: opens above the modified pill when it is clicked and there
      are uncommitted changes. Lists the changed file paths in a scrollable body
@@ -477,6 +584,56 @@
   }
 
   .cp-commit-btn:active {
+    transform: translateY(0.5px);
+  }
+
+  /* ── Push popover content (rendered inside FooterPopover's snippets) ── */
+
+  /* Each commit row: short hash (dim monospace) + subject (readable sans). */
+  .pp-hash {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-4);
+    flex-shrink: 0;
+    margin-right: 6px;
+  }
+
+  .pp-subject {
+    font-family: var(--font-sans);
+    font-size: 11.5px;
+    color: var(--fg-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Override .cp-file layout to show hash + subject side-by-side. */
+  .pp-commit-row {
+    display: flex;
+    align-items: center;
+  }
+
+  /* Primary action button — "Push now" — full-width, caution accent (mirrors
+     the commit button so the push pill popover is visually consistent). */
+  .pp-push-btn {
+    width: 100%;
+    background: var(--caution-tint);
+    color: var(--caution-500);
+    border: 1px solid color-mix(in srgb, var(--caution-500) 30%, transparent);
+    border-radius: var(--r-sm);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 7px 12px;
+    cursor: pointer;
+    text-align: center;
+  }
+
+  .pp-push-btn:hover {
+    filter: brightness(1.15);
+  }
+
+  .pp-push-btn:active {
     transform: translateY(0.5px);
   }
 </style>
