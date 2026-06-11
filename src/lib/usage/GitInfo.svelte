@@ -127,10 +127,11 @@
   }
 
   function handleCommitNow() {
+    // Close first so the popover dismisses immediately on click, then act.
+    closeCommitPopover();
     if (commitProject) {
       spawnCommitFromPopover(commitProject);
     }
-    closeCommitPopover();
   }
 
   // ── Push popover state ────────────────────────────────────────────────────
@@ -161,10 +162,12 @@
   }
 
   async function handlePushNow() {
+    // Close first so the popover dismisses immediately on click — don't wait for
+    // the (network) push to finish.
+    closePushPopover();
     if (pushProject) {
       await doPushProject(pushProject.path, pushProject.name, pushProject.id);
     }
-    closePushPopover();
   }
 
   // ── Open-PRs popover state ─────────────────────────────────────────────────
@@ -187,23 +190,25 @@
   }
 
   async function handleOpenPrsPage() {
+    // Close first so the popover dismisses immediately on click, then open the page.
     const url = openPrsResult?.pullsUrl;
+    closeOpenPrsPopover();
     if (!url) return;
     try {
       await invoke('open_path', { path: url, app: null });
     } catch (err) {
       console.warn('open_path (open PRs page) failed', err);
     }
-    closeOpenPrsPopover();
   }
 
   async function handleOpenPrUrl(url: string) {
+    // Close first so the popover dismisses immediately on click, then open the PR.
+    closeOpenPrsPopover();
     try {
       await invoke('open_path', { path: url, app: null });
     } catch (err) {
       console.warn('open_path (open PR url) failed', err);
     }
-    closeOpenPrsPopover();
   }
 
   // PRs sorted for the popover: non-draft (awaiting-review shown first) then drafts.
@@ -669,12 +674,12 @@
     margin: 0;
   }
 
-  /* Primary action button — "Commit now" — full-width, caution accent. */
+  /* Primary action button — "Commit now" — full-width, blue accent. */
   .cp-commit-btn {
     width: 100%;
-    background: var(--caution-tint);
-    color: var(--caution-500);
-    border: 1px solid color-mix(in srgb, var(--caution-500) 30%, transparent);
+    background: var(--blue-tint);
+    color: var(--info-500);
+    border: 1px solid color-mix(in srgb, var(--info-500) 30%, transparent);
     border-radius: var(--r-sm);
     font-family: var(--font-sans);
     font-size: 13px;
@@ -718,13 +723,13 @@
     align-items: center;
   }
 
-  /* Primary action button — "Push now" — full-width, caution accent (mirrors
+  /* Primary action button — "Push now" — full-width, blue accent (mirrors
      the commit button so the push pill popover is visually consistent). */
   .pp-push-btn {
     width: 100%;
-    background: var(--caution-tint);
-    color: var(--caution-500);
-    border: 1px solid color-mix(in srgb, var(--caution-500) 30%, transparent);
+    background: var(--blue-tint);
+    color: var(--info-500);
+    border: 1px solid color-mix(in srgb, var(--info-500) 30%, transparent);
     border-radius: var(--r-sm);
     font-family: var(--font-sans);
     font-size: 13px;
@@ -794,12 +799,13 @@
     margin-left: 6px;
   }
 
-  /* Primary action button — "Open PRs page" — full-width, neutral accent. */
+  /* Primary action button — "Open PRs page" — full-width, blue accent (matches
+     "Push now" / "Commit now" so all popover actions are visually consistent). */
   .opr-page-btn {
     width: 100%;
-    background: var(--space-750);
-    color: var(--fg-2);
-    border: 1px solid var(--line-subtle);
+    background: var(--blue-tint);
+    color: var(--info-500);
+    border: 1px solid color-mix(in srgb, var(--info-500) 30%, transparent);
     border-radius: var(--r-sm);
     font-family: var(--font-sans);
     font-size: 13px;

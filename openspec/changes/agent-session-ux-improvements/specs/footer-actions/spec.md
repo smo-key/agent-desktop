@@ -42,7 +42,9 @@ back to the create-confirm path rather than silently doing nothing.
 A footer git popover (push, uncommitted files, or open PRs) SHALL anchor to its
 indicator, SHALL make its body SCROLLABLE when the content overflows, and SHALL pin its
 PRIMARY ACTION button to the bottom so it stays visible while the body scrolls. The
-popover SHALL close when the user clicks OUTSIDE it or presses Escape.
+popover SHALL close when the user clicks OUTSIDE it or presses Escape. Activating the
+pinned PRIMARY ACTION SHALL ALSO close the popover immediately — without waiting for the
+(possibly asynchronous) action to finish.
 
 #### Scenario: Long list scrolls under a pinned action
 - **WHEN** a footer popover's list is taller than the popover's maximum height
@@ -55,6 +57,10 @@ popover SHALL close when the user clicks OUTSIDE it or presses Escape.
 #### Scenario: Escape closes the popover
 - **WHEN** a footer popover is open and the user presses Escape
 - **THEN** the popover closes
+
+#### Scenario: Activating the primary action closes the popover
+- **WHEN** the user clicks a popover's pinned primary action (e.g. "Push now", "Commit now", or "Open PRs page")
+- **THEN** the popover closes immediately (it does not stay open while the action runs)
 
 ### Requirement: Uncommitted-files indicator opens a commit popover
 
