@@ -96,9 +96,9 @@
 
 ## 14. Footer model + effort pills (usage-dashboard)
 
-- [ ] 14.1 Extend the footer view (`footerView`) to surface the focused pane's `model`, `model_id`, and `effort` from its latest snapshot.
-- [ ] 14.2 In `AppFooter.svelte`'s right zone, render a NON-interactive model pill (`modelLabel`) and, when `effort` is present, a non-interactive effort pill (`effortLabel`); omit the effort pill when null. Reuse the `.pill` styling as a plain element (no button/handler).
-- [ ] 14.3 Tests: `footerView` surfaces model/effort for the focused pane; a focused snapshot with no effort yields no effort value (pill omitted).
+- [x] 14.1 Extend the footer view (`footerView`) to surface the focused pane's `model`, `model_id`, and `effort` from its latest snapshot.
+- [x] 14.2 In `AppFooter.svelte`'s right zone, render a NON-interactive model pill (`modelLabel`) and, when `effort` is present, a non-interactive effort pill (`effortLabel`); omit the effort pill when null. Reuse the `.pill` styling as a plain element (no button/handler).
+- [x] 14.3 Tests: `footerView` surfaces model/effort for the focused pane; a focused snapshot with no effort yields no effort value (pill omitted).
 
 ## 15. Agent card shows model instead of cost (agent-roster-display, agent-overview)
 
