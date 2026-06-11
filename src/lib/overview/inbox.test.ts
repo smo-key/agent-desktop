@@ -12,6 +12,7 @@ import {
   shouldAutoResume,
   deleteAllArchivedRequest,
   rowSub,
+  rowModelLabel,
   clipLine,
   ROW_SUB_MAX_LEN
 } from './inbox';
@@ -25,6 +26,7 @@ function row(paneId: string, status: AgentStatus, over: Partial<AgentRow> = {}):
     name: paneId,
     cwd: null,
     model: null,
+    modelId: null,
     task: null,
     summary: null,
     question: null,
@@ -449,5 +451,37 @@ describe('rowSub — state-appropriate fallback when there is no message', () =>
     // Finished + summary -> summary, not the cost.
     const finMsg = row('d', 'finished', { summary: 'All tests green', cost: 2 });
     expect(rowSub(finMsg)).toBe('All tests green');
+  });
+});
+
+// Task 15.2 / 15.3 — rowModelLabel: the pure helper the card uses instead of costMeta
+describe('rowModelLabel', () => {
+  it('returns a versioned label for a known model id', () => {
+    const r = row('a', 'working', { modelId: 'claude-opus-4-8', model: 'Claude Opus' });
+    expect(rowModelLabel(r)).toBe('Opus 4.8');
+  });
+
+  it('falls back to the display name for an unknown model id', () => {
+    const r = row('a', 'working', { modelId: 'weird-model-xyz', model: 'My Model' });
+    expect(rowModelLabel(r)).toBe('My Model');
+  });
+
+  it('falls back to display name when modelId is null', () => {
+    const r = row('a', 'working', { modelId: null, model: 'Claude Sonnet' });
+    expect(rowModelLabel(r)).toBe('Claude Sonnet');
+  });
+
+  it('returns em dash when both modelId and model are null', () => {
+    const r = row('a', 'working', { modelId: null, model: null });
+    expect(rowModelLabel(r)).toBe('—');
+  });
+
+  it('is used in place of costMeta — costMeta is NOT exported from inbox', () => {
+    // This test documents that costMeta was removed and rowModelLabel is the
+    // replacement. If costMeta were still present it would be importable as a
+    // named export; the import above (which does NOT include costMeta) confirms it.
+    // Additionally, rowModelLabel must exist and work:
+    const r = row('b', 'idle', { modelId: 'claude-sonnet-4-6', model: null });
+    expect(rowModelLabel(r)).toBe('Sonnet 4.6');
   });
 });

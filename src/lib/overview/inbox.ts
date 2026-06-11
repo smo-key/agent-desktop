@@ -7,6 +7,7 @@
 // thin reactive shell that feeds it the live roster and renders the result.
 
 import { archivedPaneIds, needsAttention, type AgentRow, type AgentStatus } from './roster';
+import { modelLabel } from '$lib/usage/modelLabel';
 import type { ConfirmOptions } from '$lib/ui/confirmStore.svelte';
 
 /** Max characters of the roster sub-line (a one-line display); longer messages are
@@ -200,6 +201,17 @@ export function shouldAutoResume(
 ): boolean {
   if (typeof liveCount !== 'number' || typeof baselineCount !== 'number') return false;
   return liveCount > baselineCount;
+}
+
+/**
+ * PURE: the model label to show on an agent card — `modelLabel(r.modelId, r.model)`.
+ * Returns a versioned human-readable label like `"Opus 4.8"` for a known id, falls
+ * back to the snapshot display name, then `'—'` when both are absent.
+ * Introduced as the card-level seam so unit tests cover the exact text the card
+ * renders without mounting a Svelte component.
+ */
+export function rowModelLabel(row: Pick<AgentRow, 'modelId' | 'model'>): string {
+  return modelLabel(row.modelId ?? null, row.model ?? null);
 }
 
 /**

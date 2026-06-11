@@ -65,6 +65,7 @@
   import StatusBar from '$lib/usage/StatusBar.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import { friendlyTime } from './friendlyTime';
+  import { rowModelLabel } from './inbox';
   import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
   import TasksLauncher from '$lib/tasks/TasksLauncher.svelte';
   // import SpecialistsPanel from '$lib/specialists/SpecialistsPanel.svelte'; // temporarily hidden
@@ -930,11 +931,6 @@
     return pct === null ? '—' : `${Math.round(pct)}%`;
   }
 
-  /** Total cost without the leading "$" (the dollar icon carries that), or "—". */
-  function costMeta(value: number | null): string {
-    return value === null ? '—' : value.toFixed(2);
-  }
-
   /** The status dot class for a row. Paused/archived rows are muted (they don't
    *  need you), so a paused waiting agent shows a standby dot, not an orange one. */
   function badgeClass(r: AgentRow): string {
@@ -1018,8 +1014,8 @@
             {ctxLabel(r.contextPct)}
           </span>
         {/if}
-        <span class="m" use:tooltip={'Total session cost'}>
-          <Icon name="dollar-sign" size={11} />{costMeta(r.cost)}
+        <span class="m" use:tooltip={'Model'}>
+          <Icon name="cpu" size={11} />{rowModelLabel(r)}
         </span>
         <span class="m" use:tooltip={'Time since last activity'}>
           <Icon name="clock" size={11} />{friendlyTime(r.lastTs, nowMs)}

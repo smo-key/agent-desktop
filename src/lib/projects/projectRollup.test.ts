@@ -18,6 +18,7 @@ function row(paneId: string, projectId: string | null, status: AgentStatus): Age
     name: paneId,
     cwd: null,
     model: null,
+    modelId: null,
     task: null,
     summary: null,
     question: null,

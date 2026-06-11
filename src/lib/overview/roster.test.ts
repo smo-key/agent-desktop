@@ -362,6 +362,7 @@ describe('roster — control-room lanes', () => {
     name: paneId,
     cwd: null,
     model: null,
+    modelId: null,
     task: null,
     summary: null,
     question: null,
@@ -720,5 +721,39 @@ describe('roster — terminal-busy In-flight override', () => {
     const [row] = buildRoster({}, [coordWs], runtime, now);
     expect(row.status).toBe('working');
     expect(needsAttention(row)).toBe(false);
+  });
+});
+
+// Task 15.1 — roster carries modelId
+describe('roster — modelId from snapshot', () => {
+  const now = 1_000_000;
+  const normalWs: RosterWorkspace = {
+    id: 'w1',
+    name: 'WS',
+    panes: [{ paneId: 'p', cwd: '/x', isApp: true }]
+  };
+
+  it('modelId is populated from snapshot.model_id', () => {
+    const map = mapOf(snap('p', { model_id: 'claude-opus-4-8' }));
+    const [row] = buildRoster(map, [normalWs], {}, now);
+    expect(row.modelId).toBe('claude-opus-4-8');
+  });
+
+  it('modelId is null when snapshot.model_id is null', () => {
+    const map = mapOf(snap('p', { model_id: null }));
+    const [row] = buildRoster(map, [normalWs], {}, now);
+    expect(row.modelId).toBeNull();
+  });
+
+  it('modelId is null when no snapshot exists', () => {
+    const [row] = buildRoster({}, [normalWs], {}, now);
+    expect(row.modelId).toBeNull();
+  });
+
+  it('modelId and model are both populated from snapshot', () => {
+    const map = mapOf(snap('p', { model: 'Claude Opus', model_id: 'claude-opus-4-8' }));
+    const [row] = buildRoster(map, [normalWs], {}, now);
+    expect(row.model).toBe('Claude Opus');
+    expect(row.modelId).toBe('claude-opus-4-8');
   });
 });

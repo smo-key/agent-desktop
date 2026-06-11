@@ -271,6 +271,10 @@ export interface AgentRow {
   cwd: string | null;
   /** Display model name from the snapshot, or null when unknown. */
   model: string | null;
+  /** Raw model id from the snapshot (e.g. `claude-opus-4-8`), or null when unknown.
+   *  Used alongside `model` to derive a versioned human-readable label via
+   *  `modelLabel(modelId, model)`. */
+  modelId: string | null;
   /** The current in-progress task (`activeForm`), or null. */
   task: string | null;
   /** The agent's last assistant message (high-level "what it just said"), or null. */
@@ -453,6 +457,7 @@ function rowFor(
     name: displayName(wsName, pane.cwd, pane.paneId),
     cwd: pane.cwd,
     model: snapshot?.model ?? null,
+    modelId: snapshot?.model_id ?? null,
     task: snapshot?.task ?? null,
     summary: activity?.summary ?? null,
     // The pending question is event-sourced (it rides the PreToolUse event); the

@@ -14,6 +14,7 @@ function row(partial: Partial<AgentRow> & { paneId: string }): AgentRow {
     name: partial.paneId,
     cwd: null,
     model: null,
+    modelId: null,
     task: null,
     summary: null,
     question: null,

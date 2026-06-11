@@ -33,6 +33,7 @@ function row(over: Partial<AgentRow> = {}): AgentRow {
     name: 'Agent',
     cwd: null,
     model: null,
+    modelId: null,
     task: null,
     summary: null,
     question: null,
