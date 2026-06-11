@@ -17,7 +17,6 @@
   import { pushProject, pullProject } from '$lib/projects/projectGitActions';
   import {
     DEFAULT_BASE,
-    prButtonDisabled,
     cachedPrStatus,
     refreshPrStatus,
     onPrButtonClick
@@ -97,8 +96,12 @@
   // The button is disabled on the base branch / when there's no branch or project.
   let prStatus = $state<ReturnType<typeof cachedPrStatus>>({ kind: 'unknown' });
   const prBranch = $derived(folderGit?.branch ?? null);
-  const prDisabled = $derived(prButtonDisabled(gitProject?.id, prBranch, DEFAULT_BASE));
   const prExists = $derived(prStatus.kind === 'exists');
+  // The existing PR's number (when one exists), shown as "PR #N".
+  const prNumber = $derived(prStatus.kind === 'exists' ? prStatus.number : null);
+  // Show the per-branch PR bubble only on a GitHub repo: PR existence is determinable
+  // (status `exists`/`none`), not `unknown` (no GitHub remote / gh unavailable).
+  const prVisible = $derived(prStatus.kind !== 'unknown');
   // Refresh PR status whenever the footer's project/branch (or the polled git
   // status) changes: query gh in the background, then re-read the cache snapshot.
   $effect(() => {
@@ -106,14 +109,15 @@
     const path = gitProject?.path ?? null;
     const branch = prBranch;
     prStatus = cachedPrStatus(branch); // show the last-known intent immediately
-    if (prButtonDisabled(gitProject?.id, branch, DEFAULT_BASE)) return;
+    if (!path || !branch) return;
     void refreshPrStatus(path, branch, DEFAULT_BASE).then(() => {
       prStatus = cachedPrStatus(branch);
     });
   });
-  // Click: open the existing PR, else open the create-confirm (also for unknown).
+  // Click: open the existing PR, else open the create-confirm. Clickable on any
+  // repo+branch (the bubble itself is hidden when PR status is unknown / non-GitHub).
   const onPr = $derived(
-    !prDisabled && gitProject?.path && prBranch
+    gitProject?.path && prBranch
       ? () =>
           void onPrButtonClick(
             { id: gitProject.id, path: gitProject.path, name: gitProject.name },
@@ -205,7 +209,7 @@
   <div class="zone left">
     <div class="left-git">
       <div class="branch-anchor" bind:this={branchAnchorEl}>
-        <GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} {onPickBranch} {onPr} {prExists} {prDisabled} openPrs={openPrsView_} {openPrsResult} {onCommit} {commitProject} pushProject={pushProjectInfo} />
+        <GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} {onPickBranch} {onPr} {prExists} {prNumber} {prVisible} openPrs={openPrsView_} {openPrsResult} {onCommit} {commitProject} pushProject={pushProjectInfo} />
       </div>
       <BranchPicker
         open={branchOpen}

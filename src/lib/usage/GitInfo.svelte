@@ -20,11 +20,12 @@
   // display pill (the project pane keeps it read-only), mirroring the push/pull
   // span↔button switch.
   //
-  // When `onPr` is provided (the footer only), a PR button is shown immediately
-  // to the RIGHT of the modified (edited-files) pill: clicking opens the existing
-  // PR (when `prExists`) or a create-PR confirm. It is DISABLED when `prDisabled`
-  // (on the base branch, or no branch/project). Without `onPr` no PR button shows
-  // (the project pane omits it), mirroring the other footer-only switches.
+  // When `onPr` is provided AND `prVisible` (the footer, on a GitHub repo), a
+  // per-branch PR bubble is shown to the RIGHT of the modified (edited-files) pill,
+  // SEPARATE from the open-PRs-awaiting-review button: it shows "PR #N" highlighted
+  // when a PR exists (click opens it) or a gray "PR" when none (click → create-PR
+  // confirm). Hidden when `prVisible` is false (PR status unknown / non-GitHub) or in
+  // the project pane (no `onPr`).
   //
   // When `onOpenPrs` is provided (the footer only), an "open PRs awaiting review"
   // button is shown to the RIGHT of the PR button: it renders `openPrs` (a warning
@@ -71,7 +72,8 @@
     onPickBranch,
     onPr,
     prExists = false,
-    prDisabled = false,
+    prNumber = null,
+    prVisible = false,
     onOpenPrs,
     openPrs,
     openPrsResult = null,
@@ -88,7 +90,11 @@
     onPickBranch?: () => void;
     onPr?: () => void;
     prExists?: boolean;
-    prDisabled?: boolean;
+    /** The existing PR's number (when `prExists`), rendered as "PR #N". */
+    prNumber?: number | null;
+    /** Whether to show the per-branch PR bubble at all — true only when the repo is a
+     *  GitHub repo (PR existence determinable). Hidden when PR status is unknown. */
+    prVisible?: boolean;
     /** When provided (footer only), the open-PRs pill opens a popover. Without it
      *  the pill either calls `onOpenPrs` directly or is inert. */
     onOpenPrs?: () => void;
@@ -274,7 +280,7 @@
             bind:this={pushPillEl}
             onclick={openPushPopover}
             disabled={busy}
-            use:tooltip={busy ? 'Sync in progress…' : `${git.ahead ?? 0} commit${(git.ahead ?? 0) === 1 ? '' : 's'} to push — click to review`}
+            use:tooltip={busy ? 'Sync in progress…' : 'Click to review'}
           >
             <Icon name="arrow-up" size={12} />
             <span class="txt">{git.ahead ?? 0}</span>
@@ -299,7 +305,7 @@
           <span
             class="pill ahead"
             class:zero={(git.ahead ?? 0) === 0}
-            use:tooltip={`${git.ahead ?? 0} commit${(git.ahead ?? 0) === 1 ? '' : 's'} ahead of upstream — push to publish`}
+            use:tooltip={`${git.ahead ?? 0} commit${(git.ahead ?? 0) === 1 ? '' : 's'} ahead of upstream`}
           >
             <Icon name="arrow-up" size={12} />
             <span class="txt">{git.ahead ?? 0}</span>
@@ -316,7 +322,7 @@
             class="pill modified action"
             bind:this={commitPillEl}
             onclick={openCommitPopover}
-            use:tooltip={uncommittedCountTooltip(git.modified)}
+            use:tooltip={'Click to review'}
           >
             <Icon name="pencil" size={12} />
             <span class="txt">{git.modified}</span>
@@ -348,21 +354,21 @@
           <Icon name="check" size={12} />
         </span>
       {/if}
-      {#if onPr}
+      {#if onPr && prVisible}
+        <!-- Per-branch PR bubble (SEPARATE from the open-PRs-awaiting-review button):
+             shown on a GitHub repo. Highlighted "PR #N" when a PR exists (click opens
+             it); gray "PR" when none (click → create-PR confirm → agent task). -->
         <button
           type="button"
           class="pill pr action"
           class:exists={prExists}
           onclick={onPr}
-          disabled={prDisabled}
-          use:tooltip={prDisabled
-            ? 'Open a pull request — switch off the base branch first'
-            : prExists
-              ? 'Open this branch’s pull request on GitHub'
-              : 'Create a pull request into main'}
+          use:tooltip={prExists
+            ? 'Open this branch’s pull request on GitHub'
+            : 'Create a pull request into main'}
         >
           <Icon name="git-pull-request" size={12} />
-          <span class="txt">PR</span>
+          <span class="txt">{prExists && prNumber != null ? `PR #${prNumber}` : 'PR'}</span>
         </button>
       {/if}
       {#if openPrs && (onOpenPrs || openPrsResult != null)}
@@ -674,12 +680,12 @@
     margin: 0;
   }
 
-  /* Primary action button — "Commit now" — full-width, blue accent. */
+  /* Primary action button — "Commit now" — full-width, orange (caution) accent. */
   .cp-commit-btn {
     width: 100%;
-    background: var(--blue-tint);
-    color: var(--info-500);
-    border: 1px solid color-mix(in srgb, var(--info-500) 30%, transparent);
+    background: var(--caution-tint);
+    color: var(--caution-500);
+    border: 1px solid color-mix(in srgb, var(--caution-500) 30%, transparent);
     border-radius: var(--r-sm);
     font-family: var(--font-sans);
     font-size: 13px;
@@ -723,13 +729,13 @@
     align-items: center;
   }
 
-  /* Primary action button — "Push now" — full-width, blue accent (mirrors
+  /* Primary action button — "Push now" — full-width, orange (caution) accent (mirrors
      the commit button so the push pill popover is visually consistent). */
   .pp-push-btn {
     width: 100%;
-    background: var(--blue-tint);
-    color: var(--info-500);
-    border: 1px solid color-mix(in srgb, var(--info-500) 30%, transparent);
+    background: var(--caution-tint);
+    color: var(--caution-500);
+    border: 1px solid color-mix(in srgb, var(--caution-500) 30%, transparent);
     border-radius: var(--r-sm);
     font-family: var(--font-sans);
     font-size: 13px;
@@ -799,13 +805,13 @@
     margin-left: 6px;
   }
 
-  /* Primary action button — "Open PRs page" — full-width, blue accent (matches
-     "Push now" / "Commit now" so all popover actions are visually consistent). */
+  /* Primary action button — "Open PRs page" — full-width, orange (caution) accent
+     (matches "Push now" / "Commit now" so all popover actions are visually consistent). */
   .opr-page-btn {
     width: 100%;
-    background: var(--blue-tint);
-    color: var(--info-500);
-    border: 1px solid color-mix(in srgb, var(--info-500) 30%, transparent);
+    background: var(--caution-tint);
+    color: var(--caution-500);
+    border: 1px solid color-mix(in srgb, var(--caution-500) 30%, transparent);
     border-radius: var(--r-sm);
     font-family: var(--font-sans);
     font-size: 13px;

@@ -1,41 +1,38 @@
 ## ADDED Requirements
 
-### Requirement: PR button in the footer
+### Requirement: Per-branch PR bubble in the footer
 
-The footer SHALL show a PR button immediately to the RIGHT of the edited-files
-(uncommitted-changes) count. Its behavior SHALL depend on whether a pull request
-from the focused project's current branch into `main` already exists:
+The footer SHALL show a per-branch PR bubble immediately to the RIGHT of the
+edited-files (uncommitted-changes) count, SEPARATE from the open-PRs-awaiting-review
+button (which is a distinct control). The bubble creates or manages the CURRENT
+BRANCH's pull request into `main`:
 
-- WHEN a PR exists → clicking the button SHALL open that PR.
-- WHEN no PR exists → clicking SHALL open a confirmation dialog asking whether to
-  create a PR into `main`; confirming SHALL spawn an agent session (task) that
-  creates the PR into `main` and auto-archives when it returns to the user, exactly
-  as agent tasks run today.
+- It SHALL be shown whenever the focused project is a GitHub repository (i.e. PR
+  existence for the branch can be determined). When that cannot be determined (no
+  GitHub remote, or `gh` unavailable/failing), the bubble SHALL be HIDDEN.
+- WHEN a PR from the current branch into `main` EXISTS → the bubble SHALL show
+  `PR #<number>` (with a pull-request icon) in a HIGHLIGHTED state, and clicking it
+  SHALL open that PR on GitHub.
+- WHEN NO such PR exists → the bubble SHALL show a GRAY `PR` (no number), and clicking
+  it SHALL open a confirmation dialog asking whether to create a PR into `main`;
+  confirming SHALL spawn an agent session (task) that creates the PR into `main` and
+  auto-archives when it returns to the user, exactly as agent tasks run today.
 
-The button SHALL be DISABLED when the current branch is the base branch (`main`),
-or when there is no git branch / project to act on. When PR existence cannot be
-determined (e.g. the `gh` lookup is unavailable or fails), the button SHALL fall
-back to the create-confirm path rather than silently doing nothing.
+#### Scenario: Existing PR shows its number and opens
+- **WHEN** a PR from the current branch into `main` exists
+- **THEN** the bubble shows `PR #<number>` in a highlighted state, and clicking it opens that PR on GitHub
 
-#### Scenario: Create a PR from a feature branch
-- **WHEN** the focused project is on a feature branch with no PR into `main`, and the user clicks the PR button and confirms
-- **THEN** an agent session (task) is spawned that creates a PR into `main` and auto-archives when it returns to the user
-
-#### Scenario: Open an existing PR
-- **WHEN** a PR from the current branch into `main` already exists and the user clicks the PR button
-- **THEN** that PR is opened
-
-#### Scenario: Disabled on the base branch
-- **WHEN** the focused project's current branch is `main` (the base branch)
-- **THEN** the PR button is disabled (there is nothing to PR into itself)
+#### Scenario: No PR shows a gray bubble that creates on click
+- **WHEN** there is no PR from the current branch into `main` (a GitHub repo with no such PR)
+- **THEN** the bubble shows a gray `PR`, and clicking it opens a create-PR confirmation; confirming spawns an agent session (task) that creates the PR into `main` and auto-archives
 
 #### Scenario: Cancelling the confirm spawns nothing
 - **WHEN** the create-PR confirmation dialog is shown and the user cancels
 - **THEN** no agent session is spawned
 
-#### Scenario: Detection unavailable falls back to create-confirm
-- **WHEN** PR existence cannot be determined for the current branch
-- **THEN** clicking the button opens the create-PR confirmation rather than doing nothing
+#### Scenario: Hidden when PR existence cannot be determined
+- **WHEN** PR existence cannot be determined (no GitHub remote / `gh` unavailable)
+- **THEN** the per-branch PR bubble is hidden
 
 ### Requirement: Footer git popovers are scrollable, pinned, and dismissable
 
@@ -82,15 +79,16 @@ indicator SHALL be inert (clicking does nothing).
 - **WHEN** there are no uncommitted changes
 - **THEN** clicking the uncommitted-files indicator does nothing (no popover)
 
-### Requirement: The uncommitted-files indicator tooltip shows only the count
+### Requirement: The uncommitted-files indicator tooltip indicates the review action
 
-Hovering the uncommitted-files indicator SHALL show a tooltip stating only the NUMBER
-of uncommitted files — it SHALL NOT enumerate the file paths. The file list SHALL
-appear in the click popover instead.
+The uncommitted-files indicator tooltip SHALL, when the indicator is clickable (there
+are uncommitted changes), indicate that clicking opens the files to REVIEW (e.g. "Click
+to review") — it SHALL NOT enumerate the file paths. The count is shown on the indicator
+face, and the file list appears in the click popover.
 
-#### Scenario: Hover shows the count
-- **WHEN** there are N uncommitted changes and the user hovers the uncommitted-files indicator
-- **THEN** the tooltip states the count N and does not enumerate the individual files
+#### Scenario: Hover indicates the review action
+- **WHEN** there are uncommitted changes and the user hovers the uncommitted-files indicator
+- **THEN** the tooltip indicates that clicking opens the files to review (it does not enumerate the files)
 
 #### Scenario: File list lives in the popover, not the tooltip
 - **WHEN** the user hovers the uncommitted-files indicator
