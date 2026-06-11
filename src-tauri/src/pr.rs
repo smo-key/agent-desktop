@@ -191,41 +191,6 @@ pub fn gh_open_prs_args(base: &str) -> Vec<String> {
     ]
 }
 
-/// PURE: count the OPEN PRs in `gh pr list --json number,reviewDecision` stdout
-/// that are still AWAITING REVIEW — i.e. whose `reviewDecision` is anything other
-/// than `APPROVED`.
-///
-/// `gh` prints a JSON ARRAY; `reviewDecision` is a string like `APPROVED`,
-/// `REVIEW_REQUIRED`, `CHANGES_REQUESTED`, or `""`/`null` (no review state yet).
-/// Every entry whose decision is NOT exactly `APPROVED` counts as awaiting review;
-/// an empty array → `Some(0)`. On ANYTHING we can't make sense of (not an array,
-/// non-JSON, empty output) → `None` (unknown), which the runner maps to the
-/// neutral state.
-///
-/// NOTE: this function is kept for backwards compatibility with tests that use the
-/// old `number,reviewDecision` JSON shape. The primary production path now uses
-/// `parse_open_pr_list` + `awaiting_review_count_non_draft`.
-pub fn parse_awaiting_review_count(stdout: &str) -> Option<i64> {
-    let trimmed = stdout.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let value: serde_json::Value = serde_json::from_str(trimmed).ok()?;
-    let arr = value.as_array()?;
-    let mut count = 0i64;
-    for entry in arr {
-        // Treat a missing/null `reviewDecision` as "" (no decision yet → awaiting).
-        let decision = entry
-            .get("reviewDecision")
-            .and_then(|d| d.as_str())
-            .unwrap_or("");
-        if decision != "APPROVED" {
-            count += 1;
-        }
-    }
-    Some(count)
-}
-
 /// PURE: parse `gh pr list --json number,title,url,isDraft,reviewDecision` stdout
 /// into a `Vec<OpenPr>`.
 ///
@@ -648,63 +613,6 @@ mod tests {
         let i = args.iter().position(|a| a == "--base").expect("--base present");
         assert_eq!(args[i + 1], "--oops");
     }
-
-    #[test]
-    fn parse_awaiting_review_excludes_approved() {
-        // APPROVED does NOT count; everything else (REVIEW_REQUIRED,
-        // CHANGES_REQUESTED, empty/missing decision) is awaiting review.
-        let out = r#"[
-            {"number":1,"reviewDecision":"APPROVED"},
-            {"number":2,"reviewDecision":"REVIEW_REQUIRED"},
-            {"number":3,"reviewDecision":"CHANGES_REQUESTED"},
-            {"number":4,"reviewDecision":""},
-            {"number":5}
-        ]"#;
-        // 1 approved excluded; 4 awaiting.
-        assert_eq!(parse_awaiting_review_count(out), Some(4));
-    }
-
-    #[test]
-    fn parse_awaiting_review_null_decision_counts() {
-        // An explicit null reviewDecision (no review state yet) is awaiting review.
-        let out = r#"[{"number":1,"reviewDecision":null}]"#;
-        assert_eq!(parse_awaiting_review_count(out), Some(1));
-    }
-
-    #[test]
-    fn parse_awaiting_review_all_approved_is_zero() {
-        let out = r#"[
-            {"number":1,"reviewDecision":"APPROVED"},
-            {"number":2,"reviewDecision":"APPROVED"}
-        ]"#;
-        assert_eq!(parse_awaiting_review_count(out), Some(0));
-    }
-
-    #[test]
-    fn parse_awaiting_review_empty_array_is_zero() {
-        // No open PRs → a clean zero (NOT unknown).
-        assert_eq!(parse_awaiting_review_count("[]"), Some(0));
-        assert_eq!(parse_awaiting_review_count("  []  \n"), Some(0));
-    }
-
-    #[test]
-    fn parse_awaiting_review_unknown_for_empty_output() {
-        // No output at all → can't tell → unknown.
-        assert_eq!(parse_awaiting_review_count(""), None);
-        assert_eq!(parse_awaiting_review_count("   \n "), None);
-    }
-
-    #[test]
-    fn parse_awaiting_review_unknown_for_non_json() {
-        // A gh error on stdout, or any non-JSON / non-array → unknown.
-        assert_eq!(parse_awaiting_review_count("gh: not authenticated"), None);
-        assert_eq!(parse_awaiting_review_count("{not json"), None);
-        assert_eq!(
-            parse_awaiting_review_count(r#"{"message":"Bad credentials"}"#),
-            None
-        );
-    }
-
     #[test]
     fn parse_pulls_url_appends_pulls() {
         assert_eq!(

@@ -19,12 +19,10 @@ vi.mock('../ui/confirmStore.svelte', () => ({
 
 import {
   DEFAULT_BASE,
-  prButtonDisabled,
   prStatusFor,
   setAgentTaskLauncher,
   buildCreatePrPrompt,
   buildCommitPrompt,
-  onCommitButtonClick,
   onPrButtonClick,
   prCache,
   type PrStatus
@@ -43,31 +41,6 @@ beforeEach(() => {
   lastShow = null;
   prCache.clear();
   setAgentTaskLauncher(null);
-});
-
-// ─────────────────────────── disabled logic ───────────────────────────
-
-describe('prButtonDisabled', () => {
-  // Scenario: disabled when there is no project.
-  it('is disabled with no project id', () => {
-    expect(prButtonDisabled(null, 'feature', DEFAULT_BASE)).toBe(true);
-  });
-
-  // Scenario: disabled when there is no branch.
-  it('is disabled with no branch', () => {
-    expect(prButtonDisabled('p1', null, DEFAULT_BASE)).toBe(true);
-    expect(prButtonDisabled('p1', '', DEFAULT_BASE)).toBe(true);
-  });
-
-  // Scenario: disabled when the current branch IS the base.
-  it('is disabled when on the base branch', () => {
-    expect(prButtonDisabled('p1', 'main', 'main')).toBe(true);
-  });
-
-  // Scenario: enabled on a feature branch with a project.
-  it('is enabled on a feature branch', () => {
-    expect(prButtonDisabled('p1', 'feature-x', DEFAULT_BASE)).toBe(false);
-  });
 });
 
 // ─────────────────────────── status fetch + cache ───────────────────────────
@@ -164,47 +137,5 @@ describe('buildCommitPrompt', () => {
     // Explicitly NOT push and NOT a PR.
     expect(p).toMatch(/do not push|don't push|not push/);
     expect(p).toMatch(/pull request|\bpr\b/);
-  });
-});
-
-// ─────────────────────────── commit-button click ───────────────────────────
-
-describe('onCommitButtonClick', () => {
-  const proj = { id: 'p1', path: '/repo', name: 'Acme' };
-
-  // Scenario: clicking with changes opens a confirm dialog (Commit label).
-  it('shows a confirm dialog with a Commit label', () => {
-    setAgentTaskLauncher(launchMock);
-    onCommitButtonClick(proj);
-    expect(showMock).toHaveBeenCalledTimes(1);
-    expect(lastShow?.confirmLabel).toBe('Commit');
-    // Nothing launches until the user confirms.
-    expect(launchMock).not.toHaveBeenCalled();
-  });
-
-  // Scenario: confirming spawns the agent task with the project id + commit prompt.
-  it('spawns the launcher with the project id and commit prompt on confirm', () => {
-    setAgentTaskLauncher(launchMock);
-    onCommitButtonClick(proj);
-    lastShow?.onConfirm();
-    expect(launchMock).toHaveBeenCalledTimes(1);
-    expect(launchMock.mock.calls[0][0]).toBe('p1');
-    expect(String(launchMock.mock.calls[0][1]).toLowerCase()).toMatch(/commit/);
-  });
-
-  // Scenario: cancel fires nothing — the launcher is not invoked.
-  it('does not launch when the confirm is cancelled', () => {
-    setAgentTaskLauncher(launchMock);
-    onCommitButtonClick(proj);
-    // Simulate cancel: onConfirm is simply never called.
-    expect(launchMock).not.toHaveBeenCalled();
-  });
-
-  // Scenario: no project folder → no-op (no dialog, no launch).
-  it('is a no-op when the project has no folder', () => {
-    setAgentTaskLauncher(launchMock);
-    onCommitButtonClick({ id: 'p1', path: null, name: 'Acme' });
-    expect(showMock).not.toHaveBeenCalled();
-    expect(launchMock).not.toHaveBeenCalled();
   });
 });

@@ -57,21 +57,6 @@ export function setAgentTaskLauncher(fn: AgentTaskLauncher | null): void {
 export const prCache = new Map<string, PrStatus>();
 
 /**
- * Whether the PR button is DISABLED. Disabled when there is no project, no
- * branch, or the current branch IS the base (`main`) — a base branch has no
- * PR into itself. Pure so the rule is unit-tested apart from the component.
- */
-export function prButtonDisabled(
-  projectId: string | null | undefined,
-  branch: string | null | undefined,
-  base: string = DEFAULT_BASE
-): boolean {
-  if (!projectId) return true;
-  if (!branch) return true;
-  return branch === base;
-}
-
-/**
  * Query the open-PR status for `path`'s current branch into `base` via the Rust
  * `pr_status_for` command, cache it under `branch`, and return it. A thrown
  * invoke (outside Tauri, or a degenerate error) degrades to `{ kind: 'unknown' }`
@@ -227,25 +212,5 @@ export async function onPrButtonClick(
     message: `No open pull request from "${branch}" into ${base} was found. Create one? This starts an agent session that pushes the branch and opens the PR into ${base}.`,
     confirmLabel: 'Create PR',
     onConfirm: () => spawnCreatePr(project, base)
-  });
-}
-
-/**
- * Handle a COMMIT-button click (the footer's uncommitted-files indicator, only
- * wired when there ARE changes). Opens a confirm dialog; confirming spawns the
- * auto-archiving agent task that commits the pending changes on the current
- * branch — via the SAME launcher the PR action uses. Cancelling fires nothing.
- *
- * A no-op when the project has no folder (nothing to commit in). The caller
- * (`AppFooter`) already leaves the indicator INERT when the tree is clean, so this
- * is only invoked when there's something to commit.
- */
-export function onCommitButtonClick(project: PrProject): void {
-  if (!project.path) return;
-  confirmModal.show({
-    title: 'Commit changes',
-    message: `Commit the uncommitted changes in "${project.name}" on the current branch? This starts an agent session that stages the changes and creates one commit. It does not push or open a pull request.`,
-    confirmLabel: 'Commit',
-    onConfirm: () => spawnCommit(project)
   });
 }

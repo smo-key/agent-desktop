@@ -14,7 +14,6 @@ import {
   openPrsFor,
   refreshOpenPrs,
   cachedOpenPrs,
-  onOpenPrsClick,
   openPrsCache,
   sortPrsForPopover,
   type OpenPrs,
@@ -124,29 +123,6 @@ describe('refreshOpenPrs / cachedOpenPrs', () => {
   it('cachedOpenPrs returns null when nothing is cached', () => {
     expect(cachedOpenPrs('/never')).toBeNull();
     expect(cachedOpenPrs(null)).toBeNull();
-  });
-});
-
-// ─────────────────────────── click → open GitHub pulls page ───────────────────────────
-
-describe('onOpenPrsClick', () => {
-  // Scenario: click → opens the repo's pull-requests page on GitHub.
-  it('opens the pulls URL externally via open_path', async () => {
-    await onOpenPrsClick({
-      count: 2,
-      pullsUrl: 'https://github.com/o/r/pulls',
-      prs: []
-    });
-    expect(invokeMock).toHaveBeenCalledWith('open_path', {
-      path: 'https://github.com/o/r/pulls',
-      app: null
-    });
-  });
-
-  it('is a no-op when there is no URL (unknown / null result)', async () => {
-    await onOpenPrsClick(null);
-    await onOpenPrsClick({ count: 0, pullsUrl: null, prs: [] });
-    expect(invokeMock).not.toHaveBeenCalled();
   });
 });
 

@@ -124,19 +124,3 @@ export function cachedOpenPrs(path: string | null | undefined): OpenPrs | null {
   if (!path) return null;
   return openPrsCache.get(path) ?? null;
 }
-
-/**
- * Handle an open-PRs-button click: open the repo's pull-requests page on GitHub
- * via the `open_path` command (the same external-open the PR button uses — on
- * macOS `open <url>` hands an http(s) URL to the default browser). A no-op when
- * there is no URL (unknown / null result). Best-effort; a failure is logged.
- */
-export async function onOpenPrsClick(result: OpenPrs | null | undefined): Promise<void> {
-  const url = result?.pullsUrl;
-  if (!url) return;
-  try {
-    await invoke('open_path', { path: url, app: null });
-  } catch (err) {
-    console.warn('open_path (open PRs url) failed', err);
-  }
-}
