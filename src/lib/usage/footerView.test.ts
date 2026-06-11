@@ -8,6 +8,8 @@ function snap(over: Partial<Snapshot> & { pane_id: string }): Snapshot {
   return {
     session_id: null,
     model: null,
+    model_id: null,
+    effort: null,
     task: null,
     context_pct: null,
     rate_limits: null,

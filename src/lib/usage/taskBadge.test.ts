@@ -18,6 +18,8 @@ function snap(over: Partial<Snapshot> = {}): Snapshot {
     pane_id: 'pane-1',
     session_id: 'sess-1',
     model: 'Claude Opus',
+    model_id: null,
+    effort: null,
     task: null,
     context_pct: null,
     rate_limits: null,

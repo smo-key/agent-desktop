@@ -78,6 +78,12 @@ pub struct Snapshot {
     /// `model.display_name`, or `null`.
     #[serde(default)]
     pub model: Option<String>,
+    /// `model.id`, or `null`.
+    #[serde(default)]
+    pub model_id: Option<String>,
+    /// `effort.level`, or `null` (absent when the model doesn't support effort).
+    #[serde(default)]
+    pub effort: Option<String>,
     /// The detected in-progress task label, or `null`.
     #[serde(default)]
     pub task: Option<String>,
@@ -390,6 +396,8 @@ mod tests {
             pane_id: pane.into(),
             session_id: None,
             model: None,
+            model_id: None,
+            effort: None,
             task: None,
             context_pct: None,
             rate_limits: None,
@@ -401,6 +409,31 @@ mod tests {
         assert!(!c.should_emit(&mk("a", 100)), "same (pane, ts) coalesced");
         assert!(c.should_emit(&mk("a", 101)), "new ts emits");
         assert!(c.should_emit(&mk("b", 100)), "different pane emits");
+    }
+
+    /// A snapshot JSON with `model_id` + `effort` round-trips; absent → None.
+    #[test]
+    fn snapshot_model_id_and_effort_roundtrip() {
+        let tmp = TempDir::new("model_id_effort");
+        // With both fields present.
+        write_json(
+            tmp.path(),
+            "pane-mie.json",
+            r#"{"pane_id":"pane-mie","model_id":"claude-opus-4-8","effort":"high","ts":1}"#,
+        );
+        let snap = read_snapshot(&tmp.path().join("pane-mie.json")).expect("must parse");
+        assert_eq!(snap.model_id.as_deref(), Some("claude-opus-4-8"));
+        assert_eq!(snap.effort.as_deref(), Some("high"));
+
+        // With both fields absent → None.
+        write_json(
+            tmp.path(),
+            "pane-mie2.json",
+            r#"{"pane_id":"pane-mie2","ts":2}"#,
+        );
+        let snap2 = read_snapshot(&tmp.path().join("pane-mie2.json")).expect("must parse");
+        assert!(snap2.model_id.is_none());
+        assert!(snap2.effort.is_none());
     }
 
     /// End-to-end: the watcher reads a newly-written snapshot file and pushes the

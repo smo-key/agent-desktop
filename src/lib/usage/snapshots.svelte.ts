@@ -44,6 +44,8 @@ export interface Snapshot {
   pane_id: string;
   session_id: string | null;
   model: string | null;
+  model_id: string | null;
+  effort: string | null;
   task: string | null;
   /** Context window usage 0..100, or null when unknown. */
   context_pct: number | null;

@@ -98,14 +98,16 @@ describe('statusline-wrapper snapshot write', () => {
     expect(res.status).toBe(0);
 
     const snap = readSnapshot();
-    // The exact field set from the spec/design: pane_id, session_id, model, task,
-    // context_pct, rate_limits, cost, git, ts.
+    // The exact field set from the spec/design: pane_id, session_id, model,
+    // model_id, effort, task, context_pct, rate_limits, cost, git, ts.
     expect(Object.keys(snap).sort()).toEqual(
-      ['context_pct', 'cost', 'git', 'model', 'pane_id', 'rate_limits', 'session_id', 'task', 'ts'].sort()
+      ['context_pct', 'cost', 'effort', 'git', 'model', 'model_id', 'pane_id', 'rate_limits', 'session_id', 'task', 'ts'].sort()
     );
     expect(snap.pane_id).toBe(PANE_ID);
     expect(snap.session_id).toBe('sess-abc-123');
     expect(snap.model).toBe('Claude Opus 4.8');
+    expect(snap.model_id).toBe('claude-opus-4-8');
+    expect(snap.effort).toBeNull(); // no effort in base payload
     expect(snap.context_pct).toBe(42.5);
     expect(snap.cost).toBe(0.5);
     expect(snap.rate_limits).toEqual({
@@ -181,6 +183,31 @@ describe('statusline-wrapper snapshot write', () => {
     // The rest of the snapshot is still well-formed.
     expect(snap.model).toBe('Claude Opus 4.8');
     expect(snap.context_pct).toBe(42.5);
+  });
+
+  it('model_id and effort derived from stdin', () => {
+    // model_id comes from data.model.id; effort comes from data.effort.level.
+    const res = runWrapper(
+      basePayload({
+        model: { display_name: 'Claude Opus 4.8', id: 'claude-opus-4-8' },
+        effort: { level: 'high' },
+      })
+    );
+    expect(res.status).toBe(0);
+    const snap = readSnapshot();
+    expect(snap.model_id).toBe('claude-opus-4-8');
+    expect(snap.effort).toBe('high');
+  });
+
+  it('model_id and effort are null when absent from stdin', () => {
+    // model without id field -> model_id null; no effort -> effort null.
+    const res = runWrapper(
+      basePayload({ model: { display_name: 'Claude Sonnet' }, effort: undefined })
+    );
+    expect(res.status).toBe(0);
+    const snap = readSnapshot();
+    expect(snap.model_id).toBeNull();
+    expect(snap.effort).toBeNull();
   });
 
   it('Atomic tmp+rename', () => {

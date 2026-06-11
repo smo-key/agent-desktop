@@ -251,6 +251,8 @@ function gitStatus(workspaceDir) {
 function buildSnapshot(paneId, data) {
   const sessionId = data ? safeSessionId(data.session_id) : null;
   const model = data && data.model ? str(data.model.display_name) : null;
+  const model_id = data && data.model ? str(data.model.id) : null;
+  const effort = data && data.effort ? str(data.effort.level) : null;
   const rawCost = data && data.cost ? num(data.cost.total_cost_usd) : null;
 
   // rate_limits is OFTEN ABSENT (non Pro/Max, or before first API response) ->
@@ -266,6 +268,8 @@ function buildSnapshot(paneId, data) {
     pane_id: paneId,
     session_id: sessionId,
     model,
+    model_id,
+    effort,
     task: detectTask(sessionId),
     context_pct: contextPct(data),
     rate_limits: rateLimits,

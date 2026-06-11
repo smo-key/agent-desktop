@@ -12,6 +12,8 @@ function snap(paneId: string, over: Partial<Snapshot> = {}): Snapshot {
     pane_id: paneId,
     session_id: null,
     model: null,
+    model_id: null,
+    effort: null,
     task: null,
     context_pct: null,
     rate_limits: null,

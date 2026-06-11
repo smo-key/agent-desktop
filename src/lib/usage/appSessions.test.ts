@@ -12,6 +12,8 @@ function snap(paneId: string, sessionId: string | null): Snapshot {
     pane_id: paneId,
     session_id: sessionId,
     model: null,
+    model_id: null,
+    effort: null,
     task: null,
     context_pct: null,
     rate_limits: null,
