@@ -51,6 +51,8 @@
   import type { PushCommit } from '$lib/projects/projectGitActions';
   import { commitsToPush, pushProject as doPushProject } from '$lib/projects/projectGitActions';
   import { pushPopoverOpen as canPushPopover } from './pushPopover';
+  import { invoke } from '@tauri-apps/api/core';
+  import { sortPrsForPopover, type OpenPr } from '$lib/projects/openPrsActions';
 
   /** Minimal project info needed to open the push popover and execute a push. */
   export interface PushProject {
@@ -72,6 +74,7 @@
     prDisabled = false,
     onOpenPrs,
     openPrs,
+    openPrsResult = null,
     onCommit,
     commitProject = null,
     pushProject = null
@@ -86,8 +89,14 @@
     onPr?: () => void;
     prExists?: boolean;
     prDisabled?: boolean;
+    /** When provided (footer only), the open-PRs pill opens a popover. Without it
+     *  the pill either calls `onOpenPrs` directly or is inert. */
     onOpenPrs?: () => void;
     openPrs?: { icon: string; label: string; warning: boolean };
+    /** The full open-PRs result from the Rust backend, used to populate the
+     *  popover body. When provided, clicking the pill opens a popover instead of
+     *  calling `onOpenPrs` directly. */
+    openPrsResult?: { pullsUrl: string | null; prs: OpenPr[] } | null;
     /** When provided (footer only), the modified pill becomes a button that opens
      *  the commit popover. Without it the pill stays inert (project pane). */
     onCommit?: () => void;
@@ -157,6 +166,50 @@
     }
     closePushPopover();
   }
+
+  // ── Open-PRs popover state ─────────────────────────────────────────────────
+  // The open-PRs pill opens a popover listing awaiting-review PRs (non-draft first,
+  // drafts last) when `openPrsResult` is wired. The pinned action opens the pulls
+  // page. Falls back to calling `onOpenPrs` directly if only the legacy prop is set.
+  let openPrsPopoverOpen = $state(false);
+  let openPrsPillEl = $state<HTMLButtonElement | null>(null);
+
+  function handleOpenPrsClick() {
+    if (openPrsResult != null) {
+      openPrsPopoverOpen = true;
+    } else if (onOpenPrs) {
+      onOpenPrs();
+    }
+  }
+
+  function closeOpenPrsPopover() {
+    openPrsPopoverOpen = false;
+  }
+
+  async function handleOpenPrsPage() {
+    const url = openPrsResult?.pullsUrl;
+    if (!url) return;
+    try {
+      await invoke('open_path', { path: url, app: null });
+    } catch (err) {
+      console.warn('open_path (open PRs page) failed', err);
+    }
+    closeOpenPrsPopover();
+  }
+
+  async function handleOpenPrUrl(url: string) {
+    try {
+      await invoke('open_path', { path: url, app: null });
+    } catch (err) {
+      console.warn('open_path (open PR url) failed', err);
+    }
+    closeOpenPrsPopover();
+  }
+
+  // PRs sorted for the popover: non-draft (awaiting-review shown first) then drafts.
+  const sortedPrsForPopover = $derived(
+    openPrsResult ? sortPrsForPopover(openPrsResult.prs) : []
+  );
 </script>
 
 <div class="git" class:stacked={stack}>
@@ -307,15 +360,16 @@
           <span class="txt">PR</span>
         </button>
       {/if}
-      {#if onOpenPrs && openPrs}
+      {#if openPrs && (onOpenPrs || openPrsResult != null)}
         <button
           type="button"
           class="pill openprs action"
           class:warn={openPrs.warning}
-          onclick={onOpenPrs}
+          bind:this={openPrsPillEl}
+          onclick={handleOpenPrsClick}
           use:tooltip={openPrs.warning
-            ? `${openPrs.label} open pull request${openPrs.label === '1' ? '' : 's'} awaiting review — open on GitHub`
-            : 'No open pull requests awaiting review — open on GitHub'}
+            ? `${openPrs.label} open pull request${openPrs.label === '1' ? '' : 's'} awaiting review — click to review`
+            : 'No open pull requests awaiting review — click to open'}
         >
           <Icon name={openPrs.icon} size={12} />
           <span class="txt">{openPrs.label}</span>
@@ -395,6 +449,53 @@
   {#snippet action()}
     <button type="button" class="cp-commit-btn" onclick={handleCommitNow}>
       Commit now
+    </button>
+  {/snippet}
+</FooterPopover>
+
+<!-- Open-PRs popover: opens above the open-PRs pill when it is clicked and
+     `openPrsResult` is provided. Lists awaiting-review PRs (non-draft first,
+     drafts last — drafts marked visually). Each row opens that PR's URL on GitHub.
+     The pinned action opens the repo's pull-requests page. -->
+<FooterPopover
+  open={openPrsPopoverOpen}
+  anchor={openPrsPillEl}
+  onClose={closeOpenPrsPopover}
+>
+  {#snippet title()}
+    Open pull requests
+  {/snippet}
+
+  {#snippet body()}
+    {#if sortedPrsForPopover.length > 0}
+      <ul class="cp-file-list">
+        {#each sortedPrsForPopover as pr (pr.number)}
+          <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <li
+            class="cp-file opr-pr-row"
+            class:opr-draft={pr.isDraft}
+            role="button"
+            tabindex="0"
+            onclick={() => handleOpenPrUrl(pr.url)}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleOpenPrUrl(pr.url); }}
+          >
+            <span class="opr-number">#{pr.number}</span>
+            <span class="opr-title">{pr.title}</span>
+            {#if pr.isDraft}
+              <span class="opr-draft-badge">Draft</span>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="cp-empty">No open pull requests</p>
+    {/if}
+  {/snippet}
+
+  {#snippet action()}
+    <button type="button" class="opr-page-btn" onclick={handleOpenPrsPage}>
+      Open PRs page
     </button>
   {/snippet}
 </FooterPopover>
@@ -638,6 +739,81 @@
   }
 
   .pp-push-btn:active {
+    transform: translateY(0.5px);
+  }
+
+  /* ── Open-PRs popover content (rendered inside FooterPopover's snippets) ── */
+
+  /* Each PR row: number (dim monospace) + title. Clickable — opens the PR on GitHub. */
+  .opr-pr-row {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+  }
+
+  .opr-pr-row:focus {
+    outline: none;
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .opr-number {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-4);
+    flex-shrink: 0;
+    margin-right: 6px;
+  }
+
+  .opr-title {
+    font-family: var(--font-sans);
+    font-size: 11.5px;
+    color: var(--fg-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1 1 auto;
+  }
+
+  /* Draft PRs: dim title + row, showing draft badge. */
+  .opr-draft .opr-title {
+    color: var(--fg-4);
+  }
+
+  .opr-draft-badge {
+    font-family: var(--font-sans);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--fg-4);
+    background: var(--space-750);
+    border: 1px solid var(--line-subtle);
+    border-radius: var(--r-full);
+    padding: 1px 5px;
+    flex-shrink: 0;
+    margin-left: 6px;
+  }
+
+  /* Primary action button — "Open PRs page" — full-width, neutral accent. */
+  .opr-page-btn {
+    width: 100%;
+    background: var(--space-750);
+    color: var(--fg-2);
+    border: 1px solid var(--line-subtle);
+    border-radius: var(--r-sm);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 7px 12px;
+    cursor: pointer;
+    text-align: center;
+  }
+
+  .opr-page-btn:hover {
+    filter: brightness(1.15);
+  }
+
+  .opr-page-btn:active {
     transform: translateY(0.5px);
   }
 </style>

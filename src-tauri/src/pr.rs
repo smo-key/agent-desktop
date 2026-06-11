@@ -114,41 +114,66 @@ pub fn parse_pr_list(stdout: &str) -> PrStatus {
 
 // --- Open-PRs-awaiting-review: result + pure helpers ------------------------
 
+/// A single open PR entry returned by `gh pr list`.
+///
+/// Each field maps to the `--json` fields we request: `number`, `title`, `url`,
+/// `isDraft`, and `reviewDecision`. `review_decision` is `None` when `gh` omits
+/// the field (no review has been requested on the PR yet).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenPr {
+    pub number: i64,
+    pub title: String,
+    pub url: String,
+    pub is_draft: bool,
+    /// The review decision from GitHub (`APPROVED`, `REVIEW_REQUIRED`,
+    /// `CHANGES_REQUESTED`, `""`), or `None` when gh omits the field entirely
+    /// (no review requested yet — treated as awaiting review for count purposes).
+    pub review_decision: Option<String>,
+}
+
 /// The result of an "open PRs awaiting review" lookup for a repo's `base`.
 ///
-/// `count` is the number of OPEN PRs targeting `base` that are still AWAITING
-/// REVIEW (`reviewDecision` is anything other than `APPROVED`). `pulls_url` is the
-/// repo's pull-requests page on GitHub (`<repo url>/pulls`) so the footer button
-/// can open it; it is `None` when we couldn't derive it.
+/// `count` is the number of OPEN, NON-DRAFT PRs targeting `base` that are still
+/// AWAITING REVIEW (`reviewDecision` is anything other than `APPROVED`; drafts are
+/// never counted). `pulls_url` is the repo's pull-requests page on GitHub
+/// (`<repo url>/pulls`) so the footer button can open it; it is `None` when we
+/// couldn't derive it. `prs` is the full list of open PRs (including drafts) so
+/// the popover can display them.
 ///
 /// This is BEST-EFFORT: when `gh` is missing / unauthenticated / errors, the
-/// runner returns the NEUTRAL unknown result — `count: 0, pulls_url: None` — and
-/// the footer shows the neutral checkmark/`0` state without an error.
+/// runner returns the NEUTRAL unknown result — `count: 0, pulls_url: None, prs:
+/// []` — and the footer shows the neutral checkmark/`0` state without an error.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenPrs {
-    /// Number of open PRs into `base` awaiting review (reviewDecision != APPROVED).
+    /// Number of open, NON-DRAFT PRs into `base` awaiting review
+    /// (reviewDecision != APPROVED AND isDraft == false).
     pub count: i64,
     /// The repo's pull-requests page (`<url>/pulls`), or `None` when unknown.
     /// Serialized as `pullsUrl` for the frontend.
     pub pulls_url: Option<String>,
+    /// The full list of open PRs (all, including drafts) for the popover.
+    pub prs: Vec<OpenPr>,
 }
 
 impl OpenPrs {
-    /// The neutral "unknown" result: no count, no URL. Returned whenever the
-    /// lookup can't be completed (gh missing/unauth/errored/malformed output).
+    /// The neutral "unknown" result: no count, no URL, empty list. Returned
+    /// whenever the lookup can't be completed (gh missing/unauth/errored/malformed).
     fn unknown() -> Self {
         OpenPrs {
             count: 0,
             pulls_url: None,
+            prs: vec![],
         }
     }
 }
 
 /// PURE: build the `gh` argument vector for listing the OPEN PRs targeting
-/// `base`, with each PR's `number` + `reviewDecision`. `--base` scopes the query
-/// to PRs INTO `base`; `--state open` ignores merged/closed; `--json
-/// number,reviewDecision` makes the output the array we parse below.
+/// `base`, with each PR's `number`, `title`, `url`, `isDraft`, and
+/// `reviewDecision`. `--base` scopes the query to PRs INTO `base`; `--state open`
+/// ignores merged/closed; `--json number,title,url,isDraft,reviewDecision` makes
+/// the output the array we parse below.
 ///
 /// `base` is the VALUE of `--base` (argv position after the flag), so a name
 /// beginning with `-` is consumed as that flag's argument, never reparsed as a
@@ -162,7 +187,7 @@ pub fn gh_open_prs_args(base: &str) -> Vec<String> {
         "--state".to_string(),
         "open".to_string(),
         "--json".to_string(),
-        "number,reviewDecision".to_string(),
+        "number,title,url,isDraft,reviewDecision".to_string(),
     ]
 }
 
@@ -176,6 +201,10 @@ pub fn gh_open_prs_args(base: &str) -> Vec<String> {
 /// an empty array → `Some(0)`. On ANYTHING we can't make sense of (not an array,
 /// non-JSON, empty output) → `None` (unknown), which the runner maps to the
 /// neutral state.
+///
+/// NOTE: this function is kept for backwards compatibility with tests that use the
+/// old `number,reviewDecision` JSON shape. The primary production path now uses
+/// `parse_open_pr_list` + `awaiting_review_count_non_draft`.
 pub fn parse_awaiting_review_count(stdout: &str) -> Option<i64> {
     let trimmed = stdout.trim();
     if trimmed.is_empty() {
@@ -195,6 +224,79 @@ pub fn parse_awaiting_review_count(stdout: &str) -> Option<i64> {
         }
     }
     Some(count)
+}
+
+/// PURE: parse `gh pr list --json number,title,url,isDraft,reviewDecision` stdout
+/// into a `Vec<OpenPr>`.
+///
+/// `gh` prints a JSON ARRAY; each entry must have at minimum `number` (integer),
+/// `title` (string), `url` (string), and `isDraft` (bool) — entries missing these
+/// required fields are silently skipped. `reviewDecision` is optional; when absent
+/// it is treated as `None`. On ANYTHING we can't parse (non-JSON, non-array, empty
+/// input) → empty vec (best-effort, never an error).
+pub fn parse_open_pr_list(stdout: &str) -> Vec<OpenPr> {
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return vec![];
+    }
+    let value: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
+    let arr = match value.as_array() {
+        Some(a) => a,
+        None => return vec![],
+    };
+    let mut prs = Vec::with_capacity(arr.len());
+    for entry in arr {
+        let number = match entry.get("number").and_then(|n| n.as_i64()) {
+            Some(n) => n,
+            None => continue,
+        };
+        let title = match entry.get("title").and_then(|t| t.as_str()) {
+            Some(t) => t.to_string(),
+            None => continue,
+        };
+        let url = match entry.get("url").and_then(|u| u.as_str()) {
+            Some(u) if !u.is_empty() => u.to_string(),
+            _ => continue,
+        };
+        let is_draft = match entry.get("isDraft").and_then(|d| d.as_bool()) {
+            Some(d) => d,
+            None => continue,
+        };
+        // reviewDecision is optional: absent → None; present (even null/empty) → Some.
+        let review_decision = entry
+            .get("reviewDecision")
+            .and_then(|d| d.as_str())
+            .map(|s| s.to_string());
+        prs.push(OpenPr {
+            number,
+            title,
+            url,
+            is_draft,
+            review_decision,
+        });
+    }
+    prs
+}
+
+/// PURE: count the non-draft, awaiting-review PRs in a `Vec<OpenPr>`.
+///
+/// A PR is "awaiting review" when its `review_decision` is NOT `Some("APPROVED")`.
+/// Draft PRs are never counted, regardless of their decision. This is the
+/// canonical count used for the badge and the `OpenPrs.count` field.
+pub fn awaiting_review_count_non_draft(prs: &[OpenPr]) -> i64 {
+    prs.iter()
+        .filter(|pr| {
+            !pr.is_draft
+                && pr
+                    .review_decision
+                    .as_deref()
+                    .map(|d| d != "APPROVED")
+                    .unwrap_or(true) // None → no decision yet → awaiting
+        })
+        .count() as i64
 }
 
 /// PURE: parse `gh repo view --json url` stdout into the repo's pull-requests
@@ -292,22 +394,30 @@ pub async fn pr_status_for(repo_path: &str, base: &str) -> PrStatus {
 /// Look up the OPEN PRs targeting `base` in `repo_path` that are AWAITING REVIEW,
 /// plus the repo's pull-requests page URL, for the footer's "open PRs" button.
 ///
-/// Runs `gh pr list --base <base> --state open --json number,reviewDecision`
-/// (with `repo_path` as the working dir) and counts the entries whose
-/// `reviewDecision` is NOT `APPROVED`; separately runs `gh repo view --json url`
-/// and appends `/pulls` for the button's link.
+/// Runs `gh pr list --base <base> --state open --json
+/// number,title,url,isDraft,reviewDecision` (with `repo_path` as the working dir)
+/// and returns the full PR list; the `count` is derived from the non-draft,
+/// awaiting-review subset. Separately runs `gh repo view --json url` and appends
+/// `/pulls` for the button's link.
 ///
 /// BEST-EFFORT, NEVER fails: a missing/unauthenticated `gh`, a non-zero exit, a
-/// timeout, or malformed output collapse the count to the NEUTRAL unknown result
-/// ([`OpenPrs::unknown`] — `count: 0, pulls_url: None`). The URL lookup degrades
-/// INDEPENDENTLY: a successful count keeps its `count` even when the URL can't be
-/// derived (`pulls_url: None`).
+/// timeout, or malformed output collapse to the NEUTRAL unknown result
+/// ([`OpenPrs::unknown`] — `count: 0, pulls_url: None, prs: []`). The URL lookup
+/// degrades INDEPENDENTLY: a successful PR list keeps its data even when the URL
+/// can't be derived (`pulls_url: None`).
 pub async fn open_prs_for(repo_path: &str, base: &str) -> OpenPrs {
     let pulls_url = pulls_url_for(repo_path).await;
-    match awaiting_review_count_for(repo_path, base).await {
-        Some(count) => OpenPrs { count, pulls_url },
-        // Couldn't determine the count → neutral unknown (count 0), but keep any
-        // URL we did manage to derive so the button can still link to the page.
+    match open_pr_list_for(repo_path, base).await {
+        Some(prs) => {
+            let count = awaiting_review_count_non_draft(&prs);
+            OpenPrs {
+                count,
+                pulls_url,
+                prs,
+            }
+        }
+        // Couldn't determine the list → neutral unknown (count 0, empty prs), but
+        // keep any URL we did manage to derive so the button can still link.
         None => OpenPrs {
             pulls_url,
             ..OpenPrs::unknown()
@@ -315,11 +425,11 @@ pub async fn open_prs_for(repo_path: &str, base: &str) -> OpenPrs {
     }
 }
 
-/// Run `gh pr list … --json number,reviewDecision` in `repo_path` and parse the
-/// awaiting-review count, or `None` when the lookup can't be completed (gh
-/// missing/unauth/non-zero/timeout/malformed). Split out so `open_prs_for` reads
-/// as the orchestration of the two `gh` calls.
-async fn awaiting_review_count_for(repo_path: &str, base: &str) -> Option<i64> {
+/// Run `gh pr list … --json number,title,url,isDraft,reviewDecision` in
+/// `repo_path` and parse the list, or `None` when the lookup can't be completed
+/// (gh missing/unauth/non-zero/timeout/malformed). Split out so `open_prs_for`
+/// reads as the orchestration of the two `gh` calls.
+async fn open_pr_list_for(repo_path: &str, base: &str) -> Option<Vec<OpenPr>> {
     let args = gh_open_prs_args(base);
     let mut cmd = tokio::process::Command::new("gh");
     cmd.args(&args)
@@ -339,7 +449,14 @@ async fn awaiting_review_count_for(repo_path: &str, base: &str) -> Option<i64> {
         return None;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_awaiting_review_count(&stdout)
+    // parse_open_pr_list never errors — it returns an empty vec on bad input.
+    // Treat empty output as None (couldn't determine) rather than an empty list,
+    // so the badge stays neutral instead of showing 0 when gh said nothing.
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(parse_open_pr_list(trimmed))
 }
 
 /// Run `gh repo view --json url` in `repo_path` and derive the pull-requests page
@@ -514,7 +631,7 @@ mod tests {
                 "--state",
                 "open",
                 "--json",
-                "number,reviewDecision",
+                "number,title,url,isDraft,reviewDecision",
             ]
             .into_iter()
             .map(String::from)
@@ -608,5 +725,104 @@ mod tests {
         assert_eq!(parse_pulls_url("not json"), None);
         assert_eq!(parse_pulls_url("{}"), None);
         assert_eq!(parse_pulls_url(r#"{"url":""}"#), None);
+    }
+
+    // ── open-PRs list parser ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_open_pr_list_parses_full_pr_objects() {
+        let out = r#"[
+            {"number":1,"title":"Add feature","url":"https://github.com/o/r/pull/1","isDraft":false,"reviewDecision":"REVIEW_REQUIRED"},
+            {"number":2,"title":"Draft fix","url":"https://github.com/o/r/pull/2","isDraft":true,"reviewDecision":""},
+            {"number":3,"title":"No decision yet","url":"https://github.com/o/r/pull/3","isDraft":false}
+        ]"#;
+        let prs = parse_open_pr_list(out);
+        assert_eq!(prs.len(), 3);
+        assert_eq!(prs[0].number, 1);
+        assert_eq!(prs[0].title, "Add feature");
+        assert_eq!(prs[0].url, "https://github.com/o/r/pull/1");
+        assert!(!prs[0].is_draft);
+        assert_eq!(prs[0].review_decision, Some("REVIEW_REQUIRED".to_string()));
+        assert!(prs[1].is_draft);
+        assert_eq!(prs[1].review_decision, Some("".to_string()));
+        // Missing reviewDecision → None
+        assert_eq!(prs[2].review_decision, None);
+    }
+
+    #[test]
+    fn parse_open_pr_list_empty_array_returns_empty_vec() {
+        assert_eq!(parse_open_pr_list("[]"), vec![]);
+        assert_eq!(parse_open_pr_list("  []  \n"), vec![]);
+    }
+
+    #[test]
+    fn parse_open_pr_list_returns_empty_for_bad_input() {
+        // Non-JSON, empty, or non-array → empty vec (best-effort, no panic).
+        assert_eq!(parse_open_pr_list(""), vec![]);
+        assert_eq!(parse_open_pr_list("gh: not authenticated"), vec![]);
+        assert_eq!(parse_open_pr_list(r#"{"message":"Bad credentials"}"#), vec![]);
+    }
+
+    #[test]
+    fn parse_open_pr_list_skips_entries_missing_required_fields() {
+        // Entries missing number/title/url/isDraft are silently skipped.
+        let out = r#"[
+            {"number":1,"title":"Good","url":"https://github.com/o/r/pull/1","isDraft":false},
+            {"title":"Missing number","url":"https://github.com/o/r/pull/2","isDraft":false},
+            {"number":3}
+        ]"#;
+        let prs = parse_open_pr_list(out);
+        assert_eq!(prs.len(), 1);
+        assert_eq!(prs[0].number, 1);
+    }
+
+    // ── non-draft awaiting-review count derivation ───────────────────────────
+
+    #[test]
+    fn non_draft_awaiting_review_count_excludes_drafts_and_approved() {
+        let prs = vec![
+            OpenPr { number: 1, title: "a".into(), url: "u1".into(), is_draft: false, review_decision: Some("REVIEW_REQUIRED".into()) },
+            OpenPr { number: 2, title: "b".into(), url: "u2".into(), is_draft: true, review_decision: Some("REVIEW_REQUIRED".into()) },
+            OpenPr { number: 3, title: "c".into(), url: "u3".into(), is_draft: false, review_decision: Some("APPROVED".into()) },
+            OpenPr { number: 4, title: "d".into(), url: "u4".into(), is_draft: false, review_decision: None },
+        ];
+        // PR 1: non-draft, not approved → counted.
+        // PR 2: draft → excluded even though awaiting review.
+        // PR 3: approved → excluded.
+        // PR 4: non-draft, no decision (= awaiting) → counted.
+        assert_eq!(awaiting_review_count_non_draft(&prs), 2);
+    }
+
+    #[test]
+    fn non_draft_awaiting_review_count_empty_vec_is_zero() {
+        assert_eq!(awaiting_review_count_non_draft(&[]), 0);
+    }
+
+    #[test]
+    fn non_draft_awaiting_review_count_all_drafts_is_zero() {
+        let prs = vec![
+            OpenPr { number: 1, title: "a".into(), url: "u1".into(), is_draft: true, review_decision: Some("REVIEW_REQUIRED".into()) },
+        ];
+        assert_eq!(awaiting_review_count_non_draft(&prs), 0);
+    }
+
+    #[test]
+    fn non_draft_awaiting_review_count_all_approved_is_zero() {
+        let prs = vec![
+            OpenPr { number: 1, title: "a".into(), url: "u1".into(), is_draft: false, review_decision: Some("APPROVED".into()) },
+            OpenPr { number: 2, title: "b".into(), url: "u2".into(), is_draft: false, review_decision: Some("APPROVED".into()) },
+        ];
+        assert_eq!(awaiting_review_count_non_draft(&prs), 0);
+    }
+
+    #[test]
+    fn gh_open_prs_args_includes_new_fields() {
+        // The args builder now requests number,title,url,isDraft,reviewDecision.
+        let args = gh_open_prs_args("main");
+        let json_pos = args.iter().position(|a| a == "--json").expect("--json present");
+        let fields = &args[json_pos + 1];
+        assert!(fields.contains("title"), "should include title");
+        assert!(fields.contains("url"), "should include url");
+        assert!(fields.contains("isDraft"), "should include isDraft");
     }
 }

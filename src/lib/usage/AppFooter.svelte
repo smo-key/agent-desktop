@@ -22,12 +22,7 @@
     refreshPrStatus,
     onPrButtonClick
   } from '$lib/projects/prActions';
-  import {
-    openPrsView,
-    cachedOpenPrs,
-    refreshOpenPrs,
-    onOpenPrsClick
-  } from '$lib/projects/openPrsActions';
+  import { openPrsView, cachedOpenPrs, refreshOpenPrs } from '$lib/projects/openPrsActions';
   import { gitBusy } from '$lib/projects/projectGitBusy.svelte';
   import { view as topView } from '$lib/overview/view.svelte';
   import LimitBars from './LimitBars.svelte';
@@ -145,9 +140,11 @@
       openPrs = cachedOpenPrs(path);
     });
   });
-  // Click: open the repo's pull-requests page on GitHub (no-op when no URL).
-  const onOpenPrs = $derived(
-    gitProject?.path ? () => void onOpenPrsClick(openPrs) : undefined
+  // The open-PRs result is passed as `openPrsResult` to GitInfo so the pill opens
+  // an in-component popover (non-draft first, drafts last) instead of navigating
+  // directly to the pulls page. Only wire it when we have a real project path.
+  const openPrsResult = $derived(
+    gitProject?.path ? openPrs : null
   );
 
   // Commit popover (footer only): GitInfo opens a popover listing the changed files
@@ -208,7 +205,7 @@
   <div class="zone left">
     <div class="left-git">
       <div class="branch-anchor" bind:this={branchAnchorEl}>
-        <GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} {onPickBranch} {onPr} {prExists} {prDisabled} {onOpenPrs} openPrs={openPrsView_} {onCommit} {commitProject} pushProject={pushProjectInfo} />
+        <GitInfo git={folderGit} always {onPush} {onPull} busy={gitSyncing} {onPickBranch} {onPr} {prExists} {prDisabled} openPrs={openPrsView_} {openPrsResult} {onCommit} {commitProject} pushProject={pushProjectInfo} />
       </div>
       <BranchPicker
         open={branchOpen}
