@@ -76,7 +76,10 @@ describe('footerView', () => {
     expect(footerView(map, 'a', null, PROJECTS).context).toBeNull();
   });
 
-  it('surfaces model, model_id, and effort from the focused pane snapshot', () => {
+  // The two titles below mirror the `usage-dashboard` spec scenarios for the footer
+  // model/effort pills so the scenario-coverage gate maps each to this footerView
+  // assertion (footerView is the pure surface backing the rendered pills).
+  it('Model and effort pills shown for the focused session', () => {
     const map: SnapshotMap = {
       a: snap({
         pane_id: 'a',
@@ -91,7 +94,7 @@ describe('footerView', () => {
     expect(view.effort).toBe('high');
   });
 
-  it('returns null model/model_id/effort when the focused snapshot has effort: null', () => {
+  it('Effort pill omitted when unavailable', () => {
     const map: SnapshotMap = {
       a: snap({
         pane_id: 'a',

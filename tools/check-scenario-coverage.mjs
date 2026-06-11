@@ -194,7 +194,13 @@ const MANUAL_SCENARIOS = {
   // (the headless test asserts only "delegation never crashes + snapshot still
   // written"); the notify watcher firing end-to-end against a live claude pane;
   // and the rendered two-row dashboard visual itself.
-  'usage-dashboard': new Set(),
+  // The footer model/effort pills: the DATA backing them is headlessly tested via
+  // footerView ("Model and effort pills shown for the focused session" / "Effort pill
+  // omitted when unavailable"). "Pills are display-only" is a rendered-DOM interaction
+  // property (the pills are plain non-interactive spans) with no pure surface to assert
+  // against headless — like git-branch-switching's rendered-pill scenarios — so it is
+  // confirmed live in-app.
+  'usage-dashboard': new Set(['pills_are_display_only']),
   // task-detection: every derivation/parse/filter/heartbeat scenario has a REAL
   // headless test (Rust task.rs: newest_in_progress_entry_wins /
   // no_in_progress_entry_yields_null_task / activeform_present /

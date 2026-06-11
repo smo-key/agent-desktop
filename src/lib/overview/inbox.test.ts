@@ -484,4 +484,21 @@ describe('rowModelLabel', () => {
     const r = row('b', 'idle', { modelId: 'claude-sonnet-4-6', model: null });
     expect(rowModelLabel(r)).toBe('Sonnet 4.6');
   });
+
+  // Title mirrors the agent-overview spec scenario so the coverage gate maps it here.
+  it('Per-agent card reflects the snapshot model and context', () => {
+    // The per-agent card surfaces the snapshot's MODEL and context — not the dollar
+    // cost. rowModelLabel is the card's model seam; context comes from contextPct;
+    // the dollar cost is no longer shown on the card.
+    const r = row('a', 'working', {
+      modelId: 'claude-opus-4-8',
+      model: 'Claude Opus',
+      contextPct: 42,
+      cost: 9.99,
+    });
+    expect(rowModelLabel(r)).toBe('Opus 4.8');
+    expect(r.contextPct).toBe(42);
+    expect(rowModelLabel(r)).not.toContain('9.99');
+    expect(rowModelLabel(r)).not.toContain('$');
+  });
 });
