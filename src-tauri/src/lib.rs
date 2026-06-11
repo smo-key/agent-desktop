@@ -8,6 +8,7 @@ pub mod polish;
 pub mod pr;
 pub mod project_store;
 pub mod pty;
+pub mod shell_path;
 pub mod specialists;
 pub mod subagents;
 pub mod task;
@@ -243,15 +244,36 @@ fn open_path(path: String, app: Option<String>) -> Result<(), String> {
 
 /// Title-budget constants for [`select_title_messages`]. `TITLE_MAX_MSGS` caps how
 /// many user messages we feed the title model so the prompt fits the sidecar's
-/// modest 4096-token context (each message is also clipped to 200 chars by the
-/// caller). `TITLE_HEAD_MSGS` reserves the first slots for the EARLIEST messages —
-/// the session's original/primary request usually lives there, and recency-only
-/// truncation used to drop it in long sessions. The remaining
+/// modest 4096-token context (each message is clipped to 200 chars by
+/// [`clip_message`]). `TITLE_HEAD_MSGS` reserves the first slots for the EARLIEST
+/// messages — the session's original/primary request usually lives there, and
+/// recency-only truncation used to drop it in long sessions. The remaining
 /// `TITLE_MAX_MSGS - TITLE_HEAD_MSGS` slots take the most RECENT messages so a
 /// genuinely new later request can still surface. 8 + 12 keeps a strong anchor on
 /// the original ask while leaving room for refinements and any late pivot.
 const TITLE_MAX_MSGS: usize = 20;
 const TITLE_HEAD_MSGS: usize = 8;
+
+/// Clip `m` to at most `max` characters after whitespace-normalisation. For messages
+/// at or under the limit the full text is returned. For longer messages the beginning
+/// and end are shown, separated by a "…" ellipsis, so the reader (and the title
+/// model) sees both where the message starts and where it ends. PURE and
+/// unit-tested.
+fn clip_message(m: &str, max: usize) -> String {
+    let one = m.split_whitespace().collect::<Vec<_>>().join(" ");
+    let chars: Vec<char> = one.chars().collect();
+    if chars.len() <= max {
+        return one;
+    }
+    if max == 0 {
+        return String::new();
+    }
+    let head_len = (max - 1) / 2;
+    let tail_len = max - head_len - 1; // -1 for the "…"
+    let head: String = chars[..head_len].iter().collect();
+    let tail: String = chars[chars.len() - tail_len..].iter().collect();
+    format!("{head}…{tail}")
+}
 
 /// Select which user messages to feed the title model, weighting the EARLIEST
 /// (the original request) so recency truncation can never drop it. PURE so the
@@ -291,9 +313,10 @@ fn select_title_messages(msgs: &[String], max: usize, head: usize) -> Vec<&str> 
 /// Clean a raw model completion into a session-title string: drop any Qwen3
 /// `<think>…</think>` reasoning block that slipped into the content, take the first
 /// non-empty line, strip wrapping quotes / trailing periods, drop a hallucinated
-/// ticket-id prefix (see [`strip_phantom_ticket`]), and clip to 60 chars. `source`
-/// is the joined user transcript the title was generated from — the only ground
-/// truth for whether a ticket id is real. PURE so the post-processing is
+/// ticket-id prefix (see [`strip_phantom_ticket`]), de-slugify a bare slug the model
+/// copied verbatim (see [`deslugify`]), and clip to 60 chars on a word boundary.
+/// `source` is the joined user transcript the title was generated from — the only
+/// ground truth for whether a ticket id is real. PURE so the post-processing is
 /// unit-tested apart from the model call.
 fn clean_title(raw: &str, source: &str) -> String {
     let body = strip_think_blocks(raw);
@@ -304,7 +327,49 @@ fn clean_title(raw: &str, source: &str) -> String {
         .unwrap_or("")
         .trim_matches(|c| c == '"' || c == '\'' || c == '.')
         .trim();
-    strip_phantom_ticket(title, source).chars().take(60).collect()
+    let title = strip_phantom_ticket(title, source);
+    let title = deslugify(&title);
+    clip_title(&title, 60)
+}
+
+/// If `title` is a bare SLUG — all-lowercase words joined by hyphens with no spaces,
+/// e.g. an OpenSpec change name like `footer-branch-switcher` that the model copied
+/// out of the transcript — turn it into spaced, sentence-cased words
+/// (`Footer branch switcher`). A title that already contains a space, or isn't
+/// slug-shaped, is returned unchanged. The prompt tells the model not to emit slugs,
+/// but the small model still does it for workflow/OpenSpec sessions, so this is the
+/// deterministic salvage. PURE for unit testing.
+fn deslugify(title: &str) -> String {
+    let t = title.trim();
+    let is_slug = t.contains('-')
+        && !t.contains(' ')
+        && t.split('-').filter(|s| !s.is_empty()).count() >= 2
+        && t.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !is_slug {
+        return title.to_string();
+    }
+    let spaced = t.replace('-', " ");
+    let mut chars = spaced.chars();
+    match chars.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+        None => spaced,
+    }
+}
+
+/// Clip `s` to at most `max` chars, backing off to the last word boundary when the
+/// cut would land mid-word (and at least half the budget is kept), so a slightly
+/// long title ends on a whole word rather than a truncated one. A single
+/// over-long word with no space is hard-cut at `max`. PURE for unit testing.
+fn clip_title(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        return s.to_string();
+    }
+    let truncated: String = chars[..max].iter().collect();
+    match truncated.rfind(' ') {
+        Some(i) if i >= max / 2 => truncated[..i].trim_end().to_string(),
+        _ => truncated.trim_end().to_string(),
+    }
 }
 
 /// Drop a leading ticket/issue id from `title` when that id does NOT appear in
@@ -428,8 +493,8 @@ fn strip_think_blocks(s: &str) -> String {
 /// Generate a short session FOCUS title from the user's messages. The PRIMARY path
 /// is the LOCAL model (the `llama-server` sidecar loading the Qwen3 polish model —
 /// see `polish.rs`): locate the session transcript, extract the user's prose
-/// messages, and ask the local model for a <=6-word title (e.g. "SKIPA-45: Fix
-/// Feature"). Returns `None` when the user has sent nothing yet.
+/// messages, and ask the local model for a <=6-word title (e.g. "Improve dialog
+/// handling"). Returns `None` when the user has sent nothing yet.
 ///
 /// When the on-device path fails for ANY reason (model absent, sidecar won't start,
 /// HTTP error, timeout) AND `cloud_fallback` is set (the opt-in `titles.cloudFallback`
@@ -461,28 +526,51 @@ async fn session_focus(
     let Some(transcript) = activity::find_transcript(&projects_base, &pane) else {
         return Ok(None);
     };
-    let msgs = activity::user_messages(&transcript);
+    // Title-specific view: drops skill/command/caveat scaffolding (isMeta preludes,
+    // slash-command markup, interrupt markers) that the small title model otherwise
+    // copies into the title. Distinct from `user_messages` so the auto-resume /
+    // empty-session gates that read `user_hash`/`user_message_count` are unaffected.
+    let msgs = activity::title_user_messages(&transcript);
     if msgs.is_empty() {
         return Ok(None);
     }
+    let asst_msgs = activity::assistant_messages(&transcript);
     // Bound the prompt to fit the local model's modest context window (the sidecar
     // runs with a 4096-token context). Weight the EARLIEST messages so the session's
     // original request is always included even in a long session (head + tail
-    // budget), then clip each message. The first selected message is the original
-    // request; label it so the model anchors on it (DATA, not a command).
+    // budget), then clip each message with head+tail ellipsis for long ones. The
+    // first selected message is the original request; label it so the model anchors
+    // on it (DATA, not a command).
     let selected = select_title_messages(&msgs, TITLE_MAX_MSGS, TITLE_HEAD_MSGS);
-    let clip = |m: &str| -> String {
-        let one = m.split_whitespace().collect::<Vec<_>>().join(" ");
-        one.chars().take(200).collect::<String>()
-    };
-    let mut lines = selected.iter().map(|m| clip(m));
+    let mut lines = selected.iter().map(|m| clip_message(m, 200));
     let first = lines.next().unwrap_or_default(); // msgs is non-empty (checked above)
     let rest: Vec<String> = lines.collect();
-    let joined = if rest.is_empty() {
-        format!("Original request:\n- {first}")
+
+    // Earliest and most recent assistant responses bookend the session and let the
+    // title model understand what was actually accomplished, not just what was asked.
+    // Clip assistant messages tighter (150 chars) since they tend to be verbose.
+    let earliest_asst = asst_msgs.first().map(|m| clip_message(m, 150));
+    let most_recent_asst = if asst_msgs.len() > 1 {
+        asst_msgs.last().map(|m| clip_message(m, 150))
     } else {
-        format!("Original request:\n- {first}\nLater messages:\n- {}", rest.join("\n- "))
+        None
     };
+
+    let mut joined = format!("Original request:\n- {first}");
+    if let Some(ea) = &earliest_asst {
+        let label = if most_recent_asst.is_some() {
+            "Earliest assistant response"
+        } else {
+            "Assistant response"
+        };
+        joined.push_str(&format!("\n{label}:\n- {ea}"));
+    }
+    if !rest.is_empty() {
+        joined.push_str(&format!("\nLater messages:\n- {}", rest.join("\n- ")));
+    }
+    if let Some(mr) = &most_recent_asst {
+        joined.push_str(&format!("\nMost recent assistant response:\n- {mr}"));
+    }
 
     // Run the title completion through the shared local-model path (lazy-starts the
     // sidecar). The model id is the registry id; llama-server ignores it for routing.
@@ -1377,10 +1465,10 @@ mod tests {
         // The ticket id is in `source`, so it is kept (a real reference).
         assert_eq!(
             clean_title(
-                "<think>let me reason\nabout this</think>\nSKIPA-45: Fix Feature",
-                "Messages:\n- fix SKIPA-45 the login feature"
+                "<think>let me reason\nabout this</think>\nPROJ-45: Fix login feature",
+                "Messages:\n- fix PROJ-45 the login feature"
             ),
-            "SKIPA-45: Fix Feature"
+            "PROJ-45: Fix login feature"
         );
         // Case-insensitive tag, title on the same trailing segment.
         assert_eq!(
@@ -1607,6 +1695,104 @@ mod tests {
             fs::read_to_string(&second.wrapper_path).unwrap(),
             STATUSLINE_WRAPPER_SRC
         );
+    }
+
+    // --- deslugify (salvage a model-copied slug into spaced words) -----------
+
+    #[test]
+    fn deslugify_converts_a_bare_slug_to_spaced_sentence_case() {
+        assert_eq!(deslugify("footer-branch-switcher"), "Footer branch switcher");
+        assert_eq!(deslugify("hide-agents-panel"), "Hide agents panel");
+        assert_eq!(deslugify("add-csv-export-2"), "Add csv export 2");
+    }
+
+    #[test]
+    fn deslugify_leaves_real_titles_untouched() {
+        // Already spaced → not a slug.
+        assert_eq!(deslugify("Fix the login bug"), "Fix the login bug");
+        // Has a space around the hyphen → not a slug.
+        assert_eq!(deslugify("Title fallback to claude-p with haiku"),
+                   "Title fallback to claude-p with haiku");
+        // Single hyphenless word → not a slug.
+        assert_eq!(deslugify("Refactor"), "Refactor");
+        // Uppercase present (e.g. a ticket title) → not a bare lowercase slug.
+        assert_eq!(deslugify("PROJ-45"), "PROJ-45");
+        // A single hyphenated pair is still salvaged.
+        assert_eq!(deslugify("drag-drop"), "Drag drop");
+    }
+
+    #[test]
+    fn clean_title_deslugifies_a_copied_change_name() {
+        // The model copied the OpenSpec change slug verbatim; no ticket in source.
+        assert_eq!(
+            clean_title("footer-branch-switcher", "Messages:\n- change the branch from the footer"),
+            "Footer branch switcher"
+        );
+    }
+
+    // --- clip_title (word-boundary 60-char clip) -----------------------------
+
+    #[test]
+    fn clip_title_backs_off_to_a_word_boundary() {
+        let s = "Adjust archived panel order to show the most recent items first";
+        let out = clip_title(s, 60);
+        assert!(out.chars().count() <= 60);
+        assert!(!out.ends_with(' '));
+        // Ends on a whole word (no mid-word cut).
+        assert!(s.starts_with(&out));
+        assert!(out.split(' ').last().unwrap().len() >= 1);
+    }
+
+    #[test]
+    fn clip_title_hard_cuts_a_single_overlong_word() {
+        let s = "a".repeat(100);
+        assert_eq!(clip_title(&s, 60).chars().count(), 60);
+    }
+
+    #[test]
+    fn clip_title_short_unchanged() {
+        assert_eq!(clip_title("Fix login bug", 60), "Fix login bug");
+    }
+
+    // --- clip_message (beginning + ellipsis + end truncation) ----------------
+
+    #[test]
+    fn clip_message_short_message_returned_unchanged() {
+        assert_eq!(clip_message("fix the bug", 200), "fix the bug");
+        assert_eq!(clip_message("a".repeat(200).as_str(), 200), "a".repeat(200));
+    }
+
+    #[test]
+    fn clip_message_long_message_shows_beginning_and_end() {
+        // 210 chars → 200 max: head = (200-1)/2 = 99, tail = 200-99-1 = 100.
+        let input = "a".repeat(105) + &"b".repeat(105);
+        let clipped = clip_message(&input, 200);
+        // Total chars = 200 (99 head + "…" + 100 tail).
+        assert_eq!(clipped.chars().count(), 200);
+        // Starts with the beginning and ends with the tail.
+        assert!(clipped.starts_with("aaaa"), "should start with head");
+        assert!(clipped.ends_with("bbbb"), "should end with tail");
+        assert!(clipped.contains('…'), "must contain the ellipsis separator");
+    }
+
+    #[test]
+    fn clip_message_normalises_whitespace() {
+        // Multiple spaces / newlines are collapsed before clipping.
+        assert_eq!(clip_message("fix   the\nbug", 200), "fix the bug");
+    }
+
+    #[test]
+    fn clip_message_zero_max_returns_empty() {
+        assert_eq!(clip_message("hello", 0), "");
+    }
+
+    #[test]
+    fn clip_message_multibyte_respected() {
+        // "…" (U+2026) is one char; ensure the count is in chars, not bytes.
+        let input = "é".repeat(210);
+        let clipped = clip_message(&input, 200);
+        assert_eq!(clipped.chars().count(), 200);
+        assert!(clipped.contains('…'));
     }
 
     // --- select_title_messages (HEAD + TAIL message budget) -----------------

@@ -204,6 +204,9 @@ export interface RowActivity {
   questions?: PendingQuestion[] | null;
   /** Context-window usage 0..100 from the transcript, or null. */
   contextPct?: number | null;
+  /** Unix seconds of the last transcript entry's timestamp — stable across
+   *  `claude --resume` reopens. Used as `lastTs` for closed/preview rows. */
+  lastMsgTs?: number | null;
 }
 
 /** The live `pane_id -> activity` map the Overview feeds into `buildRoster`.
@@ -495,7 +498,13 @@ function rowFor(
     // snapshot has no value yet.
     contextPct: finiteOrNull(snapshot?.context_pct) ?? finiteOrNull(activity?.contextPct),
     cost: finiteOrNull(snapshot?.cost),
-    lastTs: finiteOrNull(snapshot?.ts),
+    // For closed/preview sessions use the transcript's last-entry timestamp —
+    // stable across `claude --resume` reopens (no new entry until the user
+    // replies). Falls back to the snapshot ts. Live sessions use snapshot ts.
+    lastTs:
+      (pane.closed || pane.preview)
+        ? (finiteOrNull(activity?.lastMsgTs) ?? finiteOrNull(snapshot?.ts))
+        : finiteOrNull(snapshot?.ts),
     status,
     projectId: pane.projectId ?? null,
     specialist: pane.specialist ?? null,

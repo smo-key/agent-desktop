@@ -23,7 +23,8 @@ describe('activity — transcript activity normalizer', () => {
       contextPct: 42,
       messages: null,
       userHash: null,
-      userMsgCount: 3
+      userMsgCount: 3,
+      lastMsgTs: null
     });
     expect(norm['sess-b']).toEqual({
       summary: null,
@@ -32,7 +33,8 @@ describe('activity — transcript activity normalizer', () => {
       contextPct: null,
       messages: null,
       userHash: null,
-      userMsgCount: null
+      userMsgCount: null,
+      lastMsgTs: null
     });
     expect(norm['sess-c']).toEqual({
       summary: null,
@@ -41,7 +43,8 @@ describe('activity — transcript activity normalizer', () => {
       contextPct: null,
       messages: null,
       userHash: null,
-      userMsgCount: null
+      userMsgCount: null,
+      lastMsgTs: null
     });
   });
 
@@ -93,7 +96,8 @@ describe('activity — transcript activity normalizer', () => {
       contextPct: null,
       messages: null,
       userHash: null,
-      userMsgCount: null
+      userMsgCount: null,
+      lastMsgTs: null
     });
   });
 });

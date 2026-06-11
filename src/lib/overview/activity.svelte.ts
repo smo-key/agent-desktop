@@ -54,6 +54,11 @@ export interface Activity {
    *  a `claude --resume` appending entries). The pause/preview gate auto-resumes only
    *  when this strictly increases. `null` when not yet known (transcript unread). */
   userMsgCount?: number | null;
+  /** Unix timestamp in SECONDS of the last transcript entry that carries a timestamp.
+   *  Stable across `claude --resume` reopens — no new entry is appended until the
+   *  user sends a message. Used as `lastTs` for closed/preview sessions so opening
+   *  an archived session does not reset the displayed time to "just now". */
+  lastMsgTs?: number | null;
 }
 
 /** The whole store state: paneId -> that pane's activity. */
@@ -121,6 +126,11 @@ export function normalizeActivity(payload: unknown): ActivityMap {
         typeof (value as Record<string, unknown>).userMsgCount === 'number' &&
         Number.isFinite((value as { userMsgCount: number }).userMsgCount)
           ? ((value as { userMsgCount: number }).userMsgCount)
+          : null,
+      lastMsgTs:
+        typeof (value as Record<string, unknown>).lastMsgTs === 'number' &&
+        Number.isFinite((value as { lastMsgTs: number }).lastMsgTs)
+          ? ((value as { lastMsgTs: number }).lastMsgTs)
           : null
     };
   }

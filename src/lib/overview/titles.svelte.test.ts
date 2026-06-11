@@ -40,14 +40,14 @@ afterEach(() => {
 describe('TitleStore restart persistence', () => {
   it('seeds a restored agent from cache and makes NO model call when its messages are unchanged', async () => {
     // Simulate a prior session: the title for s1@h1 was generated and persisted.
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ s1: { title: 'SKIPA-45: Fix Feature', hash: 'h1' } }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ s1: { title: 'PROJ-45: Fix login', hash: 'h1' } }));
 
     // A fresh store mimics a cold app start (loads the durable cache on construct).
     const store = new TitleStore();
     store.refresh([pane()], () => 'h1', NOW);
     await flush();
 
-    expect(store.titleFor('p1')).toBe('SKIPA-45: Fix Feature');
+    expect(store.titleFor('p1')).toBe('PROJ-45: Fix login');
     expect(invokeMock).not.toHaveBeenCalled(); // the whole point: no model re-call
   });
 
