@@ -115,10 +115,10 @@
 
 ## 17. Push popover + commits-to-push (footer-actions)
 
-- [ ] 17.1 Add a `commits_to_push(repoPath)` Tauri command in `src-tauri/src/git.rs` running `git log @{u}..HEAD` (best-effort: no upstream / not a repo → empty list, never errors) returning a list of `{hash, subject}`; add a pure parse helper with unit tests.
-- [ ] 17.2 Register the command in the invoke handler and add a frontend wrapper.
-- [ ] 17.3 Wire the push (ahead) pill to open a push popover listing the commits-to-push with a pinned "Push now" action → existing `pushProject`; inert/empty-state when nothing is ahead.
-- [ ] 17.4 Tests: the parse helper (multiple commits, empty); the push popover lists commits and "Push now" triggers the push; nothing-ahead → inert.
+- [x] 17.1 Add a `commits_to_push(repoPath)` Tauri command in `src-tauri/src/git.rs` running `git log @{u}..HEAD` (best-effort: no upstream / not a repo → empty list, never errors) returning a list of `{hash, subject}`; add a pure parse helper with unit tests.
+- [x] 17.2 Register the command in the invoke handler and add a frontend wrapper.
+- [x] 17.3 Wire the push (ahead) pill to open a push popover listing the commits-to-push with a pinned "Push now" action → existing `pushProject`; inert/empty-state when nothing is ahead.
+- [x] 17.4 Tests: the parse helper (multiple commits, empty); the push popover lists commits and "Push now" triggers the push; nothing-ahead → inert.
 
 ## 18. PRs popover + draft handling (footer-actions, pr.rs)
 
