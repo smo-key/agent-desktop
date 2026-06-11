@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "agent-desktop",
+  "productName": "Agent Desktop",
   "version": "0.1.0",
   "identifier": "com.arthur.agent-desktop",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "agent-desktop",
+        "title": "Agent Desktop",
         "width": 1100,
         "height": 720,
         "maximized": true,

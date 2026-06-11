@@ -11,6 +11,6 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>agent-desktop uses the microphone for voice dictation into your agent.</string>
+  <string>Agent Desktop uses the microphone for voice dictation into your agent.</string>
 </dict>
 </plist>
