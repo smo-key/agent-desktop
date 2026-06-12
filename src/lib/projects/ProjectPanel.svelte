@@ -103,6 +103,40 @@
   const unassigned = $derived(unassignedCount(rows));
   const allAgents = $derived(allAgentsCount(rows));
 
+  // --- Drag-to-reorder the project list -------------------------------------
+  // The expanded project rows are draggable: dropping one onto another reorders
+  // the persisted `projects` list (projects.reorder → reorderProjects + save), so
+  // the panel order — and the collapsed rail, which mirrors it — is user-arranged
+  // and survives restart. `dragId` is the row being dragged; `dragOverId` is the
+  // current drop target (for the insertion-highlight).
+  let dragId = $state<string | null>(null);
+  let dragOverId = $state<string | null>(null);
+
+  function onProjDragStart(e: DragEvent, id: string) {
+    dragId = id;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      // Some browsers refuse to start a drag unless data is set.
+      e.dataTransfer.setData('text/plain', id);
+    }
+  }
+  function onProjDragOver(e: DragEvent, id: string) {
+    if (!dragId || dragId === id) return;
+    e.preventDefault(); // allow the drop
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    dragOverId = id;
+  }
+  function onProjDrop(e: DragEvent, id: string) {
+    e.preventDefault();
+    if (dragId && dragId !== id) void projects.reorder(dragId, id);
+    dragId = null;
+    dragOverId = null;
+  }
+  function onProjDragEnd() {
+    dragId = null;
+    dragOverId = null;
+  }
+
   // --- Create / edit dialog state (the shared ProjectForm drives both) ------
   let creating = $state(false);
   /** The id of the project being edited, or null. Mutually exclusive with `creating`. */
@@ -225,6 +259,13 @@
       type="button"
       class="pp-item"
       class:active={projectFilter.selected === c.project.id}
+      class:dragging={dragId === c.project.id}
+      class:dragover={dragOverId === c.project.id}
+      draggable="true"
+      ondragstart={(e) => onProjDragStart(e, c.project.id)}
+      ondragover={(e) => onProjDragOver(e, c.project.id)}
+      ondrop={(e) => onProjDrop(e, c.project.id)}
+      ondragend={onProjDragEnd}
       onclick={() => projectFilter.select(c.project.id)}
       oncontextmenu={(e) => openMenu(e, c.project)}
     >
@@ -423,6 +464,19 @@
   .pp-item.active {
     background: var(--blue-tint);
     color: var(--blue-200);
+  }
+  /* Drag-to-reorder: the lifted row dims; the drop target shows an insertion line. */
+  .pp-item[draggable='true'] {
+    cursor: grab;
+  }
+  .pp-item.dragging {
+    opacity: 0.45;
+  }
+  /* Neutral drop highlight (a ring, not a before/after edge line) — the array-move
+     lands the row AT the target's slot, so a directional insertion line would mislead. */
+  .pp-item.dragover {
+    box-shadow: inset 0 0 0 1px var(--blue-300);
+    background: var(--blue-tint);
   }
   .pp-name {
     flex: 1;

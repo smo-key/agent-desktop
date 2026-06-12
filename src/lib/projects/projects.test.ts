@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addProject,
   removeProject,
+  reorderProjects,
   updateProject,
   hexA,
   parseProjects,
@@ -53,6 +54,26 @@ describe('projects — model helpers', () => {
     const list = [p({ id: 'a', path: '/x' }), p({ id: 'b', path: '/y' })];
     expect(removeProject(list, 'a').map((x) => x.id)).toEqual(['b']);
     expect(removeProject(list, 'nope')).toEqual(list); // no-op when absent
+  });
+
+  it('Reordering a project by dragging lands it at the drop target', () => {
+    const list = [
+      p({ id: 'a', path: '/a' }),
+      p({ id: 'b', path: '/b' }),
+      p({ id: 'c', path: '/c' }),
+      p({ id: 'd', path: '/d' })
+    ];
+    // Drag the first project DOWN onto the third: it takes that slot.
+    expect(reorderProjects(list, 'a', 'c').map((x) => x.id)).toEqual(['b', 'c', 'a', 'd']);
+    // Drag the last project UP onto the second: it inserts just before it.
+    expect(reorderProjects(list, 'd', 'b').map((x) => x.id)).toEqual(['a', 'd', 'b', 'c']);
+    // Drag to the very end / very start is reachable.
+    expect(reorderProjects(list, 'a', 'd').map((x) => x.id)).toEqual(['b', 'c', 'd', 'a']);
+    expect(reorderProjects(list, 'd', 'a').map((x) => x.id)).toEqual(['d', 'a', 'b', 'c']);
+    // No-ops: unknown id, or dropping onto itself — returns an unchanged copy.
+    expect(reorderProjects(list, 'a', 'a').map((x) => x.id)).toEqual(['a', 'b', 'c', 'd']);
+    expect(reorderProjects(list, 'nope', 'b').map((x) => x.id)).toEqual(['a', 'b', 'c', 'd']);
+    expect(reorderProjects(list, 'a', 'nope')).not.toBe(list); // a fresh copy, not the input
   });
 
   it('resolves a project by id and by path', () => {

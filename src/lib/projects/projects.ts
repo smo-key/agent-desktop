@@ -153,6 +153,31 @@ export function removeProject(list: ReadonlyArray<Project>, id: string): Project
 }
 
 /**
+ * Move the project `fromId` to the position of `toId` (drag-to-reorder). The
+ * dragged project lands exactly where the drop target sits: dropping it on a
+ * project BELOW pushes that target up (the dragged item takes its slot and
+ * everything between shifts), dropping it on one ABOVE inserts it just before.
+ * This is the standard array-move keyed by id, so the manual order the user
+ * arranges is reproduced 1:1.
+ *
+ * Pure: never mutates inputs. A no-op (returns a copy) when either id is absent
+ * or they are the same project.
+ */
+export function reorderProjects(
+  list: ReadonlyArray<Project>,
+  fromId: string,
+  toId: string
+): Project[] {
+  const from = list.findIndex((p) => p.id === fromId);
+  const to = list.findIndex((p) => p.id === toId);
+  if (from < 0 || to < 0 || from === to) return [...list];
+  const next = [...list];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+/**
  * Patch the project with id `id` in place (same position, same id). Used by the
  * edit flow. A `logo: undefined` patch REMOVES the logo. Unlike `addProject`,
  * identity is keyed by `id` (no path dedupe), so editing a project's `path`

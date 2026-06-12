@@ -28,6 +28,9 @@
     showContext,
     LANE_ORDER,
     laneForRow,
+    reorderLane,
+    moveId,
+    orderRowsByLane,
     type AgentLane,
     type AgentRow,
     type AgentStatus
@@ -175,36 +178,112 @@
   });
   const rows = $derived(filterRowsByProject(allRows, projectFilter.selected));
 
-  // Arrival order for the "Needs you" lane: paneIds in the order they STARTED
-  // needing input (earliest first / top). Maintained append-only — an agent that
-  // newly needs you joins the bottom, never jumping above one already waiting — so
-  // the queue is stable and "order received".
-  let queueOrder = $state<string[]>([]);
+  // Per-lane DISPLAY ORDER. Every bucket lists its agents most-recently-added-to-
+  // that-column first by default; the Needs-you (attn) and Paused buckets are
+  // user-reorderable by dragging, and those two manual orders PERSIST across restarts
+  // (localStorage). The map holds paneIds top-first per lane. `reorderLane` keeps the
+  // established/manual order while jumping a newcomer to the top, and drops agents
+  // that left the lane; `orderRowsByLane` projects it onto the rendered rows so the
+  // lanes, the attention queue, and focus resolution all agree on order.
+  const LANE_ORDER_KEY = 'agent-desktop:lane-order';
+  /** Load the persisted manual orders for the draggable lanes (attn + paused). The
+   *  non-draggable lanes (flight/done) start empty and re-derive newest-first. */
+  function loadLaneOrder(): Record<AgentLane, string[]> {
+    const base: Record<AgentLane, string[]> = { attn: [], flight: [], paused: [], done: [] };
+    if (typeof localStorage === 'undefined') return base;
+    try {
+      const raw = localStorage.getItem(LANE_ORDER_KEY);
+      if (!raw) return base;
+      const parsed = JSON.parse(raw) as Partial<Record<AgentLane, unknown>>;
+      for (const lane of ['attn', 'paused'] as const) {
+        const v = parsed?.[lane];
+        if (Array.isArray(v)) base[lane] = v.filter((x): x is string => typeof x === 'string');
+      }
+    } catch {
+      /* ignore bad JSON / disabled storage — fall back to defaults */
+    }
+    return base;
+  }
+  let laneOrder = $state<Record<AgentLane, string[]>>(loadLaneOrder());
+
+  /** Persist ONLY the manually-reorderable lanes (attn + paused); flight/done are
+   *  re-derived newest-first each session, so they are never stored. */
+  function saveLaneOrder() {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(
+        LANE_ORDER_KEY,
+        JSON.stringify({ attn: laneOrder.attn, paused: laneOrder.paused })
+      );
+    } catch {
+      /* ignore quota / disabled storage */
+    }
+  }
+
+  // Reconcile every lane's order against the live roster. Computed over `allRows`
+  // (UNFILTERED) so the order is stable as the project filter changes — the display
+  // sorts the filtered `rows` by this global order. Idempotent: a recompute with the
+  // same lane membership returns the same arrays (no write / no thrash off the clock).
   $effect(() => {
-    const attn = rows.filter((r) => needsAttention(r)).map((r) => r.paneId);
-    const present = new Set(attn);
-    const kept = queueOrder.filter((id) => present.has(id)); // still-waiting, in order
-    const keptSet = new Set(kept);
-    const added = attn.filter((id) => !keptSet.has(id)); // newcomers, roster order
-    const next = [...kept, ...added];
-    const changed =
-      next.length !== queueOrder.length || next.some((id, i) => id !== queueOrder[i]);
-    if (changed) queueOrder = next;
+    const present: Record<AgentLane, string[]> = { attn: [], flight: [], paused: [], done: [] };
+    for (const r of allRows) present[laneForRow(r)].push(r.paneId);
+    const next: Record<AgentLane, string[]> = { ...laneOrder };
+    let changed = false;
+    let persistChanged = false;
+    for (const lane of LANE_ORDER) {
+      const reordered = reorderLane(laneOrder[lane], present[lane]);
+      const same =
+        reordered.length === laneOrder[lane].length &&
+        reordered.every((id, i) => id === laneOrder[lane][i]);
+      if (!same) {
+        next[lane] = reordered;
+        changed = true;
+        if (lane === 'attn' || lane === 'paused') persistChanged = true;
+      }
+    }
+    if (changed) {
+      laneOrder = next;
+      if (persistChanged) saveLaneOrder();
+    }
   });
 
-  /** Rows with the attention agents reordered to `queueOrder` (earliest-waiting
-   *  first); every other row keeps its roster position (stable sort). Drives the
-   *  list, the queue, and all focus resolution so they agree on order. */
-  function reorderByQueue(list: AgentRow[], order: string[]): AgentRow[] {
-    const idx = new Map(order.map((id, i) => [id, i] as const));
-    return [...list].sort((a, b) => {
-      if (needsAttention(a) && needsAttention(b)) {
-        return (idx.get(a.paneId) ?? 0) - (idx.get(b.paneId) ?? 0);
-      }
-      return 0;
-    });
+  const viewRows = $derived(orderRowsByLane(rows, laneOrder));
+
+  // --- Drag-to-reorder within the Needs-you (attn) + Paused buckets -------------
+  // Dropping a row onto another in the SAME draggable lane moves it to that slot
+  // (moveId over the lane's global order) and persists. The pinned coordinator row
+  // is never draggable. flight/done rows are not draggable (newest-first only).
+  const DRAGGABLE_LANES: ReadonlySet<AgentLane> = new Set<AgentLane>(['attn', 'paused']);
+  let rowDrag = $state<{ lane: AgentLane; paneId: string } | null>(null);
+  let rowDragOver = $state<string | null>(null);
+
+  function onRowDragStart(e: DragEvent, lane: AgentLane, paneId: string) {
+    if (!DRAGGABLE_LANES.has(lane)) return;
+    rowDrag = { lane, paneId };
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', paneId); // some browsers require data to drag
+    }
   }
-  const viewRows = $derived(reorderByQueue(rows, queueOrder));
+  function onRowDragOver(e: DragEvent, lane: AgentLane, paneId: string) {
+    if (!rowDrag || rowDrag.lane !== lane || rowDrag.paneId === paneId) return;
+    e.preventDefault(); // allow the drop (only within the same lane)
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    rowDragOver = paneId;
+  }
+  function onRowDrop(e: DragEvent, lane: AgentLane, paneId: string) {
+    e.preventDefault();
+    if (rowDrag && rowDrag.lane === lane && rowDrag.paneId !== paneId) {
+      laneOrder = { ...laneOrder, [lane]: moveId(laneOrder[lane], rowDrag.paneId, paneId) };
+      saveLaneOrder();
+    }
+    rowDrag = null;
+    rowDragOver = null;
+  }
+  function onRowDragEnd() {
+    rowDrag = null;
+    rowDragOver = null;
+  }
 
   const queue = $derived(attentionQueue(viewRows));
 
@@ -222,12 +301,11 @@
   const pin = $derived(resolveCoordinatorPin(viewRows, activeCoordProjectId));
   // Lanes rendered BELOW the rule exclude the pinned coordinator (it never renders
   // twice). Keyboard nav uses `coordinatorNavOrder` (coordinator/affordance first),
-  // not these render lanes, so the pinned coordinator stays reachable.
-  const renderGrouped = $derived.by(() => {
-    const grouped = groupByLane(pin.rest);
-    grouped.done = [...grouped.done].reverse();
-    return grouped;
-  });
+  // not these render lanes, so the pinned coordinator stays reachable. `pin.rest`
+  // is already lane-grouped + within-lane ordered (viewRows → orderRowsByLane), so
+  // groupByLane just re-partitions it — including the Archived (done) lane, already
+  // newest-first via `laneOrder` (no extra reverse needed).
+  const renderGrouped = $derived(groupByLane(pin.rest));
 
   // The Archived lane collapses to its latest 2 rows (it's reversed above, so the
   // first 2 are the most recent) with a "Show all / Collapse" toggle below; long
@@ -975,6 +1053,13 @@
     type="button"
     class="row {lane}"
     class:sel={focus?.paneId === r.paneId}
+    class:dragging={rowDrag?.paneId === r.paneId}
+    class:dragover={rowDragOver === r.paneId}
+    draggable={DRAGGABLE_LANES.has(lane) && !isCoordPin}
+    ondragstart={(e) => onRowDragStart(e, lane, r.paneId)}
+    ondragover={(e) => onRowDragOver(e, lane, r.paneId)}
+    ondrop={(e) => onRowDrop(e, lane, r.paneId)}
+    ondragend={onRowDragEnd}
     onclick={() => onRowClick(r)}
     oncontextmenu={(e) => openAgentMenu(e, r, displayName(r.paneId, r.name))}
   >
@@ -1330,6 +1415,12 @@
   .row:hover { background: rgba(255,255,255,0.025); }
   .row.sel { background: rgba(61,123,255,0.10); border-left-color: var(--blue-500); }
   .row.attn.sel { background: var(--orange-tint); border-left-color: var(--orange-500); }
+  /* Drag-to-reorder within the Needs-you / Paused buckets: the lifted row dims; the
+     drop target shows a neutral ring (the move lands AT the target's slot, so a
+     directional edge line would mislead). */
+  .row[draggable='true'] { cursor: grab; }
+  .row.dragging { opacity: 0.45; }
+  .row.dragover { box-shadow: inset 0 0 0 1px var(--blue-300); background: rgba(61,123,255,0.08); }
   /* The coordinator top slot: a rule separating the pinned coordinator / Start
      affordance from the rest of the sessions (tasks 10.2–10.3). */
   .coord-rule { margin: 4px 16px 2px; border: none; border-top: 1px solid var(--line-default); }

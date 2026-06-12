@@ -9,6 +9,9 @@ import {
   isArchivedCoordinator,
   showContext,
   groupByLane,
+  reorderLane,
+  moveId,
+  orderRowsByLane,
   archivedPaneIds,
   LANE_ORDER,
   WORKING_WINDOW_MS,
@@ -512,6 +515,102 @@ describe('roster — control-room lanes', () => {
     expect(
       laneForRow(laneRow('coord', { role: 'coordinator', status: 'finished', closed: true }))
     ).toBe('done');
+  });
+});
+
+// Per-lane display ordering: every bucket shows its agents most-recently-added
+// first by default, and the Needs-you / Paused buckets are manually reorderable by
+// dragging. reorderLane keeps the established/manual order while jumping newcomers
+// to the top; moveId performs a drag-move; orderRowsByLane projects both onto the
+// roster rows the lanes render.
+describe('roster — per-lane display ordering', () => {
+  const laneRow = (paneId: string, over: Partial<AgentRow> = {}): AgentRow => ({
+    paneId,
+    workspaceId: 'ws',
+    name: paneId,
+    cwd: null,
+    model: null,
+    modelId: null,
+    task: null,
+    summary: null,
+    question: null,
+    questions: null,
+    currentAction: null,
+    contextPct: null,
+    cost: null,
+    lastTs: null,
+    status: 'working',
+    projectId: null,
+    ...over
+  });
+
+  it('Default order is most recently added to the column first', () => {
+    // First population (no prior order): newest-on-top means the order is the
+    // REVERSE of the incoming roster/tree order (later in the tree ⇒ more recent).
+    expect(reorderLane([], ['a', 'b', 'c'])).toEqual(['c', 'b', 'a']);
+    // A newcomer to the lane jumps to the very top, above the established order.
+    expect(reorderLane(['c', 'b', 'a'], ['c', 'b', 'a', 'd'])).toEqual(['d', 'c', 'b', 'a']);
+    // Several simultaneous newcomers: later-in-roster sorts higher.
+    expect(reorderLane(['a'], ['a', 'b', 'c'])).toEqual(['c', 'b', 'a']);
+  });
+
+  it('A manual order is preserved as agents enter and leave the column', () => {
+    // The user dragged the lane into [b, a, c]; a recompute with the same set keeps it.
+    expect(reorderLane(['b', 'a', 'c'], ['a', 'b', 'c'])).toEqual(['b', 'a', 'c']);
+    // A new agent still jumps to the top WITHOUT disturbing the manual order below.
+    expect(reorderLane(['b', 'a', 'c'], ['a', 'b', 'c', 'd'])).toEqual(['d', 'b', 'a', 'c']);
+    // An agent that left the lane drops out; the rest keep their manual order.
+    expect(reorderLane(['d', 'b', 'a', 'c'], ['b', 'c', 'd'])).toEqual(['d', 'b', 'c']);
+  });
+
+  it('An empty column keeps its remembered order (restart-safe, never wiped)', () => {
+    // The roster is transiently empty while the layout restore is in flight; a lane
+    // with no current members must RETAIN its saved order, not be cleared — otherwise
+    // the caller would persist an empty order and lose the user's arrangement before
+    // the panes reappear.
+    expect(reorderLane(['x', 'y', 'z'], [])).toEqual(['x', 'y', 'z']);
+    expect(reorderLane([], [])).toEqual([]);
+    // When the same panes re-enter the lane together, the saved order is honored.
+    expect(reorderLane(['x', 'y', 'z'], ['x', 'y', 'z'])).toEqual(['x', 'y', 'z']);
+  });
+
+  it('Dragging an agent moves it to the drop target within its bucket', () => {
+    expect(moveId(['a', 'b', 'c', 'd'], 'a', 'c')).toEqual(['b', 'c', 'a', 'd']);
+    expect(moveId(['a', 'b', 'c', 'd'], 'd', 'b')).toEqual(['a', 'd', 'b', 'c']);
+    // No-ops return a fresh copy: unknown id, or dropping onto itself.
+    expect(moveId(['a', 'b'], 'a', 'a')).toEqual(['a', 'b']);
+    expect(moveId(['a', 'b'], 'x', 'b')).toEqual(['a', 'b']);
+  });
+
+  it('orderRowsByLane groups rows by lane and orders within each by its lane order', () => {
+    const rows = [
+      laneRow('w1', { status: 'waiting' }),
+      laneRow('f1', { status: 'working' }),
+      laneRow('w2', { status: 'error' }),
+      laneRow('p1', { status: 'working', paused: true }),
+      laneRow('f2', { status: 'idle' }),
+      laneRow('p2', { status: 'working', paused: true })
+    ];
+    const laneOrder = {
+      attn: ['w2', 'w1'], // manually reversed within Needs-you
+      flight: ['f2', 'f1'], // newest-first
+      paused: ['p2', 'p1'],
+      done: []
+    };
+    const ordered = orderRowsByLane(rows, laneOrder).map((r) => r.paneId);
+    // Lanes appear in LANE_ORDER; within each, rows follow that lane's order list.
+    expect(ordered).toEqual(['w2', 'w1', 'f2', 'f1', 'p2', 'p1']);
+  });
+
+  it('orderRowsByLane sinks rows absent from their lane order to the lane end, stably', () => {
+    const rows = [
+      laneRow('a', { status: 'waiting' }),
+      laneRow('b', { status: 'waiting' }),
+      laneRow('c', { status: 'waiting' })
+    ];
+    // Only 'b' is in the order; 'a' and 'c' have no slot → they trail in input order.
+    const ordered = orderRowsByLane(rows, { attn: ['b'], flight: [], paused: [], done: [] });
+    expect(ordered.map((r) => r.paneId)).toEqual(['b', 'a', 'c']);
   });
 });
 

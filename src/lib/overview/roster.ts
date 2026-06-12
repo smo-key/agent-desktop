@@ -142,6 +142,93 @@ export function groupByLane(rows: AgentRow[]): Record<AgentLane, AgentRow[]> {
 }
 
 /**
+ * PURE: reconcile a lane's persisted/established display order against the paneIds
+ * currently IN that lane, applying the "most recently added to that column first"
+ * rule:
+ *  - ids already in `prev` that are still present keep their relative order — this
+ *    is what preserves a user's manual drag arrangement (and the established
+ *    arrival order) across recomputes;
+ *  - ids that are NEW to the lane (just entered it) are prepended ABOVE the kept
+ *    order — newest on top — so a freshly-arrived agent jumps to the top of the
+ *    bucket. Among several simultaneous newcomers, the one later in `present`
+ *    (roster/tree order ≈ most recently spawned) sorts first.
+ *
+ * `present` is the lane's paneIds in roster order. With a non-empty `present` the
+ * result is exactly the present ids (stale ids are dropped). When `present` is
+ * EMPTY the remembered order is returned UNCHANGED — an empty column is treated as
+ * "no members right now", NOT "forget the order": this is load-bearing for restart
+ * persistence, since the roster is briefly empty while the layout restore is still
+ * in flight, and dropping every id there would let the caller persist an empty order
+ * and destroy the user's saved arrangement before the panes reappear. Pure: never
+ * mutates inputs.
+ */
+export function reorderLane(
+  prev: ReadonlyArray<string>,
+  present: ReadonlyArray<string>
+): string[] {
+  if (present.length === 0) return [...prev];
+  const presentSet = new Set(present);
+  const kept = prev.filter((id) => presentSet.has(id));
+  const keptSet = new Set(kept);
+  const added = present.filter((id) => !keptSet.has(id));
+  added.reverse(); // later-in-roster ⇒ more recently added ⇒ higher
+  return [...added, ...kept];
+}
+
+/**
+ * PURE: move the id `fromId` to the position of `toId` within an ordered list of
+ * paneIds (drag-to-reorder inside a lane). Same standard array-move as
+ * `reorderProjects`: the dragged id lands exactly at the drop target's slot. A
+ * no-op copy when either id is absent or they are equal. Never mutates inputs.
+ */
+export function moveId(
+  order: ReadonlyArray<string>,
+  fromId: string,
+  toId: string
+): string[] {
+  const from = order.indexOf(fromId);
+  const to = order.indexOf(toId);
+  if (from < 0 || to < 0 || from === to) return [...order];
+  const next = [...order];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+/**
+ * PURE: order roster `rows` for display by grouping them into LANE_ORDER and, within
+ * each lane, by that lane's `order` list of paneIds (from `reorderLane`/`moveId`). A
+ * row whose paneId is absent from its lane's order sinks to the end of that lane (in
+ * its incoming relative order). The result is lane-grouped + within-lane-ordered, so
+ * the rendered lanes, the attention queue, and focus resolution all agree on order.
+ * Pure: returns a new array, never mutates inputs.
+ */
+export function orderRowsByLane(
+  rows: AgentRow[],
+  laneOrder: Record<AgentLane, ReadonlyArray<string>>
+): AgentRow[] {
+  const rankOf = (r: AgentRow): number => {
+    const i = LANE_ORDER.indexOf(laneForRow(r));
+    return i < 0 ? LANE_ORDER.length : i;
+  };
+  const withinOf = (r: AgentRow): number => {
+    const order = laneOrder[laneForRow(r)] ?? [];
+    const i = order.indexOf(r.paneId);
+    return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  return rows
+    .map((r, idx) => ({ r, idx }))
+    .sort((a, b) => {
+      const dr = rankOf(a.r) - rankOf(b.r);
+      if (dr !== 0) return dr;
+      const dw = withinOf(a.r) - withinOf(b.r);
+      if (dw !== 0) return dw;
+      return a.idx - b.idx; // stable: equal-keyed rows keep their incoming order
+    })
+    .map((x) => x.r);
+}
+
+/**
  * PURE: the paneIds of the ARCHIVED rows — those in the `done` lane (closed or
  * previewing-an-archived-session), in roster order. This is exactly the set shown
  * under the overview's "Archived" header, so it backs the "delete all archived"
