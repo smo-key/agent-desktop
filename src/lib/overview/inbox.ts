@@ -6,7 +6,7 @@
 // the queue. Framework-free so it is trivially unit-tested; Inbox.svelte is the
 // thin reactive shell that feeds it the live roster and renders the result.
 
-import { archivedPaneIds, needsAttention, type AgentRow, type AgentStatus } from './roster';
+import { archivedPaneIds, laneForRow, needsAttention, type AgentRow, type AgentStatus } from './roster';
 import { modelLabel } from '$lib/usage/modelLabel';
 import type { ConfirmOptions } from '$lib/ui/confirmStore.svelte';
 
@@ -123,6 +123,28 @@ export function resolveFocus(rows: AgentRow[], userSelected: string | null): Age
     if (picked) return picked;
   }
   return attentionQueue(rows)[0] ?? null;
+}
+
+/**
+ * PURE: the focus target after the user EXPLICITLY dismisses the shown session
+ * (archive / pause / delete) — the next actionable session, excluding the
+ * dismissed pane, chosen in roster (display) order:
+ *   1. the first Needs-you session (`attentionQueue`), else
+ *   2. the first In-flight session (the `flight` lane: working/idle, not
+ *      paused/archived/previewing), else
+ *   3. null ("All clear").
+ *
+ * This is a DISTINCT path from the opt-in auto-advance (`resolveFocus` + the
+ * grace timer): it is immediate, unconditional (ignores the auto-advance
+ * setting), and broadens the target to In-flight. `rows` must be in roster
+ * order so "first" matches what the user sees. Pure: never mutates inputs.
+ */
+export function nextOnDismiss(rows: AgentRow[], dismissedPaneId: string): string | null {
+  const others = rows.filter((r) => r.paneId !== dismissedPaneId);
+  const attn = attentionQueue(others)[0];
+  if (attn) return attn.paneId;
+  const flight = others.find((r) => laneForRow(r) === 'flight');
+  return flight?.paneId ?? null;
 }
 
 /**

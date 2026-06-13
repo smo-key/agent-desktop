@@ -6,6 +6,7 @@ import {
   attentionQueue,
   resolveFocus,
   nextInQueue,
+  nextOnDismiss,
   shouldClearPin,
   archiveDecision,
   autoArchiveAction,
@@ -139,6 +140,60 @@ describe('Queue navigation steps through waiting agents', () => {
 
   it('returns null when the queue is empty', () => {
     expect(nextInQueue([row('a', 'working')], 'a', 1)).toBe(null);
+  });
+});
+
+describe('nextOnDismiss — advance after dismissing the shown session', () => {
+  it('returns the first Needs-you session, in roster order', () => {
+    const rows = [
+      row('shown', 'waiting'),
+      row('a', 'working'),
+      row('b', 'waiting'),
+      row('c', 'error')
+    ];
+    // 'b' is the first Needs-you among the others (the dismissed 'shown' is excluded).
+    expect(nextOnDismiss(rows, 'shown')).toBe('b');
+  });
+
+  it('excludes the dismissed pane even when it would itself qualify', () => {
+    // Dismissing a waiting agent must never re-select itself.
+    const rows = [row('shown', 'waiting'), row('a', 'working')];
+    // No OTHER Needs-you -> falls through to the first In-flight ('a').
+    expect(nextOnDismiss(rows, 'shown')).toBe('a');
+  });
+
+  it('prefers Needs-you over In-flight regardless of array position', () => {
+    const rows = [row('a', 'working'), row('b', 'waiting'), row('shown', 'finished')];
+    expect(nextOnDismiss(rows, 'shown')).toBe('b');
+  });
+
+  it('falls back to the first In-flight session when nothing needs you', () => {
+    const rows = [
+      row('shown', 'waiting'),
+      row('a', 'finished'),
+      row('b', 'idle'), // in-flight (idle)
+      row('c', 'working') // also in-flight, but later
+    ];
+    expect(nextOnDismiss(rows, 'shown')).toBe('b');
+  });
+
+  it('skips paused / archived / previewing sessions as candidates', () => {
+    const rows = [
+      row('shown', 'waiting'),
+      row('a', 'waiting', { paused: true }), // not Needs-you (paused)
+      row('b', 'error', { closed: true }), // not Needs-you (archived)
+      row('c', 'working', { paused: true }), // not In-flight (paused -> paused lane)
+      row('d', 'working', { closed: true }), // not In-flight (closed -> done lane)
+      row('e', 'working', { preview: true }) // not In-flight (preview -> done lane)
+    ];
+    // Nothing actionable among the others -> All clear.
+    expect(nextOnDismiss(rows, 'shown')).toBeNull();
+  });
+
+  it('returns null when no other session is actionable', () => {
+    const rows = [row('shown', 'waiting'), row('a', 'finished')];
+    expect(nextOnDismiss(rows, 'shown')).toBeNull();
+    expect(nextOnDismiss([row('shown', 'working')], 'shown')).toBeNull();
   });
 });
 

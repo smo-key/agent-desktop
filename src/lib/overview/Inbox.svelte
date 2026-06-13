@@ -40,6 +40,7 @@
     attentionQueue,
     resolveFocus,
     nextInQueue,
+    nextOnDismiss,
     archiveDecision,
     autoArchiveAction,
     shouldAutoResume,
@@ -670,11 +671,33 @@
     return archiveDecision(activity.forPane(paneId).userHash) === 'delete';
   }
 
+  /** Advance focus after the user EXPLICITLY dismisses the SHOWN session (archive /
+   *  pause / delete): jump immediately to the next actionable session — first
+   *  Needs-you, else first In-flight, else All clear (`nextOnDismiss`). A no-op
+   *  unless `paneId` is the one currently shown, so dismissing a BACKGROUND row never
+   *  steals focus. This is unconditional — it ignores the auto-advance setting (the
+   *  setting only gates the separate leave-attention auto-advance in the reconcile
+   *  effect). Read `viewRows` BEFORE the caller mutates the workspace; `nextOnDismiss`
+   *  excludes `paneId`, so the other rows (unaffected by this dismissal) scan right.
+   *
+   *  When the target is an IN-FLIGHT pane (no Needs-you exists), the reconcile effect
+   *  KEEPS it parked via its "never advance to nothing" fallback (`wantId = target ??
+   *  shownId`) — `resolveFocus` alone would resolve to null there. That fallback is
+   *  load-bearing for this path: do not "simplify" it to `?? null`. */
+  function advanceAfterDismiss(paneId: string) {
+    if (shownId !== paneId) return;
+    clearAdvance();
+    userSelected = null;
+    shownId = nextOnDismiss(viewRows, paneId);
+    focusNonce += 1;
+  }
+
   /** ARCHIVE an agent's session → moves it to Archived (terminates the terminal but
    *  keeps it, restorable). An EMPTY session (no user messages) has nothing to
    *  resume, so it is DELETED outright instead. Not destructive for a real session,
    *  so no confirm. Drops the pin so focus advances to whatever needs you next. */
   function archiveAgent(paneId: string) {
+    advanceAfterDismiss(paneId);
     if (userSelected === paneId) userSelected = null;
     if (archiveDecision(activity.forPane(paneId).userHash) === 'delete') {
       workspace.deleteAgent(paneId);
@@ -687,6 +710,7 @@
    *  attention. Records the current user-message COUNT so only a NEW message resumes
    *  it. Drops the pin so focus advances. */
   function pauseAgent(paneId: string) {
+    advanceAfterDismiss(paneId);
     if (userSelected === paneId) userSelected = null;
     workspace.pauseAgent(paneId, activity.forPane(paneId).userMsgCount ?? null);
   }
@@ -704,6 +728,7 @@
         ? confirm(`Delete "${name}"? This permanently removes the session.`)
         : true;
     if (!ok) return;
+    advanceAfterDismiss(paneId);
     if (userSelected === paneId) userSelected = null;
     workspace.deleteAgent(paneId);
   }
