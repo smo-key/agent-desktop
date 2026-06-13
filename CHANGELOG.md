@@ -3,6 +3,21 @@
 All notable changes to this project are documented here.
 This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
 
+## [0.1.4] - 2026-06-13
+
+### Bug Fixes
+
+- **ci**: Pin Windows release leg to windows-2022 for the VS 2022 generator
+
+### Documentation
+
+- **openspec**: Reflect windows-2022 runner pin in release-ci design
+- **openspec**: Tighten resize-redraw spec — guard to idle panes and add working-agent scenario
+
+### CI/Build
+
+- **release**: Drop Intel-mac leg, bump actions to latest majors, Node 22
+
 ## [0.1.3] - 2026-06-13
 
 ### Bug Fixes
