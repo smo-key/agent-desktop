@@ -58,6 +58,7 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { events } from '$lib/overview/events.svelte';
   import { executor } from '$lib/orchestration/executor.svelte';
+  import { checkForUpdateOnLaunch } from '$lib/updates/checkForUpdate';
   import { titles } from '$lib/overview/titles.svelte';
   import { triggersTranscriptRead, SAFETY_POLL_MS } from '$lib/overview/poll';
   import { appSessionRefs } from '$lib/overview/sessionRefs';
@@ -100,6 +101,10 @@
     // them reactively once loaded. Kept on disk (not localStorage) so an abrupt
     // restart doesn't forget the layout.
     void uiPrefs.hydrate();
+    // Check for an in-app update (desktop-auto-update spec). Best-effort and
+    // non-blocking: prompts + installs on confirm when a newer version is
+    // published, and is a silent no-op offline / outside the Tauri runtime.
+    void checkForUpdateOnLaunch();
     // Load the user's open-with preferences (seeds defaults on first run).
     void openWith.load();
     // Load session-title preferences (the opt-in cloud title fallback).

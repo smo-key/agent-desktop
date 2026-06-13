@@ -1257,6 +1257,15 @@ pub fn run() {
         // and posts notifications via @tauri-apps/plugin-notification; the scope is
         // granted by `notification:default` in capabilities/default.json.
         .plugin(tauri_plugin_notification::init())
+        // In-app auto-update (desktop-auto-update spec). The updater plugin
+        // checks the GitHub Release `latest.json` endpoint (configured in
+        // tauri.conf.json `plugins.updater`) and verifies bundles against the
+        // committed public key; the process plugin's `relaunch()` restarts the
+        // app after an update installs. The launch check + install prompt lives
+        // in the frontend (src/lib/updates). Scopes granted by `updater:default`
+        // + `process:default` in capabilities/default.json.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

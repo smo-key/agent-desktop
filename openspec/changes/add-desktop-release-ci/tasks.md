@@ -15,10 +15,10 @@
 
 ## 3. Auto-update integration
 
-- [ ] 3.1 Add `@tauri-apps/plugin-updater` (JS) and `tauri-plugin-updater` (Rust) deps; register the plugin in `src-tauri/src` and the JS entry.
-- [ ] 3.2 Generate an updater signing keypair (`tauri signer generate`); commit the public key into `tauri.conf.json` `plugins.updater` with the GitHub Release `latest.json` endpoint. Document storing the private key as a secret.
-- [ ] 3.3 Add a minimal in-app update-check flow: on launch, check for an update; if found, prompt and on confirm download/verify/install; on no-update or failure (offline) continue silently without blocking startup.
-- [ ] 3.4 Add capability/permission entries the updater plugin requires (`capabilities/default.json`) and ensure `check:gate` still passes.
+- [x] 3.1 Add `@tauri-apps/plugin-updater` (JS) and `tauri-plugin-updater` (Rust) deps; register the plugin in `src-tauri/src` and the JS entry.
+- [x] 3.2 Generate an updater signing keypair (`tauri signer generate`); commit the public key into `tauri.conf.json` `plugins.updater` with the GitHub Release `latest.json` endpoint. Document storing the private key as a secret.
+- [x] 3.3 Add a minimal in-app update-check flow: on launch, check for an update; if found, prompt and on confirm download/verify/install; on no-update or failure (offline) continue silently without blocking startup.
+- [x] 3.4 Add capability/permission entries the updater plugin requires (`capabilities/default.json`) and ensure `check:gate` still passes.
 
 ## 4. Version sync + tagging
 
