@@ -12,6 +12,7 @@ import {
   autoArchiveAction,
   shouldAutoResume,
   deleteAllArchivedRequest,
+  archiveWorkingConfirm,
   rowSub,
   rowModelLabel,
   clipLine,
@@ -270,6 +271,26 @@ describe('Delete all archived agents', () => {
     ];
     // No archived agents → no request to show (the caller hides the action).
     expect(deleteAllArchivedRequest(rows, harness().deps)).toBeNull();
+  });
+});
+
+describe('archiveWorkingConfirm — guard archiving a working agent', () => {
+  it('returns a confirmation request when the agent is working', () => {
+    let archived = 0;
+    const req = archiveWorkingConfirm('working', () => archived++);
+    expect(req).not.toBeNull();
+    expect(req!.confirmLabel).toBe('Archive anyway');
+    // The archive action runs ONLY on confirm, never while merely building the request.
+    expect(archived).toBe(0);
+    req!.onConfirm();
+    expect(archived).toBe(1);
+  });
+
+  it('returns null for every non-working status (archive immediately)', () => {
+    const others: AgentStatus[] = ['waiting', 'finished', 'error', 'idle'];
+    for (const status of others) {
+      expect(archiveWorkingConfirm(status, () => {})).toBeNull();
+    }
   });
 });
 

@@ -45,6 +45,7 @@
     autoArchiveAction,
     shouldAutoResume,
     deleteAllArchivedRequest,
+    archiveWorkingConfirm,
     rowSub as rowSubText
   } from './inbox';
   import { toRosterWorkspaces, toNavWorkspaces } from './rosterInputs';
@@ -701,11 +702,10 @@
     focusNonce += 1;
   }
 
-  /** ARCHIVE an agent's session → moves it to Archived (terminates the terminal but
-   *  keeps it, restorable). An EMPTY session (no user messages) has nothing to
-   *  resume, so it is DELETED outright instead. Not destructive for a real session,
-   *  so no confirm. Drops the pin so focus advances to whatever needs you next. */
-  function archiveAgent(paneId: string) {
+  /** Perform the archive: an EMPTY session (no user messages) has nothing to resume,
+   *  so it is DELETED outright; a real session is archived (kept, restorable). Drops
+   *  the pin so focus advances to whatever needs you next. */
+  function performArchive(paneId: string) {
     advanceAfterDismiss(paneId);
     if (userSelected === paneId) userSelected = null;
     if (archiveDecision(activity.forPane(paneId).userHash) === 'delete') {
@@ -713,6 +713,17 @@
     } else {
       workspace.closeAgent(paneId);
     }
+  }
+
+  /** ARCHIVE an agent's session → moves it to Archived (terminates the terminal but
+   *  keeps it, restorable). Archiving a WORKING agent interrupts a running task, so we
+   *  confirm first; any other status archives immediately (not destructive for a real
+   *  session). Covers the buttons, context menu, and ⌘W alike via this one chokepoint. */
+  function archiveAgent(paneId: string) {
+    const status = viewRows.find((r) => r.paneId === paneId)?.status ?? 'idle';
+    const req = archiveWorkingConfirm(status, () => performArchive(paneId));
+    if (req) confirmModal.show(req);
+    else performArchive(paneId);
   }
 
   /** PAUSE (defer) an agent: keep it live but move it to the Paused lane, out of

@@ -237,6 +237,28 @@ export function rowModelLabel(row: Pick<AgentRow, 'modelId' | 'model'>): string 
 }
 
 /**
+ * PURE: build a confirmation request for archiving an agent that is currently
+ * WORKING (actively producing output), or `null` when no confirmation is needed —
+ * any other status archives immediately. Archiving a working session interrupts a
+ * running task, so we guard it; the returned `onConfirm` runs the caller's `archive`
+ * action ONLY when the user confirms. Mirrors `deleteAllArchivedRequest`'s shape so
+ * the caller just `confirmModal.show(req)` when non-null.
+ */
+export function archiveWorkingConfirm(
+  status: AgentStatus,
+  archive: () => void
+): ConfirmOptions | null {
+  if (status !== 'working') return null;
+  return {
+    title: 'Archive working session?',
+    message:
+      'This agent is currently working. Archiving will stop it. You can restore it later from Archived.',
+    confirmLabel: 'Archive anyway',
+    onConfirm: archive
+  };
+}
+
+/**
  * PURE: build the confirmation request for "delete all archived agents", or `null`
  * when nothing is archived (so the caller hides the action). The returned
  * `onConfirm` deletes every archived pane (`archivedPaneIds`) via `deleteAgent`,
