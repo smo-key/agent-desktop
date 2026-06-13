@@ -2,5 +2,5 @@
   "provider": "local",
   "taskRef": "add-desktop-release-ci",
   "url": "",
-  "lastEvent": "planned"
+  "lastEvent": "implementing"
 }
