@@ -7,6 +7,7 @@
 
   import { help } from './helpStore.svelte';
   import { SHORTCUTS } from './shortcuts';
+  import { autofocus } from './autofocus';
 
   function close() {
     help.close();
@@ -38,7 +39,8 @@
     >
       <header class="head">
         <h2>Keyboard shortcuts</h2>
-        <button class="x" aria-label="Close" onclick={close}>×</button>
+        <!-- Read-only modal: the close button is its only control, so it takes focus. -->
+        <button class="x" aria-label="Close" onclick={close} use:autofocus>×</button>
       </header>
 
       <div class="groups">

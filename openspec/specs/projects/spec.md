@@ -23,6 +23,13 @@ out to `git push` / `git pull --ff-only` in that folder, run NON-INTERACTIVELY
 prompt fails fast instead of hanging. Pull is fast-forward only, so a divergent
 branch fails cleanly without ever leaving the worktree mid-merge.
 
+A Push of a branch that already tracks an upstream runs `git push`. A Push of an
+UNPUBLISHED branch (one with no upstream — never uploaded) instead runs
+`git push -u <remote> HEAD`, where `<remote>` is `origin` when present, else the
+first configured remote; this PUBLISHES the branch (creates the remote branch and
+records tracking), so a later Push is a plain `git push`. "No upstream" is
+therefore NOT a push failure.
+
 On SUCCESS, the action shows a non-blocking toast naming the project and echoing
 git's message. On FAILURE, the action opens an interactive terminal in the
 project's folder that runs the failed git command, so the user sees git's full
@@ -49,11 +56,19 @@ completes (success or failure), so the operation cannot be re-triggered mid-run.
 - **THEN** the app runs `git pull` in that folder, bringing the new commits in
 - **AND** shows a success toast naming the project.
 
+#### Scenario: Push publishes an unpushed branch and sets its upstream
+
+- **WHEN** the user picks **Push** on a project whose current branch has no upstream
+  (was never published) and a remote is configured
+- **THEN** the app runs `git push -u <remote> HEAD` in that folder, creating the
+  branch on the remote and recording tracking
+- **AND** a later Push of that branch is a plain `git push`.
+
 #### Scenario: Push or pull failure opens a terminal
 
-- **WHEN** a Push or Pull cannot complete (no upstream, rejected non-fast-forward,
-  a divergent branch on pull, or no network / a remote that would prompt) AND a
-  terminal surface is available
+- **WHEN** a Push or Pull cannot complete (rejected non-fast-forward, a divergent
+  branch on pull, or no network / a remote that would prompt) AND a terminal
+  surface is available
 - **THEN** the app opens an interactive terminal in the project's folder running
   the failed git command (`git push` / `git pull`)
 - **AND** the action does not throw, and a failed pull leaves the worktree
@@ -94,18 +109,28 @@ A project's git state SHALL be surfaced in the app footer's left zone, before th
 usage-limit bars, as a single always-visible indicator showing the current
 branch, commits ahead/behind its upstream, and the count of modified files (each
 shown even at zero). The indicator SHALL reflect the FOLDER git of the focused
-pane's project; when no pane is focused (e.g. in the overview) it SHALL fall back
-to the project currently selected in the project pane, and show no project git
-when that selection is a non-project bucket (All agents / no project). The git
+pane's project WHILE the agent grid (the terminal panes) is showing — i.e. while
+that pane is actually visible. When the agent panes are NOT visible (the
+overview), the indicator SHALL instead follow the project currently selected in
+the project pane — even if a pane remains focused underneath — so that selecting a
+project updates the footer git with no agents visible; it SHALL show no project
+git when that selection is a non-project bucket (All agents / no project). The git
 state SHALL NOT be rendered on the individual project-pane rows, which carry only
 the project's icon, name, attention dot, and agent count.
 
 #### Scenario: Footer shows the focused pane's project git
 
-- **WHEN** a pane whose project folder is on branch `main`, 2 commits ahead with 3
-  modified files, is focused
+- **WHEN** the agent grid is showing and a pane whose project folder is on branch
+  `main`, 2 commits ahead with 3 modified files, is focused
 - **THEN** the footer's left zone shows that branch, ahead/behind, and modified
   count before the usage-limit bars.
+
+#### Scenario: Footer follows the panel selection when no agent panes are visible
+
+- **WHEN** the agent panes are not visible (the overview) — even though a pane is
+  still focused underneath — and the project pane has a concrete project selected
+- **THEN** the footer shows that selected project's folder git, not the focused
+  pane's.
 
 #### Scenario: Footer falls back to the panel selection in the overview
 
@@ -150,4 +175,29 @@ The system SHALL provide a project panel (shared by both overviews) that filters
 - **WHEN** a project (or "All agents", or the unassigned bucket) is selected in the panel
 - **THEN** the roster is filtered to the agents bound to that selection
 - **AND** the panel shows each project's agent count and flags a project whose agents are waiting/errored
+
+### Requirement: Reorder Projects By Dragging
+The system SHALL let the user reorder the project list by dragging a project row
+onto another, moving the dragged project to the drop target's slot. The new order
+SHALL be persisted with the project list (the sibling `projects.json`) so it
+survives a restart, and SHALL drive both the expanded panel and the collapsed icon
+rail (which mirror the same list). A drag that resolves to no movement (an unknown
+project, or a drop onto itself) SHALL leave the list unchanged.
+
+#### Scenario: Reordering a project by dragging lands it at the drop target
+- **WHEN** a project is dragged and dropped onto another project in the list
+- **THEN** the dragged project is moved to the drop target's position (the standard array-move keyed by id), the rest keep their relative order, and the new order is persisted
+- **AND** a drag with an unknown id, or a drop onto the same project, leaves the order unchanged
+
+### Requirement: Keyboard navigation reveals the selected project filter
+
+When keyboard navigation changes the selected project filter, the system SHALL scroll the active project row into view within the project panel when it is not already fully visible, so the selection never moves out of sight as the user cycles through a panel longer than its scrollport. A selected row that is already fully visible SHALL NOT be scrolled.
+
+#### Scenario: Cycling to an off-screen project scrolls it into view
+- **WHEN** the user cycles the project filter with the keyboard to a project whose panel row is below or above the visible portion of the panel
+- **THEN** the panel scrolls so the active project row is brought into view
+
+#### Scenario: An already-visible project filter is not scrolled
+- **WHEN** keyboard navigation selects a project whose panel row is already fully visible
+- **THEN** the panel scroll position is left unchanged
 

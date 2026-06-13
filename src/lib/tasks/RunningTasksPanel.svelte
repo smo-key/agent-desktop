@@ -213,27 +213,20 @@
               ></span>
               <span class="tp-name" use:tooltip={entry.name}>{entry.name}</span>
               <div class="tp-actions">
-                {#if !entry.running}
-                  {#if entry.kind === 'task'}
-                    <button
-                      class="tp-act"
-                      use:tooltip={'Dismiss'}
-                      aria-label="Dismiss"
-                      onclick={entry.onDismiss}
-                    >
-                      <Icon name="trash-2" size={12} />
-                    </button>
-                  {:else}
-                    <button
-                      class="tp-act"
-                      use:tooltip={'Close'}
-                      aria-label="Close"
-                      onclick={entry.onDismiss}
-                    >
-                      <Icon name="x" size={12} />
-                    </button>
-                  {/if}
-                {/if}
+                <!-- Trash is ALWAYS shown (both kinds, running or stopped). Clicking
+                     it kills the terminal AND closes its slot: onDismiss drops the
+                     entry from the store, which unmounts the live `TerminalPane`,
+                     whose onDestroy kills + reaps any still-running PTY. A stopped
+                     slot has no live process, so it just closes. The verb tracks
+                     state — "Kill" while running, "Close" once stopped. -->
+                <button
+                  class="tp-act"
+                  use:tooltip={entry.running ? 'Kill terminal' : 'Close terminal'}
+                  aria-label={entry.running ? 'Kill terminal' : 'Close terminal'}
+                  onclick={entry.onDismiss}
+                >
+                  <Icon name="trash-2" size={12} />
+                </button>
               </div>
             </div>
             <div class="tp-term-body">

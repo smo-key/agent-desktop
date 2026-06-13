@@ -1,0 +1,401 @@
+# Changelog
+
+All notable changes to this project are documented here.
+This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
+
+## [Unreleased]
+
+### Features
+
+- **ci**: Make sidecar provisioning cross-platform
+- **ui**: Autofocus the first control when a dialog opens
+- **ui**: Add shared autofocus Svelte action
+- **alerts**: Restrict desktop notifications to focus-independent modes
+- **orchestration**: Identify agents by generated session title
+- **alerts**: Suppress alerts for never-prompted agents; use generated title
+- **inbox**: Confirm before archiving a working agent
+- **alerts**: Desktop + sound notifications when an agent needs input
+- **terminal**: Make HTTP/HTTPS URLs clickable like file links
+- **footer**: Enrich open-PRs popover rows with author, updated, status
+- **openPrs**: Mirror author/updatedAt and add popover-row helpers
+- **footer**: ↑ pill always opens push popover; publish unpushed branches
+- **pr**: Capture PR author and updatedAt in open-PRs lookup
+- **git**: Make unpushed branches publishable from status + push
+- **inbox**: Advance focus to next actionable session on dismiss
+- **roster,projects**: Drag-to-reorder buckets and projects
+- **push-popover**: Open a commit's GitHub diff from the push pill
+- **footer**: Always run commit + create-PR tasks on Sonnet
+- **footer**: Split commit task into logical commits by content
+- **terminals-panel**: Always-on trash button kills + closes a terminal
+- **inbox**: Collapse Archived lane to latest 2 with Show all toggle
+- **footer-git-followups**: Footer git follows panel selection, count tooltip, openable popover files
+- **titles**: Improve session-title quality on the on-device model
+- **overview**: Launched-coordinator waiting, hide unknown context, reset-time tooltips
+- **footer**: Per-branch PR #N bubble; orange popover buttons; review tooltips
+- **footer**: Popover actions close immediately + blue, consistent buttons
+- **footer**: Open-PRs pill opens a popover (drafts last); badge excludes drafts
+- **footer**: Open-PRs pill opens a popover (drafts last); badge excludes drafts
+- **footer**: Push pill opens a popover listing commits-to-push with Push now
+- **footer**: Add FooterPopover + open a commit popover from the uncommitted pill; count-only tooltip
+- **overview**: Show the agent's model on its card instead of the dollar cost
+- **footer**: Show focused session model + effort as non-interactive pills
+- **usage**: Add model_id + effort snapshot fields and model/effort label helpers
+- **footer-actions**: Commit button + uncommitted-files hover list
+- **footer-actions**: Open-PRs-awaiting-review button (warning+count / checkmark, opens GitHub)
+- **footer-actions**: PR button — open existing or create-via-agent-task into main
+- **session-titles**: Derive auto-titles from the whole session, weighted to the original request
+- **coordinator-lifecycle**: Archive/delete the coordinator like any session; label it when archived
+- **agent-roster-display**: Icon-only compass badge for coordinated agents
+- **agent-roster-display**: Show last message/question on every row, incl. archived
+- **session-titles**: Refresh auto-title promptly after each user message
+- **session-titles**: Let the user rename a session (header + context menu, manual sticks)
+- **inbox-auto-advance**: Add opt-in auto-advance setting (default off)
+- **agent-status-derivation**: Show In flight while terminal is actively working
+- **keyboard-shortcuts**: Rebind insert file path to Cmd+O
+- **project-agent-counters**: Exclude archived agents from counters
+- **usage**: Wire the branch picker into the footer branch pill
+- **usage**: Add BranchPicker dropdown menu component
+- **projects**: Add branchActions module (list/switch/create + helpers)
+- **projects**: Add ProjectGitStore.refreshOne for targeted git refresh
+- **terminal-insert-filename**: ⌘I shortcut + help-modal entry
+- **terminal-insert-filename**: Insert Filename context-menu item
+- **terminal-insert-filename**: QuotePath + insertFilenameInto + pickFile
+- **overview**: Delete all archived agents with a confirmation dialog
+- **titles,models**: Cloud title fallback + delete downloaded models
+- **coordinator**: Needs-input tool + suppress default needs-input heuristic (tasks 10.11-10.12)
+- **coordinator**: Include coordinator in ⌘↑/↓ cycling; no pause/archive, delete-only (tasks 10.8-10.9)
+- **coordinator**: Always-"Coordinator" label, show with no sessions, drop menu item (tasks 10.5-10.7)
+- **usage**: Match footer push/pull button size + guard against double-trigger
+- **projects**: Open a terminal when Push/Pull fails + footer sync buttons
+- **coordinator**: Pin coordinator atop Sessions + start affordance + main-pane Start state (tasks 10.2-10.4)
+- **projects**: Move project git state from the project pane into the footer
+- **coordinator**: Restrict coordinator to orchestration-only (no work tools) (task 10.1)
+- Show all functional keyboard shortcuts in help modal
+- **project-folder-storage**: Move autoWorktree off the registry to project-folder config
+- **project-folder-storage**: Per-project task store load/save with retry
+- **project-folder-storage**: One-time migration of user-level data into project folders
+- **specialists**: Model dropdown, tools multiselect, tab rename, resizable Sessions (tasks 9.1-9.3)
+- **coordinator**: Per-project coordinator lifecycle + projectId-scoped toolkit (tasks 6.1-6.5)
+- **project-store**: Per-project .agent-desktop tasks/config commands (tasks 1.1-1.3)
+- **project-tasks**: Per-project sanitized tasks + config serialization (tasks 2.1-2.2)
+- **workflow**: Add BA define lane and fold dev pickup into workflow-start
+- **usage**: Startup usage-bootstrap session tests + review fixes + OpenSpec delta
+- **orchestration**: Frontend executor for toolkit ops (tasks 4.1-4.6)
+- **projects**: Push/Pull context-menu items on project rows
+- **orchestration**: Bundled MCP toolkit adapter + per-session mcp-config (tasks 3.5-3.6)
+- **orchestration**: Rust control socket with id-correlated reply + per-target queue (tasks 3.1-3.4)
+- **specialists**: Reactive store wrapping specialist commands (task 2.4)
+- **specialists**: Tauri commands to list/read/write/delete .claude/agents files (task 2.3)
+- **projects**: Worktree management dialog (list/open/prune)
+- **workspace**: Remove clean worktrees on permanent session close
+- **launcher**: Launch sessions into an auto-created worktree
+- **git**: Worktree create/remove/list Tauri commands
+- **projects**: Auto-worktree toggle in project form
+- **specialists**: Pure specialist model + name validation (tasks 2.1, 2.2)
+- **projects**: Add per-project autoWorktree setting field
+- **onboarding**: Full-screen first-launch model gate + route wiring
+- **specialists**: Resolve spawn-as-specialist CLI spike (task 1)
+- **onboarding**: Presence-gated onboarding store with session dismissal
+- **onboarding**: Pure download-list catalog (formatBytes, downloadRows)
+- **titles**: Generate session titles with the local model, not haiku
+- **launcher**: Launch spinner for agent panes
+- **voice**: White waveform, centered 5-bar mirror
+- **voice**: Simplified panel — mic waveform, checkmark, processing shimmer
+- **tasks**: Toast "<task> completed" on successful task completion
+- **voice**: Live partial transcript overlay (frontend-driven rolling re-transcribe)
+- **tasks**: Auto-archive a task-spawned agent once it returns to the user
+- **voice**: Move activation button to a footer-centered overlay launcher
+- **tasks**: Click-to-start + context menu, optional name, close terminals on exit 0
+- **voice**: Assemble dictation pipeline (capture→STT→polish→insert)
+- **voice**: Transcript polish (llama-server sidecar + constrained prompt + gating/fallback)
+- **tasks**: ⌘T opens task dialog, ⌘Y opens bare terminal; single root-mounted dialog
+- **tasks**: Create/edit task dialog; Agents-bar launcher header; Terminals panel + button
+- **voice**: Whisper.cpp STT sidecar scaffolding + VAD gating + WAV/arg/JSON pure logic
+- **tasks**: ProjectTasks.update() to edit a task definition (name/kind/command/prompt)
+- **voice**: Mic capture + macOS permission handling + denied guidance
+- **voice**: Double-tap right-Command activation (NSEvent monitor + detector)
+- **tasks**: Wire agent-task launcher to open a Claude workspace session
+- **tasks**: Left Tasks launcher panel under the Agents roster with resizable splitter
+- **voice**: Verbatim insertion into focused agent terminal (no auto-submit)
+- **tasks**: Right panel renders running task + bare-terminal panes, renamed "Tasks", no +
+- **voice**: Bottom-center voice panel + store + activation button
+- **tasks**: Store lifecycle — completion semantics, agent dispatch, bare terminals, migration
+- **tasks**: Task kind (terminal|agent) + prompt + legacy terminals migration
+- **voice**: Settings store + merge-on-save persistence + settings UI
+- **tasks**: Tasks_load/tasks_save Tauri commands for tasks.json persistence
+- **voice**: Plan add-voice-input OpenSpec change
+- **desktop**: Projects, terminals panel, file links, settings & UI overhaul
+- **workflow**: Workflow-quick skill
+- **workflow**: Workflow-close skill
+- **workflow**: Workflow-build skill
+- **workflow**: Workflow-start skill
+- **workflow**: Workflow index/router skill
+- **workflow**: Self-contained subagent-driven build-loop reference
+- **workflow**: Jira provider reference
+- **workflow**: Github projects provider reference
+- **workflow**: Local provider reference
+- **workflow**: Provider contract reference
+- **workflow**: Workflow.json linkage reference
+- **workflow**: Config schema reference for workflow skills
+- **footer**: Inset logo within agent avatar tiles (padding + contain)
+- **footer**: Use project logo in the footer chip when present
+- **footer**: Limit bars read time(colored) | bar | used%(white)
+- **footer**: Align right zone under terminal pane (dynamic) + stack above collapsed selector
+- **footer**: Git pills with icons, ctx %+color, time-remaining limit labels
+- **footer**: Mount AppFooter, drop UsageBar + title-bar UsageMeter
+- **footer**: Footer components (StatusBar, ProjectChip, LimitBars, GitInfo, ContextBar, AppFooter)
+- **footer**: FooterView pure derivation
+- **footer**: Thread git ahead/behind through Rust + TS types
+- **footer**: Wrapper emits git ahead/behind counts
+- **footer**: ContrastText helper for the project chip
+- **footer**: BarColor helper (green<50, yellow<80, red)
+- **overview**: Drop the attention count labels
+- **overview**: Collapse the project pane, 1s top-first advance, agent keynav, remember project
+- **overview**: Inbox polish — debounced advance, sidebar collapse, title bar, launcher
+- **layout**: Persist sessionId and resume sessions with claude --resume on restart
+- **usage**: Compact display-only UsageMeter (5h/7d windows) for the title bar
+- **overview**: Close sessions, fix promptless "Working", drop the Grid tab
+- **overview**: Render the Inbox and teleport the surface via portal
+- **overview**: Inbox surface — grouped roster + teleported live-TUI focus
+- **overview**: Pure inbox selection cores (queue/resolve/nav/pin)
+- **terminals**: Focus() + scrollToBottom() handle methods and helpers
+- **layout**: Surface-slot store for the teleport target
+- **layout**: Portal action to relocate a persistent element
+- **overview**: Haiku-generated session titles from the user's messages
+- **overview**: Remove the Windows view entirely
+- **overview**: Richer agent cards — markdown transcript, full-width attn, 1-line statusline
+- **events**: Event-sourced status, currentAction & timeline in the overview (groups 4-7, 9)
+- **events**: Hook → Unix socket → durable sink pipeline backend (groups 1-3, 8)
+- Milestone 6 — workflow-board (generic, read-only /workflow board)
+- Agent-overview (mission control)
+- Milestone 5 — session-launcher (folder picker + recents + initial prompt + placement)
+- Milestone 4 — task-detection (foreign-session watcher + per-pane task badge)
+- Milestone 3 — usage-dashboard (statusline wrapper + snapshot watcher + two-row bar)
+- **tiling-layout**: Pane right-click context menu
+- Milestone 2 — tiling-layout (recursive splits + session rail) + layout-persistence
+- Milestone 1 — scaffold + terminal-core PTY walking skeleton
+
+### Bug Fixes
+
+- **alerts**: Correct viewedPaneId, startup priming, permission recovery
+- **git**: Keep detached HEAD non-publishable; capture footer-publish change
+- **footer**: Gate open-PR row updated-time on the parsed value
+- **projects**: Open the project context menu from the collapsed rail
+- **overview**: Keep a parent agent In flight while a Task subagent finishes
+- **session-rail**: Widen rename input overlay to 720px
+- **pty**: Resolve login-shell PATH so claude launches from Finder
+- **icon**: Pad macOS app icon to Apple safe area
+- **archived-panel**: Stable cost/time for closed sessions; reverse-chron order
+- **overview**: Latch everPrompted durably so a long-turn coordinator stays Working
+- **footer**: Keep the push pill inert at ahead===0 (nothing to push)
+- **footer**: Close FooterPopover on Escape via window handler; drop dead gitFilesTooltip
+- **coordinator-lifecycle**: Restore the archived coordinator on Start (one coordinator per project)
+- **agent-roster-display**: State-appropriate sub-line fallback (restore per-state words + cost)
+- **terminal-file-links**: Reconcile open-with spec with shipped 4-bucket model
+- **activity-pipeline**: Complete sidecar retirement + reconcile interrupt/seed drift
+- **review**: Merge-seed + event-store question gate (review WARNINGs)
+- **review**: Resolve adversarial-review CRITICALs before archive
+- **git**: Guard checkout against option injection via --end-of-options
+- **terminal-insert-filename**: Shell-safe quoting + no-dialog guard + Cmd-Opt-I
+- **git**: Exclude the bare remote name from list_branches remotes
+- **spawn**: Disable Claude's agent view so arrow keys don't archive sessions
+- **overview**: Forward SessionEnd reason so /clear never reads as finished
+- **overview**: Return interrupted (Esc) agents to Needs-input
+- **overview**: Don't auto-archive a live session on a SessionEnd
+- **terminal**: Shift+Enter inserts a newline instead of submitting
+- **overview**: Gate pause/preview auto-resume on a whole-file user-message count
+- **models**: Download via system curl to survive per-process proxy blocking
+- **models**: Download models behind TLS-inspecting corporate proxies
+- **coordinator**: Show "No sessions yet" when only the coordinator is present (task 10.10)
+- **project-folder-storage**: Don't clobber an unreadable per-project file
+- **project-folder-storage**: Make migration non-destructive (review CRITICALs)
+- **usage**: Keep footer limit bars from clipping behind a long branch name
+- **worktree**: Robust worktree removal + guard form toggle against stale load
+- **project-folder-storage**: Clear legacy terminals.json on migration (idempotency)
+- **orchestration**: Exclude coordinator panes from toolkit targets + list_agents
+- **titles**: Stop the model parroting the SKIPA-45 placeholder
+- **projects**: Harden Push/Pull — non-interactive git + ff-only pull
+- **voice**: Clicking outside the panel no longer closes/cancels it
+- **workspace**: Clean up worktree on multi-pane deleteAgent
+- **onboarding**: Guard download re-entrancy; harden formatBytes edges
+- **voice**: Show whole message (substantial commit chunks) + Esc-over-TUI cancel
+- **voice**: Whisper-server readiness probe (no /health endpoint)
+- **titles**: Strip think-blocks by original-string offsets, not lowercased copy
+- **launcher**: Backstop so the launch spinner can't cover a pane forever
+- **voice**: Resolve adversarial-review findings
+- **voice**: Don't drop quiet/short speech; show "didn't catch that" feedback
+- **voice**: Lively waveform — level-driven 5-bar dance
+- **voice**: Strip whisper non-speech annotations; slow live-partial interval
+- **voice**: Correct insertion target, spawn-if-none, tap-to-stop toggle
+- **voice**: Single right-⌘ tap activation, working STT, polish model URL, no-target P0
+- **tasks**: Let the task dialog own the keyboard while open (parity with launcher)
+- **tasks**: Keep failed task pane mounted to preserve error output; guard migration test
+- **tasks**: Migrate legacy terminals only when tasks.json absent; cover no-command exit-0
+- **workflow**: Jira provider — consistent BASE from config, no phantom JIRA_BASEURL env
+- **footer**: Logo inset uses px padding (16% resolved vs parent width → huge tile)
+- **overview**: Idle session is a stable "waiting", not a PTY-driven flicker
+- **layout**: Portal same-target no-op + home precondition + tests
+- Address 5 live-review issues (drag, close, launch, status; drop workflow-board)
+- Resolve integration-review findings across the milestone seams
+- Use macOS Overlay title bar, drop duplicate custom traffic lights
+
+### Refactor
+
+- **pr**: Extract parse_repo_url; fix rail rename overlay clipping
+- **footer**: Drop dead helpers superseded by popover/PR-bubble wiring
+- **project-terminals**: Drop selective auto-restart, superseded by project-folder storage
+- **tasks**: Rename project-terminals module → project-tasks (mechanical, no behavior change)
+- **overview**: Retire the card Overview (superseded by the Inbox)
+
+### Documentation
+
+- **openspec**: Sync dialog-autofocus spec into durable specs
+- **openspec**: Propose add-alert-click-focus change
+- **openspec**: Propose add-desktop-release-ci change
+- **openspec**: Propose add-search-command-palette change
+- **openspec**: Archive footer-publish-unpushed-branch; promote specs
+- **specs**: Sync open-PRs popover enrichment into footer-actions
+- **inbox**: Fix stale 'reversed above' comment on Archived order
+- **openspec**: Scaffold enrich-open-prs-popover change
+- **openspec**: Propose needs-input alerts (sound + desktop notifications)
+- **claude**: Auto-commit completed work; keep no-auto-branch
+- Add README
+- **terminals-panel-trash-button**: Capture always-on trash button delta
+- **agent-session-ux-improvements**: Reconcile proposal with shipped footer behavior
+- **agent-session-ux-improvements**: Close gate 21; record dead-code cleanup (group 25)
+- **footer**: Accurate PR-bubble base-branch comments; check off group 20
+- **agent-session-ux-improvements**: Reopen + extend scope
+- **footer-branch-switcher**: Reconcile design with shipped implementation
+- **terminal-insert-filename**: Reconcile spec/design with shipped code
+- **openspec**: Plan footer-branch-switcher change
+- **claude**: Forbid auto-creating branches under branchPerTask:false
+- **openspec**: Coordinator needs-input + No-sessions-box fix (tasks 10.10-10.12)
+- **openspec**: Coordinator label "Coordinator", show w/ no sessions, drop menu (tasks 10.5-10.7)
+- **projects**: Spec the single-flight push/pull guard
+- **openspec**: Sync project-folder-storage + project-tasks into durable specs
+- **openspec**: Reconcile design/tasks with on-demand config access
+- **projects**: Sync footer-git delta into the durable projects spec
+- **openspec**: Coordinator must delegate + pinned-top Sessions UI (tasks 10.x)
+- **openspec**: Reconcile migration drift — legacy terminals.json cleared
+- **openspec**: Reconcile add-project-auto-worktree with folder-config storage
+- **show-all-shortcuts-in-help**: Capture spec delta for shortcuts registry
+- **openspec**: Coordinator-exclusion scenarios + verification status (task 8.x)
+- **openspec**: Extract shared runtime from coordinator; UI scope; check off tasks
+- **openspec**: Capture fix-title-prompt-ticket-placeholder delta
+- **openspec**: Propose add-project-folder-storage
+- **openspec**: Propose add-first-launch-model-gate
+- **openspec**: Plan add-agent-specialists (multi-agent support)
+- **voice**: Reconcile spec/design/tasks drift before archive
+- **coordinator**: Apply-ready OpenSpec change for per-project coordinator agent
+- Workflow-build drives a self-contained subagent-driven build loop (no superpowers dep)
+- Implementation plan for workflow skills; rename workflow-implement -> workflow-build
+- Design for workflow skill set (start/implement/close/quick + providers)
+- **footer**: Persistent footer implementation plan
+- **footer**: Persistent footer design spec
+- Implementation plan for the agent inbox overview
+- Design for the agent inbox overview (master–detail + live TUI focus)
+- Design for agent activity event pipeline (hooks → socket → durable sink)
+- Add agent-desktop design spec
+
+### Testing
+
+- **coverage**: Map usage-dashboard + agent-overview scenarios to tests
+- **coverage**: Enforce git-branch-switching scenario coverage
+- **project-folder-storage**: Enroll capability in the scenario-coverage gate
+- **project-folder-storage**: Cover all 18 enforced scenarios by title
+- **tasks**: Enforce project-tasks + tasks-panel in scenario-coverage gate
+
+### Miscellaneous
+
+- **tasks**: Add Run Dev terminal task
+- **openspec**: Archive enrich-open-prs-popover
+- **project**: Track .agent-desktop/tasks.json
+- **terminals-panel-trash-button**: Sync spec + archive change
+- **footer-git-followups**: Sync specs + archive change
+- Workflow complete
+- **deps**: Refresh package-lock metadata
+- **branding**: Rename app to "Agent Desktop"
+- Ignore worktrees/ directory
+- Add signed + notarized macOS packaging build
+- **agent-session-ux-improvements**: Archive change; promote 10 capability specs
+- **agent-session-ux-improvements**: Check off group 17 (push popover)
+- **agent-session-ux-improvements**: Check off group 16 (FooterPopover + commit popover)
+- **agent-session-ux-improvements**: Check off group 14 (footer model + effort pills)
+- **agent-session-ux-improvements**: Check off group 13 (snapshot model_id/effort + label helpers)
+- **agent-session-ux-improvements**: Mark review (implementation complete)
+- **agent-session-ux-improvements**: Check off tasks 4 + gate (13.1/13.2); 13.3 manual remains
+- **agent-session-ux-improvements**: Check off task 7
+- **agent-session-ux-improvements**: Check off tasks 6 + 12
+- **coordinator-lifecycle**: One-coordinator-per-project (restore on Start); check off tasks 1 + 4
+- **footer-actions**: Add uncommitted-files hover list + open-PRs-awaiting-review button; check off task 2
+- **agent-session-ux-improvements**: Check off tasks 5 + 9
+- **session-titles**: Add whole-session title derivation requirement; check off task 3
+- **agent-session-ux-improvements**: Check off tasks 8 + 11
+- **agent-session-ux-improvements**: Mark implementing
+- **agent-session-ux-improvements**: Apply-ready OpenSpec change
+- **add-terminal-file-links**: Archive change; promote 2 capability specs
+- **add-delete-all-archived-agents**: Archive change; fold into agent-overview
+- **add-activity-event-pipeline**: Archive change; promote 2 capability specs
+- **add-terminals-panel**: Archive change; promote 2 capability specs
+- **add-agent-specialists**: Archive change; promote 3 capability specs
+- **add-agent-desktop**: Archive change; promote 8 capability specs
+- **add-agent-desktop**: Reconcile tasks for close-out
+- **openspec**: Archive footer-branch-switcher; promote git-branch-switching spec
+- **terminal-insert-filename**: Sync spec + archive change (done)
+- **footer-branch-switcher**: 7.3 live verification confirmed by user
+- **footer-branch-switcher**: Tasks complete, mark in review
+- **terminal-insert-filename**: Tasks done + final review APPROVE; status review
+- **terminal-insert-filename**: Mark foundation tasks done; status implementing
+- **terminal-insert-filename**: Insert Filename menu action + ⌘I
+- Various improvements
+- Add package:mac build script for macOS bundling
+- **setup**: Add setup scripts and sync lockfile
+- Workflow skill updates, tooltip util, and misc UI tweaks
+- **openspec**: Archive add-project-folder-storage (done)
+- **add-git-sync-terminal-fallback**: Archive change, promote specs
+- **move-project-git-to-footer**: Archive change, mark done
+- **openspec**: Archive add-project-auto-worktree; promote project-worktrees spec
+- **openspec**: Mark add-project-folder-storage tasks done, in review
+- **gate**: Drop inert usage-bootstrap MANUAL entries
+- **show-all-shortcuts-in-help**: Archive change, promote keyboard-shortcuts spec
+- **usage**: Drop startup usage-bootstrap session
+- **workflow**: Mark add-agent-specialists in review
+- **voice**: Remove pre-archive change dir for add-whisper-server-partials
+- **voice**: Archive add-whisper-server-partials (done)
+- **voice**: Check off 4.2 manual live verification
+- **openspec**: Sync + archive fix-title-prompt-ticket-placeholder
+- **openspec**: Archive add-usage-bootstrap-session (done)
+- **openspec**: Archive add-project-push-pull-menu (done)
+- **specialists**: Check off tasks 2.1-2.4 (model, validation, commands, store)
+- **openspec**: Mark add-project-auto-worktree in review
+- **openspec**: Complete add-project-auto-worktree tasks; mark implementing
+- **openspec**: Sync + archive add-first-launch-model-gate
+- **projects**: Apply-ready add-project-auto-worktree change
+- **voice**: Mark add-whisper-server-partials in review
+- **openspec**: Sync + archive switch-title-model-to-local
+- **voice**: Partials retain full message, reprocess only a 6s sliding window
+- **voice**: Apply-ready add-whisper-server-partials change
+- **openspec**: Sync + archive add-launch-spinner
+- **voice**: Archive add-voice-input; promote specs to durable
+- **workflow**: Archive add-tasks-panel; promote project-tasks + tasks-panel specs
+- **tasks**: Close-out drift — mark 8.3 live smoke confirmed by user
+- **tasks**: Mark group 9 (dialog + UI polish) complete
+- **tasks**: Mark add-tasks-panel in review (implementation complete)
+- **tasks-panel**: Mark implementing; sync launcher location to Inbox roster
+- **tasks-panel**: Apply-ready OpenSpec change for project Tasks
+- **overview**: Drop dead derived values + refresh stale comments
+- **agent-overview**: Inbox overview requirement + scenarios
+- Add design kit (brand, type/color tokens, UI mockups)
+- Add pre-commit gate (svelte-check + coverage + openspec validate) (§1.7)
+- Check off 9.3 (validate --strict + full check green)
+- Check off workflow-board (§8) + whole-change coverage (§9.2)
+- Check off agent-overview tasks (§10)
+- Add agent-overview capability (mission control)
+- Check off M5 tasks (session-launcher §7)
+- Check off M4 tasks (task-detection §6)
+- Check off M3 tasks (usage-dashboard §5.1-5.5)
+- Check off M2 tasks (tiling-layout §3, layout-persistence §4)
+- Check off M1 tasks (foundation §1.1-1.6, terminal-core §2.1-2.5)
+- Add 'add-agent-desktop' change (7 capabilities)
+
+

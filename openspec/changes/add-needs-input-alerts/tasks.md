@@ -1,0 +1,71 @@
+## 1. Pure alert core (`notify.ts`)
+
+- [x] 1.1 Write `src/lib/overview/notify.test.ts`: cover `newlyNeedsAttention(prev, rows)` edge detection (entry fires; staying does not; re-entry fires; paused/archived/preview excluded) and `shouldAlert(row, mode, ctx)` across all four modes × focus/viewed-agent combinations (per the `needs-input-alerts` spec scenarios).
+- [x] 1.2 Implement `src/lib/overview/notify.ts`: export `AlertMode` type, `newlyNeedsAttention` (set-diff over `needsAttention` rows), and `shouldAlert`. Framework-free (no Svelte/Tauri/browser imports). Make 1.1 pass.
+
+## 2. Settings store (`notifications.svelte.ts`)
+
+- [x] 2.1 Write `src/lib/settings/notifications.test.ts` for the pure `parseNotificationPrefs`: fresh/missing slice → both `off`; valid modes load; non-object / unknown / missing mode → falls back to `off` per channel.
+- [x] 2.2 Implement `src/lib/settings/notifications.svelte.ts` mirroring `autoAdvance.svelte.ts`: `NotificationPrefs` (`{ sound: { mode }, desktop: { mode } }`), `DEFAULT_NOTIFICATION_PREFS` (both `off`), pure `parseNotificationPrefs`, `NotificationStore` with `prefs`/`loaded`/`load()`/`setSoundMode`/`setDesktopMode`, persisting the `notifications` slice via `saveSettingsSlice`. Singleton export. Make 2.1 pass.
+
+## 3. Window-focus store (`windowFocus.svelte.ts`)
+
+- [x] 3.1 Implement `src/lib/overview/windowFocus.svelte.ts`: a reactive `appFocused` store derived from `window` `focus`/`blur` + `document.visibilitychange` (focused = has focus AND document visible), with start/stop listener wiring guarded for non-browser/SSR. (Live-wired; no unit test.)
+
+## 4. Tauri notification plugin wiring
+
+- [x] 4.1 Add `@tauri-apps/plugin-notification` to `package.json` dependencies and install.
+- [x] 4.2 Add `tauri-plugin-notification` to `src-tauri/Cargo.toml` and register it in `src-tauri/src/lib.rs` (`.plugin(tauri_plugin_notification::init())`).
+- [x] 4.3 Grant `notification:default` in `src-tauri/capabilities/default.json`.
+
+## 5. Reactive alert shell (`alerts.svelte.ts`)
+
+- [x] 5.1 Implement `src/lib/overview/alerts.svelte.ts`: an `AlertController` holding the primed/`prev` attention set; a `process(rows, ctx)` that primes on first observation (fires nothing), computes `newlyNeedsAttention`, and for each new row fires the sound chime when `shouldAlert(row, prefs.sound.mode, ctx)` and the desktop notification when `shouldAlert(row, prefs.desktop.mode, ctx)`.
+- [x] 5.2 Implement `playChime()` (lazy `AudioContext`, two-tone oscillator ding, resumed on first use) and `desktopNotify(row)` (permission check/request via `@tauri-apps/plugin-notification`; `sendNotification({ title, body })` with title "Agent needs input" and body = name + clipped question/summary; swallow errors in non-Tauri/denied contexts).
+
+## 6. Route integration (always-mounted driver)
+
+- [x] 6.1 Add `src/lib/overview/focusAgent.svelte.ts`: a one-field reactive singleton (`paneId`) holding the inbox's currently-shown agent.
+- [x] 6.2 In `src/lib/overview/Inbox.svelte`, publish the shown agent into `focusAgent` via one `$effect` (`focusAgent.paneId = focus?.paneId ?? null`). (Inbox is mounted only in overview mode, so it must not own the alert driver.)
+- [x] 6.3 In `src/routes/+page.svelte` (always mounted), build the alert roster via `buildRoster(...)` off the shared singletons on a 1s clock, compute `viewedPaneId` (`view.isGrid ? workspace.focusedId : focusAgent.paneId`), start `windowFocus`, and call `alerts.process(rows, { appFocused, viewedPaneId })` from an `$effect` — so alerts fire in both overview and grid views with no double-firing.
+
+## 7. Settings UI
+
+- [x] 7.1 Add a "Notifications" section to `src/lib/ui/SettingsModal.svelte`: two mode pickers (Sound, Desktop notification) each offering Never / App in background / Not viewing the agent / Always, bound to `notifications.setSoundMode` / `setDesktopMode`; load on mount. Reflect a denied-permission state on the desktop picker where detectable.
+
+## 8. Verify
+
+- [x] 8.1 Run `npm run check:gate` (type-check, tests, coverage) and fix any failures.
+- [ ] 8.2 Manual smoke in `npm run dev`: configure each mode, confirm sound and desktop alerts fire on a real agent entering Needs input under the expected focus/view conditions, and that defaults are silent.
+
+## 9. No alerts before first prompt + notification uses generated title
+
+- [x] 9.1 Add `everPrompted?: boolean` to `AgentRow` (`src/lib/overview/roster.ts`) and set it in `rowFor` from `event?.everPrompted === true`.
+- [x] 9.2 Extend `src/lib/overview/notify.test.ts`: a never-prompted (`everPrompted: false`) row that newly enters Needs input is excluded from `newlyNeedsAttention`; a prompted (`everPrompted: true`) and an unspecified (`undefined`, legacy/fixtures) row are still returned.
+- [x] 9.3 In `newlyNeedsAttention` (`src/lib/overview/notify.ts`), also exclude rows with `everPrompted === false` (suppress alerts for an agent launched with no prompt; `undefined` still alerts so fixtures/legacy are unaffected). Make 9.2 pass. Document that this gates ALERTS only — the attention lane is unchanged.
+- [x] 9.4 In `src/routes/+page.svelte`, resolve each alert row's `name` to `titles.titleFor(paneId) ?? name` when building `alertRows`, so `notificationBody` shows the generated title rather than the "Session N" workspace name.
+- [x] 9.5 Run `npm run check:gate` and fix any failures.
+
+## 10. Restrict the desktop channel to focus-independent modes
+
+The focus-aware modes (`agent-unfocused`, `always`) only differ from `app-unfocused`
+while the app is focused, where macOS shows no notification — so they are meaningless
+for the desktop channel. Offer only `off` / `app-unfocused` for desktop; sound keeps all four.
+
+- [x] 10.1 Add a pure `clampDesktopMode` to `src/lib/settings/notifications.svelte.ts` (`off`/`app-unfocused` pass through; `agent-unfocused`/`always` → `app-unfocused`) and apply it in `load()` and `setDesktopMode()`. Extend `notifications.test.ts` first: the clamp's table, a legacy desktop mode clamped on load, and `setDesktopMode('always')` clamped.
+- [x] 10.2 In `src/lib/ui/SettingsModal.svelte`, remove the `agent-unfocused` and `always` options from the DESKTOP picker only (leave the sound picker's four intact).
+- [x] 10.3 Run `npm run check` and the touched tests; fix any failures.
+
+## 11. Notification reads "Project: Agent" with the latest message as the body
+
+Supersedes the title/body shape of task 5.2: the title becomes "<Project Name>:
+<Agent Title>" (project prefix dropped when the agent has no project) and the body
+becomes the agent's most recently sent message alone (no longer prefixed with the
+agent name, which now lives in the title).
+
+- [x] 11.1 Add an optional alert-display field `projectName?: string | null` to `AgentRow` (`src/lib/overview/roster.ts`), documented as set only at the alert callsite (parallel to the `name` title override). `rowFor` need not set it.
+- [x] 11.2 Update the `Desktop notification content and permission` scenarios in `src/lib/overview/notify.test.ts` to the new spec: `notificationTitle(row)` returns "Acme API: parser" (and "parser" alone when no project), and `notificationBody(row)` returns the question/last-message alone, one line, with a generic fallback when neither exists. Keep `it(...)` titles matching the spec `#### Scenario:` names.
+- [x] 11.3 In `src/lib/overview/notify.ts`, change `notificationTitle()` to `notificationTitle(row: AgentRow)` returning `projectName ? "${projectName}: ${name}" : name`, and change `notificationBody(row)` to return the clipped pending-question-else-summary alone (generic needs-input fallback when neither). Make 11.2 pass.
+- [x] 11.4 In `src/lib/overview/alerts.svelte.ts`, call `notificationTitle(row)` (pass the row) in `desktopNotify`.
+- [x] 11.5 In `src/routes/+page.svelte`, when building `alertRows`, also resolve `projectName` from `projectForId(projects.list, r.projectId)` (via `projectLabel`) and attach it to the row alongside the `name` title override.
+- [x] 11.6 Run `npm run check` and the touched tests; fix any failures.

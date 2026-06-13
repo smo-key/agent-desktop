@@ -6,6 +6,7 @@
   // HelpModal backdrop/dialog pattern. Dismiss with Esc / backdrop / close button.
 
   import { settingsModal } from './settingsStore.svelte';
+  import { autofocus } from './autofocus';
   import {
     openWith,
     APP_CHOICES,
@@ -14,6 +15,10 @@
   } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
+  import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
+  import { notifications, type AlertMode } from '$lib/settings/notifications.svelte';
+  import { ensureDesktopPermission } from '$lib/overview/alerts.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
   import {
     ensureModels,
@@ -69,7 +74,7 @@
   // The buckets, in display order, with human labels.
   const ROWS: { bucket: FileBucket; label: string }[] = [
     { bucket: 'code', label: 'Code files' },
-    { bucket: 'html', label: 'HTML files' },
+    { bucket: 'html', label: 'HTML files and URLs' },
     { bucket: 'markdown', label: 'Markdown files' },
     { bucket: 'other', label: 'Other files' }
   ];
@@ -129,6 +134,36 @@
         <h2>Settings</h2>
         <button class="x" aria-label="Close" onclick={close}>×</button>
       </header>
+
+      <section class="group">
+        <span class="label">Sessions panel</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Density</span>
+            <div class="control">
+              <!-- Focus the first setting control on open (skips the header ×). -->
+              <select
+                value={compactMode.prefs.enabled ? 'compact' : 'default'}
+                onchange={(e) => compactMode.setEnabled(e.currentTarget.value === 'compact')}
+                use:autofocus
+              >
+                <option value="default">Default</option>
+                <option value="compact">Compact</option>
+              </select>
+            </div>
+          </li>
+          <li class="row">
+            <span class="desc">Show subagents under each session</span>
+            <div class="control">
+              <input
+                type="checkbox"
+                checked={subagentsVisible.prefs.enabled}
+                onchange={(e) => subagentsVisible.setEnabled(e.currentTarget.checked)}
+              />
+            </div>
+          </li>
+        </ul>
+      </section>
 
       <section class="group">
         <span class="label">Open files with</span>
@@ -252,6 +287,44 @@
                 checked={autoAdvance.prefs.enabled}
                 onchange={(e) => autoAdvance.setEnabled(e.currentTarget.checked)}
               />
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <span class="label">Notifications</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Sound when an agent needs input</span>
+            <div class="control">
+              <select
+                value={notifications.prefs.sound.mode}
+                onchange={(e) =>
+                  notifications.setSoundMode(e.currentTarget.value as AlertMode)}
+              >
+                <option value="off">Never</option>
+                <option value="app-unfocused">When app is in the background</option>
+                <option value="agent-unfocused">When not viewing that agent</option>
+                <option value="always">Always</option>
+              </select>
+            </div>
+          </li>
+          <li class="row">
+            <span class="desc">Desktop notification when an agent needs input</span>
+            <div class="control">
+              <select
+                value={notifications.prefs.desktop.mode}
+                onchange={(e) => {
+                  const mode = e.currentTarget.value as AlertMode;
+                  notifications.setDesktopMode(mode);
+                  // Request OS notification permission as soon as the channel is enabled.
+                  if (mode !== 'off') void ensureDesktopPermission();
+                }}
+              >
+                <option value="off">Never</option>
+                <option value="app-unfocused">When app is in the background</option>
+              </select>
             </div>
           </li>
         </ul>

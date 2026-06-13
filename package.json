@@ -9,17 +9,16 @@
     "setup:sidecars": "./scripts/fetch-models.sh && ./scripts/fetch-whisper.sh && ./scripts/fetch-llama.sh",
     "postinstall": "git config core.hooksPath .githooks 2>/dev/null || true",
     "dev": "tauri dev",
-    "build": "tauri build",
+    "build": "tauri build --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'",
     "dev:web": "vite dev",
     "build:web": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "coverage": "node tools/check-scenario-coverage.mjs",
-    "check:gate": "npm run check && npm run test && npm run coverage",
-    "tauri": "tauri",
-    "package:mac": "tauri build",
-    "package:mac:signed": "bash scripts/package-mac-signed.sh"
+    "lint:storage": "node tools/check-localstorage.mjs",
+    "check:gate": "npm run check && npm run test && npm run coverage && npm run lint:storage",
+    "tauri": "tauri"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "3.0.10",
@@ -37,6 +36,9 @@
   "dependencies": {
     "@tauri-apps/api": "2.11.0",
     "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/addon-webgl": "0.19.0",
     "@xterm/xterm": "6.0.0"

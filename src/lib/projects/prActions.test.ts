@@ -128,12 +128,15 @@ describe('onPrButtonClick', () => {
 // ─────────────────────────── commit prompt ───────────────────────────
 
 describe('buildCommitPrompt', () => {
-  it('instructs staging + a single conventional commit on the current branch, no push/PR', () => {
+  it('instructs grouping into logical commits by content on the current branch, no push/PR', () => {
     const p = buildCommitPrompt().toLowerCase();
     expect(p).toMatch(/commit/);
     expect(p).toMatch(/current branch/);
-    // One commit with a conventional message.
+    // Conventional-commits message(s).
     expect(p).toMatch(/conventional/);
+    // Splits the changes into one or more commits grouped by content/concern.
+    expect(p).toMatch(/split|group/);
+    expect(p).toMatch(/by content|concern/);
     // Explicitly NOT push and NOT a PR.
     expect(p).toMatch(/do not push|don't push|not push/);
     expect(p).toMatch(/pull request|\bpr\b/);

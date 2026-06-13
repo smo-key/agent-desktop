@@ -4,6 +4,7 @@ import {
   getRuntime,
   noteExit,
   noteOutput,
+  noteStatus,
   runtimeMap
 } from './runtime';
 import { deriveStatus } from './roster';
@@ -50,6 +51,30 @@ describe('runtime registry', () => {
     clearRuntime('p1');
     expect(getRuntime('p1')).toBeUndefined();
     expect(deriveStatus(getRuntime('p1'), 4_000_000)).toBe('idle');
+  });
+
+  it('noteStatus records the last derived status as hysteresis memory', () => {
+    const now = 6_000_000;
+    noteOutput('p1', now);
+    noteStatus('p1', 'working');
+    expect(getRuntime('p1')!.lastStatus).toBe('working');
+    // Quiet within the idle-grace band: the recorded 'working' holds it In flight.
+    expect(
+      deriveStatus(getRuntime('p1'), now + 5_000, undefined, getRuntime('p1')!.lastStatus)
+    ).toBe('working');
+    // It is overwritten by the next recorded status.
+    noteStatus('p1', 'waiting');
+    expect(getRuntime('p1')!.lastStatus).toBe('waiting');
+  });
+
+  it('noteStatus never resurrects an idle pane (no entry → stays idle)', () => {
+    // A rostered pane with no runtime entry derives `idle` ("not wired yet"). Recording
+    // that status must NOT create an entry — otherwise the next tick would read its null
+    // lastOutputAt as `working`, flipping a just-spawned zero-output pane to working.
+    expect(getRuntime('p1')).toBeUndefined();
+    noteStatus('p1', 'idle');
+    expect(getRuntime('p1')).toBeUndefined();
+    expect(deriveStatus(getRuntime('p1'), 7_000_000)).toBe('idle');
   });
 
   it('runtimeMap returns detached shallow copies', () => {

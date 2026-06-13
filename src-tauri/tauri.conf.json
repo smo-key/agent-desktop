@@ -19,16 +19,26 @@
         "resizable": true,
         "fullscreen": false,
         "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "hiddenTitle": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/smo-key/agent-desktop/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ1NjY4NkQ1RjU3NTkyMEMKUldRTWtuWDExWVptUmRKQ21SL2xYZ3k5Um9EYzJMVHB4NEZFK0tvZXRwTklKb3E2V2VXdnVCNFoK"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "externalBin": [
       "binaries/whisper-cli",
       "binaries/whisper-server",

@@ -1,0 +1,6 @@
+{
+  "provider": "local",
+  "taskRef": "footer-publish-unpushed-branch",
+  "url": "",
+  "lastEvent": "done"
+}

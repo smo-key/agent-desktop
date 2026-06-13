@@ -37,6 +37,12 @@ tauri-plugin-dialog = "2.7.1"
 # `whisper-cli-<target-triple>` and runs it; see src/transcribe.rs.
 tauri-plugin-shell = "2"
 
+# Native OS desktop notifications for the needs-input alerts (capability
+# `needs-input-alerts`): when an agent enters the "Needs input" state the frontend
+# requests permission and posts a notification via @tauri-apps/plugin-notification.
+# Scope is granted by `notification:default` in capabilities/default.json.
+tauri-plugin-notification = "2"
+
 # Streaming HTTP client for download-on-first-run of voice MODELS (Milestone 4 /
 # tasks.md 5.2). `stream` gives us a chunked `bytes_stream()` so we can sum bytes
 # and emit progress; rustls avoids a system-OpenSSL build dependency.
@@ -59,6 +65,8 @@ futures-util = "0.3"
 # features we use.
 once_cell = "1"
 tokio = { version = "1", features = ["sync", "time", "process", "io-util"] }
+tauri-plugin-updater = "2.10.1"
+tauri-plugin-process = "2.3.1"
 
 # Native macOS NSEvent monitor for the voice-panel double-tap-right-Command
 # gesture (see src/voice_activation.rs). objc2 0.6 / objc2-app-kit 0.3 are the
@@ -69,3 +77,11 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSEvent"] }
 objc2-foundation = "0.3"
 block2 = "0.6"
+
+# Custom macOS notification path for clickable needs-input alerts (capability
+# `alert-click-focus`). The bundled notification plugin discards click events on
+# desktop, so on macOS we send via this crate (which notify_rust wraps) with
+# `wait_for_click(true)` to capture the body click and emit the alerting agent's
+# paneId back to the frontend. Already in the tree transitively via the plugin;
+# pinned here as a direct dep for the click-response API.
+mac-notification-sys = "0.6"

@@ -14,9 +14,14 @@
   import { tooltip } from '$lib/ui/tooltip';
 
   // Inline-rename bookkeeping. `editingId` is the workspace being renamed (double
-  // click a row label to start); `draft` holds the in-progress text.
+  // click a row label to start); `draft` holds the in-progress text. The rail is
+  // a narrow fixed-width column, so the rename field is rendered as a fixed
+  // overlay anchored to the row (`anchorRect`) — this lets it be far wider than
+  // the rail without being clipped by the rail's `overflow: hidden`. Its width is
+  // clamped to the viewport in CSS so it stays in bounds when the window resizes.
   let editingId = $state<string | null>(null);
   let draft = $state('');
+  let anchorRect = $state<{ top: number; left: number; height: number } | null>(null);
 
   function switchTo(id: string) {
     if (editingId === id) return; // don't steal a rename-in-progress click
@@ -45,20 +50,28 @@
     workspace.closeWorkspace(id);
   }
 
-  function startRename(id: string, current: string) {
+  function startRename(id: string, current: string, e: MouseEvent) {
     editingId = id;
     draft = current;
+    // Anchor the fixed overlay to the row that was double-clicked. The rail is
+    // pinned to the window's left edge with stable row offsets, so this rect
+    // stays valid across horizontal window resizes (width is viewport-clamped).
+    const row = e.currentTarget as HTMLElement;
+    const r = row.getBoundingClientRect();
+    anchorRect = { top: r.top, left: r.left, height: r.height };
   }
 
   function commitRename() {
     if (editingId) workspace.renameWorkspace(editingId, draft);
     editingId = null;
     draft = '';
+    anchorRect = null;
   }
 
   function cancelRename() {
     editingId = null;
     draft = '';
+    anchorRect = null;
   }
 
   function onRenameKey(e: KeyboardEvent) {
@@ -92,16 +105,17 @@
               switchTo(ws.id);
             }
           }}
-          ondblclick={() => startRename(ws.id, ws.name)}
+          ondblclick={(e) => startRename(ws.id, ws.name, e)}
         >
           <!-- Active dot: bright when active, dim otherwise (PTYs alive either
                way; the dot signals which session you're looking at). -->
           <span class="dot" class:on={isActive} aria-hidden="true"></span>
 
-          {#if editingId === ws.id}
+          {#if editingId === ws.id && anchorRect}
             <!-- svelte-ignore a11y_autofocus -->
             <input
               class="rename"
+              style="top: {anchorRect.top}px; left: {anchorRect.left}px; height: {anchorRect.height}px; width: min(400px, calc(100vw - {anchorRect.left}px - 16px));"
               bind:value={draft}
               onkeydown={onRenameKey}
               onblur={commitRename}
@@ -213,9 +227,14 @@
     white-space: nowrap;
   }
 
+  /* Rendered as a fixed overlay (positioned inline via `anchorRect`) so it can be
+     much wider than the 200px rail without being clipped by `overflow: hidden`.
+     The inline `width` clamps to the viewport, so it never overflows the window
+     edge and shrinks gracefully when the window is resized narrower. */
   .rename {
-    flex: 1 1 auto;
-    min-width: 0;
+    position: fixed;
+    z-index: 50;
+    box-sizing: border-box;
     font-size: 13px;
     font-family: var(--font-sans);
     color: var(--fg-1);

@@ -1,0 +1,78 @@
+# git-cliff configuration — conventional-commits changelog
+#
+# Used by the release pipeline to generate:
+#   (a) the GitHub Release body (commits since the previous tag):
+#         git cliff --unreleased --strip header
+#   (b) the full committed CHANGELOG.md (entire history, grouped by tag):
+#         git cliff -o CHANGELOG.md
+# Both are derived from the same conventional-commit history and config.
+#
+# Pinned in CI: git-cliff 2.13.1 (recommended pin). Bump in lockstep with the
+# release workflow when upgrading.
+
+[changelog]
+# Markdown header for the generated changelog file.
+header = """
+# Changelog
+
+All notable changes to this project are documented here.
+This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).\n
+"""
+# Template rendered once per release (tag) section.
+body = """
+{% if version %}\
+## [{{ version | trim_start_matches(pat="v") }}]{% if previous and previous.version %}{% endif %} - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## [Unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}**: {% endif %}\
+{{ commit.message | upper_first }}\
+{% endfor %}
+{% endfor %}\n
+"""
+# Rendered after all release sections.
+footer = ""
+# Trim leading/trailing whitespace from each line of the templates.
+trim = true
+
+[git]
+# Parse commits according to the conventional-commits spec.
+conventional_commits = true
+# Skip commits that are not conventional.
+filter_unconventional = false
+# Do not split commits on newlines (one entry per commit).
+split_commits = false
+# Strip the conventional-commit type prefix from the rendered line and map
+# each type to a readable, ordered group. The numeric prefix in group names
+# controls section ordering and is stripped by `striptags`/`trim` rendering.
+commit_parsers = [
+  # Drop release/CI/merge noise from the notes entirely.
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "\\[skip ci\\]", skip = true },
+  { message = "^Merge ", skip = true },
+
+  { message = "^feat", group = "<!-- 0 -->Features" },
+  { message = "^fix", group = "<!-- 1 -->Bug Fixes" },
+  { message = "^perf", group = "<!-- 2 -->Performance" },
+  { message = "^refactor", group = "<!-- 3 -->Refactor" },
+  { message = "^docs", group = "<!-- 4 -->Documentation" },
+  { message = "^style", group = "<!-- 5 -->Styling" },
+  { message = "^test", group = "<!-- 6 -->Testing" },
+  { message = "^ci", group = "<!-- 7 -->CI/Build" },
+  { message = "^build", group = "<!-- 7 -->CI/Build" },
+  { message = "^chore", group = "<!-- 8 -->Miscellaneous" },
+  # Anything else conventional but unmapped falls into Miscellaneous.
+  { message = ".*", group = "<!-- 8 -->Miscellaneous" },
+]
+# Protect against false positives where the type prefix matched mid-word.
+protect_breaking_commits = false
+# Drop merge commits before parsing.
+filter_commits = false
+# Only consider tags matching the release tag pattern vX.Y.Z.
+tag_pattern = "v[0-9]*"
+# Sort tags newest-first in the changelog.
+topo_order = false
+sort_commits = "newest"

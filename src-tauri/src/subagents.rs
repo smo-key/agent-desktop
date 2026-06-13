@@ -35,13 +35,22 @@
 //!      that re-emits the per-session map whenever any of those dirs change,
 //!      pushed to the frontend as the Tauri event `overview://subagents`.
 
-use std::collections::HashMap;
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// How many bytes of the parent transcript's TAIL to scan for `Task` tool_use /
+/// tool_result ids when deriving standalone-subagent status. A live subagent's
+/// `tool_use` is necessarily recent (near the tail); anything not found in the
+/// tail has scrolled out (old) and is treated as finished. Bounds the per-recompute
+/// read cost the way [`crate::activity`] bounds its own transcript tail.
+const PARENT_TAIL_BYTES: u64 = 1 << 20; // 1 MiB
 
 /// The Tauri event name the subagents watcher emits the per-session map on. The
 /// frontend listens on exactly this name.
@@ -115,6 +124,22 @@ pub struct Subagent {
     /// subagents by workflow under the parent.
     #[serde(default)]
     pub workflow_id: Option<String>,
+    /// The workflow phase title this subagent ran under (e.g. `Capabilities`), or
+    /// `null`. Lets the UI sub-group a workflow's subagents by phase.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_title: Option<String>,
+    /// The workflow phase index (ordinal) this subagent ran under, or `null`. Used
+    /// to order phase groups in the UI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_index: Option<i64>,
+    /// When the subagent started, as a Unix epoch in MILLISECONDS, or `null`. Lets
+    /// the UI compute "duration alive" for a still-running subagent (`now - startedAt`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<i64>,
+    /// The subagent's total run duration in MILLISECONDS once finished, or `null`
+    /// while still running. The UI prefers this over `now - startedAt` when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +188,18 @@ struct ProgressEntry {
     /// Context-window usage 0..100, when recorded (reserved).
     #[serde(default, rename = "contextPct")]
     context_pct: Option<f64>,
+    /// Workflow phase title this agent ran under, e.g. `Capabilities`.
+    #[serde(default, rename = "phaseTitle")]
+    phase_title: Option<String>,
+    /// Workflow phase ordinal this agent ran under.
+    #[serde(default, rename = "phaseIndex")]
+    phase_index: Option<i64>,
+    /// Start time as a Unix epoch in milliseconds.
+    #[serde(default, rename = "startedAt")]
+    started_at: Option<i64>,
+    /// Total run duration in milliseconds, once finished.
+    #[serde(default, rename = "durationMs")]
+    duration_ms: Option<i64>,
 }
 
 impl ProgressEntry {
@@ -190,6 +227,10 @@ impl ProgressEntry {
             usage: if usage.is_empty() { None } else { Some(usage) },
             parent_session: parent_session.to_string(),
             workflow_id: non_empty(Some(workflow_id)),
+            phase_title: non_empty(self.phase_title.as_deref()),
+            phase_index: self.phase_index,
+            started_at: self.started_at,
+            duration_ms: self.duration_ms,
         })
     }
 }
@@ -223,48 +264,274 @@ fn non_empty(v: Option<&str>) -> Option<String> {
 pub fn parse_session_subagents(session_dir: &Path, session_id: &str) -> Vec<Subagent> {
     let mut out = Vec::new();
     let workflows_dir = session_dir.join("workflows");
-    let Ok(entries) = std::fs::read_dir(&workflows_dir) else {
-        return out;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        // Only top-level `*.json` run records; skip `scripts/` (a subdir, not a
-        // file) and any non-json sibling.
-        let is_json = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("json"));
-        if !is_json {
-            continue;
-        }
-        let Ok(meta) = entry.metadata() else { continue };
-        if !meta.is_file() {
-            continue;
-        }
-        // The workflow id is the file stem (`wf_e4241c06-5ee.json` -> `wf_…`).
-        let workflow_id = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue; // unreadable -> skip this run record, keep the rest.
-        };
-        let Ok(record) = serde_json::from_str::<WorkflowRecord>(&text) else {
-            continue; // malformed JSON -> skip this run record, keep the rest.
-        };
-        for prog in record.workflow_progress {
-            if let Some(sub) = prog.into_subagent(session_id, &workflow_id) {
-                out.push(sub);
+    // A missing/unreadable `workflows/` dir just means this session ran no
+    // `Workflow()` — the DOMINANT real-world case, since sessions spawn standalone
+    // `Task`/`Agent` subagents far more often than workflows. We must NOT return
+    // here: standalone subagents (parsed below) live under `subagents/` with no
+    // `workflows/` dir at all. So only the workflow-record loop is skipped.
+    if let Ok(entries) = std::fs::read_dir(&workflows_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // Only top-level `*.json` run records; skip `scripts/` (a subdir, not a
+            // file) and any non-json sibling.
+            let is_json = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+            if !is_json {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else { continue };
+            if !meta.is_file() {
+                continue;
+            }
+            // The workflow id is the file stem (`wf_e4241c06-5ee.json` -> `wf_…`).
+            let workflow_id = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue; // unreadable -> skip this run record, keep the rest.
+            };
+            let Ok(record) = serde_json::from_str::<WorkflowRecord>(&text) else {
+                continue; // malformed JSON -> skip this run record, keep the rest.
+            };
+            for prog in record.workflow_progress {
+                if let Some(sub) = prog.into_subagent(session_id, &workflow_id) {
+                    out.push(sub);
+                }
             }
         }
     }
+    // (2) Standalone Task/Agent subagents recorded as bare sidecars directly under
+    // `<session>/subagents/` (NOT under `subagents/workflows/`). The dominant case
+    // in practice — most sessions spawn `Agent()`/`Task` subagents, not workflows.
+    out.extend(parse_standalone_subagents(session_dir, session_id));
+    // Stable order: by workflow id, then chronologically (started_at; unknown last),
+    // then id as a final tiebreak. Workflow-less standalone subagents (None id) sort
+    // ahead of any named workflow group and read newest-spawned-last.
     out.sort_by(|a, b| {
         a.workflow_id
             .cmp(&b.workflow_id)
+            .then_with(|| cmp_started(a.started_at, b.started_at))
             .then_with(|| a.id.cmp(&b.id))
     });
     out
+}
+
+/// Order two optional start times ascending, with a known time always sorting
+/// before an unknown (`None`) one. Keeps chronological order within a group while
+/// pushing timing-less rows to the end.
+fn cmp_started(a: Option<i64>, b: Option<i64>) -> Ordering {
+    match (a, b) {
+        (Some(x), Some(y)) => x.cmp(&y),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// (1b) Standalone Task-tool subagents (bare sidecars, no workflow record).
+// ---------------------------------------------------------------------------
+
+/// The minimal per-subagent meta sidecar Claude writes for a standalone `Task`
+/// agent: `{"agentType":"Explore","description":"…","toolUseId":"toolu_…"}`. All
+/// fields optional/tolerant; an unreadable file is skipped, a malformed one yields
+/// defaults (the row still surfaces by its filename id).
+#[derive(Debug, Default, Deserialize)]
+struct SubagentMeta {
+    /// Human description of the task — used as the subagent's label.
+    #[serde(default)]
+    description: Option<String>,
+    /// The agent type (e.g. `Explore`, `general-purpose`). Not surfaced as a field
+    /// today (rows are label + status + duration), but read for completeness.
+    #[serde(default, rename = "agentType")]
+    #[allow(dead_code)]
+    agent_type: Option<String>,
+    /// The parent transcript `tool_use` id this subagent corresponds to — the join
+    /// key used to decide whether the parent has recorded a result (done) or not.
+    #[serde(default, rename = "toolUseId")]
+    tool_use_id: Option<String>,
+}
+
+/// The parent transcript's tool state, scanned once per session: the set of `Task`
+/// `tool_use` ids seen in the tail, and the set of `tool_use_id`s that already have
+/// a `tool_result`. A standalone subagent is RUNNING iff its id is a pending
+/// tool_use (present in `task_uses`, absent from `results`); otherwise DONE.
+#[derive(Debug, Default)]
+struct ParentToolState {
+    task_uses: HashSet<String>,
+    results: HashSet<String>,
+}
+
+/// Parse every standalone Task subagent under `<session_dir>/subagents/` (bare
+/// `agent-<id>.meta.json` + sibling `agent-<id>.jsonl`), skipping the
+/// `subagents/workflows/` subdir (those are workflow agents). Returns an empty vec
+/// when the dir is absent or holds no bare metas — and only then pays for the
+/// parent-transcript scan. Never panics.
+fn parse_standalone_subagents(session_dir: &Path, session_id: &str) -> Vec<Subagent> {
+    let subdir = session_dir.join("subagents");
+    let Ok(entries) = std::fs::read_dir(&subdir) else {
+        return Vec::new();
+    };
+    let metas: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|e| e.metadata().map(|m| m.is_file()).unwrap_or(false))
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("agent-") && n.ends_with(".meta.json"))
+        })
+        .collect();
+    if metas.is_empty() {
+        return Vec::new();
+    }
+    // Only scan the parent transcript once we know there are standalone subagents.
+    let parent = scan_parent_tool_state(session_dir, session_id);
+    metas
+        .iter()
+        .filter_map(|meta_path| standalone_from_meta(meta_path, &subdir, session_id, &parent))
+        .collect()
+}
+
+/// Build one [`Subagent`] from a bare meta sidecar at `meta_path` (id from the file
+/// name), attributing it to `session_id`. Status is derived from `parent`; timing
+/// from the sibling `agent-<id>.jsonl`. Returns `None` only when the id can't be
+/// recovered or the meta file is unreadable.
+fn standalone_from_meta(
+    meta_path: &Path,
+    subdir: &Path,
+    session_id: &str,
+    parent: &ParentToolState,
+) -> Option<Subagent> {
+    let name = meta_path.file_name()?.to_str()?;
+    let id = name.strip_prefix("agent-")?.strip_suffix(".meta.json")?;
+    if id.is_empty() {
+        return None;
+    }
+    let text = std::fs::read_to_string(meta_path).ok()?;
+    let meta: SubagentMeta = serde_json::from_str(&text).unwrap_or_default();
+
+    let (first, last) = jsonl_span(&subdir.join(format!("agent-{id}.jsonl")));
+    // RUNNING iff the parent shows a pending tool_use (seen, no result yet). A
+    // subagent with no tool_use id, or whose id has a result / scrolled out of the
+    // tail, is treated as finished.
+    let running = match meta.tool_use_id.as_deref() {
+        Some(tid) => parent.task_uses.contains(tid) && !parent.results.contains(tid),
+        None => false,
+    };
+    let duration_ms = if running {
+        None // still alive -> the UI ticks `now - started_at`.
+    } else {
+        match (first, last) {
+            (Some(f), Some(l)) => Some((l - f).max(0)),
+            _ => None,
+        }
+    };
+
+    Some(Subagent {
+        id: id.to_string(),
+        label: non_empty(meta.description.as_deref()),
+        status: Some(if running { "running" } else { "done" }.to_string()),
+        model: None,
+        usage: None,
+        parent_session: session_id.to_string(),
+        workflow_id: None,
+        phase_title: None,
+        phase_index: None,
+        started_at: first,
+        duration_ms,
+    })
+}
+
+/// The first and last `timestamp` (unix millis) across a subagent transcript's
+/// entries — the span used for "duration alive". Returns `(None, None)` for an
+/// unreadable/empty file. Lines that aren't JSON or carry no parseable timestamp
+/// are skipped.
+fn jsonl_span(path: &Path) -> (Option<i64>, Option<i64>) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return (None, None);
+    };
+    let mut first = None;
+    let mut last = None;
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if let Some(ms) = v
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(crate::activity::parse_iso_millis)
+        {
+            if first.is_none() {
+                first = Some(ms);
+            }
+            last = Some(ms);
+        }
+    }
+    (first, last)
+}
+
+/// Scan the parent session transcript (`<project>/<session_id>.jsonl`, a bounded
+/// tail) for the `Task` tool_use ids and the `tool_use_id`s that already have a
+/// `tool_result`. A truncated first line from the tail cut simply fails to parse
+/// and is skipped. Missing transcript -> empty state (everything reads as done).
+fn scan_parent_tool_state(session_dir: &Path, session_id: &str) -> ParentToolState {
+    let mut state = ParentToolState::default();
+    let Some(project_dir) = session_dir.parent() else {
+        return state;
+    };
+    let transcript = project_dir.join(format!("{session_id}.jsonl"));
+    let Some(text) = read_tail(&transcript, PARENT_TAIL_BYTES) else {
+        return state;
+    };
+    for line in text.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(content) = v
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for block in content {
+            match block.get("type").and_then(Value::as_str) {
+                Some("tool_use") if block.get("name").and_then(Value::as_str) == Some("Task") => {
+                    if let Some(id) = block.get("id").and_then(Value::as_str) {
+                        state.task_uses.insert(id.to_string());
+                    }
+                }
+                Some("tool_result") => {
+                    if let Some(id) = block.get("tool_use_id").and_then(Value::as_str) {
+                        state.results.insert(id.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    state
+}
+
+/// Read up to the last `max_bytes` of a file as a lossy UTF-8 string. `None` when
+/// the file can't be opened/read. The leading partial line (from cutting mid-line)
+/// is the caller's problem — JSONL parsing skips it.
+fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    f.seek(SeekFrom::Start(len.saturating_sub(max_bytes))).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
 // ---------------------------------------------------------------------------
@@ -456,6 +723,38 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
 
+    /// Regression (the bug this change shipped with): a session that spawned ONLY
+    /// standalone `Task`/`Agent` subagents has NO `workflows/` dir — the dominant
+    /// real-world case. The standalone subagents must still surface. (Before the fix,
+    /// `parse_session_subagents` returned early on the missing `workflows/` dir and
+    /// never ran the standalone parser, so these never appeared in the Inbox.)
+    #[test]
+    fn standalone_subagents_surface_without_a_workflows_dir() {
+        let tmp = TempDir::new("no-workflows");
+        let session = make_session(tmp.path(), "-Users-arthur-git-app", "sess-NW");
+        // Simulate a real standalone-only session: NO workflows/ dir exists.
+        std::fs::remove_dir_all(session.join("workflows")).unwrap();
+        assert!(!session.join("workflows").exists(), "precondition: no workflows/ dir");
+
+        write_standalone_meta(&session, "asolo", "Trace the data pipeline", "toolu_x");
+        write_standalone_jsonl(
+            &session,
+            "asolo",
+            &["2026-06-13T10:00:00.000Z", "2026-06-13T10:00:42.000Z"],
+        );
+        write_parent_transcript(
+            &session,
+            "sess-NW",
+            &[&task_use_line("toolu_x"), &tool_result_line("toolu_x")],
+        );
+
+        let subs = parse_session_subagents(&session, "sess-NW");
+        assert_eq!(subs.len(), 1, "standalone subagent surfaces even with no workflows/ dir");
+        assert_eq!(subs[0].id, "asolo");
+        assert_eq!(subs[0].label.as_deref(), Some("Trace the data pipeline"));
+        assert_eq!(subs[0].status.as_deref(), Some("done"));
+    }
+
     /// A throwaway dir under the system temp dir, removed on drop. Mirrors the
     /// helper in [`crate::usage`]/[`crate::task`] tests.
     struct TempDir(PathBuf);
@@ -518,6 +817,156 @@ mod tests {
         .unwrap();
     }
 
+    /// Write a bare standalone-Task meta sidecar
+    /// (`subagents/agent-<id>.meta.json`) the way Claude does for an `Agent()` call.
+    fn write_standalone_meta(session_dir: &Path, agent_id: &str, desc: &str, tool_use_id: &str) {
+        let dir = session_dir.join("subagents");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!("agent-{agent_id}.meta.json")),
+            format!(
+                r#"{{"agentType":"Explore","description":"{desc}","toolUseId":"{tool_use_id}"}}"#
+            ),
+        )
+        .unwrap();
+    }
+
+    /// Write a standalone subagent transcript (`subagents/agent-<id>.jsonl`) with
+    /// one entry per supplied ISO timestamp (the first/last drive duration).
+    fn write_standalone_jsonl(session_dir: &Path, agent_id: &str, timestamps: &[&str]) {
+        let dir = session_dir.join("subagents");
+        std::fs::create_dir_all(&dir).unwrap();
+        let body: String = timestamps
+            .iter()
+            .map(|ts| format!(r#"{{"type":"assistant","timestamp":"{ts}"}}"#))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(dir.join(format!("agent-{agent_id}.jsonl")), body).unwrap();
+    }
+
+    /// Write the PARENT session transcript (`<project>/<session>.jsonl`, sibling of
+    /// the session dir) from raw JSONL lines.
+    fn write_parent_transcript(session_dir: &Path, session_id: &str, lines: &[&str]) {
+        let parent = session_dir.parent().unwrap();
+        std::fs::write(
+            parent.join(format!("{session_id}.jsonl")),
+            lines.join("\n"),
+        )
+        .unwrap();
+    }
+
+    /// A parent `tool_use` line for a `Task` with the given id.
+    fn task_use_line(tool_id: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"tool_use","id":"{tool_id}","name":"Task","input":{{}}}}]}}}}"#
+        )
+    }
+
+    /// A parent `tool_result` line completing the given tool_use id.
+    fn tool_result_line(tool_id: &str) -> String {
+        format!(
+            r#"{{"type":"user","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"{tool_id}","content":"ok"}}]}}}}"#
+        )
+    }
+
+    /// Spec scenario: "Standalone Task subagents appear under their parent agent".
+    /// A session with a bare `agent-<id>.meta.json` + `.jsonl` (no workflow record)
+    /// surfaces a FLAT subagent: label from `description`, started_at from the first
+    /// jsonl timestamp, and (since the parent recorded a result) status `done` with a
+    /// duration spanning the jsonl.
+    #[test]
+    fn standalone_task_subagents_appear_under_their_parent_agent() {
+        let tmp = TempDir::new("standalone");
+        let session = make_session(tmp.path(), "-Users-arthur-git-app", "sess-S");
+        write_standalone_meta(&session, "a84539", "Implement auto-update integration", "toolu_1");
+        let first = "2026-06-13T19:39:14.406Z";
+        let last = "2026-06-13T19:41:22.169Z";
+        write_standalone_jsonl(&session, "a84539", &[first, last]);
+        // Parent recorded the Task AND its result -> the subagent is finished.
+        write_parent_transcript(
+            &session,
+            "sess-S",
+            &[&task_use_line("toolu_1"), &tool_result_line("toolu_1")],
+        );
+
+        let subs = parse_session_subagents(&session, "sess-S");
+        assert_eq!(subs.len(), 1, "the one standalone subagent surfaces");
+        let s = &subs[0];
+        assert_eq!(s.id, "a84539");
+        assert_eq!(s.label.as_deref(), Some("Implement auto-update integration"));
+        assert_eq!(s.parent_session, "sess-S");
+        assert!(s.workflow_id.is_none(), "standalone -> no workflow (flat/ungrouped)");
+        assert!(s.phase_title.is_none(), "standalone -> no phase");
+        assert_eq!(s.status.as_deref(), Some("done"), "parent recorded a result");
+
+        let f = crate::activity::parse_iso_millis(first).unwrap();
+        let l = crate::activity::parse_iso_millis(last).unwrap();
+        assert_eq!(s.started_at, Some(f));
+        assert_eq!(s.duration_ms, Some(l - f), "duration spans the jsonl");
+    }
+
+    /// Spec scenario: "Standalone subagent status reflects the parent result".
+    /// Two standalone subagents share a session: one whose tool_use has a matching
+    /// `tool_result` in the parent (-> done, with a settled duration), and one whose
+    /// `tool_use` is still pending with no result (-> running, duration left to the
+    /// UI's live `now - startedAt`).
+    #[test]
+    fn standalone_subagent_status_reflects_the_parent_result() {
+        let tmp = TempDir::new("standalone-status");
+        let session = make_session(tmp.path(), "-Users-arthur-git-app", "sess-T");
+        write_standalone_meta(&session, "adone", "finished task", "toolu_done");
+        write_standalone_jsonl(
+            &session,
+            "adone",
+            &["2026-06-13T10:00:00.000Z", "2026-06-13T10:00:30.000Z"],
+        );
+        write_standalone_meta(&session, "arun", "live task", "toolu_run");
+        write_standalone_jsonl(&session, "arun", &["2026-06-13T10:01:00.000Z"]);
+        // Parent: both Tasks were launched; only the first has a result.
+        write_parent_transcript(
+            &session,
+            "sess-T",
+            &[
+                &task_use_line("toolu_done"),
+                &task_use_line("toolu_run"),
+                &tool_result_line("toolu_done"),
+            ],
+        );
+
+        let subs = parse_session_subagents(&session, "sess-T");
+        let done = subs.iter().find(|s| s.id == "adone").unwrap();
+        let run = subs.iter().find(|s| s.id == "arun").unwrap();
+
+        assert_eq!(done.status.as_deref(), Some("done"), "has a tool_result");
+        assert_eq!(done.duration_ms, Some(30_000), "settled 30s duration");
+
+        assert_eq!(run.status.as_deref(), Some("running"), "pending, no result");
+        assert!(run.started_at.is_some(), "running row still carries a start time");
+        assert!(
+            run.duration_ms.is_none(),
+            "running -> no settled duration (UI ticks now - startedAt)"
+        );
+    }
+
+    /// A standalone subagent whose meta JSON is malformed still surfaces by its
+    /// filename id (label/status best-effort), and an unreadable jsonl just yields
+    /// no timing — the row is never dropped, and the rest of the session is intact.
+    #[test]
+    fn standalone_malformed_meta_is_tolerated() {
+        let tmp = TempDir::new("standalone-bad");
+        let session = make_session(tmp.path(), "-Users-arthur-git-app", "sess-U");
+        let dir = session.join("subagents");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Truncated/invalid JSON meta + no jsonl at all.
+        std::fs::write(dir.join("agent-abad.meta.json"), r#"{"description":"oops"#).unwrap();
+
+        let subs = parse_session_subagents(&session, "sess-U");
+        assert_eq!(subs.len(), 1, "malformed meta still surfaces a row");
+        assert_eq!(subs[0].id, "abad");
+        assert!(subs[0].label.is_none(), "unparseable meta -> no label");
+        assert!(subs[0].started_at.is_none(), "no jsonl -> no timing");
+    }
+
     /// Spec scenario: "Subagents appear under their parent agent".
     /// A session with a workflow run record (plus a couple meta sidecars) yields
     /// one [`Subagent`] per `workflow_agent` entry, each carrying its label and
@@ -534,7 +983,8 @@ mod tests {
                 {"type":"workflow_phase","index":1,"title":"Capabilities"},
                 {"type":"workflow_agent","index":1,"label":"spec:terminal-core",
                  "agentId":"a45490d0ade2c7a7c","model":"claude-opus-4-8[1m]",
-                 "state":"done","tokens":22423,"toolCalls":2,"durationMs":41710},
+                 "state":"done","tokens":22423,"toolCalls":2,"durationMs":41710,
+                 "phaseIndex":1,"phaseTitle":"Capabilities","startedAt":1780373405182},
                 {"type":"workflow_agent","index":2,"label":"spec:tiling-layout",
                  "agentId":"aafb262f94f1397db","model":"claude-opus-4-8[1m]",
                  "state":"running","tokens":12000}
@@ -566,12 +1016,22 @@ mod tests {
                 context_pct: None
             })
         );
+        // Phase + timing fields are surfaced when the agent row carries them.
+        assert_eq!(first.phase_title.as_deref(), Some("Capabilities"));
+        assert_eq!(first.phase_index, Some(1));
+        assert_eq!(first.started_at, Some(1780373405182));
+        assert_eq!(first.duration_ms, Some(41710));
 
         let second = &subs[1];
         assert_eq!(second.id, "aafb262f94f1397db");
         assert_eq!(second.label.as_deref(), Some("spec:tiling-layout"));
         assert_eq!(second.status.as_deref(), Some("running"));
         assert_eq!(second.usage.unwrap().tokens, Some(12000));
+        // A row that omits the phase/timing fields parses them to None.
+        assert!(second.phase_title.is_none(), "no phaseTitle -> null");
+        assert!(second.phase_index.is_none(), "no phaseIndex -> null");
+        assert!(second.started_at.is_none(), "no startedAt -> null");
+        assert!(second.duration_ms.is_none(), "no durationMs -> null");
     }
 
     /// Spec scenario: "Partial subagent metadata does not break the roster".

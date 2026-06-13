@@ -14,6 +14,9 @@
   import { openWith } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
+  import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
+  import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
   import VoicePanel from '$lib/voice/VoicePanel.svelte';
   import ModelOnboarding from '$lib/onboarding/ModelOnboarding.svelte';
@@ -46,7 +49,7 @@
   import { projectTasks } from '$lib/tasks/projectTasks.svelte';
   import { taskAgentReturnedToUser } from '$lib/tasks/agentTask';
   import { activeProjectId } from '$lib/tasks/activeProject';
-  import { projectForId } from '$lib/projects/projects';
+  import { projectForId, projectLabel } from '$lib/projects/projects';
   import { setGitTerminalOpener } from '$lib/projects/projectGitActions';
   import { setAgentTaskLauncher } from '$lib/projects/prActions';
   import { buildLaunchPlan } from '$lib/launcher/plan';
@@ -56,10 +59,26 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { events } from '$lib/overview/events.svelte';
   import { executor } from '$lib/orchestration/executor.svelte';
+  import { checkForUpdateOnLaunch } from '$lib/updates/checkForUpdate';
   import { titles } from '$lib/overview/titles.svelte';
   import { triggersTranscriptRead, SAFETY_POLL_MS } from '$lib/overview/poll';
   import { appSessionRefs } from '$lib/overview/sessionRefs';
   import { type SpatialDir } from '$lib/layout/tree';
+  // Needs-input alerts (capability `needs-input-alerts`): the alert driver lives here
+  // on the always-mounted route (the Inbox is mounted only in overview mode), so a
+  // sound/desktop alert can fire whether the user is in the overview or driving an
+  // agent in the grid. See design D7b/D7c.
+  import { buildRoster } from '$lib/overview/roster';
+  import { toRosterWorkspaces, toNavWorkspaces } from '$lib/overview/rosterInputs';
+  import { activationIntent } from '$lib/overview/activate';
+  import { focusRequest } from '$lib/overview/focusRequest.svelte';
+  import { listen } from '@tauri-apps/api/event';
+  import { runtimeMap } from '$lib/overview/runtime';
+  import { coordinatorNeedsInput } from '$lib/orchestration/coordinatorNeedsInput.svelte';
+  import { windowFocus } from '$lib/overview/windowFocus.svelte';
+  import { focusAgent } from '$lib/overview/focusAgent.svelte';
+  import { alerts } from '$lib/overview/alerts.svelte';
+  import { notifications } from '$lib/settings/notifications.svelte';
 
   // True once the persisted layout has loaded (or fallen back to fresh). We hold
   // off rendering the workspace area until then so we never flash a throwaway
@@ -77,12 +96,28 @@
   // on-quit persistence. Rendering the restored PaneNodes re-spawns one PTY per
   // leaf (saved shell + cwd only) via each TerminalPane's mount.
   onMount(() => {
+    // Hydrate durable UI-layout prefs (project-pane collapse, terminals width,
+    // tasks-launcher split, project filter, lane order) from the `ui` settings
+    // slice. Seeded with defaults so the UI renders immediately; this corrects
+    // them reactively once loaded. Kept on disk (not localStorage) so an abrupt
+    // restart doesn't forget the layout.
+    void uiPrefs.hydrate();
+    // Check for an in-app update (desktop-auto-update spec). Best-effort and
+    // non-blocking: prompts + installs on confirm when a newer version is
+    // published, and is a silent no-op offline / outside the Tauri runtime.
+    void checkForUpdateOnLaunch();
     // Load the user's open-with preferences (seeds defaults on first run).
     void openWith.load();
     // Load session-title preferences (the opt-in cloud title fallback).
     void titleSettings.load();
     // Load the auto-advance focus preference (opt-in; defaults OFF).
     void autoAdvance.load();
+    // Load the compact-mode preference (opt-in; defaults OFF / full three-line rows).
+    void compactMode.load();
+    // Load the subagents-visibility preference (defaults ON / subagents shown).
+    void subagentsVisible.load();
+    // Load the needs-input alert channel modes (opt-in; both default OFF / silent).
+    void notifications.load();
     // Load the persisted one-time onboarding flag FIRST so a returning user who has
     // already seen the gate never sees a flash of it, then load voice-input
     // preferences and check whether the on-device models that selection needs are
@@ -120,14 +155,18 @@
     setAgentTaskLauncher((projectId, prompt) => {
       const proj = projectForId(projects.list, projectId);
       if (!proj) return;
-      const paneId = workspace.launch(
-        buildLaunchPlan({
+      const paneId = workspace.launch({
+        ...buildLaunchPlan({
           folder: proj.path,
           prompt,
           placement: 'tab',
           projectId: proj.id
-        })
-      );
+        }),
+        // The footer Commit + Create-PR tasks ALWAYS run on Sonnet — they are
+        // mechanical git chores (stage/commit, push/open-PR) that don't need the
+        // default model, so force `--model sonnet` for cost/speed.
+        extraArgs: ['--model', 'sonnet']
+      });
       if (paneId) taskAgentPanes.add(paneId);
     });
     // A terminal task that succeeds (exit 0) pops a "<name> completed" toast.
@@ -226,6 +265,27 @@
       unlistenVoice = unlisten;
     });
 
+    // Listen for a clicked needs-input notification (`agent-notification-activated`
+    // from the custom macOS notify path; capability `alert-click-focus`). Raise +
+    // focus the window, switch to the overview, and — when a live leaf still carries
+    // the alerting agent's pane — request the inbox select it. A dead pane focuses
+    // the window only (the inbox no-ops the request).
+    let unlistenNotifyClick: (() => void) | undefined;
+    void listen<{ paneId: string }>('agent-notification-activated', (ev) => {
+      const paneId = ev.payload?.paneId;
+      void getCurrentWindow()
+        .show()
+        .then(() => getCurrentWindow().unminimize())
+        .then(() => getCurrentWindow().setFocus())
+        .catch(() => {});
+      view.show('overview');
+      if (!paneId) return;
+      const intent = activationIntent(paneId, toNavWorkspaces(workspace.workspaces));
+      if (intent.selectPaneId) focusRequest.request(intent.selectPaneId);
+    }).then((un) => {
+      unlistenNotifyClick = un;
+    });
+
     return () => {
       stopWatching?.();
       unlistenSnapshots?.();
@@ -234,6 +294,7 @@
       unlistenExecutor?.();
       unlistenTermClose?.();
       unlistenVoice?.();
+      unlistenNotifyClick?.();
       events.onEvent = undefined;
     };
   });
@@ -327,6 +388,80 @@
   // such change; `retain` is a no-op (no reactive write) when nothing is stale.
   $effect(() => {
     snapshots.retain(workspace.allPaneIds());
+  });
+
+  // NEEDS-INPUT ALERTS driver (capability `needs-input-alerts`). Built off the same
+  // module singletons the Inbox roster uses, on its own 1s clock so a working→waiting
+  // flip is detected promptly. `alerts.process` fires the sound/desktop channels for
+  // agents that JUST entered "Needs input" (each per its own mode). Driven ONLY here
+  // (single source, always mounted) so no alert ever fires twice and alerts keep
+  // working in grid view (the Inbox is mounted only in overview mode).
+  let alertNowMs = $state(Date.now());
+  $effect(() => {
+    const id = setInterval(() => (alertNowMs = Date.now()), 1000);
+    return () => clearInterval(id);
+  });
+  // Track OS window focus + visibility while mounted (the route is the app root).
+  $effect(() => windowFocus.start());
+  const alertRows = $derived(
+    buildRoster(
+      snapshots.byPane,
+      toRosterWorkspaces(workspace.workspaces),
+      runtimeMap(),
+      alertNowMs,
+      activity.bySession,
+      undefined,
+      events.activityMap(),
+      new Set(Object.keys(coordinatorNeedsInput.all()))
+    ).map((r) => {
+      // Enrich the row for its desktop notification: the TITLE reads
+      // "<Project Name>: <Agent Title>". The Agent Title is the GENERATED session
+      // title (the label on its card) when we have one, falling back to the
+      // workspace/cwd `name` — so it reads "Fix login dialog" rather than the bare
+      // "Session N". The Project Name is the agent's owning project's display name
+      // (dropped when it has none). `notificationTitle`/`Body` read `name`/
+      // `projectName`; the focus/coordinator logic keys on `paneId`, so both
+      // overrides are alert-display only.
+      const title = titles.titleFor(r.paneId);
+      const proj = projectForId(projects.list, r.projectId);
+      const projectName = proj ? projectLabel(proj) : null;
+      return { ...r, name: title ?? r.name, projectName };
+    })
+  );
+  // Clear a coordinator's explicit needs-input flag once it resumes (status back to
+  // `working`). This mirror of the Inbox effect must ALSO run here on the always-
+  // mounted route, otherwise the flag would never clear while the user is in grid view
+  // (Inbox unmounted), pinning a coordinator in attention. Idempotent with the Inbox's.
+  $effect(() => {
+    for (const r of alertRows) {
+      if (r.role === 'coordinator') coordinatorNeedsInput.clearOnWorking(r.paneId, r.status);
+    }
+  });
+  // The agent the user is "viewing": the focused grid PANE in grid view (focusedPaneId,
+  // not the leaf id), else the inbox focus agent — used by the `agent-unfocused` mode.
+  const viewedPaneId = $derived(view.isGrid ? workspace.focusedPaneId : focusAgent.paneId);
+  // Alerts stay PRIMED (baseline tracked, nothing fired) until the app has SETTLED:
+  // the layout has restored, prefs have loaded, and a short grace has elapsed. The
+  // grace is load-bearing — the roster fills in asynchronously after `restored` (panes
+  // re-spawn, snapshots/events seed), and a resumed session that re-derives its quiet
+  // "waiting" prompt during that window must count as a pre-existing waiter, NOT a new
+  // entry. Priming each tick keeps the baseline current so those waiters never alert.
+  const ALERT_SETTLE_MS = 6000;
+  let alertReadyAtMs: number | null = null;
+  $effect(() => {
+    if (restored && notifications.loaded && alertReadyAtMs === null) {
+      alertReadyAtMs = alertNowMs;
+    }
+    const settled =
+      restored &&
+      notifications.loaded &&
+      alertReadyAtMs !== null &&
+      alertNowMs - alertReadyAtMs >= ALERT_SETTLE_MS;
+    if (!settled) {
+      alerts.prime(alertRows); // track the baseline; fire nothing while still settling
+      return;
+    }
+    alerts.process(alertRows, { appFocused: windowFocus.focused, viewedPaneId });
   });
 
   // AUTO-ARCHIVE TASK AGENTS: a Claude session spawned by an agent task is meant to

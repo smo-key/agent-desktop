@@ -114,11 +114,26 @@ pub fn parse_pr_list(stdout: &str) -> PrStatus {
 
 // --- Open-PRs-awaiting-review: result + pure helpers ------------------------
 
+/// A PR's author, mirroring the `author` sub-object of `gh pr list --json author`
+/// (`{ "login": …, "name": …, "is_bot": … }`). `name` is `None` when gh reports
+/// it empty; `is_bot` distinguishes bot authors so the UI can show a bot glyph.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrAuthor {
+    pub login: String,
+    /// The author's display name, or `None` when gh reports it empty/absent.
+    pub name: Option<String>,
+    /// Whether the author is a bot (gh emits this as `is_bot`).
+    pub is_bot: bool,
+}
+
 /// A single open PR entry returned by `gh pr list`.
 ///
 /// Each field maps to the `--json` fields we request: `number`, `title`, `url`,
-/// `isDraft`, and `reviewDecision`. `review_decision` is `None` when `gh` omits
-/// the field (no review has been requested on the PR yet).
+/// `isDraft`, `reviewDecision`, `author`, and `updatedAt`. `review_decision` is
+/// `None` when `gh` omits the field (no review has been requested on the PR yet);
+/// `author` and `updated_at` are `None` when gh omits or empties them (best-effort
+/// enrichment for the popover rows).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenPr {
@@ -130,6 +145,11 @@ pub struct OpenPr {
     /// `CHANGES_REQUESTED`, `""`), or `None` when gh omits the field entirely
     /// (no review requested yet — treated as awaiting review for count purposes).
     pub review_decision: Option<String>,
+    /// The PR's author, or `None` when gh omits it / it has no usable login.
+    pub author: Option<PrAuthor>,
+    /// When the PR was last updated (ISO-8601 string from gh's `updatedAt`), or
+    /// `None` when gh omits/empties it.
+    pub updated_at: Option<String>,
 }
 
 /// The result of an "open PRs awaiting review" lookup for a repo's `base`.
@@ -170,10 +190,10 @@ impl OpenPrs {
 }
 
 /// PURE: build the `gh` argument vector for listing the OPEN PRs targeting
-/// `base`, with each PR's `number`, `title`, `url`, `isDraft`, and
-/// `reviewDecision`. `--base` scopes the query to PRs INTO `base`; `--state open`
-/// ignores merged/closed; `--json number,title,url,isDraft,reviewDecision` makes
-/// the output the array we parse below.
+/// `base`, with each PR's `number`, `title`, `url`, `isDraft`, `reviewDecision`,
+/// `author`, and `updatedAt`. `--base` scopes the query to PRs INTO `base`;
+/// `--state open` ignores merged/closed; the `--json` field list makes the output
+/// the array we parse below.
 ///
 /// `base` is the VALUE of `--base` (argv position after the flag), so a name
 /// beginning with `-` is consumed as that flag's argument, never reparsed as a
@@ -187,7 +207,7 @@ pub fn gh_open_prs_args(base: &str) -> Vec<String> {
         "--state".to_string(),
         "open".to_string(),
         "--json".to_string(),
-        "number,title,url,isDraft,reviewDecision".to_string(),
+        "number,title,url,isDraft,reviewDecision,author,updatedAt".to_string(),
     ]
 }
 
@@ -196,9 +216,10 @@ pub fn gh_open_prs_args(base: &str) -> Vec<String> {
 ///
 /// `gh` prints a JSON ARRAY; each entry must have at minimum `number` (integer),
 /// `title` (string), `url` (string), and `isDraft` (bool) — entries missing these
-/// required fields are silently skipped. `reviewDecision` is optional; when absent
-/// it is treated as `None`. On ANYTHING we can't parse (non-JSON, non-array, empty
-/// input) → empty vec (best-effort, never an error).
+/// required fields are silently skipped. `reviewDecision`, `author`, and
+/// `updatedAt` are optional; when absent/empty they are treated as `None`. On
+/// ANYTHING we can't parse (non-JSON, non-array, empty input) → empty vec
+/// (best-effort, never an error).
 pub fn parse_open_pr_list(stdout: &str) -> Vec<OpenPr> {
     let trimmed = stdout.trim();
     if trimmed.is_empty() {
@@ -237,15 +258,54 @@ pub fn parse_open_pr_list(stdout: &str) -> Vec<OpenPr> {
             .get("reviewDecision")
             .and_then(|d| d.as_str())
             .map(|s| s.to_string());
+        // author + updatedAt are best-effort enrichment for the popover rows: a
+        // missing/empty author or updatedAt simply yields None (the row hides that
+        // piece), it never skips the PR.
+        let author = entry.get("author").and_then(parse_pr_author);
+        let updated_at = entry
+            .get("updatedAt")
+            .and_then(|u| u.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
         prs.push(OpenPr {
             number,
             title,
             url,
             is_draft,
             review_decision,
+            author,
+            updated_at,
         });
     }
     prs
+}
+
+/// PURE: parse a `gh` `author` JSON object into a [`PrAuthor`].
+///
+/// Returns `None` when there is no usable `login` (the field is absent, null, or
+/// an empty string — e.g. a deleted/ghost author), so the row falls back to a
+/// neutral placeholder. `name` collapses an empty string to `None`; `is_bot`
+/// defaults to `false` (gh emits it as `is_bot`, but we also tolerate `isBot`).
+fn parse_pr_author(value: &serde_json::Value) -> Option<PrAuthor> {
+    let login = value
+        .get("login")
+        .and_then(|l| l.as_str())
+        .filter(|s| !s.is_empty())?;
+    let name = value
+        .get("name")
+        .and_then(|n| n.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let is_bot = value
+        .get("is_bot")
+        .or_else(|| value.get("isBot"))
+        .and_then(|b| b.as_bool())
+        .unwrap_or(false);
+    Some(PrAuthor {
+        login: login.to_string(),
+        name,
+        is_bot,
+    })
 }
 
 /// PURE: count the non-draft, awaiting-review PRs in a `Vec<OpenPr>`.
@@ -266,10 +326,11 @@ pub fn awaiting_review_count_non_draft(prs: &[OpenPr]) -> i64 {
         .count() as i64
 }
 
-/// PURE: parse `gh repo view --json url` stdout into the repo's pull-requests
-/// page URL (`<url>/pulls`). Returns `None` when the output isn't the expected
-/// `{"url": "https://github.com/o/r"}` object (non-JSON, missing/empty url).
-pub fn parse_pulls_url(stdout: &str) -> Option<String> {
+/// PURE: parse `gh repo view --json url` stdout into the repo's BASE web URL
+/// (`https://github.com/o/r`, trailing slash stripped). Returns `None` when the
+/// output isn't the expected `{"url": "…"}` object (non-JSON, missing/empty url).
+/// The shared extractor behind [`parse_pulls_url`] and the commit-link path.
+pub fn parse_repo_url(stdout: &str) -> Option<String> {
     let trimmed = stdout.trim();
     if trimmed.is_empty() {
         return None;
@@ -279,9 +340,15 @@ pub fn parse_pulls_url(stdout: &str) -> Option<String> {
     if url.is_empty() {
         return None;
     }
-    // Append `/pulls`, tolerating a trailing slash on the repo url.
-    let base = url.trim_end_matches('/');
-    Some(format!("{base}/pulls"))
+    // Strip a trailing slash so callers can append `/pulls`, `/commit/<sha>`, etc.
+    Some(url.trim_end_matches('/').to_string())
+}
+
+/// PURE: parse `gh repo view --json url` stdout into the repo's pull-requests
+/// page URL (`<url>/pulls`). Returns `None` when the output isn't the expected
+/// `{"url": "https://github.com/o/r"}` object (non-JSON, missing/empty url).
+pub fn parse_pulls_url(stdout: &str) -> Option<String> {
+    parse_repo_url(stdout).map(|base| format!("{base}/pulls"))
 }
 
 // --- Environment seeding ----------------------------------------------------
@@ -423,10 +490,12 @@ async fn open_pr_list_for(repo_path: &str, base: &str) -> Option<Vec<OpenPr>> {
     Some(parse_open_pr_list(trimmed))
 }
 
-/// Run `gh repo view --json url` in `repo_path` and derive the pull-requests page
-/// URL (`<url>/pulls`), or `None` when the lookup can't be completed. Degrades
-/// independently of the count so a failed URL never zeroes a real count.
-async fn pulls_url_for(repo_path: &str) -> Option<String> {
+/// Run `gh repo view --json url` in `repo_path` and parse the repo's BASE web URL
+/// (`https://github.com/o/r`), or `None` when the lookup can't be completed (gh
+/// missing/unauthenticated/non-zero/timeout/malformed, or the repo isn't on a
+/// host gh recognizes). Best-effort; the seam for both the pulls link and the
+/// per-commit diff links.
+pub async fn repo_url_for(repo_path: &str) -> Option<String> {
     let mut cmd = tokio::process::Command::new("gh");
     cmd.args(["repo", "view", "--json", "url"])
         .current_dir(repo_path)
@@ -445,7 +514,14 @@ async fn pulls_url_for(repo_path: &str) -> Option<String> {
         return None;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_pulls_url(&stdout)
+    parse_repo_url(&stdout)
+}
+
+/// Run `gh repo view --json url` in `repo_path` and derive the pull-requests page
+/// URL (`<url>/pulls`), or `None` when the lookup can't be completed. Degrades
+/// independently of the count so a failed URL never zeroes a real count.
+async fn pulls_url_for(repo_path: &str) -> Option<String> {
+    repo_url_for(repo_path).await.map(|base| format!("{base}/pulls"))
 }
 
 /// Resolve the current branch name in `dir` via `git rev-parse --abbrev-ref
@@ -595,7 +671,7 @@ mod tests {
                 "--state",
                 "open",
                 "--json",
-                "number,title,url,isDraft,reviewDecision",
+                "number,title,url,isDraft,reviewDecision,author,updatedAt",
             ]
             .into_iter()
             .map(String::from)
@@ -632,6 +708,31 @@ mod tests {
         assert_eq!(parse_pulls_url("not json"), None);
         assert_eq!(parse_pulls_url("{}"), None);
         assert_eq!(parse_pulls_url(r#"{"url":""}"#), None);
+    }
+
+    #[test]
+    fn parse_repo_url_returns_the_base_url() {
+        assert_eq!(
+            parse_repo_url(r#"{"url":"https://github.com/o/r"}"#),
+            Some("https://github.com/o/r".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_repo_url_strips_trailing_slash() {
+        // A trailing slash is stripped so callers can append `/commit/<sha>` cleanly.
+        assert_eq!(
+            parse_repo_url(r#"{"url":"https://github.com/o/r/"}"#),
+            Some("https://github.com/o/r".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_repo_url_none_for_missing_or_bad_output() {
+        assert_eq!(parse_repo_url(""), None);
+        assert_eq!(parse_repo_url("not json"), None);
+        assert_eq!(parse_repo_url("{}"), None);
+        assert_eq!(parse_repo_url(r#"{"url":""}"#), None);
     }
 
     // ── open-PRs list parser ─────────────────────────────────────────────────
@@ -683,15 +784,77 @@ mod tests {
         assert_eq!(prs[0].number, 1);
     }
 
+    // ── author + updatedAt enrichment ────────────────────────────────────────
+
+    #[test]
+    fn parse_open_pr_list_parses_author_and_updated_at() {
+        // gh nests author as { id, is_bot, login, name } and emits updatedAt as an
+        // ISO-8601 string; both are captured for the popover rows.
+        let out = r#"[
+            {"number":1,"title":"Add feature","url":"https://github.com/o/r/pull/1","isDraft":false,"reviewDecision":"REVIEW_REQUIRED","author":{"id":"MDQ6","is_bot":false,"login":"octocat","name":"The Octocat"},"updatedAt":"2026-06-12T14:30:00Z"}
+        ]"#;
+        let prs = parse_open_pr_list(out);
+        assert_eq!(prs.len(), 1);
+        assert_eq!(
+            prs[0].author,
+            Some(PrAuthor {
+                login: "octocat".to_string(),
+                name: Some("The Octocat".to_string()),
+                is_bot: false,
+            })
+        );
+        assert_eq!(prs[0].updated_at, Some("2026-06-12T14:30:00Z".to_string()));
+    }
+
+    #[test]
+    fn parse_open_pr_list_author_and_updated_at_default_to_none() {
+        // Absent author/updatedAt → None (the row hides those pieces); the PR is
+        // still parsed. An empty updatedAt string also collapses to None.
+        let out = r#"[
+            {"number":1,"title":"No enrichment","url":"https://github.com/o/r/pull/1","isDraft":false,"updatedAt":""}
+        ]"#;
+        let prs = parse_open_pr_list(out);
+        assert_eq!(prs.len(), 1);
+        assert_eq!(prs[0].author, None);
+        assert_eq!(prs[0].updated_at, None);
+    }
+
+    #[test]
+    fn parse_pr_author_requires_a_non_empty_login() {
+        // No usable login (absent, null, or empty) → None, so the row falls back to
+        // a neutral placeholder rather than rendering a login-less avatar.
+        assert_eq!(parse_pr_author(&serde_json::json!({})), None);
+        assert_eq!(parse_pr_author(&serde_json::json!({ "login": "" })), None);
+        assert_eq!(parse_pr_author(&serde_json::json!({ "login": null })), None);
+    }
+
+    #[test]
+    fn parse_pr_author_flags_bots_and_collapses_empty_name() {
+        // is_bot is honored (so the UI can show a bot glyph); an empty name → None.
+        let bot = parse_pr_author(&serde_json::json!({
+            "login": "dependabot",
+            "name": "",
+            "is_bot": true
+        }));
+        assert_eq!(
+            bot,
+            Some(PrAuthor {
+                login: "dependabot".to_string(),
+                name: None,
+                is_bot: true,
+            })
+        );
+    }
+
     // ── non-draft awaiting-review count derivation ───────────────────────────
 
     #[test]
     fn non_draft_awaiting_review_count_excludes_drafts_and_approved() {
         let prs = vec![
-            OpenPr { number: 1, title: "a".into(), url: "u1".into(), is_draft: false, review_decision: Some("REVIEW_REQUIRED".into()) },
-            OpenPr { number: 2, title: "b".into(), url: "u2".into(), is_draft: true, review_decision: Some("REVIEW_REQUIRED".into()) },
-            OpenPr { number: 3, title: "c".into(), url: "u3".into(), is_draft: false, review_decision: Some("APPROVED".into()) },
-            OpenPr { number: 4, title: "d".into(), url: "u4".into(), is_draft: false, review_decision: None },
+            OpenPr { number: 1, title: "a".into(), url: "u1".into(), is_draft: false, review_decision: Some("REVIEW_REQUIRED".into()), author: None, updated_at: None },
+            OpenPr { number: 2, title: "b".into(), url: "u2".into(), is_draft: true, review_decision: Some("REVIEW_REQUIRED".into()), author: None, updated_at: None },
+            OpenPr { number: 3, title: "c".into(), url: "u3".into(), is_draft: false, review_decision: Some("APPROVED".into()), author: None, updated_at: None },
+            OpenPr { number: 4, title: "d".into(), url: "u4".into(), is_draft: false, review_decision: None, author: None, updated_at: None },
         ];
         // PR 1: non-draft, not approved → counted.
         // PR 2: draft → excluded even though awaiting review.
@@ -708,7 +871,7 @@ mod tests {
     #[test]
     fn non_draft_awaiting_review_count_all_drafts_is_zero() {
         let prs = vec![
-            OpenPr { number: 1, title: "a".into(), url: "u1".into(), is_draft: true, review_decision: Some("REVIEW_REQUIRED".into()) },
+            OpenPr { number: 1, title: "a".into(), url: "u1".into(), is_draft: true, review_decision: Some("REVIEW_REQUIRED".into()), author: None, updated_at: None },
         ];
         assert_eq!(awaiting_review_count_non_draft(&prs), 0);
     }
@@ -716,8 +879,8 @@ mod tests {
     #[test]
     fn non_draft_awaiting_review_count_all_approved_is_zero() {
         let prs = vec![
-            OpenPr { number: 1, title: "a".into(), url: "u1".into(), is_draft: false, review_decision: Some("APPROVED".into()) },
-            OpenPr { number: 2, title: "b".into(), url: "u2".into(), is_draft: false, review_decision: Some("APPROVED".into()) },
+            OpenPr { number: 1, title: "a".into(), url: "u1".into(), is_draft: false, review_decision: Some("APPROVED".into()), author: None, updated_at: None },
+            OpenPr { number: 2, title: "b".into(), url: "u2".into(), is_draft: false, review_decision: Some("APPROVED".into()), author: None, updated_at: None },
         ];
         assert_eq!(awaiting_review_count_non_draft(&prs), 0);
     }

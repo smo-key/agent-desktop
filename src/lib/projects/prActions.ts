@@ -119,23 +119,31 @@ export function buildCreatePrPrompt(base: string = DEFAULT_BASE): string {
 
 /**
  * The agent prompt that COMMITS the pending working-tree changes. Instructs the
- * session to stage everything and create ONE commit with a clear conventional
- * message on the CURRENT branch, then hand back to the user (so the auto-archive
- * effect closes the fire-and-forget task). Crucially it must NOT push and NOT open
- * a PR — committing locally is the whole job. Kept pure + exported so its shape is
- * unit-tested (mirrors `buildCreatePrPrompt`).
+ * session to GROUP the changes into one or more logical commits BY CONTENT — each
+ * commit a single coherent concern (a feature, a fix, a refactor, a docs/chore
+ * change) with files staged selectively — on the CURRENT branch, then hand back to
+ * the user (so the auto-archive effect closes the fire-and-forget task). Crucially
+ * it must NOT push and NOT open a PR — committing locally is the whole job. Kept
+ * pure + exported so its shape is unit-tested (mirrors `buildCreatePrPrompt`).
  */
 export function buildCommitPrompt(): string {
   return [
     'Commit the pending uncommitted changes in this repository on the CURRENT branch.',
     '',
-    'Steps:',
-    '1. Review the working-tree changes (`git status` and `git diff`) so the commit message is accurate.',
-    '2. Stage ALL pending changes (`git add -A`).',
-    '3. Create exactly ONE commit with a clear, conventional-commits message (e.g. `feat: …`, `fix: …`, `chore: …`) summarizing the changes.',
-    '4. Print the resulting commit summary and then stop.',
+    'Split the changes into one or more commits grouped BY CONTENT — each commit a single,',
+    'coherent concern (e.g. one feature, one fix, one refactor, one docs/chore change). Do not',
+    'lump unrelated changes together; if everything is genuinely one concern, a single commit is fine.',
     '',
-    'Do NOT push the branch and do NOT open a pull request — just create the local commit on the current branch.'
+    'Steps:',
+    '1. Review the working-tree changes (`git status` and `git diff`) so you understand every change.',
+    '2. Group the changes into logical units by concern, and for each unit:',
+    '   - Stage ONLY that unit\'s files/hunks (`git add <paths>`, or `git add -p` to split a file).',
+    '   - Create one commit with a clear, conventional-commits message (e.g. `feat: …`, `fix: …`, `chore: …`)',
+    '     describing that unit.',
+    '3. Repeat until the working tree is clean (no remaining uncommitted changes).',
+    '4. Print the resulting commits (`git log` of the new commits) and then stop.',
+    '',
+    'Do NOT push the branch and do NOT open a pull request — just create the local commits on the current branch.'
   ].join('\n');
 }
 

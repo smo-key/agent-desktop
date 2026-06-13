@@ -50,6 +50,14 @@ export interface Subagent {
   parentSession: string;
   /** The workflow run id this subagent belongs to, or null. */
   workflowId?: string | null;
+  /** The workflow phase title this subagent ran under (e.g. `Capabilities`), or null. */
+  phaseTitle?: string | null;
+  /** The workflow phase ordinal this subagent ran under, or null (orders phase groups). */
+  phaseIndex?: number | null;
+  /** Start time as a Unix epoch in MILLISECONDS, or null (for live `now - startedAt`). */
+  startedAt?: number | null;
+  /** Total run duration in MILLISECONDS once finished, or null while still running. */
+  durationMs?: number | null;
 }
 
 /** One session the store asks subagents for: its Claude session id + its cwd. The

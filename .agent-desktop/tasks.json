@@ -1,0 +1,1 @@
+{"version":1,"tasks":[{"id":"term-mqbvuccj-1","name":"Build app","kind":"terminal","command":"yarn build","cwd":null},{"id":"term-mqcfxvwc-2","name":"Run Dev","kind":"terminal","command":"npm run dev","cwd":null}]}

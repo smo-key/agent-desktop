@@ -20,6 +20,7 @@ import {
   addTask,
   removeTask,
   renameTask,
+  reorderTask,
   defaultTaskName,
   defaultAgentName,
   parseProjectTasks,
@@ -347,6 +348,19 @@ export class ProjectTasksStore {
   async rename(id: string, name: string): Promise<void> {
     const projectId = this.projectIdForTask(id);
     this.byProject = renameTask(this.byProject, id, name);
+    if (projectId) await this.saveProject(projectId);
+  }
+
+  /**
+   * Move task `fromId` to the slot of `toId` within their project (drag-to-reorder
+   * in the launcher) and persist that project. No-op (no save) when nothing moved
+   * (unknown id, same id, or a cross-project drop).
+   */
+  async reorder(fromId: string, toId: string): Promise<void> {
+    const next = reorderTask(this.byProject, fromId, toId);
+    if (next === this.byProject) return; // nothing moved
+    this.byProject = next;
+    const projectId = this.projectIdForTask(fromId);
     if (projectId) await this.saveProject(projectId);
   }
 

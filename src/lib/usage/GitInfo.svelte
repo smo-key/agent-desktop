@@ -38,10 +38,13 @@
   // 0/null, so a clean tree can't be clicked. The hover tooltip shows only the
   // COUNT of changed files (e.g. "3 uncommitted files").
   //
-  // When `pushProject` is provided (the footer only), the AHEAD (↑) pill becomes
-  // a BUTTON that opens the push popover whenever `ahead > 0`, listing the commits
-  // that would be sent with a pinned "Push now" action. It stays INERT when
-  // `ahead === 0`/null so a clean (nothing-to-push) state can't be clicked.
+  // When `pushProject` is provided (the footer only), the AHEAD (↑) pill is ALWAYS
+  // a BUTTON that opens the push popover — the user takes the secondary "Push now"
+  // action there in every case. It reads HIGHLIGHTED whenever there is something to
+  // do (commits to push, OR an unpublished branch that pushing would publish — even
+  // at zero commits) and falls to a NEUTRAL empty state (mirroring the open-PRs zero
+  // state) only when the branch is published and fully in sync. It is disabled ONLY
+  // while a push/pull for the project is in flight (`busy`).
   import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import type { GitStatus } from './snapshots.svelte';
@@ -50,10 +53,23 @@
   import type { CommitProject } from './commitPopover';
   import { spawnCommitFromPopover } from './commitPopover';
   import type { PushCommit } from '$lib/projects/projectGitActions';
-  import { commitsToPush, pushProject as doPushProject } from '$lib/projects/projectGitActions';
-  import { pushPopoverOpen as canPushPopover } from './pushPopover';
+  import {
+    commitsToPush,
+    pushProject as doPushProject,
+    repoWebUrl,
+    commitWebUrl
+  } from '$lib/projects/projectGitActions';
+  import { pushPopoverOpen as canPushPopover, aheadPillEnabled } from './pushPopover';
   import { invoke } from '@tauri-apps/api/core';
-  import { sortPrsForPopover, type OpenPr } from '$lib/projects/openPrsActions';
+  import {
+    sortPrsForPopover,
+    reviewStatus,
+    prUpdatedSeconds,
+    type OpenPr
+  } from '$lib/projects/openPrsActions';
+  import PrAuthorAvatar from './PrAuthorAvatar.svelte';
+  import { friendlyTime } from '$lib/overview/friendlyTime';
+  import { openInEditor } from '$lib/overview/editor';
 
   /** Minimal project info needed to open the push popover and execute a push. */
   export interface PushProject {
@@ -140,31 +156,82 @@
     }
   }
 
+  // Clicking a file row in the commit popover opens that file in the user's
+  // configured editor (the open-with preferences, resolved against the project
+  // folder since git reports repo-relative paths). The popover stays OPEN so the
+  // user can review several files (and still reach "Commit now") without reopening.
+  function handleOpenFile(file: string) {
+    void openInEditor(commitProject?.path ?? null, file);
+  }
+
   // ── Push popover state ────────────────────────────────────────────────────
-  // The ahead (↑) pill opens the push popover when `pushProject` is wired AND
-  // `ahead > 0`. Otherwise the pill calls `onPush` directly (project pane) or
-  // is inert. The popover lazily fetches the commit list on open.
-  const pushable = $derived(canPushPopover(git?.ahead, !!pushProject));
+  // The ahead (↑) pill opens the push popover whenever `pushProject` is wired — in
+  // ALL cases, so the user always takes the secondary action inside the popover.
+  // Otherwise the pill calls `onPush` directly (no-popover surface) or is inert.
+  // The popover lazily fetches the commit list on open.
+  const pushable = $derived(canPushPopover(!!pushProject));
+
+  // Whether the ↑ pill reads HIGHLIGHTED (something to do — commits to push, or an
+  // unpublished branch to publish) vs the NEUTRAL empty state (published + in sync,
+  // or count unknown). Drives the `.zero` styling that mirrors the open-PRs zero pill.
+  const aheadEnabled = $derived(aheadPillEnabled(git?.ahead, git?.upstream));
+
+  // The ↑ pill's hover tooltip, reflecting what a click/push would do: publish an
+  // unpublished branch, push pending commits, or (in sync) just review.
+  const aheadTooltip = $derived.by(() => {
+    const n = git?.ahead ?? 0;
+    const commits = `${n} commit${n === 1 ? '' : 's'}`;
+    if (git?.upstream === false) {
+      return n > 0
+        ? `Publish this branch — ${commits} to upload`
+        : 'Publish this branch to its remote';
+    }
+    return n > 0 ? `${commits} to push — click to review` : 'Up to date with the remote';
+  });
 
   let pushPopoverOpenState = $state(false);
   let pushPillEl = $state<HTMLButtonElement | null>(null);
   let pushCommits = $state<PushCommit[]>([]);
   let pushCommitsLoading = $state(false);
+  // The repo's GitHub base URL, resolved when the popover opens so each commit
+  // row can link to its diff view. Null (non-GitHub / gh unavailable) → rows
+  // stay inert display rows, mirroring how the PR bubble hides off GitHub.
+  let pushRepoUrl = $state<string | null>(null);
 
   function openPushPopover() {
     if (!pushable) return;
     pushPopoverOpenState = true;
+    pushRepoUrl = null;
     // Lazily fetch the commit list when the popover opens.
     pushCommitsLoading = true;
     void commitsToPush(pushProject?.path).then((commits) => {
       pushCommits = commits;
       pushCommitsLoading = false;
     });
+    // Resolve the repo's GitHub base URL in parallel so commit rows become
+    // clickable links to each commit's diff view (best-effort; null off GitHub).
+    void repoWebUrl(pushProject?.path).then((url) => {
+      pushRepoUrl = url;
+    });
   }
 
   function closePushPopover() {
     pushPopoverOpenState = false;
     pushCommits = [];
+    pushRepoUrl = null;
+  }
+
+  async function handleOpenCommit(hash: string) {
+    // Close first so the popover dismisses immediately on click (mirrors the PR
+    // rows), then open the commit's diff view on GitHub in the default browser.
+    const url = commitWebUrl(pushRepoUrl, hash);
+    closePushPopover();
+    if (!url) return;
+    try {
+      await invoke('open_path', { path: url, app: null });
+    } catch (err) {
+      console.warn('open_path (open commit url) failed', err);
+    }
   }
 
   async function handlePushNow() {
@@ -182,9 +249,14 @@
   // page. Falls back to calling `onOpenPrs` directly if only the legacy prop is set.
   let openPrsPopoverOpen = $state(false);
   let openPrsPillEl = $state<HTMLButtonElement | null>(null);
+  // Snapshot of "now" (epoch ms) taken when the popover opens, so each row's
+  // relative last-updated time ("2h ago") is computed against a stable reference
+  // for the life of the popover — a transient view doesn't need per-second ticking.
+  let openPrsNowMs = $state(Date.now());
 
   function handleOpenPrsClick() {
     if (openPrsResult != null) {
+      openPrsNowMs = Date.now();
       openPrsPopoverOpen = true;
     } else if (onOpenPrs) {
       onOpenPrs();
@@ -270,33 +342,34 @@
       {/if}
       {#if always || (git.ahead != null && git.ahead > 0)}
         {#if pushable}
-          <!-- Commits to push present + footer wired a pushProject: a clickable PUSH
-               button. Clicking opens the push popover which lists the commits and
-               pins a "Push now" action. INERT when ahead === 0/null. -->
+          <!-- Footer wired a pushProject: the ↑ pill is ALWAYS a clickable button
+               that opens the push popover (the user pushes/publishes there in every
+               case). Highlighted when there's something to do, NEUTRAL (`.zero`,
+               mirroring the open-PRs empty pill) when published + in sync. Disabled
+               only while a sync is in flight. -->
           <button
             type="button"
             class="pill ahead action"
-            class:zero={(git.ahead ?? 0) === 0}
+            class:zero={!aheadEnabled}
             bind:this={pushPillEl}
             onclick={openPushPopover}
             disabled={busy}
-            use:tooltip={busy ? 'Sync in progress…' : 'Click to review'}
+            use:tooltip={busy ? 'Sync in progress…' : aheadTooltip}
           >
             <Icon name="arrow-up" size={12} />
             <span class="txt">{git.ahead ?? 0}</span>
           </button>
         {:else if onPush && !pushProject}
           <!-- Direct-push fallback for a surface that wires onPush WITHOUT a
-               pushProject (no popover). In the footer both are wired together, so
-               this never fires there — footer `ahead === 0` falls through to the
-               inert span below (nothing to push → SHALL NOT push). -->
+               pushProject (no popover). The footer always wires both, so this never
+               fires there. -->
           <button
             type="button"
             class="pill ahead action"
-            class:zero={(git.ahead ?? 0) === 0}
+            class:zero={!aheadEnabled}
             onclick={onPush}
             disabled={busy}
-            use:tooltip={busy ? 'Sync in progress…' : 'Push to origin'}
+            use:tooltip={busy ? 'Sync in progress…' : aheadTooltip}
           >
             <Icon name="arrow-up" size={12} />
             <span class="txt">{git.ahead ?? 0}</span>
@@ -304,8 +377,8 @@
         {:else}
           <span
             class="pill ahead"
-            class:zero={(git.ahead ?? 0) === 0}
-            use:tooltip={`${git.ahead ?? 0} commit${(git.ahead ?? 0) === 1 ? '' : 's'} ahead of upstream`}
+            class:zero={!aheadEnabled}
+            use:tooltip={aheadTooltip}
           >
             <Icon name="arrow-up" size={12} />
             <span class="txt">{git.ahead ?? 0}</span>
@@ -315,14 +388,15 @@
       {#if git.modified != null}
         {#if commitable}
           <!-- Changes present + footer wired a commit action: a clickable COMMIT
-               button. Hover shows the count-only tooltip; clicking opens the commit
-               popover which lists the file paths and pins a "Commit now" action. -->
+               button. Hover shows the count-only tooltip (matching the other
+               indicators' count tooltips); clicking opens the commit popover which
+               lists the file paths and pins a "Commit now" action. -->
           <button
             type="button"
             class="pill modified action"
             bind:this={commitPillEl}
             onclick={openCommitPopover}
-            use:tooltip={'Click to review'}
+            use:tooltip={uncommittedCountTooltip(git.modified)}
           >
             <Icon name="pencil" size={12} />
             <span class="txt">{git.modified}</span>
@@ -414,10 +488,28 @@
     {:else if pushCommits.length > 0}
       <ul class="cp-file-list">
         {#each pushCommits as commit (commit.hash)}
-          <li class="cp-file pp-commit-row">
-            <span class="pp-hash">{commit.hash.slice(0, 7)}</span>
-            <span class="pp-subject">{commit.subject}</span>
-          </li>
+          {#if pushRepoUrl}
+            <!-- Repo is on GitHub: the row links to the commit's diff view.
+                 Clicking closes the popover and opens it in the browser. -->
+            <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <li
+              class="cp-file pp-commit-row pp-commit-clickable"
+              role="button"
+              tabindex="0"
+              use:tooltip={'Open this commit on GitHub'}
+              onclick={() => handleOpenCommit(commit.hash)}
+              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleOpenCommit(commit.hash); } }}
+            >
+              <span class="pp-hash">{commit.hash.slice(0, 7)}</span>
+              <span class="pp-subject">{commit.subject}</span>
+            </li>
+          {:else}
+            <li class="cp-file pp-commit-row">
+              <span class="pp-hash">{commit.hash.slice(0, 7)}</span>
+              <span class="pp-subject">{commit.subject}</span>
+            </li>
+          {/if}
         {/each}
       </ul>
     {:else}
@@ -449,7 +541,15 @@
     {#if git?.files && git.files.length > 0}
       <ul class="cp-file-list">
         {#each git.files as file (file)}
-          <li class="cp-file">{file}</li>
+          <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <li
+            class="cp-file cp-file-row"
+            role="button"
+            tabindex="0"
+            onclick={() => handleOpenFile(file)}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleOpenFile(file); } }}
+          >{file}</li>
         {/each}
       </ul>
     {:else}
@@ -481,6 +581,8 @@
     {#if sortedPrsForPopover.length > 0}
       <ul class="cp-file-list">
         {#each sortedPrsForPopover as pr (pr.number)}
+          {@const status = reviewStatus(pr.reviewDecision)}
+          {@const updatedSec = prUpdatedSeconds(pr.updatedAt)}
           <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <li
@@ -491,11 +593,24 @@
             onclick={() => handleOpenPrUrl(pr.url)}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleOpenPrUrl(pr.url); }}
           >
+            <PrAuthorAvatar author={pr.author} size={16} />
             <span class="opr-number">#{pr.number}</span>
             <span class="opr-title">{pr.title}</span>
             {#if pr.isDraft}
               <span class="opr-draft-badge">Draft</span>
             {/if}
+            {#if updatedSec != null}
+              <!-- Gate on the PARSED value (not raw truthiness) so a malformed
+                   updatedAt omits the piece entirely rather than rendering "—"
+                   with an "Invalid Date" tooltip. When non-null, Date.parse
+                   succeeded, so the tooltip's exact timestamp is always valid. -->
+              <span class="opr-updated" use:tooltip={`Updated ${new Date(pr.updatedAt ?? '').toLocaleString()}`}>
+                {friendlyTime(updatedSec, openPrsNowMs)}
+              </span>
+            {/if}
+            <span class="opr-status opr-status-{status.tone}" use:tooltip={status.label}>
+              <Icon name={status.icon} size={12} />
+            </span>
           </li>
         {/each}
       </ul>
@@ -671,6 +786,18 @@
     color: var(--fg-1);
   }
 
+  /* A clickable file row (commit popover): opens the file in the configured editor.
+     Pointer + a focus ring so it reads as actionable and is keyboard-reachable. */
+  .cp-file-row {
+    cursor: pointer;
+  }
+
+  .cp-file-row:focus {
+    outline: none;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--fg-1);
+  }
+
   .cp-empty {
     font-family: var(--font-sans);
     font-size: 12px;
@@ -729,6 +856,19 @@
     align-items: center;
   }
 
+  /* A clickable commit row (repo on GitHub): opens the commit's diff view.
+     Pointer + a focus ring so it reads as actionable and is keyboard-reachable
+     (matches the PR-row affordance). */
+  .pp-commit-clickable {
+    cursor: pointer;
+  }
+
+  .pp-commit-clickable:focus {
+    outline: none;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--fg-1);
+  }
+
   /* Primary action button — "Push now" — full-width, orange (caution) accent (mirrors
      the commit button so the push pill popover is visually consistent). */
   .pp-push-btn {
@@ -783,6 +923,40 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1 1 auto;
+  }
+
+  /* Author avatar leads each row; space it from the PR number. */
+  .opr-pr-row :global(.pr-avatar) {
+    margin-right: 6px;
+  }
+
+  /* Relative last-updated time, sitting right of the title before the status icon. */
+  .opr-updated {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-4);
+    flex-shrink: 0;
+    margin-left: 8px;
+  }
+
+  /* Per-row review-status glyph (rightmost), colored by the review decision. */
+  .opr-status {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    margin-left: 6px;
+  }
+  .opr-status-approved {
+    color: var(--nominal-500);
+  }
+  .opr-status-changes {
+    color: var(--abort-500);
+  }
+  .opr-status-required {
+    color: var(--caution-500);
+  }
+  .opr-status-none {
+    color: var(--fg-4);
   }
 
   /* Draft PRs: dim title + row, showing draft badge. */

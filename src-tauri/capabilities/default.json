@@ -8,8 +8,14 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
+    "notification:default",
     "core:window:allow-start-dragging",
     "core:window:allow-destroy",
+    "core:window:allow-set-focus",
+    "core:window:allow-unminimize",
+    "core:window:allow-show",
+    "updater:default",
+    "process:default",
     {
       "identifier": "shell:allow-execute",
       "allow": [

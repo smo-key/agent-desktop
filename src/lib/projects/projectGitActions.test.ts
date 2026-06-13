@@ -10,7 +10,13 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock
 const showMock = vi.fn((..._a: unknown[]) => 0);
 vi.mock('../ui/toastStore.svelte', () => ({ toast: { show: (...a: unknown[]) => showMock(...a) } }));
 
-import { pushProject, pullProject, setGitTerminalOpener } from './projectGitActions';
+import {
+  pushProject,
+  pullProject,
+  setGitTerminalOpener,
+  repoWebUrl,
+  commitWebUrl
+} from './projectGitActions';
 
 // The injected terminal opener (set by the app at startup). Reset per test.
 const openMock = vi.fn((..._a: unknown[]) => {});
@@ -82,4 +88,51 @@ it('Project has no folder', async () => {
   expect(invokeMock).not.toHaveBeenCalled();
   expect(showMock).toHaveBeenCalledTimes(2);
   expect(showMock.mock.calls[0][0]).toMatch(/no folder/i);
+});
+
+// ── repoWebUrl ──────────────────────────────────────────────────────────────
+
+// Scenario: repoWebUrl returns the GitHub base URL for a repo on GitHub.
+it('repoWebUrl resolves the repo base URL', async () => {
+  invokeMock.mockResolvedValueOnce('https://github.com/o/r');
+  await expect(repoWebUrl('/repo')).resolves.toBe('https://github.com/o/r');
+  expect(invokeMock).toHaveBeenCalledWith('repo_web_url', { repoPath: '/repo' });
+});
+
+// Scenario: repoWebUrl returns null when the backend can't answer (non-GitHub /
+// gh missing-or-unauthenticated) — null result OR a rejected invoke, and never
+// invokes for a missing path.
+it('repoWebUrl returns null when unavailable', async () => {
+  invokeMock.mockResolvedValueOnce(null);
+  await expect(repoWebUrl('/repo')).resolves.toBeNull();
+
+  invokeMock.mockRejectedValueOnce('gh not authenticated');
+  await expect(repoWebUrl('/repo')).resolves.toBeNull();
+
+  invokeMock.mockClear();
+  await expect(repoWebUrl(null)).resolves.toBeNull();
+  await expect(repoWebUrl('')).resolves.toBeNull();
+  expect(invokeMock).not.toHaveBeenCalled();
+});
+
+// ── commitWebUrl ────────────────────────────────────────────────────────────
+
+// Scenario: commitWebUrl builds the diff-view URL from base + hash.
+it('commitWebUrl builds the commit diff URL', () => {
+  expect(commitWebUrl('https://github.com/o/r', 'abc123')).toBe(
+    'https://github.com/o/r/commit/abc123'
+  );
+  // A trailing slash on the base is tolerated (no `//commit`).
+  expect(commitWebUrl('https://github.com/o/r/', 'abc123')).toBe(
+    'https://github.com/o/r/commit/abc123'
+  );
+});
+
+// Scenario: commitWebUrl yields null when base or hash is missing (non-GitHub
+// repo → no link → inert row).
+it('commitWebUrl is null without a base or hash', () => {
+  expect(commitWebUrl(null, 'abc123')).toBeNull();
+  expect(commitWebUrl('', 'abc123')).toBeNull();
+  expect(commitWebUrl('https://github.com/o/r', null)).toBeNull();
+  expect(commitWebUrl('https://github.com/o/r', '')).toBeNull();
 });

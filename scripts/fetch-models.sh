@@ -51,10 +51,12 @@ if [[ -f "$DEST" && "${FORCE:-0}" != "1" ]]; then
 fi
 
 # --- Tooling check -----------------------------------------------------------
+# curl and wget both ship with Git Bash on Windows, on macOS, and on the Linux
+# CI runners, so this provisions the (architecture-independent) model everywhere.
 if command -v curl >/dev/null 2>&1; then
   DL=(curl -fL --retry 3 -o "$DEST.part" "$MODEL_URL")
 elif command -v wget >/dev/null 2>&1; then
-  DL=(wget -O "$DEST.part" "$MODEL_URL")
+  DL=(wget --tries=3 -O "$DEST.part" "$MODEL_URL")
 else
   echo "ERROR: need 'curl' or 'wget' to download the bundled model." >&2
   exit 1

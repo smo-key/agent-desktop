@@ -10,6 +10,7 @@
   // come from the PURE `projectCounts`/`unassignedCount` over the roster rows the
   // parent passes in. Creating a project persists it and selects it.
 
+  import { tick } from 'svelte';
   import type { AgentRow } from '../overview/roster';
   import type { Project, ProjectDraft } from './projects';
   import { projects } from './projects.svelte';
@@ -103,6 +104,55 @@
   const unassigned = $derived(unassignedCount(rows));
   const allAgents = $derived(allAgentsCount(rows));
 
+  // REVEAL the selected project filter: when the selection changes (e.g. the inbox's
+  // ⌘⇧↑/↓ cycles through a panel longer than its scrollport), scroll the active row
+  // into view after the DOM updates. `block: 'nearest'` no-ops when the row is already
+  // fully visible, so clicking a visible project never jumps the panel. Covers both the
+  // expanded rows (`.pp-item.active`) and the collapsed icon rail (`.pp-rail-ic.active`).
+  let panelEl = $state<HTMLElement | null>(null);
+  $effect(() => {
+    void projectFilter.selected; // re-run when the selection changes
+    const container = panelEl;
+    if (!container) return;
+    void tick().then(() => {
+      container.querySelector('.active')?.scrollIntoView({ block: 'nearest' });
+    });
+  });
+
+  // --- Drag-to-reorder the project list -------------------------------------
+  // The expanded project rows are draggable: dropping one onto another reorders
+  // the persisted `projects` list (projects.reorder → reorderProjects + save), so
+  // the panel order — and the collapsed rail, which mirrors it — is user-arranged
+  // and survives restart. `dragId` is the row being dragged; `dragOverId` is the
+  // current drop target (for the insertion-highlight).
+  let dragId = $state<string | null>(null);
+  let dragOverId = $state<string | null>(null);
+
+  function onProjDragStart(e: DragEvent, id: string) {
+    dragId = id;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      // Some browsers refuse to start a drag unless data is set.
+      e.dataTransfer.setData('text/plain', id);
+    }
+  }
+  function onProjDragOver(e: DragEvent, id: string) {
+    if (!dragId || dragId === id) return;
+    e.preventDefault(); // allow the drop
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    dragOverId = id;
+  }
+  function onProjDrop(e: DragEvent, id: string) {
+    e.preventDefault();
+    if (dragId && dragId !== id) void projects.reorder(dragId, id);
+    dragId = null;
+    dragOverId = null;
+  }
+  function onProjDragEnd() {
+    dragId = null;
+    dragOverId = null;
+  }
+
   // --- Create / edit dialog state (the shared ProjectForm drives both) ------
   let creating = $state(false);
   /** The id of the project being edited, or null. Mutually exclusive with `creating`. */
@@ -150,7 +200,7 @@
        Each filter icon carries a styled flyout tooltip (the shared `use:tooltip`
        action, placed to the right) with its name — no native `title` (those are
        slow + unstyled). -->
-  <aside class="ppanel rail" aria-label="Projects">
+  <aside class="ppanel rail" aria-label="Projects" bind:this={panelEl}>
     <button
       class="pp-rail-btn"
       onclick={() => onToggle?.()}
@@ -175,6 +225,7 @@
         class="pp-rail-ic"
         class:active={projectFilter.selected === c.project.id}
         onclick={() => projectFilter.select(c.project.id)}
+        oncontextmenu={(e) => openMenu(e, c.project)}
         aria-label={c.project.name}
         use:tooltip={{ text: c.project.name, placement: 'right' }}
       >
@@ -196,7 +247,7 @@
     {/if}
   </aside>
 {:else}
-<aside class="ppanel" aria-label="Projects">
+<aside class="ppanel" aria-label="Projects" bind:this={panelEl}>
   <div class="pp-head">
     <span class="pp-title">Workspace</span>
     <button
@@ -221,11 +272,28 @@
   <div class="pp-label">Projects</div>
 
   {#each counts as c (c.project.id)}
-    <button
-      type="button"
+    <!-- A div (not a <button>): WKWebView (Tauri/macOS) refuses to start a native
+         HTML5 drag from a form control, so the draggable row must be a plain
+         element. role/tabindex/onkeydown restore the button semantics. -->
+    <div
       class="pp-item"
       class:active={projectFilter.selected === c.project.id}
+      class:dragging={dragId === c.project.id}
+      class:dragover={dragOverId === c.project.id}
+      role="button"
+      tabindex="0"
+      draggable="true"
+      ondragstart={(e) => onProjDragStart(e, c.project.id)}
+      ondragover={(e) => onProjDragOver(e, c.project.id)}
+      ondrop={(e) => onProjDrop(e, c.project.id)}
+      ondragend={onProjDragEnd}
       onclick={() => projectFilter.select(c.project.id)}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          projectFilter.select(c.project.id);
+        }
+      }}
       oncontextmenu={(e) => openMenu(e, c.project)}
     >
       {#if c.project.logo}
@@ -236,7 +304,7 @@
       <span class="pp-name" use:tooltip={c.project.path}>{c.project.name}</span>
       {#if c.attn}<span class="pp-attn" use:tooltip={'Needs attention'}></span>{/if}
       <span class="pp-ct">{c.count}</span>
-    </button>
+    </div>
   {/each}
 
   {#if unassigned > 0}
@@ -406,6 +474,9 @@
     border: none;
     background: none;
     width: 100%;
+    /* The rows are <div>s (see markup): unlike <button>, a div is content-box by
+       default, so width:100% + padding would overflow the rail without this. */
+    box-sizing: border-box;
     text-align: left;
     cursor: pointer;
     color: var(--fg-2);
@@ -423,6 +494,22 @@
   .pp-item.active {
     background: var(--blue-tint);
     color: var(--blue-200);
+  }
+  /* Drag-to-reorder: the lifted row dims; the drop target shows an insertion line.
+     `-webkit-user-drag: element` is required for WebKit (WKWebView) to honor the
+     native drag — the `draggable` attribute alone is unreliable there. */
+  .pp-item[draggable='true'] {
+    cursor: grab;
+    -webkit-user-drag: element;
+  }
+  .pp-item.dragging {
+    opacity: 0.45;
+  }
+  /* Neutral drop highlight (a ring, not a before/after edge line) — the array-move
+     lands the row AT the target's slot, so a directional insertion line would mislead. */
+  .pp-item.dragover {
+    box-shadow: inset 0 0 0 1px var(--blue-300);
+    background: var(--blue-tint);
   }
   .pp-name {
     flex: 1;

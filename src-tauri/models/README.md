@@ -25,7 +25,10 @@ with the correct name:
 ```
 
 The script is idempotent (skips if the file is already present) and requires
-network access at build time. It does **not** commit anything.
+network access at build time. It does **not** commit anything. The model is
+**architecture-independent**, so `fetch-models.sh` runs identically on every
+release target — macOS, Linux, and Windows under Git Bash (it uses whichever of
+`curl`/`wget` is present) — and is bundled as a Tauri resource on all of them.
 
 ### Local `cargo build` placeholder
 

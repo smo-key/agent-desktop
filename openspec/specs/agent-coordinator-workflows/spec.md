@@ -66,12 +66,23 @@ visual workflow builder.
 
 ### Requirement: Coordinator delegates all work and cannot perform it directly
 The coordinator SHALL NOT perform work itself — no file edits, shell commands,
-notebook edits, or other direct task execution. It SHALL accomplish a goal only by
+notebook edits, or other direct task execution. "Work" SHALL include research:
+investigating the project (reading files, searching the codebase, gathering
+context) is itself a task the coordinator SHALL delegate rather than do directly,
+even when read-only inspection tools remain technically available to it. It SHALL
+accomplish a goal — including any fact-finding needed to plan that goal — only by
 creating sessions (optionally as specialists) and coordinating them via the
 toolkit. The coordinator's launch SHALL restrict its available tools so the work
 tools (file write/edit, shell, notebook edit) and the internal `Task` tool are
 unavailable, while the orchestration toolkit (and read-only inspection) remain
 available.
+
+For every agent the coordinator spawns, once it judges that agent's task complete
+(the agent has delivered the result it was spawned for and the coordinator has no
+further work for it), the coordinator SHALL archive that agent promptly, so a
+spawned agent stays open only while it still has work to do. This applies to all
+coordinator-spawned agents — not only throwaway research helpers — and SHALL NOT
+extend to the coordinator itself or to agents the user started.
 
 #### Scenario: Coordinator launch excludes work tools
 - **WHEN** a coordinator is started for a project
@@ -82,6 +93,16 @@ available.
 - **WHEN** the coordinator is given a goal that requires doing work
 - **THEN** it creates one or more sessions (optionally specialists) to perform the work
 - **AND** it does not perform the work in its own session
+
+#### Scenario: Coordinator delegates research rather than investigating itself
+- **WHEN** the coordinator needs to investigate the project (read files, search the codebase, gather context) before it can plan
+- **THEN** it spawns an agent to perform that research and report back
+- **AND** it does not read or search the project in its own session
+
+#### Scenario: Coordinator archives a spawned agent once its task is complete
+- **WHEN** the coordinator judges that an agent it spawned has completed its task and has no further work
+- **THEN** the coordinator archives that agent promptly rather than leaving it lingering
+- **AND** it does not archive the coordinator or agents the user started
 
 ### Requirement: Coordinator is pinned to the top of the Sessions list
 The coordinator SHALL appear at the top of the Sessions list, above all other

@@ -1,12 +1,26 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The Tauri `invoke` is mocked so `OpenWithStore.openFile` can be asserted without
+// a live backend (mirrors uiPrefs/prActions tests). The pure helpers below don't
+// touch it.
+const invokeMock = vi.fn(async (..._a: unknown[]): Promise<unknown> => undefined);
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
+
 import {
   classify,
   resolveApp,
+  isProjectAwareEditor,
+  OpenWithStore,
   parsePrefs,
   DEFAULT_PREFS,
   SYSTEM,
   type OpenWithPrefs
 } from './openWith.svelte';
+
+beforeEach(() => {
+  invokeMock.mockReset();
+  invokeMock.mockResolvedValue(undefined);
+});
 
 // Tests for the PURE open-with logic: extension → bucket classification, bucket →
 // app resolution under prefs, and tolerant parsing of persisted settings. The
@@ -44,6 +58,14 @@ describe('classify', () => {
   it('ignores a leading dot (dotfiles are not extensions)', () => {
     expect(classify('/home/me/.gitignore')).toBe('other');
   });
+
+  it('routes http/https URLs to the html bucket by scheme', () => {
+    expect(classify('https://example.com/docs')).toBe('html');
+    expect(classify('http://localhost:3000')).toBe('html');
+    // The scheme wins over any extension in the URL path.
+    expect(classify('https://example.com/app.css')).toBe('html');
+    expect(classify('https://example.com/readme.md')).toBe('html');
+  });
 });
 
 describe('resolveApp', () => {
@@ -60,6 +82,10 @@ describe('resolveApp', () => {
     expect(resolveApp(prefs, 'README.md')).toBe('Zed');
   });
 
+  it('opens an http(s) URL with the html-category app', () => {
+    expect(resolveApp(prefs, 'https://example.com/docs')).toBe('Brave Browser');
+  });
+
   it('returns undefined (system default) when the bucket is SYSTEM', () => {
     expect(resolveApp(prefs, 'photo.png')).toBeUndefined();
   });
@@ -67,6 +93,73 @@ describe('resolveApp', () => {
   it('treats all-system defaults as system everywhere', () => {
     expect(resolveApp(DEFAULT_PREFS, 'index.html')).toBeUndefined();
     expect(resolveApp(DEFAULT_PREFS, 'main.ts')).toBeUndefined();
+  });
+});
+
+describe('isProjectAwareEditor', () => {
+  it('is true for the allowlisted project-aware editors', () => {
+    for (const app of ['Cursor', 'Visual Studio Code', 'Zed', 'Sublime Text']) {
+      expect(isProjectAwareEditor(app)).toBe(true);
+    }
+  });
+
+  it('is false for non-project-aware apps, custom names, and System Default', () => {
+    for (const app of ['TextEdit', 'Finder', 'Brave Browser', 'My Custom App']) {
+      expect(isProjectAwareEditor(app)).toBe(false);
+    }
+    expect(isProjectAwareEditor(undefined)).toBe(false);
+    expect(isProjectAwareEditor(null)).toBe(false);
+  });
+});
+
+describe('OpenWithStore.openFile', () => {
+  const withPrefs = (prefs: OpenWithPrefs): OpenWithStore => {
+    const store = new OpenWithStore();
+    store.prefs = prefs;
+    return store;
+  };
+  const prefs: OpenWithPrefs = {
+    code: 'Cursor',
+    html: 'Brave Browser',
+    markdown: 'Zed',
+    other: 'TextEdit'
+  };
+
+  it('forwards the workspace to a project-aware editor', async () => {
+    await withPrefs(prefs).openFile('/proj/src/a.ts', '/proj');
+    expect(invokeMock).toHaveBeenLastCalledWith('open_path', {
+      path: '/proj/src/a.ts',
+      app: 'Cursor',
+      workspace: '/proj'
+    });
+  });
+
+  it('omits the workspace for a System Default category', async () => {
+    await withPrefs(DEFAULT_PREFS).openFile('/proj/src/a.ts', '/proj');
+    expect(invokeMock).toHaveBeenLastCalledWith('open_path', {
+      path: '/proj/src/a.ts',
+      app: null,
+      workspace: null
+    });
+  });
+
+  it('omits the workspace for a non-project-aware app', async () => {
+    // `other` is "TextEdit" — a named app, but not a project-aware editor.
+    await withPrefs(prefs).openFile('/proj/photo.png', '/proj');
+    expect(invokeMock).toHaveBeenLastCalledWith('open_path', {
+      path: '/proj/photo.png',
+      app: 'TextEdit',
+      workspace: null
+    });
+  });
+
+  it('omits the workspace when none is supplied', async () => {
+    await withPrefs(prefs).openFile('/proj/src/a.ts');
+    expect(invokeMock).toHaveBeenLastCalledWith('open_path', {
+      path: '/proj/src/a.ts',
+      app: 'Cursor',
+      workspace: null
+    });
   });
 });
 

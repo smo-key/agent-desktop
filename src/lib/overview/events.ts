@@ -127,7 +127,11 @@ function questionText(questions: PendingQuestion[]): string | null {
  *  - a pending `AskUserQuestion` in flight        → `waiting` (+ the question)
  *  - any other tool in flight (Pre w/o its Post)  → `working` (+ currentAction)
  *  - last event `UserPromptSubmit`/`PostToolUse` → `working`
- *  - last event `Stop`/`SubagentStop`             → `waiting` (turn done, your move)
+ *  - last event `Stop`                            → `waiting` (turn done, your move)
+ *  - a `SubagentStop` is NOT a turn end for the host pane — an in-process Task
+ *    subagent finished while the parent is still mid-turn. It neither clears the
+ *    in-flight tool nor forces `waiting`; with a Task still in flight the parent stays
+ *    `working`, and with nothing in flight it falls through to `null` (PTY fallback)
  *  - last event `Notification`                    → `waiting` (needs permission/input)
  *  - last event `SessionStart`                    → `waiting` — idle at the prompt
  *      (freshly started or just resumed), a STABLE status so it doesn't bounce
@@ -157,6 +161,10 @@ export function deriveEventActivity(
     stickyEverPrompted || events.some((ev) => ev.hookEventName === 'UserPromptSubmit');
 
   // Track the in-flight tool: a PreToolUse clears on its PostToolUse or a turn end.
+  // `SubagentStop` is deliberately NOT a clear: it fires on the PARENT pane when an
+  // in-process Task subagent finishes, but the parent's `Task` tool has not returned
+  // (its `PostToolUse[Task]` clears it) and the parent is still mid-turn — so it must
+  // keep the parent's in-flight tool. The parent's own turn end stays its `Stop`.
   let inFlight: AgentEvent | null = null;
   for (const ev of events) {
     switch (ev.hookEventName) {
@@ -165,7 +173,6 @@ export function deriveEventActivity(
         break;
       case 'PostToolUse':
       case 'Stop':
-      case 'SubagentStop':
         inFlight = null;
         break;
       default:
@@ -201,7 +208,6 @@ export function deriveEventActivity(
       status = 'working';
       break;
     case 'Stop':
-    case 'SubagentStop':
     case 'Notification':
     case 'SessionStart':
       // A session sitting at the prompt — freshly started with no prompt yet, or
@@ -210,6 +216,10 @@ export function deriveEventActivity(
       // keeps redrawing (cursor blink, status line), so the PTY signal bounces
       // working↔waiting. An event-sourced status holds steady until you actually
       // submit a prompt (→ `UserPromptSubmit` → working).
+      //
+      // `SubagentStop` is intentionally ABSENT: it is not a turn end for the host
+      // pane (a Task subagent finished, the parent is still working). With no tool in
+      // flight it falls through to `null` (PTY fallback) rather than forcing `waiting`.
       status = 'waiting';
       break;
     case 'SessionEnd':

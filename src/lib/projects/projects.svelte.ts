@@ -14,6 +14,7 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   addProject,
   removeProject,
+  reorderProjects,
   updateProject,
   parseProjects,
   serializeProjects,
@@ -64,6 +65,18 @@ export class ProjectsStore {
    */
   async update(id: string, patch: Partial<Omit<Project, 'id'>>): Promise<void> {
     this.list = updateProject(this.list, id, patch);
+    await this.save();
+  }
+
+  /**
+   * Move project `fromId` to the slot of `toId` (drag-to-reorder in the panel) and
+   * persist the new order. No-op (no save) when nothing moved (unknown id / same id).
+   */
+  async reorder(fromId: string, toId: string): Promise<void> {
+    const next = reorderProjects(this.list, fromId, toId);
+    const changed = next.some((p, i) => p.id !== this.list[i]?.id);
+    if (!changed) return;
+    this.list = next;
     await this.save();
   }
 

@@ -138,6 +138,35 @@ export function removeTask(map: TasksByProject, id: string): TasksByProject {
   return next;
 }
 
+/**
+ * Move task `fromId` to the slot of `toId` WITHIN their shared project (drag-to-
+ * reorder in the launcher) — the standard array-move keyed by id, so the manual
+ * order the user arranges is reproduced 1:1.
+ *
+ * Pure: never mutates inputs. A no-op returning the SAME map reference (so callers
+ * can cheaply detect "nothing changed") when either id is absent, the two tasks
+ * belong to DIFFERENT projects, or they are the same task.
+ */
+export function reorderTask(
+  map: TasksByProject,
+  fromId: string,
+  toId: string
+): TasksByProject {
+  if (fromId === toId) return map;
+  // Reorder only within the single project that owns BOTH ids; cross-project drops
+  // (and unknown ids) leave the map untouched.
+  for (const [projectId, list] of Object.entries(map)) {
+    const from = list.findIndex((t) => t.id === fromId);
+    const to = list.findIndex((t) => t.id === toId);
+    if (from < 0 || to < 0) continue;
+    const next = [...list];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    return { ...map, [projectId]: next };
+  }
+  return map;
+}
+
 /** Rename the terminal with id `id`. A blank/whitespace name is ignored (no-op). */
 export function renameTask(
   map: TasksByProject,

@@ -142,6 +142,93 @@ export function groupByLane(rows: AgentRow[]): Record<AgentLane, AgentRow[]> {
 }
 
 /**
+ * PURE: reconcile a lane's persisted/established display order against the paneIds
+ * currently IN that lane, applying the "most recently added to that column first"
+ * rule:
+ *  - ids already in `prev` that are still present keep their relative order — this
+ *    is what preserves a user's manual drag arrangement (and the established
+ *    arrival order) across recomputes;
+ *  - ids that are NEW to the lane (just entered it) are prepended ABOVE the kept
+ *    order — newest on top — so a freshly-arrived agent jumps to the top of the
+ *    bucket. Among several simultaneous newcomers, the one later in `present`
+ *    (roster/tree order ≈ most recently spawned) sorts first.
+ *
+ * `present` is the lane's paneIds in roster order. With a non-empty `present` the
+ * result is exactly the present ids (stale ids are dropped). When `present` is
+ * EMPTY the remembered order is returned UNCHANGED — an empty column is treated as
+ * "no members right now", NOT "forget the order": this is load-bearing for restart
+ * persistence, since the roster is briefly empty while the layout restore is still
+ * in flight, and dropping every id there would let the caller persist an empty order
+ * and destroy the user's saved arrangement before the panes reappear. Pure: never
+ * mutates inputs.
+ */
+export function reorderLane(
+  prev: ReadonlyArray<string>,
+  present: ReadonlyArray<string>
+): string[] {
+  if (present.length === 0) return [...prev];
+  const presentSet = new Set(present);
+  const kept = prev.filter((id) => presentSet.has(id));
+  const keptSet = new Set(kept);
+  const added = present.filter((id) => !keptSet.has(id));
+  added.reverse(); // later-in-roster ⇒ more recently added ⇒ higher
+  return [...added, ...kept];
+}
+
+/**
+ * PURE: move the id `fromId` to the position of `toId` within an ordered list of
+ * paneIds (drag-to-reorder inside a lane). Same standard array-move as
+ * `reorderProjects`: the dragged id lands exactly at the drop target's slot. A
+ * no-op copy when either id is absent or they are equal. Never mutates inputs.
+ */
+export function moveId(
+  order: ReadonlyArray<string>,
+  fromId: string,
+  toId: string
+): string[] {
+  const from = order.indexOf(fromId);
+  const to = order.indexOf(toId);
+  if (from < 0 || to < 0 || from === to) return [...order];
+  const next = [...order];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+/**
+ * PURE: order roster `rows` for display by grouping them into LANE_ORDER and, within
+ * each lane, by that lane's `order` list of paneIds (from `reorderLane`/`moveId`). A
+ * row whose paneId is absent from its lane's order sinks to the end of that lane (in
+ * its incoming relative order). The result is lane-grouped + within-lane-ordered, so
+ * the rendered lanes, the attention queue, and focus resolution all agree on order.
+ * Pure: returns a new array, never mutates inputs.
+ */
+export function orderRowsByLane(
+  rows: AgentRow[],
+  laneOrder: Record<AgentLane, ReadonlyArray<string>>
+): AgentRow[] {
+  const rankOf = (r: AgentRow): number => {
+    const i = LANE_ORDER.indexOf(laneForRow(r));
+    return i < 0 ? LANE_ORDER.length : i;
+  };
+  const withinOf = (r: AgentRow): number => {
+    const order = laneOrder[laneForRow(r)] ?? [];
+    const i = order.indexOf(r.paneId);
+    return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  return rows
+    .map((r, idx) => ({ r, idx }))
+    .sort((a, b) => {
+      const dr = rankOf(a.r) - rankOf(b.r);
+      if (dr !== 0) return dr;
+      const dw = withinOf(a.r) - withinOf(b.r);
+      if (dw !== 0) return dw;
+      return a.idx - b.idx; // stable: equal-keyed rows keep their incoming order
+    })
+    .map((x) => x.r);
+}
+
+/**
  * PURE: the paneIds of the ARCHIVED rows — those in the `done` lane (closed or
  * previewing-an-archived-session), in roster order. This is exactly the set shown
  * under the overview's "Archived" header, so it backs the "delete all archived"
@@ -169,6 +256,15 @@ export interface PaneRuntime {
    * input while such work is in flight.
    */
   terminalBusy?: boolean;
+  /**
+   * The pane's PREVIOUSLY-derived (final) status — the hysteresis memory for the
+   * silence-based demotion. The Overview records each row's final status here after
+   * every roster rebuild (`noteStatus`); `deriveStatus` reads it as `prevStatus` so a
+   * pane already shown `working` holds In flight through a brief silence (see
+   * `IDLE_GRACE_MS`) instead of bouncing to `waiting`. Optional: absent means "no
+   * prior status", in which case derivation is the single-window behavior (fail-safe).
+   */
+  lastStatus?: AgentStatus;
 }
 
 /** The live `pane_id -> runtime` map the Overview feeds into `buildRoster`. */
@@ -221,6 +317,19 @@ export type ActivityMap = Record<string, RowActivity>;
  * `waiting` promptly.
  */
 export const WORKING_WINDOW_MS = 2500;
+
+/**
+ * Demotion hysteresis window (ms). PROMOTION to `working` stays responsive at
+ * `WORKING_WINDOW_MS` (output within it → working), but an agent ALREADY shown
+ * `working` holds that status through continued silence until THIS longer window
+ * elapses before silence alone demotes it to `waiting`. This kills the
+ * `working ↔ waiting` bounce for a quiet-but-active agent (thinking, or a long
+ * non-streaming tool): it stays In flight as long as it produces output at least
+ * this often, and only a sustained idle gap reads Needs input. Any new output
+ * resets the silence measurement, so re-promotion is immediate. Must exceed
+ * `WORKING_WINDOW_MS`.
+ */
+export const IDLE_GRACE_MS = 10_000;
 
 /** One pane in a workspace, as the roster needs it (framework-free projection). */
 export interface RosterPane {
@@ -313,6 +422,11 @@ export interface AgentRow {
   status: AgentStatus;
   /** The project this agent belongs to (registry `projectId`), or null if none. */
   projectId: string | null;
+  /** The owning project's display NAME, resolved for the desktop notification title
+   *  ("<projectName>: <name>"). Alert-display only and OPTIONAL: it is attached at the
+   *  alert callsite (parallel to the `name` title override), not by `rowFor`; roster
+   *  fixtures and non-alert consumers may omit it. Null/undefined → no project prefix. */
+  projectName?: string | null;
   /** The SPECIALIST this pane was spawned AS (registry `specialist`), or null if
    *  it was not spawned as a specialist. Surfaced as a roster badge so a
    *  coordinator-spawned specialist agent is visibly attributed (task 5.4).
@@ -345,6 +459,13 @@ export interface AgentRow {
   /** The user-message COUNT captured when the preview began; the inbox unarchives the
    *  session when the live count strictly exceeds it. Undefined when not previewing. */
   previewCount?: number | null;
+  /** Whether this agent has EVER been prompted — it has received its first user prompt
+   *  or otherwise begun a turn (event-sourced `everPrompted`, sticky). `false` for an
+   *  agent launched with no initial prompt that is still sitting at an empty prompt.
+   *  The needs-input ALERTS use this to stay silent until the first prompt (an agent
+   *  you just launched yourself is no surprise); it does NOT affect the attention lane.
+   *  Optional: `rowFor` always sets it, but roster fixtures may omit it. */
+  everPrompted?: boolean;
 }
 
 /** Coerce to a finite number, else null (guards NaN/Infinity/strings). */
@@ -368,7 +489,8 @@ function finiteOrNull(value: unknown): number | null {
 export function deriveStatus(
   runtime: PaneRuntime | undefined,
   nowMs: number,
-  workingWindowMs: number = WORKING_WINDOW_MS
+  workingWindowMs: number = WORKING_WINDOW_MS,
+  prevStatus?: AgentStatus
 ): AgentStatus {
   if (!runtime) return 'idle';
   if (runtime.exited) {
@@ -376,7 +498,16 @@ export function deriveStatus(
     return code !== null && code !== 0 ? 'error' : 'finished';
   }
   if (runtime.lastOutputAt === null) return 'working';
-  return nowMs - runtime.lastOutputAt <= workingWindowMs ? 'working' : 'waiting';
+  const silent = nowMs - runtime.lastOutputAt;
+  // Responsive promote: recent output → working.
+  if (silent <= workingWindowMs) return 'working';
+  // Demotion hysteresis: a pane that was ALREADY working holds In flight through
+  // continued silence until the longer idle-grace window elapses, so a quiet-but-
+  // active agent does not bounce working↔waiting. The hold applies ONLY to a pane
+  // that was working (a settled `waiting` pane is not re-promoted); with no prior
+  // status (`undefined`) this branch is skipped → single-window behavior (fail-safe).
+  if (prevStatus === 'working' && silent <= IDLE_GRACE_MS) return 'working';
+  return 'waiting';
 }
 
 /** The last path segment of a cwd (e.g. `/home/u/parser` -> `parser`), or null. */
@@ -415,7 +546,9 @@ function rowFor(
   // Status precedence: a process exit is AUTHORITATIVE (a dead process is never
   // "working"); otherwise the event-sourced status wins; the PTY-byte heuristic is
   // the fallback only when events haven't determined a status (or none arrived).
-  const ptyStatus = deriveStatus(runtime, nowMs, workingWindowMs);
+  // `runtime.lastStatus` (the pane's previously-shown final status, recorded by the
+  // Overview after each rebuild) drives the silence-demotion hysteresis in deriveStatus.
+  const ptyStatus = deriveStatus(runtime, nowMs, workingWindowMs, runtime?.lastStatus);
   // A CLOSED (Completed) agent is always `finished` (Completed lane), regardless of
   // how its PTY exited — overrides the exit-code/event-derived status.
   const closed = pane.closed === true;
@@ -514,7 +647,8 @@ function rowFor(
     paused: pane.paused === true,
     pausedCount: pane.pausedCount ?? null,
     preview: pane.preview === true,
-    previewCount: pane.previewCount ?? null
+    previewCount: pane.previewCount ?? null,
+    everPrompted: event?.everPrompted === true
   };
 }
 

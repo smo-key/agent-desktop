@@ -16,8 +16,14 @@ import {
   cachedOpenPrs,
   openPrsCache,
   sortPrsForPopover,
+  reviewStatus,
+  authorAvatarUrl,
+  authorInitial,
+  authorLabel,
+  prUpdatedSeconds,
   type OpenPrs,
-  type OpenPr
+  type OpenPr,
+  type PrAuthor
 } from './openPrsActions';
 
 beforeEach(() => {
@@ -131,13 +137,17 @@ describe('refreshOpenPrs / cachedOpenPrs', () => {
 const pr = (
   n: number,
   isDraft: boolean,
-  reviewDecision: string | null = null
+  reviewDecision: string | null = null,
+  author: PrAuthor | null = null,
+  updatedAt: string | null = null
 ): OpenPr => ({
   number: n,
   title: `PR ${n}`,
   url: `https://github.com/o/r/pull/${n}`,
   isDraft,
-  reviewDecision
+  reviewDecision,
+  author,
+  updatedAt
 });
 
 describe('sortPrsForPopover', () => {
@@ -181,5 +191,85 @@ describe('sortPrsForPopover', () => {
     const prs = [pr(3, true), pr(1, true), pr(2, true)];
     const sorted = sortPrsForPopover(prs);
     expect(sorted.map((p) => p.number)).toEqual([3, 1, 2]);
+  });
+});
+
+// ─────────────────────────── reviewStatus ───────────────────────────────
+// Scenario: each row shows a review-status icon (approved/changes/required) +
+// Scenario: a PR with no requested review shows a neutral status icon.
+
+describe('reviewStatus', () => {
+  it('Each row shows a review-status icon', () => {
+    expect(reviewStatus('APPROVED')).toEqual({ icon: 'check', tone: 'approved', label: 'Approved' });
+    expect(reviewStatus('CHANGES_REQUESTED')).toEqual({
+      icon: 'x',
+      tone: 'changes',
+      label: 'Changes requested'
+    });
+    expect(reviewStatus('REVIEW_REQUIRED')).toEqual({
+      icon: 'clock',
+      tone: 'required',
+      label: 'Review required'
+    });
+  });
+
+  it('A PR with no requested review shows a neutral status icon', () => {
+    const neutral = { icon: 'circle', tone: 'none', label: 'No review requested' };
+    expect(reviewStatus(null)).toEqual(neutral);
+    expect(reviewStatus('')).toEqual(neutral);
+    expect(reviewStatus(undefined)).toEqual(neutral);
+    // An unrecognized decision string is treated as neutral, never as a positive state.
+    expect(reviewStatus('SOMETHING_ELSE')).toEqual(neutral);
+  });
+});
+
+// ─────────────────────────── author helpers ───────────────────────────────
+
+const author = (login: string, name: string | null = null, isBot = false): PrAuthor => ({
+  login,
+  name,
+  isBot
+});
+
+describe('author avatar + label + initial', () => {
+  it('Each row shows the author avatar with a name on hover', () => {
+    // Avatar URL is derived from the login; the hover label prefers the display name.
+    expect(authorAvatarUrl('octocat')).toBe('https://github.com/octocat.png?size=40');
+    expect(authorAvatarUrl('octocat', 16)).toBe('https://github.com/octocat.png?size=16');
+    expect(authorLabel(author('octocat', 'The Octocat'))).toBe('The Octocat');
+    // No display name → @login.
+    expect(authorLabel(author('octocat'))).toBe('@octocat');
+  });
+
+  it('Author avatar falls back when the image cannot load', () => {
+    // The textual fallback glyph: the initial of the name, else the login.
+    expect(authorInitial(author('octocat', 'The Octocat'))).toBe('T');
+    expect(authorInitial(author('octocat'))).toBe('O');
+    // Unknown author → a neutral placeholder, never a broken image / login-less URL.
+    expect(authorInitial(null)).toBe('?');
+    expect(authorAvatarUrl(null)).toBeNull();
+    expect(authorLabel(null)).toBe('unknown');
+  });
+
+  it('encodes odd logins into the avatar URL', () => {
+    // Defensive: a login with URL-significant characters is encoded, never injected raw.
+    expect(authorAvatarUrl('a/b?c')).toBe('https://github.com/a%2Fb%3Fc.png?size=40');
+  });
+});
+
+// ─────────────────────────── prUpdatedSeconds ───────────────────────────────
+
+describe('prUpdatedSeconds', () => {
+  it('Each row shows when the PR was last updated', () => {
+    // ISO-8601 → unix SECONDS (for friendlyTime). 2026-06-12T14:30:00Z = 1_781_274_600.
+    expect(prUpdatedSeconds('2026-06-12T14:30:00Z')).toBe(Math.floor(Date.parse('2026-06-12T14:30:00Z') / 1000));
+  });
+
+  it('Enriched row context degrades gracefully', () => {
+    // Missing / unparseable last-updated → null, so the row simply omits the time.
+    expect(prUpdatedSeconds(null)).toBeNull();
+    expect(prUpdatedSeconds(undefined)).toBeNull();
+    expect(prUpdatedSeconds('')).toBeNull();
+    expect(prUpdatedSeconds('not a date')).toBeNull();
   });
 });

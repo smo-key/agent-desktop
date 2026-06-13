@@ -5,7 +5,7 @@
   import type { WebglAddon } from '@xterm/addon-webgl';
   import { Channel, invoke } from '@tauri-apps/api/core';
   import { registerTerminal, unregisterTerminal } from './layout/terminals';
-  import { fileLinkAt } from './terminalLinks';
+  import { fileLinkAt, urlAt } from './terminalLinks';
   import { openWith } from './settings/openWith.svelte';
   import { getUsagePaths } from './usage/paths';
   import { buildSpawnOverride } from './usage/spawn';
@@ -140,9 +140,10 @@
   let onTitleSub: IDisposable | undefined;
   let contextLossSub: IDisposable | undefined;
 
-  // ── File links (terminal-file-links spec) ───────────────────────────────
-  // ⌘-hover over a token that resolves to an existing path → dotted underline +
-  // pointer; ⌘-click → open it (per the user's open-with preferences). We manage
+  // ── File / URL links (terminal-file-links spec) ─────────────────────────
+  // ⌘-hover over a token that resolves to an existing path — or an http(s) URL →
+  // dotted underline + pointer; ⌘-click → open it (per the user's open-with
+  // preferences; URLs use the HTML/browser preference). We manage
   // the affordance OURSELVES (own overlay + cursor class + capture-phase click)
   // rather than via xterm's link provider: the provider's hover/cursor fights the
   // PTY mouse-reporting that claude's TUI enables (`.xterm.enable-mouse-events`
@@ -346,6 +347,24 @@
       clearArmed();
       return;
     }
+    // HTTP/HTTPS URLs are linkified directly — no filesystem resolution. Check
+    // this BEFORE the file path so a URL like `http://localhost:3000` is armed as
+    // a URL (and isn't mangled by the file token's `:port`→`:line` stripping).
+    const url = urlAt(lineText, col);
+    if (url) {
+      const urlKey = `url:${absLine}:${url.start}:${url.text}`;
+      // Same URL already armed — position is stable, nothing to redo.
+      if (urlKey === armedKey && armedPath) return;
+      // Invalidate any in-flight `resolve_path` so its late reply can't clobber
+      // this synchronous URL arm.
+      resolveSeq++;
+      armedPath = url.text;
+      armedKey = urlKey;
+      positionUnderline(mx, viewportRow, url.start, url.end);
+      mx.screen.classList.add('file-link-armed');
+      return;
+    }
+
     const link = fileLinkAt(lineText, col);
     if (!link) {
       clearArmed();
@@ -426,7 +445,11 @@
       if (e.button !== 0 || !metaDown || !armedPath) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      void openWith.openFile(armedPath);
+      // Pass the pane cwd (the agent's working dir = project root) so a
+      // workspace-capable editor opens the project and reveals the file within
+      // it, rather than guessing a workspace from the file's folder. A URL arm
+      // (cwd irrelevant) falls in a non-editor bucket and ignores the root.
+      void openWith.openFile(armedPath, cwd);
     };
     host.addEventListener('mousedown', onHostDownCapture, true);
 

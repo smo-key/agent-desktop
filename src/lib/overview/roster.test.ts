@@ -9,9 +9,13 @@ import {
   isArchivedCoordinator,
   showContext,
   groupByLane,
+  reorderLane,
+  moveId,
+  orderRowsByLane,
   archivedPaneIds,
   LANE_ORDER,
   WORKING_WINDOW_MS,
+  IDLE_GRACE_MS,
   type AgentRow,
   type PaneRuntime,
   type RosterWorkspace,
@@ -341,6 +345,109 @@ describe('roster — Agent status heuristic', () => {
   });
 });
 
+describe('roster — silence does not bounce a working agent (demotion hysteresis)', () => {
+  const now = 1_000_000; // epoch ms
+  const live = (silentMs: number): PaneRuntime => ({
+    lastOutputAt: now - silentMs,
+    exited: false,
+    exitCode: null
+  });
+
+  it('A working agent holds In flight through silence within the idle-grace band', () => {
+    // Quiet past the short working window but within the longer idle-grace window:
+    // a pane that WAS working stays working (no bounce to Needs input).
+    const silent = WORKING_WINDOW_MS + 1_000;
+    expect(silent).toBeLessThan(IDLE_GRACE_MS);
+    expect(deriveStatus(live(silent), now, WORKING_WINDOW_MS, 'working')).toBe('working');
+    // The band is inclusive at the idle-grace boundary.
+    expect(deriveStatus(live(IDLE_GRACE_MS), now, WORKING_WINDOW_MS, 'working')).toBe('working');
+  });
+
+  it('Confirmed idle past the idle-grace window reads Needs input', () => {
+    expect(deriveStatus(live(IDLE_GRACE_MS + 1), now, WORKING_WINDOW_MS, 'working')).toBe('waiting');
+  });
+
+  it('New output re-promotes immediately regardless of prior status', () => {
+    expect(deriveStatus(live(100), now, WORKING_WINDOW_MS, 'waiting')).toBe('working');
+  });
+
+  it('A settled waiting pane is not re-promoted by the hold', () => {
+    // prevStatus 'waiting' + quiet past the short window stays waiting (the hold
+    // only applies to a pane that was working).
+    expect(deriveStatus(live(WORKING_WINDOW_MS + 1), now, WORKING_WINDOW_MS, 'waiting')).toBe(
+      'waiting'
+    );
+  });
+
+  it('No recorded prior status falls back to the single-window behavior (fail-safe)', () => {
+    // Exactly the pre-change result at the boundary: <= window working, > window waiting.
+    expect(deriveStatus(live(WORKING_WINDOW_MS), now, WORKING_WINDOW_MS, undefined)).toBe('working');
+    expect(deriveStatus(live(WORKING_WINDOW_MS + 1), now, WORKING_WINDOW_MS, undefined)).toBe(
+      'waiting'
+    );
+  });
+
+  it('A positive signal (process exit) demotes immediately even when prevStatus was working', () => {
+    expect(
+      deriveStatus(
+        { lastOutputAt: now - 50, exited: true, exitCode: 0 },
+        now,
+        WORKING_WINDOW_MS,
+        'working'
+      )
+    ).toBe('finished');
+    expect(
+      deriveStatus(
+        { lastOutputAt: now - 50, exited: true, exitCode: 1 },
+        now,
+        WORKING_WINDOW_MS,
+        'working'
+      )
+    ).toBe('error');
+  });
+
+  it('rowFor threads the pane runtime lastStatus so the hold survives a quiet tick', () => {
+    // A live non-coordinator pane, quiet within the idle-grace band, with no
+    // event-sourced status: prior status 'working' on the runtime keeps it In flight.
+    const silent = WORKING_WINDOW_MS + 1_000;
+    const wsX = ws('wX', 'X', [{ paneId: 'p', cwd: '/r' }]);
+    const held = buildRoster(
+      {},
+      [wsX],
+      runtimeOf(rt('p', { lastOutputAt: now - silent, lastStatus: 'working' })),
+      now
+    );
+    expect(held[0].status).toBe('working');
+    // Without the prior-working latch the same silence reads waiting.
+    const bounced = buildRoster({}, [wsX], runtimeOf(rt('p', { lastOutputAt: now - silent })), now);
+    expect(bounced[0].status).toBe('waiting');
+  });
+
+  it('An event-sourced waiting overrides the hysteresis hold', () => {
+    const silent = WORKING_WINDOW_MS + 1_000;
+    const wsX = ws('wX', 'X', [{ paneId: 'p', cwd: '/r' }]);
+    const evAct: Record<string, EventActivity> = {
+      p: {
+        status: 'waiting',
+        currentAction: null,
+        question: null,
+        questions: null,
+        everPrompted: true
+      }
+    };
+    const [row] = buildRoster(
+      {},
+      [wsX],
+      runtimeOf(rt('p', { lastOutputAt: now - silent, lastStatus: 'working' })),
+      now,
+      {},
+      WORKING_WINDOW_MS,
+      evAct
+    );
+    expect(row.status).toBe('waiting');
+  });
+});
+
 describe('roster — control-room lanes', () => {
   // The Overview groups agents into three lanes, ordered top->bottom by how much
   // they need you: needs-attention (waiting/error), completed (finished), then
@@ -512,6 +619,102 @@ describe('roster — control-room lanes', () => {
     expect(
       laneForRow(laneRow('coord', { role: 'coordinator', status: 'finished', closed: true }))
     ).toBe('done');
+  });
+});
+
+// Per-lane display ordering: every bucket shows its agents most-recently-added
+// first by default, and the Needs-you / Paused buckets are manually reorderable by
+// dragging. reorderLane keeps the established/manual order while jumping newcomers
+// to the top; moveId performs a drag-move; orderRowsByLane projects both onto the
+// roster rows the lanes render.
+describe('roster — per-lane display ordering', () => {
+  const laneRow = (paneId: string, over: Partial<AgentRow> = {}): AgentRow => ({
+    paneId,
+    workspaceId: 'ws',
+    name: paneId,
+    cwd: null,
+    model: null,
+    modelId: null,
+    task: null,
+    summary: null,
+    question: null,
+    questions: null,
+    currentAction: null,
+    contextPct: null,
+    cost: null,
+    lastTs: null,
+    status: 'working',
+    projectId: null,
+    ...over
+  });
+
+  it('Default order is most recently added to the column first', () => {
+    // First population (no prior order): newest-on-top means the order is the
+    // REVERSE of the incoming roster/tree order (later in the tree ⇒ more recent).
+    expect(reorderLane([], ['a', 'b', 'c'])).toEqual(['c', 'b', 'a']);
+    // A newcomer to the lane jumps to the very top, above the established order.
+    expect(reorderLane(['c', 'b', 'a'], ['c', 'b', 'a', 'd'])).toEqual(['d', 'c', 'b', 'a']);
+    // Several simultaneous newcomers: later-in-roster sorts higher.
+    expect(reorderLane(['a'], ['a', 'b', 'c'])).toEqual(['c', 'b', 'a']);
+  });
+
+  it('A manual order is preserved as agents enter and leave the column', () => {
+    // The user dragged the lane into [b, a, c]; a recompute with the same set keeps it.
+    expect(reorderLane(['b', 'a', 'c'], ['a', 'b', 'c'])).toEqual(['b', 'a', 'c']);
+    // A new agent still jumps to the top WITHOUT disturbing the manual order below.
+    expect(reorderLane(['b', 'a', 'c'], ['a', 'b', 'c', 'd'])).toEqual(['d', 'b', 'a', 'c']);
+    // An agent that left the lane drops out; the rest keep their manual order.
+    expect(reorderLane(['d', 'b', 'a', 'c'], ['b', 'c', 'd'])).toEqual(['d', 'b', 'c']);
+  });
+
+  it('An empty column keeps its remembered order (restart-safe, never wiped)', () => {
+    // The roster is transiently empty while the layout restore is in flight; a lane
+    // with no current members must RETAIN its saved order, not be cleared — otherwise
+    // the caller would persist an empty order and lose the user's arrangement before
+    // the panes reappear.
+    expect(reorderLane(['x', 'y', 'z'], [])).toEqual(['x', 'y', 'z']);
+    expect(reorderLane([], [])).toEqual([]);
+    // When the same panes re-enter the lane together, the saved order is honored.
+    expect(reorderLane(['x', 'y', 'z'], ['x', 'y', 'z'])).toEqual(['x', 'y', 'z']);
+  });
+
+  it('Dragging an agent moves it to the drop target within its bucket', () => {
+    expect(moveId(['a', 'b', 'c', 'd'], 'a', 'c')).toEqual(['b', 'c', 'a', 'd']);
+    expect(moveId(['a', 'b', 'c', 'd'], 'd', 'b')).toEqual(['a', 'd', 'b', 'c']);
+    // No-ops return a fresh copy: unknown id, or dropping onto itself.
+    expect(moveId(['a', 'b'], 'a', 'a')).toEqual(['a', 'b']);
+    expect(moveId(['a', 'b'], 'x', 'b')).toEqual(['a', 'b']);
+  });
+
+  it('orderRowsByLane groups rows by lane and orders within each by its lane order', () => {
+    const rows = [
+      laneRow('w1', { status: 'waiting' }),
+      laneRow('f1', { status: 'working' }),
+      laneRow('w2', { status: 'error' }),
+      laneRow('p1', { status: 'working', paused: true }),
+      laneRow('f2', { status: 'idle' }),
+      laneRow('p2', { status: 'working', paused: true })
+    ];
+    const laneOrder = {
+      attn: ['w2', 'w1'], // manually reversed within Needs-you
+      flight: ['f2', 'f1'], // newest-first
+      paused: ['p2', 'p1'],
+      done: []
+    };
+    const ordered = orderRowsByLane(rows, laneOrder).map((r) => r.paneId);
+    // Lanes appear in LANE_ORDER; within each, rows follow that lane's order list.
+    expect(ordered).toEqual(['w2', 'w1', 'f2', 'f1', 'p2', 'p1']);
+  });
+
+  it('orderRowsByLane sinks rows absent from their lane order to the lane end, stably', () => {
+    const rows = [
+      laneRow('a', { status: 'waiting' }),
+      laneRow('b', { status: 'waiting' }),
+      laneRow('c', { status: 'waiting' })
+    ];
+    // Only 'b' is in the order; 'a' and 'c' have no slot → they trail in input order.
+    const ordered = orderRowsByLane(rows, { attn: ['b'], flight: [], paused: [], done: [] });
+    expect(ordered.map((r) => r.paneId)).toEqual(['b', 'a', 'c']);
   });
 });
 

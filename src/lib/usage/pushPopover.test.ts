@@ -12,7 +12,7 @@ vi.mock('../projects/projectGitBusy.svelte', () => ({
   gitBusy: { isBusy: vi.fn(() => false), begin: vi.fn(), end: vi.fn() }
 }));
 
-import { pushPopoverOpen } from './pushPopover';
+import { pushPopoverOpen, aheadPillEnabled } from './pushPopover';
 import { pushProject } from '$lib/projects/projectGitActions';
 
 beforeEach(() => {
@@ -21,29 +21,44 @@ beforeEach(() => {
 });
 
 describe('pushPopoverOpen', () => {
-  // Scenario: popover opens when ahead > 0 and a push handler is wired
-  it('returns true when ahead > 0 and a push handler is present', () => {
-    expect(pushPopoverOpen(3, true)).toBe(true);
+  // Scenario: the popover appears in ALL cases when a push handler is wired — the
+  // user takes the secondary action (push / publish) inside it.
+  it('returns true whenever a push handler is wired', () => {
+    expect(pushPopoverOpen(true)).toBe(true);
   });
 
-  // Scenario: inert when ahead === 0 (even if push handler present)
-  it('returns false when ahead is 0', () => {
-    expect(pushPopoverOpen(0, true)).toBe(false);
-  });
-
-  // Scenario: inert when ahead is null (git couldn't answer)
-  it('returns false when ahead is null', () => {
-    expect(pushPopoverOpen(null, true)).toBe(false);
-  });
-
-  // Scenario: inert when no push handler is wired (project pane — no action)
+  // Scenario: inert when no push handler is wired (no real project folder bound)
   it('returns false when no push handler wired', () => {
-    expect(pushPopoverOpen(5, false)).toBe(false);
+    expect(pushPopoverOpen(false)).toBe(false);
+  });
+});
+
+describe('aheadPillEnabled', () => {
+  // Scenario: published branch with commits to push → highlighted
+  it('is enabled when ahead > 0 on a published branch', () => {
+    expect(aheadPillEnabled(2, true)).toBe(true);
   });
 
-  // Scenario: inert when ahead is undefined
-  it('returns false when ahead is undefined', () => {
-    expect(pushPopoverOpen(undefined, true)).toBe(false);
+  // Scenario: published branch fully in sync → neutral empty state
+  it('is disabled (neutral) when a published branch has nothing to push', () => {
+    expect(aheadPillEnabled(0, true)).toBe(false);
+  });
+
+  // Scenario: unpushed branch with commits → highlighted (publishes on push)
+  it('is enabled when an unpushed branch has commits', () => {
+    expect(aheadPillEnabled(3, false)).toBe(true);
+  });
+
+  // Scenario: unpushed branch with NO commits → still highlighted (publish branch)
+  it('is enabled when an unpushed branch has zero commits', () => {
+    expect(aheadPillEnabled(0, false)).toBe(true);
+  });
+
+  // Scenario: unknown count (e.g. no remote) → neutral, regardless of upstream
+  it('is disabled (neutral) when the count is unknown', () => {
+    expect(aheadPillEnabled(null, false)).toBe(false);
+    expect(aheadPillEnabled(undefined, true)).toBe(false);
+    expect(aheadPillEnabled(null, null)).toBe(false);
   });
 });
 

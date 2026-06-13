@@ -3,6 +3,7 @@ pub mod claude_title;
 pub mod events;
 pub mod git;
 pub mod models;
+pub mod notify_click;
 pub mod orchestration;
 pub mod polish;
 pub mod pr;
@@ -220,26 +221,68 @@ fn resolve_path(cwd: Option<String>, token: String) -> Result<Option<String>, St
         .map(|abs| abs.to_string_lossy().into_owned()))
 }
 
+/// True when `path` resolves to a location inside `root` (or equal to it). Both
+/// sides are canonicalized so symlinks (e.g. macOS `/var` → `/private/var`) and
+/// `..` segments compare correctly; a non-existent root or path yields `false`.
+/// PURE w.r.t. its inputs (reads only the filesystem); unit-tested.
+fn path_within(root: &str, path: &str) -> bool {
+    match (fs::canonicalize(root), fs::canonicalize(path)) {
+        (Ok(r), Ok(p)) => p.starts_with(&r),
+        _ => false,
+    }
+}
+
+/// Build the argument vector passed to `open` (after the program name) for
+/// [`open_path`]. PURE so the launch wiring is unit-tested without spawning:
+/// - no app                  → `[path]`                    (OS default handler)
+/// - app, no workspace        → `["-a", app, path]`
+/// - app + workspace          → `["-a", app, workspace, path]` (editor opens the
+///   folder as the workspace and reveals the file within it)
+///
+/// A `workspace` without an `app` is ignored (the OS default handler can't be told
+/// a workspace), so it degrades to `[path]`.
+fn open_args(path: &str, app: Option<&str>, workspace: Option<&str>) -> Vec<String> {
+    match app {
+        Some(app) => {
+            let mut args = vec!["-a".to_string(), app.to_string()];
+            if let Some(workspace) = workspace {
+                args.push(workspace.to_string());
+            }
+            args.push(path.to_string());
+            args
+        }
+        None => vec![path.to_string()],
+    }
+}
+
 /// Open `path` in an application. With `app` set, launches that specific app
 /// (macOS `open -a <app> <path>`, e.g. "Brave Browser", "Cursor"); with `app`
 /// `None`/empty, opens in the OS default handler (`open <path>` — registered app
-/// for files, Finder for directories). The frontend picks `app` from the user's
-/// open-with preferences. Mirrors `open_in_editor` — best-effort spawn-and-return;
-/// a launch failure is surfaced as a string the frontend logs/ignores.
+/// for files, Finder for directories). When `workspace` is set alongside an `app`
+/// and actually contains `path`, the workspace folder is opened too
+/// (`open -a <app> <workspace> <path>`) so a project-aware editor reveals the file
+/// inside the project rather than guessing a workspace from the file's folder. A
+/// `workspace` that doesn't contain the file (e.g. an absolute path clicked outside
+/// the project, or a non-file target like a URL) is dropped so no unrelated project
+/// is opened. The frontend picks `app`/`workspace` from the user's open-with
+/// preferences. Mirrors `open_in_editor` — best-effort spawn-and-return; a launch
+/// failure is surfaced as a string the frontend logs/ignores.
 #[tauri::command]
-fn open_path(path: String, app: Option<String>) -> Result<(), String> {
-    let mut cmd = std::process::Command::new("open");
-    match app.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
-        Some(app) => {
-            cmd.args(["-a", app, &path]);
-        }
-        None => {
-            cmd.arg(&path);
-        }
-    }
-    cmd.spawn()
+fn open_path(path: String, app: Option<String>, workspace: Option<String>) -> Result<(), String> {
+    let app = app.as_deref().map(str::trim).filter(|a| !a.is_empty());
+    let workspace = workspace
+        .as_deref()
+        .map(str::trim)
+        .filter(|w| !w.is_empty())
+        // A workspace is honored only with a named app and when it really contains
+        // the file — otherwise an unrelated project could be opened.
+        .filter(|w| app.is_some() && path_within(w, &path));
+    let args = open_args(&path, app, workspace);
+    std::process::Command::new("open")
+        .args(&args)
+        .spawn()
         .map(|_| ())
-        .map_err(|e| format!("open {path} (app {app:?}): {e}"))
+        .map_err(|e| format!("open {path} (app {app:?}, workspace {workspace:?}): {e}"))
 }
 
 /// Title-budget constants for [`select_title_messages`]. `TITLE_MAX_MSGS` caps how
@@ -1141,6 +1184,16 @@ async fn open_prs_for(repo_path: String, base: String) -> Result<pr::OpenPrs, St
     Ok(pr::open_prs_for(&repo_path, &base).await)
 }
 
+/// Resolve the repo's BASE web URL for `repo_path` via `gh repo view --json url`
+/// (e.g. `https://github.com/o/r`), for the footer push popover's per-commit diff
+/// links. Returns `null` (NOT an error) when the repo isn't on a host gh
+/// recognizes or `gh` is missing/unauthenticated/errors. Best-effort; the
+/// frontend treats `null` as "no link" and keeps the commit rows inert.
+#[tauri::command(async)]
+async fn repo_web_url(repo_path: String) -> Result<Option<String>, String> {
+    Ok(pr::repo_url_for(&repo_path).await)
+}
+
 /// Create a fresh session worktree off `repo_path`'s HEAD (auto-worktree
 /// projects). Returns `{ path, branch, base }`; ensures `.worktrees` is gitignored
 /// and the branch is unique. `Err` when `repo_path` isn't a git repo or git fails.
@@ -1241,6 +1294,20 @@ pub fn run() {
         // capabilities/default.json (`shell:allow-execute` + the externalBin
         // entry). See src/transcribe.rs.
         .plugin(tauri_plugin_shell::init())
+        // Notification plugin: native OS desktop notifications for the needs-input
+        // alerts (capability `needs-input-alerts`). The frontend requests permission
+        // and posts notifications via @tauri-apps/plugin-notification; the scope is
+        // granted by `notification:default` in capabilities/default.json.
+        .plugin(tauri_plugin_notification::init())
+        // In-app auto-update (desktop-auto-update spec). The updater plugin
+        // checks the GitHub Release `latest.json` endpoint (configured in
+        // tauri.conf.json `plugins.updater`) and verifies bundles against the
+        // committed public key; the process plugin's `relaunch()` restarts the
+        // app after an update installs. The launch check + install prompt lives
+        // in the frontend (src/lib/updates). Scopes granted by `updater:default`
+        // + `process:default` in capabilities/default.json.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -1392,12 +1459,14 @@ pub fn run() {
             git_create_branch,
             pr_status_for,
             open_prs_for,
+            repo_web_url,
             worktree_create,
             worktree_remove_if_clean,
             worktree_list,
             worktree_remove,
             events_for,
             orchestration_reply,
+            notify_click::notify_agent,
             transcribe::voice_transcribe_final,
             transcribe::voice_transcribe_stream,
             models::voice_download_models,
@@ -1449,6 +1518,55 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn open_args_builds_per_app_and_root_combination() {
+        // No app → OS default handler gets just the path.
+        assert_eq!(open_args("/p/a.ts", None, None), vec!["/p/a.ts"]);
+        // App, no workspace root → open the file with that app.
+        assert_eq!(
+            open_args("/p/a.ts", Some("Cursor"), None),
+            vec!["-a", "Cursor", "/p/a.ts"]
+        );
+        // App + workspace root → open the project folder, then reveal the file.
+        assert_eq!(
+            open_args("/p/sub/a.ts", Some("Cursor"), Some("/p")),
+            vec!["-a", "Cursor", "/p", "/p/sub/a.ts"]
+        );
+        // A root with no app can't target a workspace → ignored.
+        assert_eq!(open_args("/p/a.ts", None, Some("/p")), vec!["/p/a.ts"]);
+    }
+
+    #[test]
+    fn path_within_checks_containment_with_canonicalization() {
+        let tmp = TempDir::new("within");
+        let root = tmp.path();
+        let sub = root.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let file = sub.join("a.ts");
+        fs::write(&file, "x").unwrap();
+
+        // A file under the root (even nested) is contained.
+        assert!(path_within(
+            root.to_str().unwrap(),
+            file.to_str().unwrap()
+        ));
+        // The root itself counts as within.
+        assert!(path_within(root.to_str().unwrap(), root.to_str().unwrap()));
+        // A sibling directory outside the root is not contained.
+        let other = TempDir::new("within-other");
+        let outside = other.path().join("b.ts");
+        fs::write(&outside, "y").unwrap();
+        assert!(!path_within(
+            root.to_str().unwrap(),
+            outside.to_str().unwrap()
+        ));
+        // A non-existent path (canonicalize fails) is not contained.
+        assert!(!path_within(
+            root.to_str().unwrap(),
+            sub.join("missing.ts").to_str().unwrap()
+        ));
     }
 
     #[test]

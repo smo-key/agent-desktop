@@ -20,6 +20,7 @@
   // and `action` has `flex: 0 0 auto`.
 
   import type { Snippet } from 'svelte';
+  import { autofocus } from '$lib/ui/autofocus';
 
   let {
     open,
@@ -61,9 +62,10 @@
 
   // ── Keyboard handler ──────────────────────────────────────────────────────
   // Bound at the window level (see <svelte:window> below) so Escape closes the
-  // popover regardless of where focus is — the panel itself is never focused
-  // (unlike BranchPicker, which autofocuses its filter input), so a panel-local
-  // handler would never fire. Guarded by `open` so closed instances are inert.
+  // popover regardless of where focus is. On open the body autofocuses its first
+  // focusable row (use:autofocus within), but the body may have no focusable row
+  // (empty/loading) so focus can sit outside the panel — a panel-local handler
+  // alone wouldn't suffice. Guarded by `open` so closed instances are inert.
   function onKeyDown(e: KeyboardEvent) {
     if (!open) return;
     if (e.key === 'Escape') {
@@ -101,7 +103,12 @@
       </div>
     {/if}
 
-    <div class="fp-body">
+    <!-- Autofocus the body (not the whole panel) so focus lands on the first
+         navigational row and NEVER on the pinned action button below — a stray
+         Enter must not fire a consequential commit/push. When the body has no
+         focusable row (empty/loading, or a non-GitHub push list), nothing is
+         focused and focus stays on the trigger. -->
+    <div class="fp-body" use:autofocus={{ within: true }}>
       {@render body()}
     </div>
 

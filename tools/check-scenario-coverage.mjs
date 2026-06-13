@@ -143,6 +143,16 @@ const ENFORCED_CAPABILITIES = new Set([
   // the rendered footer pill being actionable, the project-pane pill staying read-
   // only, and the no-branch pill not opening — are MANUAL below.
   'git-branch-switching',
+  // needs-input-alerts: sound + desktop notifications when an agent enters the
+  // "Needs input" state. Every PURE scenario is unit-tested under exactly one title
+  // each — notify.test.ts (the edge detector: entry/stay/re-entry/paused-excluded,
+  // priming; the four per-channel modes × focus/viewed-agent; channel independence;
+  // the notification title/body content) and notifications.test.ts (the settings
+  // slice: opt-in defaults, load, malformed→off, merge-save, change a mode). The
+  // three genuinely live aspects (the OS notification permission prompt + its
+  // denied/non-Tauri no-op) are headless-exempt (MANUAL below); the chime + the
+  // Settings pickers' rendered wiring are confirmed live in the same pass.
+  'needs-input-alerts',
 ]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by
@@ -319,6 +329,14 @@ const MANUAL_SCENARIOS = {
     // (and ⌘Tab is additionally subject to the macOS app-switcher reservation).
     'new_terminal_shortcut_opens_an_empty_shell',
     'focus_cycle_shortcut_moves_between_agent_and_terminals',
+    // Always-on per-terminal trash button: the PRESENCE + state-aware label of the
+    // rendered button is a DOM-render assertion with no component-render harness in
+    // this repo — confirmed live (like the other rendered-affordance scenarios). The
+    // BEHAVIOR it triggers (kill + close a running task / bare shell) is headlessly
+    // covered by projectTasks.svelte.test.ts ("Clicking kills and closes a running
+    // task" / "…bare shell").
+    'trash_button_is_shown_on_a_running_terminal',
+    'trash_button_is_shown_on_a_stopped_terminal',
   ]),
   // project-tasks: every scenario has a REAL headless test (model + store), so the
   // MANUAL set is intentionally empty.
@@ -330,9 +348,15 @@ const MANUAL_SCENARIOS = {
   //   - the FOOTER surface wiring the rendered ahead/behind git pills to the same
   //     (tested) pushProject/pullProject actions;
   //   - the project rows rendering with NO git status line (git moved to the footer).
+  // Two more are scroll-reveal behaviors: keyboard-cycling the project filter scrolls
+  // the active row into view (`scrollIntoView`), or leaves it put when already visible.
+  // jsdom has no layout, so `scrollIntoView` is a no-op there and the visible/not-visible
+  // distinction can't be asserted headless — confirmed live in-app.
   'projects': new Set([
     'push_and_pull_are_available_from_the_footer',
     'project_rows_carry_no_git_line',
+    'cycling_to_an_off_screen_project_scrolls_it_into_view',
+    'an_already_visible_project_filter_is_not_scrolled',
   ]),
   // tasks-panel: every scenario is a rendered-component / live-PTY behavior with no
   // pure surface to assert headless — confirmed live in-app.
@@ -370,6 +394,17 @@ const MANUAL_SCENARIOS = {
     'footer_pill_is_actionable',
     'non_footer_pill_stays_read_only',
     'no_branch_to_switch',
+  ]),
+  // needs-input-alerts: the OS-notification permission flow is genuinely live —
+  // requesting permission when the desktop channel is enabled, and the silent no-op
+  // when permission is denied or the app runs outside the Tauri shell — all bound to
+  // the @tauri-apps/plugin-notification API with no pure surface to assert headless.
+  // (The "notification shown with agent context" content IS unit-tested via the pure
+  // notificationTitle/notificationBody helpers.)
+  'needs-input-alerts': new Set([
+    'permission_requested_on_enable',
+    'permission_denied',
+    'non_desktop_context',
   ]),
 };
 

@@ -38,6 +38,12 @@ pub struct GitStatus {
     pub modified: Option<i64>,
     pub ahead: Option<i64>,
     pub behind: Option<i64>,
+    /// Whether the current branch tracks an UPSTREAM (i.e. has been published to a
+    /// remote). `Some(true)` when a tracking branch exists, `Some(false)` for a
+    /// local-only branch that was never pushed, `None` off-repo / detached (no
+    /// branch). The footer's ↑ pill uses this to offer a first-time *publish* for a
+    /// `Some(false)` branch even when `ahead` is 0.
+    pub upstream: Option<bool>,
     /// The changed file PATHS (capped at [`MAX_CHANGED_PATHS`]) for the
     /// uncommitted-files hover list. Empty when the tree is clean; left empty
     /// (not null) when git couldn't answer — the count (`modified`) carries the
@@ -105,6 +111,22 @@ fn run_git_raw(dir: &str, args: &[&str]) -> Option<String> {
     String::from_utf8(output.stdout).ok()
 }
 
+/// Whether the repo at `dir` has at least one configured remote. `git remote`
+/// prints one remote name per line; empty (or a git error) means none. Used to
+/// decide whether an unpublished branch has anywhere to push.
+fn has_remote(dir: &str) -> bool {
+    run_git(dir, &["remote"]).map(|s| !s.is_empty()).unwrap_or(false)
+}
+
+/// Whether HEAD is on a real branch (not a DETACHED or unborn HEAD).
+/// `git symbolic-ref -q HEAD` succeeds only when HEAD points at a branch ref.
+/// A detached HEAD is not publishable, so the ↑ pill must treat it as "no branch"
+/// (note `rev-parse --abbrev-ref HEAD` reports the literal `"HEAD"` when detached —
+/// it does NOT return None — so the branch name alone can't distinguish the case).
+fn on_branch(dir: &str) -> bool {
+    run_git(dir, &["symbolic-ref", "-q", "HEAD"]).is_some()
+}
+
 /// Compute the git status for a single folder. Mirrors the statusline wrapper:
 /// each field is left null when its git query fails.
 pub fn status_for_dir(dir: &str) -> GitStatus {
@@ -134,11 +156,26 @@ pub fn status_for_dir(dir: &str) -> GitStatus {
             out.behind = Some(n);
         }
     }
-    // Commits AHEAD of the upstream tracking branch (not yet pushed).
-    if let Some(ahead) = run_git(dir, &["rev-list", "@{upstream}..HEAD", "--count"]) {
-        if let Ok(n) = ahead.parse::<i64>() {
-            out.ahead = Some(n);
-        }
+    // Upstream + ahead. `upstream` records whether the branch is published (tracks a
+    // remote); it is left null off-repo, on an unborn branch, or on a DETACHED HEAD
+    // (none of which is a publishable branch — and `rev-parse --abbrev-ref HEAD`
+    // reports the literal "HEAD" when detached, so we gate on `on_branch`, not just
+    // `branch.is_some()`). `ahead` is the number of commits the next push would send:
+    // against the upstream when one exists, else (an unpublished branch) the commits
+    // not yet on ANY remote — i.e. what publishing the branch would upload. With no
+    // remote at all there is nowhere to push, so `ahead` stays null.
+    if out.branch.is_some() && on_branch(dir) {
+        let has_upstream = run_git(dir, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_some();
+        out.upstream = Some(has_upstream);
+        out.ahead = if has_upstream {
+            run_git(dir, &["rev-list", "@{upstream}..HEAD", "--count"])
+                .and_then(|s| s.parse::<i64>().ok())
+        } else if has_remote(dir) {
+            run_git(dir, &["rev-list", "--count", "HEAD", "--not", "--remotes"])
+                .and_then(|s| s.parse::<i64>().ok())
+        } else {
+            None
+        };
     }
     out
 }
@@ -214,11 +251,33 @@ fn run_git_action(dir: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
-/// Push the project's current branch to its remote (`git push`). Returns git's
-/// message on success, an error message (no upstream / rejected / offline) on
-/// failure.
+/// Push the project's current branch to its remote. A PUBLISHED branch (one that
+/// tracks an upstream) pushes straight to it with `git push`. An UNPUBLISHED branch
+/// (no upstream — never uploaded) is PUBLISHED with `git push -u <remote> HEAD`,
+/// which creates the remote branch and records tracking so later pushes are a plain
+/// `git push`; the remote defaults to `origin`, else the first configured one.
+/// Returns git's message on success, an error message (rejected / offline / no
+/// remote at all) on failure.
 pub fn push(dir: &str) -> Result<String, String> {
-    run_git_action(dir, &["push"])
+    if run_git(dir, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_some() {
+        run_git_action(dir, &["push"])
+    } else {
+        let remote = default_push_remote(dir);
+        run_git_action(dir, &["push", "-u", &remote, "HEAD"])
+    }
+}
+
+/// The remote to publish an unpushed branch to: `origin` when present, else the
+/// first configured remote, else `origin` (which then errors cleanly when there is
+/// no remote at all). `git remote` lists one remote name per line.
+fn default_push_remote(dir: &str) -> String {
+    let remotes = run_git(dir, &["remote"]).unwrap_or_default();
+    let names: Vec<&str> = remotes.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    if names.iter().any(|&n| n == "origin") {
+        "origin".to_string()
+    } else {
+        names.first().map(|s| s.to_string()).unwrap_or_else(|| "origin".to_string())
+    }
 }
 
 /// Pull the project's current branch from its remote, fast-forward ONLY
@@ -660,11 +719,26 @@ pub fn commits_to_push_for(dir: &str) -> Vec<PushCommit> {
     if dir.is_empty() {
         return vec![];
     }
-    // run_git trims output, which is fine here: each commit record is on its own
-    // line and there is no leading-space significance (unlike porcelain status).
-    // We use run_git_raw to preserve newlines between records; trimming the overall
-    // output would coalesce everything into one unparseable blob.
-    let stdout = match run_git_raw(dir, &["log", "@{u}..HEAD", "--format=%H\x1f%s"]) {
+    // Mirror status_for_dir's "commits to push" definition so the popover list
+    // matches the ↑ count exactly: against the upstream when the branch is
+    // published, else (an unpublished branch with a remote) the commits not yet on
+    // ANY remote — what publishing the branch would upload. No upstream and no
+    // remote → nothing to list.
+    //
+    // run_git_raw preserves the newlines BETWEEN records (each commit is its own
+    // line); trimming the whole output would coalesce them into one unparseable
+    // blob. There is no leading-space significance here (unlike porcelain status).
+    let stdout = if run_git(dir, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_some() {
+        run_git_raw(dir, &["log", "--format=%H\x1f%s", "@{u}..HEAD"])
+    } else if on_branch(dir) && has_remote(dir) {
+        // Unpublished branch: list what publishing would upload. Gated on `on_branch`
+        // so a DETACHED HEAD (not publishable) lists nothing — matching the null
+        // `ahead` count above, so the pill count and popover list never disagree.
+        run_git_raw(dir, &["log", "--format=%H\x1f%s", "HEAD", "--not", "--remotes"])
+    } else {
+        None
+    };
+    let stdout = match stdout {
         Some(s) => s,
         None => return vec![],
     };
@@ -894,6 +968,140 @@ mod tests {
         let repo = TempRepo::new("pushnorem");
         let res = push(repo.str());
         assert!(res.is_err(), "push with no remote should Err, got {:?}", res);
+    }
+
+    #[test]
+    fn push_publishes_an_unpushed_branch_and_sets_its_upstream() {
+        let repo = TempRepo::new("push-publish");
+        let remote = bare_remote("push-publish");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+        // A new branch with a commit, never published (no upstream).
+        run(repo.str(), &["checkout", "-q", "-b", "feature"]);
+        fs::write(repo.path().join("c.md"), "c\n").unwrap();
+        run(repo.str(), &["add", "."]);
+        run(repo.str(), &["commit", "-q", "-m", "c"]);
+
+        push(repo.str()).expect("publishing an unpushed branch should succeed");
+
+        // The remote received the branch (the main commit + the new one).
+        let count = run_git(remote.str(), &["rev-list", "feature", "--count"]).unwrap();
+        assert_eq!(count, "2", "remote should have the published branch's commits");
+        // The local branch now tracks origin/feature (later pushes are plain).
+        let up = run_git(repo.str(), &["rev-parse", "--abbrev-ref", "@{upstream}"]);
+        assert_eq!(up.as_deref(), Some("origin/feature"), "publishing sets the upstream");
+    }
+
+    #[test]
+    fn status_reports_upstream_and_counts_ahead_vs_upstream() {
+        let repo = TempRepo::new("upstream-true");
+        let remote = bare_remote("upstream-true");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+        // Two local commits not yet pushed.
+        fs::write(repo.path().join("a.md"), "a\n").unwrap();
+        run(repo.str(), &["add", "."]);
+        run(repo.str(), &["commit", "-q", "-m", "a"]);
+        fs::write(repo.path().join("b.md"), "b\n").unwrap();
+        run(repo.str(), &["add", "."]);
+        run(repo.str(), &["commit", "-q", "-m", "b"]);
+
+        let s = status_for_dir(repo.str());
+        assert_eq!(s.upstream, Some(true), "a tracked branch reports upstream=true");
+        assert_eq!(s.ahead, Some(2), "two commits ahead of the upstream");
+    }
+
+    #[test]
+    fn status_counts_publishable_commits_for_an_unpushed_branch() {
+        let repo = TempRepo::new("upstream-false");
+        let remote = bare_remote("upstream-false");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+        // A new branch that is never pushed (no upstream), with two commits.
+        run(repo.str(), &["checkout", "-q", "-b", "feature"]);
+        fs::write(repo.path().join("c.md"), "c\n").unwrap();
+        run(repo.str(), &["add", "."]);
+        run(repo.str(), &["commit", "-q", "-m", "c"]);
+        fs::write(repo.path().join("d.md"), "d\n").unwrap();
+        run(repo.str(), &["add", "."]);
+        run(repo.str(), &["commit", "-q", "-m", "d"]);
+
+        let s = status_for_dir(repo.str());
+        assert_eq!(s.upstream, Some(false), "an unpushed branch reports upstream=false");
+        assert_eq!(
+            s.ahead,
+            Some(2),
+            "ahead counts the commits not on any remote (what publishing sends)"
+        );
+    }
+
+    #[test]
+    fn status_reports_zero_publishable_commits_for_a_fresh_unpushed_branch() {
+        let repo = TempRepo::new("upstream-zero");
+        let remote = bare_remote("upstream-zero");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+        // A fresh branch off the pushed main with NO new commits.
+        run(repo.str(), &["checkout", "-q", "-b", "fresh"]);
+
+        let s = status_for_dir(repo.str());
+        assert_eq!(s.upstream, Some(false), "an unpushed branch reports upstream=false");
+        assert_eq!(
+            s.ahead,
+            Some(0),
+            "no commits beyond the remote yet, but the branch is still publishable"
+        );
+    }
+
+    #[test]
+    fn status_leaves_upstream_and_ahead_null_on_a_detached_head() {
+        // Regression: a DETACHED HEAD reports the literal branch "HEAD" from
+        // `rev-parse --abbrev-ref`, so it must NOT be treated as a publishable
+        // branch — upstream/ahead stay null (neutral, non-actionable ↑ pill) rather
+        // than offering a publish that `git push -u origin HEAD` can't perform.
+        let repo = TempRepo::new("detached");
+        let remote = bare_remote("detached");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+        // A second commit, then detach onto it.
+        fs::write(repo.path().join("x.md"), "x\n").unwrap();
+        run(repo.str(), &["add", "."]);
+        run(repo.str(), &["commit", "-q", "-m", "x"]);
+        run(repo.str(), &["checkout", "-q", "--detach", "HEAD"]);
+
+        let s = status_for_dir(repo.str());
+        assert_eq!(s.upstream, None, "a detached HEAD is not a publishable branch");
+        assert_eq!(s.ahead, None, "a detached HEAD reports no ahead count");
+        // The commit list must agree with the (null) count — empty, not the
+        // unpushed-commit list, so the pill and popover never disagree.
+        assert!(
+            commits_to_push_for(repo.str()).is_empty(),
+            "a detached HEAD lists no commits to push"
+        );
+    }
+
+    #[test]
+    fn status_leaves_ahead_null_when_there_is_no_remote() {
+        let repo = TempRepo::new("no-remote-ahead");
+        let s = status_for_dir(repo.str());
+        assert_eq!(s.upstream, Some(false), "a branch with no upstream reports upstream=false");
+        assert_eq!(s.ahead, None, "no remote means nowhere to push, so ahead stays null");
+    }
+
+    #[test]
+    fn commits_to_push_lists_an_unpushed_branchs_commits() {
+        let repo = TempRepo::new("ctp-unpushed");
+        let remote = bare_remote("ctp-unpushed");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+        run(repo.str(), &["checkout", "-q", "-b", "feature"]);
+        fs::write(repo.path().join("c.md"), "c\n").unwrap();
+        run(repo.str(), &["add", "."]);
+        run(repo.str(), &["commit", "-q", "-m", "feat c"]);
+
+        let commits = commits_to_push_for(repo.str());
+        assert_eq!(commits.len(), 1, "one unpushed commit, got {:?}", commits);
+        assert_eq!(commits[0].subject, "feat c");
     }
 
     #[test]

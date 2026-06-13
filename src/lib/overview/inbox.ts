@@ -6,7 +6,7 @@
 // the queue. Framework-free so it is trivially unit-tested; Inbox.svelte is the
 // thin reactive shell that feeds it the live roster and renders the result.
 
-import { archivedPaneIds, needsAttention, type AgentRow, type AgentStatus } from './roster';
+import { archivedPaneIds, laneForRow, needsAttention, type AgentRow, type AgentStatus } from './roster';
 import { modelLabel } from '$lib/usage/modelLabel';
 import type { ConfirmOptions } from '$lib/ui/confirmStore.svelte';
 
@@ -126,6 +126,28 @@ export function resolveFocus(rows: AgentRow[], userSelected: string | null): Age
 }
 
 /**
+ * PURE: the focus target after the user EXPLICITLY dismisses the shown session
+ * (archive / pause / delete) — the next actionable session, excluding the
+ * dismissed pane, chosen in roster (display) order:
+ *   1. the first Needs-you session (`attentionQueue`), else
+ *   2. the first In-flight session (the `flight` lane: working/idle, not
+ *      paused/archived/previewing), else
+ *   3. null ("All clear").
+ *
+ * This is a DISTINCT path from the opt-in auto-advance (`resolveFocus` + the
+ * grace timer): it is immediate, unconditional (ignores the auto-advance
+ * setting), and broadens the target to In-flight. `rows` must be in roster
+ * order so "first" matches what the user sees. Pure: never mutates inputs.
+ */
+export function nextOnDismiss(rows: AgentRow[], dismissedPaneId: string): string | null {
+  const others = rows.filter((r) => r.paneId !== dismissedPaneId);
+  const attn = attentionQueue(others)[0];
+  if (attn) return attn.paneId;
+  const flight = others.find((r) => laneForRow(r) === 'flight');
+  return flight?.paneId ?? null;
+}
+
+/**
  * Step through the attention queue from `currentPaneId` by `dir` (+1 / -1),
  * wrapping around. Returns the next attention pane id, or null when the queue is
  * empty. Used by the focus header's ↑/↓ queue-nav.
@@ -215,6 +237,28 @@ export function rowModelLabel(row: Pick<AgentRow, 'modelId' | 'model'>): string 
 }
 
 /**
+ * PURE: build a confirmation request for archiving an agent that is currently
+ * WORKING (actively producing output), or `null` when no confirmation is needed —
+ * any other status archives immediately. Archiving a working session interrupts a
+ * running task, so we guard it; the returned `onConfirm` runs the caller's `archive`
+ * action ONLY when the user confirms. Mirrors `deleteAllArchivedRequest`'s shape so
+ * the caller just `confirmModal.show(req)` when non-null.
+ */
+export function archiveWorkingConfirm(
+  status: AgentStatus,
+  archive: () => void
+): ConfirmOptions | null {
+  if (status !== 'working') return null;
+  return {
+    title: 'Archive working session?',
+    message:
+      'This agent is currently working. Archiving will stop it. You can restore it later from Archived.',
+    confirmLabel: 'Archive anyway',
+    onConfirm: archive
+  };
+}
+
+/**
  * PURE: build the confirmation request for "delete all archived agents", or `null`
  * when nothing is archived (so the caller hides the action). The returned
  * `onConfirm` deletes every archived pane (`archivedPaneIds`) via `deleteAgent`,
@@ -243,4 +287,25 @@ export function deleteAllArchivedRequest(
       }
     }
   };
+}
+
+/**
+ * PURE: decide whether keyboard navigation onto `selectedPaneId` should expand the
+ * collapsed Archived lane. The lane shows only its first `previewCount` rows (the
+ * newest-first `archivedPaneIds`) until "Show all" is toggled; a selection beyond
+ * that preview is not rendered, so it cannot be revealed without expanding. Returns
+ * true ONLY when the lane is still collapsed AND the selected pane is an archived row
+ * at or beyond `previewCount`. The `showingAll` short-circuit makes the caller's
+ * `showAllArchived = true` write monotonic (true → already-showing → false), so the
+ * driving effect converges instead of looping. A null/non-archived selection is false.
+ */
+export function archivedNavNeedsExpand(
+  selectedPaneId: string | null,
+  archivedPaneIds: string[],
+  previewCount: number,
+  showingAll: boolean
+): boolean {
+  if (showingAll || selectedPaneId === null) return false;
+  const idx = archivedPaneIds.indexOf(selectedPaneId);
+  return idx >= previewCount;
 }

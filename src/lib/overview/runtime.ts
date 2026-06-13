@@ -10,7 +10,7 @@
 // Overview's existing heartbeat clock drives recomputation instead, so a status
 // change is reflected within ~1s with zero per-chunk reactivity cost.
 
-import type { PaneRuntime, RuntimeMap } from './roster';
+import type { AgentStatus, PaneRuntime, RuntimeMap } from './roster';
 
 const runtimes = new Map<string, PaneRuntime>();
 
@@ -54,6 +54,24 @@ export function noteExit(paneId: string, code: number | null): void {
  */
 export function noteBusy(paneId: string, busy: boolean): void {
   entryFor(paneId).terminalBusy = busy;
+}
+
+/**
+ * Record a pane's most recent DERIVED (final) status — the hysteresis memory for the
+ * silence-based demotion. The Overview calls this for each row after every roster
+ * rebuild; `deriveStatus` reads it back (via `runtime.lastStatus`, as `prevStatus`) so a
+ * pane already shown `working` holds In flight through a brief silence rather than
+ * bouncing to `waiting` (see `IDLE_GRACE_MS`). Cheap: a single field write.
+ *
+ * Records ONLY when a runtime entry already exists — it must NEVER create one. A pane
+ * with no entry derives `idle` ("not wired yet"); fabricating an entry here would make
+ * the next tick read its null `lastOutputAt` as `working`, flipping a just-spawned,
+ * zero-output pane from idle to working. A genuinely working/quiet pane always has an
+ * entry (from `noteOutput`), so the hysteresis memory is preserved where it matters.
+ */
+export function noteStatus(paneId: string, status: AgentStatus): void {
+  const r = runtimes.get(paneId);
+  if (r) r.lastStatus = status;
 }
 
 /** Drop a pane's runtime entry (on pane teardown), so a closed pane leaves none. */

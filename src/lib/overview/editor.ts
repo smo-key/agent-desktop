@@ -16,7 +16,9 @@ export function resolveFile(cwd: string | null, file: string): string {
 }
 
 /** Open a transcript filename per the open-with preferences, resolved against
- *  `cwd`. Best-effort: a failure (app missing, outside Tauri) is logged, not thrown. */
+ *  `cwd`. The same `cwd` is the project root passed to a workspace-capable editor,
+ *  so it opens the project (not the file's folder) and reveals the file within it.
+ *  Best-effort: a failure (app missing, outside Tauri) is logged, not thrown. */
 export async function openInEditor(cwd: string | null, file: string): Promise<void> {
-  await openWith.openFile(resolveFile(cwd, file));
+  await openWith.openFile(resolveFile(cwd, file), cwd);
 }

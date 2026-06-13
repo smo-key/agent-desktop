@@ -156,8 +156,9 @@ pub struct PaneRef {
 
 /// Best-effort ISO-8601 (`2026-06-03T12:00:00.000Z`) → unix millis. Returns
 /// `None` for anything that doesn't match the expected shape (Z-suffix only).
-/// Mirrors the same helper in `events.rs` — no chrono dependency.
-fn parse_iso_millis(s: &str) -> Option<i64> {
+/// Mirrors the same helper in `events.rs` — no chrono dependency. `pub(crate)` so
+/// the subagents parser can reuse it for standalone-subagent sidecar timestamps.
+pub(crate) fn parse_iso_millis(s: &str) -> Option<i64> {
     let bytes = s.as_bytes();
     if bytes.len() < 20 || !s.ends_with('Z') {
         return None;

@@ -8,6 +8,7 @@
 
   import { WorktreePanel, type Worktree } from './worktreePanel.svelte';
   import Icon from '../icons/Icon.svelte';
+  import { autofocus } from '$lib/ui/autofocus';
 
   let {
     projectId,
@@ -58,7 +59,9 @@
   >
     <header class="head">
       <h2>Worktrees — {projectName}</h2>
-      <button class="x" aria-label="Close" onclick={onClose}>
+      <!-- Focus the close button on open: per-row Open/Prune are too consequential
+           (and Prune is destructive) to be the default Enter target. -->
+      <button class="x" aria-label="Close" onclick={onClose} use:autofocus>
         <Icon name="x" size={15} color="var(--fg-3)" />
       </button>
     </header>

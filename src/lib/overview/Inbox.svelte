@@ -28,6 +28,8 @@
     showContext,
     LANE_ORDER,
     laneForRow,
+    reorderLane,
+    orderRowsByLane,
     type AgentLane,
     type AgentRow,
     type AgentStatus
@@ -37,20 +39,33 @@
     attentionQueue,
     resolveFocus,
     nextInQueue,
+    nextOnDismiss,
     archiveDecision,
     autoArchiveAction,
     shouldAutoResume,
     deleteAllArchivedRequest,
+    archiveWorkingConfirm,
+    archivedNavNeedsExpand,
     rowSub as rowSubText
   } from './inbox';
   import { toRosterWorkspaces, toNavWorkspaces } from './rosterInputs';
-  import { runtimeMap } from './runtime';
+  import { noteStatus, runtimeMap } from './runtime';
   import { navigateTarget } from './navigate';
+  import { focusAgent } from './focusAgent.svelte';
+  import { focusRequest } from './focusRequest.svelte';
   import { activity } from './activity.svelte';
   import { events } from './events.svelte';
   import { titles } from './titles.svelte';
   import { summaries } from './summaries.svelte';
   import { costs } from './costs.svelte';
+  import { subagents } from './subagents.svelte';
+  import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
+  import {
+    groupSubagentsByPhase,
+    formatDurationAlive,
+    liveSubagents,
+    type WorkflowGroup
+  } from './subagentRows';
   import { projects } from '$lib/projects/projects.svelte';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import {
@@ -81,37 +96,19 @@
   import CoordinatorStart from '$lib/orchestration/CoordinatorStart.svelte';
   import { coordinatorNeedsInput } from '$lib/orchestration/coordinatorNeedsInput.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
+  import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
 
   // --- Sessions / Tasks split (Sessions roster on top / Tasks bottom) ----------
   // The `.col-list` column splits into the Sessions roster (top, resizable) and
   // the bottom region (Tasks launcher + Agents library). The bottom region's
   // height is a persisted fraction of the column (clamped) so the Sessions area
   // resizes by dragging the gutter between them; driven via flex-basis.
-  const TASKS_FRAC_KEY = 'agent-desktop:tasks-launcher-frac';
-  const TASKS_FRAC_MIN = 0.15;
-  const TASKS_FRAC_MAX = 0.6;
-  const TASKS_FRAC_DEFAULT = 0.33;
-  function clampFrac(f: number): number {
-    return Math.max(TASKS_FRAC_MIN, Math.min(TASKS_FRAC_MAX, f));
-  }
-  function loadTasksFrac(): number {
-    if (typeof localStorage === 'undefined') return TASKS_FRAC_DEFAULT;
-    try {
-      const v = Number(localStorage.getItem(TASKS_FRAC_KEY));
-      return Number.isFinite(v) && v > 0 ? clampFrac(v) : TASKS_FRAC_DEFAULT;
-    } catch {
-      return TASKS_FRAC_DEFAULT;
-    }
-  }
-  let tasksFrac = $state(loadTasksFrac());
+  // The bottom region's height is a persisted fraction of the column, stored in
+  // the durable `ui` settings slice (`uiPrefs`) — NOT localStorage.
+  const tasksFrac = $derived(uiPrefs.data.tasksLauncherFrac);
   function setTasksFrac(f: number) {
-    tasksFrac = clampFrac(f);
-    if (typeof localStorage === 'undefined') return;
-    try {
-      localStorage.setItem(TASKS_FRAC_KEY, String(tasksFrac));
-    } catch {
-      /* ignore quota / disabled storage */
-    }
+    uiPrefs.setTasksLauncherFrac(f);
   }
   /** Drag the gutter: convert pointer Y within the column into a bottom fraction. */
   function startTasksResize(e: PointerEvent) {
@@ -171,42 +168,119 @@
   $effect(() => {
     for (const r of allRows) {
       if (r.role === 'coordinator') coordinatorNeedsInput.clearOnWorking(r.paneId, r.status);
+      // Record each row's FINAL (post-override) status as the hysteresis memory for the
+      // next derivation: a pane shown `working` holds In flight through a brief silence
+      // instead of bouncing to `waiting` (see deriveStatus / IDLE_GRACE_MS). The runtime
+      // registry is non-reactive, so this write does not retrigger the roster recompute;
+      // `rowFor` reads the value recorded on the previous tick.
+      noteStatus(r.paneId, r.status);
     }
   });
   const rows = $derived(filterRowsByProject(allRows, projectFilter.selected));
 
-  // Arrival order for the "Needs you" lane: paneIds in the order they STARTED
-  // needing input (earliest first / top). Maintained append-only — an agent that
-  // newly needs you joins the bottom, never jumping above one already waiting — so
-  // the queue is stable and "order received".
-  let queueOrder = $state<string[]>([]);
-  $effect(() => {
-    const attn = rows.filter((r) => needsAttention(r)).map((r) => r.paneId);
-    const present = new Set(attn);
-    const kept = queueOrder.filter((id) => present.has(id)); // still-waiting, in order
-    const keptSet = new Set(kept);
-    const added = attn.filter((id) => !keptSet.has(id)); // newcomers, roster order
-    const next = [...kept, ...added];
-    const changed =
-      next.length !== queueOrder.length || next.some((id, i) => id !== queueOrder[i]);
-    if (changed) queueOrder = next;
+  // Per-lane DISPLAY ORDER. Every bucket lists its agents most-recently-added-to-
+  // that-column first; the Needs-you (attn) and Paused orders PERSIST across restarts
+  // (localStorage) so a returning agent keeps its slot rather than jumping by load
+  // order. The map holds paneIds top-first per lane. `reorderLane` keeps the
+  // established order while jumping a newcomer to the top, and drops agents
+  // that left the lane; `orderRowsByLane` projects it onto the rendered rows so the
+  // lanes, the attention queue, and focus resolution all agree on order.
+  // The manual orders for the draggable lanes (attn + paused) persist in the
+  // durable `ui` settings slice (`uiPrefs`), NOT localStorage. The non-draggable
+  // lanes (flight/done) start empty and re-derive newest-first each session.
+  let laneOrder = $state<Record<AgentLane, string[]>>({
+    attn: [],
+    flight: [],
+    paused: [],
+    done: []
   });
 
-  /** Rows with the attention agents reordered to `queueOrder` (earliest-waiting
-   *  first); every other row keeps its roster position (stable sort). Drives the
-   *  list, the queue, and all focus resolution so they agree on order. */
-  function reorderByQueue(list: AgentRow[], order: string[]): AgentRow[] {
-    const idx = new Map(order.map((id, i) => [id, i] as const));
-    return [...list].sort((a, b) => {
-      if (needsAttention(a) && needsAttention(b)) {
-        return (idx.get(a.paneId) ?? 0) - (idx.get(b.paneId) ?? 0);
-      }
-      return 0;
-    });
+  // One-time seed from the durable prefs once they have hydrated (the settings
+  // load is async, kicked off on app mount). Until then `laneOrder` holds defaults
+  // and the reconcile effect below is gated off, so a returning agent's saved slot
+  // is never overwritten by mount-order before the saved order arrives.
+  let laneSeeded = $state(false);
+  $effect(() => {
+    if (laneSeeded || !uiPrefs.loaded) return;
+    laneOrder = {
+      attn: [...uiPrefs.data.laneOrder.attn],
+      flight: [],
+      paused: [...uiPrefs.data.laneOrder.paused],
+      done: []
+    };
+    laneSeeded = true;
+  });
+
+  /** Persist ONLY the manually-reorderable lanes (attn + paused); flight/done are
+   *  re-derived newest-first each session, so they are never stored. */
+  function saveLaneOrder() {
+    uiPrefs.setLaneOrder({ attn: laneOrder.attn, paused: laneOrder.paused });
   }
-  const viewRows = $derived(reorderByQueue(rows, queueOrder));
+
+  // Reconcile every lane's order against the live roster. Computed over `allRows`
+  // (UNFILTERED) so the order is stable as the project filter changes — the display
+  // sorts the filtered `rows` by this global order. Idempotent: a recompute with the
+  // same lane membership returns the same arrays (no write / no thrash off the clock).
+  $effect(() => {
+    // Hold off until the saved order has hydrated + seeded, so reconciliation never
+    // persists mount-order over a returning agent's saved slot (see `laneSeeded`).
+    if (!laneSeeded) return;
+    const present: Record<AgentLane, string[]> = { attn: [], flight: [], paused: [], done: [] };
+    for (const r of allRows) present[laneForRow(r)].push(r.paneId);
+    const next: Record<AgentLane, string[]> = { ...laneOrder };
+    let changed = false;
+    let persistChanged = false;
+    for (const lane of LANE_ORDER) {
+      const reordered = reorderLane(laneOrder[lane], present[lane]);
+      const same =
+        reordered.length === laneOrder[lane].length &&
+        reordered.every((id, i) => id === laneOrder[lane][i]);
+      if (!same) {
+        next[lane] = reordered;
+        changed = true;
+        if (lane === 'attn' || lane === 'paused') persistChanged = true;
+      }
+    }
+    if (changed) {
+      laneOrder = next;
+      if (persistChanged) saveLaneOrder();
+    }
+  });
+
+  const viewRows = $derived(orderRowsByLane(rows, laneOrder));
 
   const queue = $derived(attentionQueue(viewRows));
+
+  // Flash a card briefly when its agent JUST enters the "needs you" state — a real
+  // transition from not-attention → attention while we're watching (driven by the
+  // per-second `nowMs` clock flipping working → waiting). We hold the paneId in a
+  // reactive set for the 1.2s the CSS flash runs, then drop it. `prevAttn` /
+  // `attnSeeded` are plain (untracked) trackers, like `lastShownId` above; seeding
+  // on the first roster means agents ALREADY needing attention at mount don't flash
+  // — only genuine transitions do.
+  const FLASH_MS = 2500;
+  let prevAttn = new Map<string, boolean>();
+  let attnSeeded = false;
+  let flashPanes = $state(new Set<string>());
+  $effect(() => {
+    const seen = new Set<string>();
+    for (const r of viewRows) {
+      seen.add(r.paneId);
+      const now = needsAttention(r);
+      if (attnSeeded && prevAttn.get(r.paneId) === false && now) {
+        const id = r.paneId;
+        flashPanes.add(id);
+        flashPanes = new Set(flashPanes);
+        setTimeout(() => {
+          flashPanes.delete(id);
+          flashPanes = new Set(flashPanes);
+        }, FLASH_MS);
+      }
+      prevAttn.set(r.paneId, now);
+    }
+    for (const id of [...prevAttn.keys()]) if (!seen.has(id)) prevAttn.delete(id);
+    attnSeeded = true;
+  });
 
   // The active project for the coordinator pin: the concrete project chosen in the
   // project filter (null on All / Unassigned). Only with a concrete project does the
@@ -222,12 +296,17 @@
   const pin = $derived(resolveCoordinatorPin(viewRows, activeCoordProjectId));
   // Lanes rendered BELOW the rule exclude the pinned coordinator (it never renders
   // twice). Keyboard nav uses `coordinatorNavOrder` (coordinator/affordance first),
-  // not these render lanes, so the pinned coordinator stays reachable.
-  const renderGrouped = $derived.by(() => {
-    const grouped = groupByLane(pin.rest);
-    grouped.done = [...grouped.done].reverse();
-    return grouped;
-  });
+  // not these render lanes, so the pinned coordinator stays reachable. `pin.rest`
+  // is already lane-grouped + within-lane ordered (viewRows → orderRowsByLane), so
+  // groupByLane just re-partitions it — including the Archived (done) lane, already
+  // newest-first via `laneOrder` (no extra reverse needed).
+  const renderGrouped = $derived(groupByLane(pin.rest));
+
+  // The Archived lane collapses to its latest 2 rows (newest-first via `laneOrder`
+  // — see above; no reverse — so the first 2 ARE the most recent) with a "Show all /
+  // Collapse" toggle below; long archives don't bury the live lanes. Default collapsed.
+  const ARCHIVED_PREVIEW = 2;
+  let showAllArchived = $state(false);
 
   // Group metadata (label) for the left list, in attn -> flight -> paused -> done
   // order. `done` is the Archived lane (closed sessions); `paused` sits above it.
@@ -262,26 +341,11 @@
   }
 
   // Whether the project pane (left of the roster) is collapsed — remembered across
-  // app restarts via localStorage.
-  const COLLAPSE_KEY = 'agent-desktop:project-pane-collapsed';
-  function loadCollapsed(): boolean {
-    if (typeof localStorage === 'undefined') return false;
-    try {
-      return localStorage.getItem(COLLAPSE_KEY) === '1';
-    } catch {
-      return false;
-    }
-  }
-  let projectPaneCollapsed = $state(loadCollapsed());
+  // app restarts via the durable `ui` settings slice (`uiPrefs`), NOT localStorage
+  // (which WKWebView drops on an abrupt restart).
+  const projectPaneCollapsed = $derived(uiPrefs.data.projectPaneCollapsed);
   function toggleProjectPane() {
-    projectPaneCollapsed = !projectPaneCollapsed;
-    if (typeof localStorage !== 'undefined') {
-      try {
-        localStorage.setItem(COLLAPSE_KEY, projectPaneCollapsed ? '1' : '0');
-      } catch {
-        /* ignore quota / disabled storage */
-      }
-    }
+    uiPrefs.setProjectPaneCollapsed(!projectPaneCollapsed);
   }
 
   // Right-click context menu for a roster row (open / close the agent).
@@ -294,6 +358,35 @@
 
   // The focused (shown) agent row.
   const focus = $derived(viewRows.find((r) => r.paneId === shownId) ?? null);
+
+  // Publish the shown agent so the always-mounted alert driver (+page.svelte) can
+  // resolve the OVERVIEW-mode `viewedPaneId` for the `agent-unfocused` alert mode.
+  // The Inbox is mounted only in overview mode, so it must NOT own the alert driver
+  // itself — it only publishes this selection (needs-input-alerts, design D7b/D7c).
+  $effect(() => {
+    focusAgent.paneId = focus?.paneId ?? null;
+  });
+
+  // Honor an INBOUND select request from outside the inbox — a clicked needs-input
+  // notification (capability `alert-click-focus`). The always-mounted route writes
+  // `focusRequest` from the activation event; we select that agent here through the
+  // normal `selectAgent` path and CONSUME the request. The inbox mounts only in
+  // overview mode, so a click from grid view sets the request BEFORE this component
+  // exists; consuming a HELD request (rather than diffing a baseline captured at
+  // mount, which would already equal the just-issued request and swallow it) makes
+  // delivery independent of mount timing, and consuming prevents a stale request from
+  // re-firing on a later remount. A request for a pane no live row carries is consumed
+  // without selecting — the window is already focused by the route, matching the
+  // "dead pane → focus-only" behavior. (While idle, `paneId` is null and the effect
+  // returns before reading `viewRows`, so it does not re-run on every roster tick.)
+  $effect(() => {
+    const paneId = focusRequest.paneId;
+    if (paneId === null) return;
+    focusRequest.consume();
+    if (viewRows.some((r) => r.paneId === paneId)) {
+      selectAgent(paneId);
+    }
+  });
 
   // --- Rename the focused session (header inline-edit) -----------------------
   // Click the focus-pane header title (or pick "Rename" in the agent card menu) to
@@ -314,6 +407,28 @@
    *  agent lives in a non-active workspace. Null for a non-claude/shell pane. */
   function sessionIdOf(r: AgentRow): string | null {
     return workspace.sessionIn(r.workspaceId, r.paneId).sessionId ?? null;
+  }
+
+  /** The workflow → phase groups of LIVE subagents to nest under a row (every
+   *  session/lane, not just the focused one), or [] when the user has hidden
+   *  subagents (the Sessions-panel setting), the session has none, or all have
+   *  exited. Exited (done/errored) subagents are filtered out, so only in-flight
+   *  ones remain. */
+  function subagentGroupsFor(r: AgentRow): WorkflowGroup[] {
+    if (!subagentsVisible.prefs.enabled) return [];
+    const sid = sessionIdOf(r);
+    if (!sid) return [];
+    return groupSubagentsByPhase(liveSubagents(subagents.forSession(sid)));
+  }
+
+  /** Map a subagent's verbatim status to a row class. Known terminal states map to
+   *  `done`/`error`; everything else (running/queued/unknown/null) is the neutral
+   *  `running` style, so an unrecognized state never throws or looks broken. */
+  function subStatusClass(status?: string | null): 'done' | 'error' | 'running' {
+    const s = (status ?? '').toLowerCase();
+    if (s === 'done' || s === 'completed' || s === 'success') return 'done';
+    if (s === 'error' || s === 'failed') return 'error';
+    return 'running';
   }
 
   /** Enter header edit mode for the focused session, seeding the draft with the
@@ -586,11 +701,32 @@
     return archiveDecision(activity.forPane(paneId).userHash) === 'delete';
   }
 
-  /** ARCHIVE an agent's session → moves it to Archived (terminates the terminal but
-   *  keeps it, restorable). An EMPTY session (no user messages) has nothing to
-   *  resume, so it is DELETED outright instead. Not destructive for a real session,
-   *  so no confirm. Drops the pin so focus advances to whatever needs you next. */
-  function archiveAgent(paneId: string) {
+  /** Advance focus after the user EXPLICITLY dismisses the SHOWN session (archive /
+   *  pause / delete): jump immediately to the next actionable session — first
+   *  Needs-you, else first In-flight, else All clear (`nextOnDismiss`). A no-op
+   *  unless `paneId` is the one currently shown, so dismissing a BACKGROUND row never
+   *  steals focus. This is unconditional — it ignores the auto-advance setting (the
+   *  setting only gates the separate leave-attention auto-advance in the reconcile
+   *  effect). Read `viewRows` BEFORE the caller mutates the workspace; `nextOnDismiss`
+   *  excludes `paneId`, so the other rows (unaffected by this dismissal) scan right.
+   *
+   *  When the target is an IN-FLIGHT pane (no Needs-you exists), the reconcile effect
+   *  KEEPS it parked via its "never advance to nothing" fallback (`wantId = target ??
+   *  shownId`) — `resolveFocus` alone would resolve to null there. That fallback is
+   *  load-bearing for this path: do not "simplify" it to `?? null`. */
+  function advanceAfterDismiss(paneId: string) {
+    if (shownId !== paneId) return;
+    clearAdvance();
+    userSelected = null;
+    shownId = nextOnDismiss(viewRows, paneId);
+    focusNonce += 1;
+  }
+
+  /** Perform the archive: an EMPTY session (no user messages) has nothing to resume,
+   *  so it is DELETED outright; a real session is archived (kept, restorable). Drops
+   *  the pin so focus advances to whatever needs you next. */
+  function performArchive(paneId: string) {
+    advanceAfterDismiss(paneId);
     if (userSelected === paneId) userSelected = null;
     if (archiveDecision(activity.forPane(paneId).userHash) === 'delete') {
       workspace.deleteAgent(paneId);
@@ -599,10 +735,22 @@
     }
   }
 
+  /** ARCHIVE an agent's session → moves it to Archived (terminates the terminal but
+   *  keeps it, restorable). Archiving a WORKING agent interrupts a running task, so we
+   *  confirm first; any other status archives immediately (not destructive for a real
+   *  session). Covers the buttons, context menu, and ⌘W alike via this one chokepoint. */
+  function archiveAgent(paneId: string) {
+    const status = viewRows.find((r) => r.paneId === paneId)?.status ?? 'idle';
+    const req = archiveWorkingConfirm(status, () => performArchive(paneId));
+    if (req) confirmModal.show(req);
+    else performArchive(paneId);
+  }
+
   /** PAUSE (defer) an agent: keep it live but move it to the Paused lane, out of
    *  attention. Records the current user-message COUNT so only a NEW message resumes
    *  it. Drops the pin so focus advances. */
   function pauseAgent(paneId: string) {
+    advanceAfterDismiss(paneId);
     if (userSelected === paneId) userSelected = null;
     workspace.pauseAgent(paneId, activity.forPane(paneId).userMsgCount ?? null);
   }
@@ -620,6 +768,7 @@
         ? confirm(`Delete "${name}"? This permanently removes the session.`)
         : true;
     if (!ok) return;
+    advanceAfterDismiss(paneId);
     if (userSelected === paneId) userSelected = null;
     workspace.deleteAgent(paneId);
   }
@@ -839,6 +988,50 @@
   // the render uses, so nav and render agree.
   const navTargets = $derived(coordinatorNavOrder(viewRows, activeCoordProjectId));
 
+  // The scrollable session-list container; the reveal effect scrolls the selected
+  // row into view within it on keyboard navigation.
+  let listScrollEl = $state<HTMLDivElement | null>(null);
+
+  // AUTO-EXPAND the Archived lane when navigation selects an archived session hidden
+  // beyond its collapsed preview — otherwise the row isn't rendered and can't be
+  // revealed. Fired ONCE per selection TRANSITION (guarded by `lastNavExpandId`, a
+  // plain non-reactive tracker like `lastShownId`), NOT continuously: re-asserting
+  // expansion every time the effect re-runs would defeat the manual "Collapse" button
+  // while a hidden archived row stays selected, and would re-evaluate every second
+  // (since `renderGrouped` recomputes on the roster's 1s clock). The early return on an
+  // unchanged selection also shrinks this effect's tracked deps to just `shownId`.
+  let lastNavExpandId: string | null = null;
+  $effect(() => {
+    const id = shownId;
+    if (id === lastNavExpandId) return;
+    lastNavExpandId = id;
+    if (
+      archivedNavNeedsExpand(
+        id,
+        renderGrouped.done.map((r) => r.paneId),
+        ARCHIVED_PREVIEW,
+        showAllArchived
+      )
+    ) {
+      showAllArchived = true;
+    }
+  });
+
+  // REVEAL the selected session: when the selection (or the Archived expansion that
+  // brings a hidden row into the DOM) changes, scroll the `.sel` row into view within
+  // the list after the DOM updates. `block: 'nearest'` no-ops when the row is already
+  // fully visible, so clicks / auto-advance to a visible row never jump the list. The
+  // `.sel` class covers lane rows AND the pinned-coordinator / start-affordance slot.
+  $effect(() => {
+    void shownId; // re-run when the selection changes
+    void showAllArchived; // and after an auto-expand renders a newly-visible row
+    const container = listScrollEl;
+    if (!container) return;
+    void tick().then(() => {
+      container.querySelector('.row.sel')?.scrollIntoView({ block: 'nearest' });
+    });
+  });
+
   /** Focus a nav target: a real pane selects normally (a closed/archived one is then
    *  auto-previewed by the focus effect, as before); the not-started `start` sentinel
    *  does exactly what clicking the affordance does (shows the Start empty-state). */
@@ -969,6 +1162,7 @@
     type="button"
     class="row {lane}"
     class:sel={focus?.paneId === r.paneId}
+    class:flash-attn={flashPanes.has(r.paneId)}
     onclick={() => onRowClick(r)}
     oncontextmenu={(e) => openAgentMenu(e, r, displayName(r.paneId, r.name))}
   >
@@ -1010,25 +1204,55 @@
         {/if}
       </span>
       <span class="s" class:q={needsAttention(r)} use:tooltip={rowSub(r)}>{rowSub(r)}</span>
-      <span class="meta">
-        {#if showContext(r)}
-          <span class="m ctx" use:tooltip={'Context window used by this agent'}>
-            <span class="ctxbar"><StatusBar pct={r.contextPct} /></span>
-            {ctxLabel(r.contextPct)}
+      {#if !compactMode.prefs.enabled}
+        <span class="meta">
+          {#if showContext(r)}
+            <span class="m ctx" use:tooltip={'Context window used by this agent'}>
+              <span class="ctxbar"><StatusBar pct={r.contextPct} /></span>
+              {ctxLabel(r.contextPct)}
+            </span>
+          {/if}
+          <span class="m" use:tooltip={'Model'}>
+            <Icon name="cpu" size={11} />{rowModelLabel(r)}
           </span>
-        {/if}
-        <span class="m" use:tooltip={'Model'}>
-          <Icon name="cpu" size={11} />{rowModelLabel(r)}
+          <span class="m" use:tooltip={'Time since last activity'}>
+            <Icon name="clock" size={11} />{friendlyTime(r.lastTs, nowMs)}
+          </span>
         </span>
-        <span class="m" use:tooltip={'Time since last activity'}>
-          <Icon name="clock" size={11} />{friendlyTime(r.lastTs, nowMs)}
-        </span>
-      </span>
+      {/if}
     </span>
     {#if needsAttention(r)}
       <span class="badge {badgeClass(r)} dotonly"><span class="dot"></span></span>
     {/if}
   </button>
+{/snippet}
+
+<!-- Nested LIVE subagents under a parent agent row, on EVERY session/lane (not just
+     the focused one). Exited (done/errored) subagents are filtered out so only
+     in-flight ones show; grouped by workflow then phase, always expanded. Each row:
+     a status dot, the subagent label, and its "duration alive" (ticking off the same
+     `nowMs` clock the roster uses for relative times). -->
+{#snippet subagentBlock(r: AgentRow)}
+  {@const groups = subagentGroupsFor(r)}
+  {#each groups as g (g.workflowId ?? '∅')}
+    <div class="sa-wf">
+      {#each g.phases as p (p.phaseTitle ?? '∅')}
+        {#if p.phaseTitle}
+          <div class="sa-phase">{p.phaseTitle}</div>
+        {/if}
+        {#each p.subagents as s (s.id)}
+          {@const dur = formatDurationAlive(s, nowMs)}
+          <div class="sa-row">
+            <span class="sa-dot {subStatusClass(s.status)}"></span>
+            <span class="sa-label" use:tooltip={s.label ?? s.id}>{s.label ?? s.id}</span>
+            {#if dur}
+              <span class="sa-dur" use:tooltip={'Time alive'}>{dur}</span>
+            {/if}
+          </div>
+        {/each}
+      {/each}
+    </div>
+  {/each}
 {/snippet}
 
 <div class="inbox-shell" class:project-collapsed={projectPaneCollapsed}>
@@ -1050,7 +1274,7 @@
       <!-- Middle region: the agent roster (or its empty state). Flexes to fill
            the space left between the header and the bottom Tasks launcher. -->
       <div class="agent-region">
-        <div class="list-scroll">
+        <div class="list-scroll" bind:this={listScrollEl}>
           <!-- Coordinator TOP SLOT (tasks 10.2–10.3, 10.6): the project's live
                coordinator pinned above all sessions, OR — when none is running —
                a focusable "Start coordinator" affordance. A rule separates it from
@@ -1059,6 +1283,7 @@
                yet" empty state sits BELOW them (task 10.6). -->
           {#if pin.coordinator}
             {@render sessionRow(pin.coordinator, laneForRow(pin.coordinator), true)}
+            {@render subagentBlock(pin.coordinator)}
             <hr class="coord-rule" />
           {:else if pin.showStart && activeCoordProject}
             <button
@@ -1093,6 +1318,8 @@
           {:else}
             {#each LANE_ORDER as lane (lane)}
               {@const items = renderGrouped[lane]}
+              {@const collapsedArchive = lane === 'done' && !showAllArchived}
+              {@const visible = collapsedArchive ? items.slice(0, ARCHIVED_PREVIEW) : items}
               {#if items.length > 0}
                 <div class="group-h {lane}">
                   {LANES[lane].title} <span class="gn">· {items.length}</span><span class="rule"></span>
@@ -1107,9 +1334,19 @@
                     </button>
                   {/if}
                 </div>
-                {#each items as r (r.paneId)}
+                {#each visible as r (r.paneId)}
                   {@render sessionRow(r, lane)}
+                  {@render subagentBlock(r)}
                 {/each}
+                {#if lane === 'done' && items.length > ARCHIVED_PREVIEW}
+                  <button
+                    type="button"
+                    class="show-all"
+                    onclick={() => (showAllArchived = !showAllArchived)}
+                  >
+                    {showAllArchived ? 'Collapse' : `Show all (${items.length})`}
+                  </button>
+                {/if}
               {/if}
             {/each}
           {/if}
@@ -1289,10 +1526,50 @@
   }
   .group-h .group-action:hover { color: var(--danger, #e5484d); }
 
+  /* "Show all / Collapse" toggle under the Archived lane's preview rows. Mono/
+     uppercase to read as a lane affordance, full-width row indent to align with
+     the rows above it. */
+  .show-all {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: none;
+    background: transparent;
+    padding: 6px 16px 8px 16px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-label);
+    color: var(--fg-4);
+    cursor: pointer;
+    transition: color var(--dur-fast);
+  }
+  .show-all:hover { color: var(--fg-2); }
+
   .row { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 10px 16px; cursor: pointer; border: none; border-left: 2px solid transparent; background: none; transition: background var(--dur-fast); }
   .row:hover { background: rgba(255,255,255,0.025); }
   .row.sel { background: rgba(61,123,255,0.10); border-left-color: var(--blue-500); }
   .row.attn.sel { background: var(--orange-tint); border-left-color: var(--orange-500); }
+  /* When an agent JUST enters "needs you", flash its card from 50% of the orange
+     accent to clear in 2.5s. An overlay pseudo-element keeps the wash behind the
+     row's content and above its base (hover/sel) background; it ends fully
+     transparent so there is no snap back to normal. One-shot — the `.flash-attn`
+     class is held only while it runs (see `flashPanes` / `FLASH_MS`). */
+  .row.flash-attn { position: relative; }
+  .row.flash-attn > * { position: relative; z-index: 1; }
+  .row.flash-attn::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: var(--orange-500);
+    animation: needsYouFlash 2.5s var(--ease-out) forwards;
+  }
+  @keyframes needsYouFlash { from { opacity: 0.5; } to { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .row.flash-attn::after { animation: none; opacity: 0; }
+  }
   /* The coordinator top slot: a rule separating the pinned coordinator / Start
      affordance from the rest of the sessions (tasks 10.2–10.3). */
   .coord-rule { margin: 4px 16px 2px; border: none; border-top: 1px solid var(--line-default); }
@@ -1323,6 +1600,32 @@
   .row .nm .meta .ctx { gap: 5px; }
   .row .nm .meta .ctx .ctxbar { display: inline-flex; width: 34px; }
   .row .nm .meta .ctx .ctxbar :global(.bar) { width: 34px; min-width: 34px; flex: 0 0 34px; height: 4px; }
+
+  /* Nested workflow subagents under a parent agent row (active lanes only). Indented
+     to sit under the parent's name (icon 30 + gap 11 + padding 16). A subtle left
+     guide rail ties each workflow's phases + rows to the parent above. */
+  .sa-wf { margin: 1px 0 3px 0; padding-left: 57px; }
+  .sa-phase {
+    padding: 3px 16px 1px 0; font-family: var(--font-mono); font-size: 9px;
+    text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--fg-4);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sa-row {
+    display: flex; align-items: center; gap: 7px; padding: 2px 16px 2px 0;
+    border-left: 1px solid var(--line-subtle); margin-left: -8px; padding-left: 8px;
+  }
+  .sa-dot { flex: none; width: 6px; height: 6px; border-radius: var(--r-full); background: var(--fg-4); }
+  .sa-dot.done { background: var(--nominal-500); }
+  .sa-dot.error { background: var(--abort-500); }
+  .sa-dot.running { background: var(--info-500); }
+  .sa-label {
+    flex: 1; min-width: 0; font-size: 11px; color: var(--fg-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sa-dur {
+    flex: none; font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    font-size: 10px; color: var(--fg-4);
+  }
 
   .col-focus { background: var(--space-850); min-width: 0; display: flex; flex-direction: column; min-height: 0; }
   .fhead { flex: none; display: flex; align-items: center; gap: 11px; padding: 11px 18px; border-bottom: 1px solid var(--line-subtle); background: var(--space-900); }

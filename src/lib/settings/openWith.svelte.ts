@@ -1,7 +1,8 @@
-// Open-with preferences: which application opens a file when the user ⌘-clicks a
-// path in a terminal (or a transcript file link). Files fall into three buckets —
-// HTML, code, and other — and each bucket maps to either the OS default ("system")
-// or a named app launched via `open -a <app>` on the Rust side.
+// Open-with preferences: which application opens a target when the user ⌘-clicks
+// it in a terminal (a path or an http(s) URL) or a transcript file link. Targets
+// fall into four buckets — html, markdown, code, and other — and each bucket maps
+// to either the OS default ("system") or a named app launched via `open -a <app>`
+// on the Rust side. `http(s)` URLs route to the html bucket (by scheme).
 //
 // Persistence mirrors the projects/recents stores: load once on startup from
 // `settings.json`, save (best-effort) on every change. The pure classification
@@ -69,9 +70,14 @@ const CODE_EXTS = new Set([
   'tf', 'hcl', 'dockerfile', 'makefile', 'cmake'
 ]);
 
-/** PURE: classify an absolute or relative path into a bucket by its extension.
- *  Extension-less files and directories → `other`. */
+/** PURE: classify an absolute or relative path — or an `http(s)` URL — into a
+ *  bucket. URLs route to `html` by their scheme (so a clicked terminal URL opens
+ *  with the HTML/browser preference); files route by extension; extension-less
+ *  files and directories → `other`. */
 export function classify(path: string): FileBucket {
+  // An http(s) URL is an HTML-category target regardless of any path extension,
+  // so `https://x/app.css` opens in the browser, not a code editor.
+  if (/^https?:\/\//i.test(path)) return 'html';
   // Basename, then the extension after the last dot (ignore leading-dot dotfiles).
   const base = path.replace(/[/\\]+$/, '').split(/[/\\]/).pop() ?? '';
   const dot = base.lastIndexOf('.');
@@ -91,6 +97,19 @@ export function resolveApp(prefs: OpenWithPrefs, path: string): string | undefin
   const pref = prefs[classify(path)];
   if (!pref || pref === SYSTEM) return undefined;
   return pref;
+}
+
+/** Editors that open a folder as a workspace AND reveal a file within it when both
+ *  are passed to `open -a <App> <folder> <file>`. These get a workspace root on
+ *  open; browsers, Finder, "System Default", and custom app names do not (passing a
+ *  folder would mishandle them). Lives next to `EDITORS`/`APP_CHOICES` so the
+ *  allowlist is maintained where the editor names are defined. */
+const PROJECT_AWARE_EDITORS = new Set(['Cursor', 'Visual Studio Code', 'Zed', 'Sublime Text']);
+
+/** PURE: whether `app` is a project-aware editor (opens a folder as a workspace). A
+ *  blank/undefined app (System Default) and any non-allowlisted name are not. */
+export function isProjectAwareEditor(app: string | null | undefined): boolean {
+  return app != null && PROJECT_AWARE_EDITORS.has(app);
 }
 
 /**
@@ -122,11 +141,18 @@ export class OpenWithStore {
     void this.save();
   }
 
-  /** Open `path` with the configured app for its bucket (or the OS default). */
-  async openFile(path: string): Promise<void> {
+  /** Open `path` with the configured app for its bucket (or the OS default). When
+   *  `workspace` is supplied and the resolved app is a project-aware editor (see
+   *  `isProjectAwareEditor`), that directory is passed as the editor's workspace
+   *  root so it opens the project and reveals the file inside it rather than
+   *  guessing a workspace from the file's folder. Browsers, Finder, System Default,
+   *  and custom apps open the file alone, as before. (The backend additionally
+   *  drops a workspace that does not actually contain the file.) */
+  async openFile(path: string, workspace?: string | null): Promise<void> {
     const app = resolveApp(this.prefs, path);
+    const ws = workspace && isProjectAwareEditor(app) ? workspace : null;
     try {
-      await invoke('open_path', { path, app: app ?? null });
+      await invoke('open_path', { path, app: app ?? null, workspace: ws });
     } catch (err) {
       console.warn('open_path failed', err);
     }

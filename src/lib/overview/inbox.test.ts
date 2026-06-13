@@ -6,14 +6,17 @@ import {
   attentionQueue,
   resolveFocus,
   nextInQueue,
+  nextOnDismiss,
   shouldClearPin,
   archiveDecision,
   autoArchiveAction,
   shouldAutoResume,
   deleteAllArchivedRequest,
+  archiveWorkingConfirm,
   rowSub,
   rowModelLabel,
   clipLine,
+  archivedNavNeedsExpand,
   ROW_SUB_MAX_LEN
 } from './inbox';
 import type { PendingQuestion } from './roster';
@@ -142,6 +145,60 @@ describe('Queue navigation steps through waiting agents', () => {
   });
 });
 
+describe('nextOnDismiss — advance after dismissing the shown session', () => {
+  it('returns the first Needs-you session, in roster order', () => {
+    const rows = [
+      row('shown', 'waiting'),
+      row('a', 'working'),
+      row('b', 'waiting'),
+      row('c', 'error')
+    ];
+    // 'b' is the first Needs-you among the others (the dismissed 'shown' is excluded).
+    expect(nextOnDismiss(rows, 'shown')).toBe('b');
+  });
+
+  it('excludes the dismissed pane even when it would itself qualify', () => {
+    // Dismissing a waiting agent must never re-select itself.
+    const rows = [row('shown', 'waiting'), row('a', 'working')];
+    // No OTHER Needs-you -> falls through to the first In-flight ('a').
+    expect(nextOnDismiss(rows, 'shown')).toBe('a');
+  });
+
+  it('prefers Needs-you over In-flight regardless of array position', () => {
+    const rows = [row('a', 'working'), row('b', 'waiting'), row('shown', 'finished')];
+    expect(nextOnDismiss(rows, 'shown')).toBe('b');
+  });
+
+  it('falls back to the first In-flight session when nothing needs you', () => {
+    const rows = [
+      row('shown', 'waiting'),
+      row('a', 'finished'),
+      row('b', 'idle'), // in-flight (idle)
+      row('c', 'working') // also in-flight, but later
+    ];
+    expect(nextOnDismiss(rows, 'shown')).toBe('b');
+  });
+
+  it('skips paused / archived / previewing sessions as candidates', () => {
+    const rows = [
+      row('shown', 'waiting'),
+      row('a', 'waiting', { paused: true }), // not Needs-you (paused)
+      row('b', 'error', { closed: true }), // not Needs-you (archived)
+      row('c', 'working', { paused: true }), // not In-flight (paused -> paused lane)
+      row('d', 'working', { closed: true }), // not In-flight (closed -> done lane)
+      row('e', 'working', { preview: true }) // not In-flight (preview -> done lane)
+    ];
+    // Nothing actionable among the others -> All clear.
+    expect(nextOnDismiss(rows, 'shown')).toBeNull();
+  });
+
+  it('returns null when no other session is actionable', () => {
+    const rows = [row('shown', 'waiting'), row('a', 'finished')];
+    expect(nextOnDismiss(rows, 'shown')).toBeNull();
+    expect(nextOnDismiss([row('shown', 'working')], 'shown')).toBeNull();
+  });
+});
+
 describe('Addressed attention agent advances the focus to the next', () => {
   it('clears the pin when the pinned agent leaves attention', () => {
     // pinned 'a' transitions waiting -> working: pin should clear so the queue takes over
@@ -215,6 +272,26 @@ describe('Delete all archived agents', () => {
     ];
     // No archived agents → no request to show (the caller hides the action).
     expect(deleteAllArchivedRequest(rows, harness().deps)).toBeNull();
+  });
+});
+
+describe('archiveWorkingConfirm — guard archiving a working agent', () => {
+  it('returns a confirmation request when the agent is working', () => {
+    let archived = 0;
+    const req = archiveWorkingConfirm('working', () => archived++);
+    expect(req).not.toBeNull();
+    expect(req!.confirmLabel).toBe('Archive anyway');
+    // The archive action runs ONLY on confirm, never while merely building the request.
+    expect(archived).toBe(0);
+    req!.onConfirm();
+    expect(archived).toBe(1);
+  });
+
+  it('returns null for every non-working status (archive immediately)', () => {
+    const others: AgentStatus[] = ['waiting', 'finished', 'error', 'idle'];
+    for (const status of others) {
+      expect(archiveWorkingConfirm(status, () => {})).toBeNull();
+    }
   });
 });
 
@@ -500,5 +577,40 @@ describe('rowModelLabel', () => {
     expect(r.contextPct).toBe(42);
     expect(rowModelLabel(r)).not.toContain('9.99');
     expect(rowModelLabel(r)).not.toContain('$');
+  });
+});
+
+describe('archivedNavNeedsExpand — auto-expand the Archived lane on nav', () => {
+  const PREVIEW = 2;
+  // done-lane order, newest-first; the first PREVIEW are visible while collapsed.
+  const archived = ['a', 'b', 'c', 'd'];
+
+  it('is false when the archived lane is empty', () => {
+    expect(archivedNavNeedsExpand('a', [], PREVIEW, false)).toBe(false);
+  });
+
+  it('is false for a null selection', () => {
+    expect(archivedNavNeedsExpand(null, archived, PREVIEW, false)).toBe(false);
+  });
+
+  it('is false when the selection is not an archived row', () => {
+    expect(archivedNavNeedsExpand('z', archived, PREVIEW, false)).toBe(false);
+  });
+
+  it('is false for a selection within the visible preview', () => {
+    expect(archivedNavNeedsExpand('a', archived, PREVIEW, false)).toBe(false); // index 0
+    expect(archivedNavNeedsExpand('b', archived, PREVIEW, false)).toBe(false); // index 1
+  });
+
+  it('is true for a selection at the preview boundary (first hidden row)', () => {
+    expect(archivedNavNeedsExpand('c', archived, PREVIEW, false)).toBe(true); // index 2
+  });
+
+  it('is true for a selection beyond the preview', () => {
+    expect(archivedNavNeedsExpand('d', archived, PREVIEW, false)).toBe(true); // index 3
+  });
+
+  it('is false when the lane is already showing all (monotonic — never loops)', () => {
+    expect(archivedNavNeedsExpand('d', archived, PREVIEW, true)).toBe(false);
   });
 });
