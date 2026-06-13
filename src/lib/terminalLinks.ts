@@ -44,12 +44,23 @@ export function extractToken(line: string, col: number): RawToken | null {
   return { raw: line.slice(start, end), start, end };
 }
 
+/** Options for {@link normalizeToken}. */
+export interface NormalizeOptions {
+  /**
+   * Strip a trailing `:line` / `:line:col` suffix (default `true`). Pass `false`
+   * for URL candidates, where a trailing `:port` (e.g. `http://localhost:3000`)
+   * must NOT be peeled off as a line/column reference.
+   */
+  stripLineCol?: boolean;
+}
+
 /**
  * Strip path decorations from `raw`, returning the cleaned token and the offsets
  * (relative to `raw`) of what was kept. Peels iteratively from both ends so the
  * decorations compose in any order, e.g. `"src/foo.ts:42:8".` → `src/foo.ts`.
  */
-export function normalizeToken(raw: string): CleanToken {
+export function normalizeToken(raw: string, opts: NormalizeOptions = {}): CleanToken {
+  const stripLineCol = opts.stripLineCol ?? true;
   let left = 0;
   let right = raw.length; // exclusive
 
@@ -60,8 +71,8 @@ export function normalizeToken(raw: string): CleanToken {
     const first = raw[left];
     const last = raw[right - 1];
 
-    // `:line` or `:line:col` suffix.
-    const m = seg.match(/:\d+(:\d+)?$/);
+    // `:line` or `:line:col` suffix (skipped for URLs so `host:port` survives).
+    const m = stripLineCol ? seg.match(/:\d+(:\d+)?$/) : null;
     if (m) {
       right -= m[0].length;
       changed = true;
@@ -122,6 +133,34 @@ export function fileLinkAt(line: string, col: number): CleanToken | null {
   if (!tok) return null;
   const clean = normalizeToken(tok.raw);
   if (!clean.text) return null;
+  return {
+    text: clean.text,
+    start: tok.start + clean.start,
+    end: tok.start + clean.end
+  };
+}
+
+/** Matches a cleaned `http(s)` URL token: an explicit scheme followed by at least
+ *  one more (non-space) character. The leading scheme is what distinguishes a URL
+ *  from a bare hostname/filename like `example.com`, which we intentionally do NOT
+ *  linkify. `normalizeToken` already extracted a whitespace-free run, so `\S` here
+ *  is just a guard that the URL has a host part. */
+const HTTP_URL_RE = /^https?:\/\/\S+$/i;
+
+/**
+ * Like {@link fileLinkAt}, but for HTTP/HTTPS URLs: from a line + column, return
+ * the cleaned URL candidate and its [start, end) range in LINE coordinates, or
+ * null when the run under the pointer is not an `http(s)` URL. Decorations are
+ * stripped exactly as for file tokens EXCEPT the `:line[:col]` suffix, which is
+ * preserved so a `host:port` (e.g. `http://localhost:3000`) survives intact.
+ * Unlike file links, the caller does NOT validate existence — a well-formed URL
+ * is linkifiable as-is.
+ */
+export function urlAt(line: string, col: number): CleanToken | null {
+  const tok = extractToken(line, col);
+  if (!tok) return null;
+  const clean = normalizeToken(tok.raw, { stripLineCol: false });
+  if (!HTTP_URL_RE.test(clean.text)) return null;
   return {
     text: clean.text,
     start: tok.start + clean.start,

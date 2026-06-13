@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractToken, normalizeToken, fileLinkAt } from './terminalLinks';
+import { extractToken, normalizeToken, fileLinkAt, urlAt } from './terminalLinks';
 
 // Tests for the PURE token helpers behind terminal file links (terminal-file-links
 // spec: Token decoration stripping). They prove the load-bearing properties — the
@@ -46,6 +46,51 @@ describe('normalizeToken', () => {
   it('strips a stray trailing bracket and a quoted line suffix together', () => {
     expect(normalizeToken('foo.ts)').text).toBe('foo.ts');
     expect(normalizeToken('"foo.ts:42"').text).toBe('foo.ts');
+  });
+
+  it('keeps a :port-like suffix when stripLineCol is false (for URLs)', () => {
+    // Default still strips the trailing `:3000`…
+    expect(normalizeToken('http://localhost:3000').text).toBe('http://localhost');
+    // …but opting out keeps it, so a host:port URL survives intact.
+    expect(normalizeToken('http://localhost:3000', { stripLineCol: false }).text).toBe(
+      'http://localhost:3000'
+    );
+    // Wrapping/punctuation peeling still applies when stripLineCol is false.
+    expect(normalizeToken('(http://localhost:3000).', { stripLineCol: false }).text).toBe(
+      'http://localhost:3000'
+    );
+  });
+});
+
+describe('urlAt', () => {
+  it('linkifies an http(s) URL under the column', () => {
+    const httpsLine = 'see https://example.com/docs for more';
+    const https = urlAt(httpsLine, 8); // inside the URL
+    expect(https?.text).toBe('https://example.com/docs');
+    expect(httpsLine.slice(https!.start, https!.end)).toBe('https://example.com/docs');
+
+    expect(urlAt('open http://localhost:8080/app now', 12)?.text).toBe('http://localhost:8080/app');
+  });
+
+  it('keeps a host:port URL with no path (does not strip :port as :line)', () => {
+    expect(urlAt('http://localhost:3000', 5)?.text).toBe('http://localhost:3000');
+  });
+
+  it('strips surrounding brackets and trailing punctuation, hugging the URL', () => {
+    const line = 'docs (https://example.com).';
+    const link = urlAt(line, 10); // inside the URL
+    expect(link?.text).toBe('https://example.com');
+    expect(line.slice(link!.start, link!.end)).toBe('https://example.com');
+  });
+
+  it('returns null for a scheme-less token (a bare host or filename)', () => {
+    expect(urlAt('visit example.com today', 8)).toBeNull();
+    expect(urlAt('open notes.io now', 6)).toBeNull();
+    expect(urlAt('cat src/foo.ts', 6)).toBeNull();
+  });
+
+  it('returns null on whitespace', () => {
+    expect(urlAt('a b', 1)).toBeNull();
   });
 });
 

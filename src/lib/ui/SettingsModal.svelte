@@ -69,7 +69,7 @@
   // The buckets, in display order, with human labels.
   const ROWS: { bucket: FileBucket; label: string }[] = [
     { bucket: 'code', label: 'Code files' },
-    { bucket: 'html', label: 'HTML files' },
+    { bucket: 'html', label: 'HTML files and URLs' },
     { bucket: 'markdown', label: 'Markdown files' },
     { bucket: 'other', label: 'Other files' }
   ];

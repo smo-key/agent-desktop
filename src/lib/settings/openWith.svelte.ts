@@ -1,7 +1,8 @@
-// Open-with preferences: which application opens a file when the user ⌘-clicks a
-// path in a terminal (or a transcript file link). Files fall into three buckets —
-// HTML, code, and other — and each bucket maps to either the OS default ("system")
-// or a named app launched via `open -a <app>` on the Rust side.
+// Open-with preferences: which application opens a target when the user ⌘-clicks
+// it in a terminal (a path or an http(s) URL) or a transcript file link. Targets
+// fall into four buckets — html, markdown, code, and other — and each bucket maps
+// to either the OS default ("system") or a named app launched via `open -a <app>`
+// on the Rust side. `http(s)` URLs route to the html bucket (by scheme).
 //
 // Persistence mirrors the projects/recents stores: load once on startup from
 // `settings.json`, save (best-effort) on every change. The pure classification
@@ -69,9 +70,14 @@ const CODE_EXTS = new Set([
   'tf', 'hcl', 'dockerfile', 'makefile', 'cmake'
 ]);
 
-/** PURE: classify an absolute or relative path into a bucket by its extension.
- *  Extension-less files and directories → `other`. */
+/** PURE: classify an absolute or relative path — or an `http(s)` URL — into a
+ *  bucket. URLs route to `html` by their scheme (so a clicked terminal URL opens
+ *  with the HTML/browser preference); files route by extension; extension-less
+ *  files and directories → `other`. */
 export function classify(path: string): FileBucket {
+  // An http(s) URL is an HTML-category target regardless of any path extension,
+  // so `https://x/app.css` opens in the browser, not a code editor.
+  if (/^https?:\/\//i.test(path)) return 'html';
   // Basename, then the extension after the last dot (ignore leading-dot dotfiles).
   const base = path.replace(/[/\\]+$/, '').split(/[/\\]/).pop() ?? '';
   const dot = base.lastIndexOf('.');

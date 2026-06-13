@@ -44,6 +44,14 @@ describe('classify', () => {
   it('ignores a leading dot (dotfiles are not extensions)', () => {
     expect(classify('/home/me/.gitignore')).toBe('other');
   });
+
+  it('routes http/https URLs to the html bucket by scheme', () => {
+    expect(classify('https://example.com/docs')).toBe('html');
+    expect(classify('http://localhost:3000')).toBe('html');
+    // The scheme wins over any extension in the URL path.
+    expect(classify('https://example.com/app.css')).toBe('html');
+    expect(classify('https://example.com/readme.md')).toBe('html');
+  });
 });
 
 describe('resolveApp', () => {
@@ -58,6 +66,10 @@ describe('resolveApp', () => {
     expect(resolveApp(prefs, 'index.html')).toBe('Brave Browser');
     expect(resolveApp(prefs, 'main.ts')).toBe('Cursor');
     expect(resolveApp(prefs, 'README.md')).toBe('Zed');
+  });
+
+  it('opens an http(s) URL with the html-category app', () => {
+    expect(resolveApp(prefs, 'https://example.com/docs')).toBe('Brave Browser');
   });
 
   it('returns undefined (system default) when the bucket is SYSTEM', () => {
