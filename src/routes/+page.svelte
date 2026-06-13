@@ -15,6 +15,7 @@
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
   import VoicePanel from '$lib/voice/VoicePanel.svelte';
   import ModelOnboarding from '$lib/onboarding/ModelOnboarding.svelte';
@@ -93,6 +94,12 @@
   // on-quit persistence. Rendering the restored PaneNodes re-spawns one PTY per
   // leaf (saved shell + cwd only) via each TerminalPane's mount.
   onMount(() => {
+    // Hydrate durable UI-layout prefs (project-pane collapse, terminals width,
+    // tasks-launcher split, project filter, lane order) from the `ui` settings
+    // slice. Seeded with defaults so the UI renders immediately; this corrects
+    // them reactively once loaded. Kept on disk (not localStorage) so an abrupt
+    // restart doesn't forget the layout.
+    void uiPrefs.hydrate();
     // Load the user's open-with preferences (seeds defaults on first run).
     void openWith.load();
     // Load session-title preferences (the opt-in cloud title fallback).

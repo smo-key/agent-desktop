@@ -11,6 +11,9 @@ npm run --silent check
 echo "[pre-commit] scenario coverage gate…"
 node tools/check-scenario-coverage.mjs >/dev/null
 
+echo "[pre-commit] localStorage gate…"
+node tools/check-localstorage.mjs >/dev/null
+
 echo "[pre-commit] openspec validate (active changes)…"
 openspec validate --changes --strict
 

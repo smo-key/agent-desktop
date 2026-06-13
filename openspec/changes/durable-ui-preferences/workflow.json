@@ -1,0 +1,6 @@
+{
+  "provider": "local",
+  "taskRef": "durable-ui-preferences",
+  "url": "",
+  "lastEvent": "review"
+}

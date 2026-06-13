@@ -16,7 +16,8 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "coverage": "node tools/check-scenario-coverage.mjs",
-    "check:gate": "npm run check && npm run test && npm run coverage",
+    "lint:storage": "node tools/check-localstorage.mjs",
+    "check:gate": "npm run check && npm run test && npm run coverage && npm run lint:storage",
     "tauri": "tauri",
     "package:mac": "tauri build",
     "package:mac:signed": "bash scripts/package-mac-signed.sh"

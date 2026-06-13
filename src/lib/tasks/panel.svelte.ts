@@ -4,49 +4,30 @@
 // running PTYs survive a hide (terminals-panel spec). Open state is in-memory
 // (defaults off); the running processes — not the panel's visibility — are the
 // durable thing worth persisting.
+//
+// The drag-resizable WIDTH, by contrast, is a remembered preference: it lives in
+// the durable `ui` settings slice (`uiPrefs`), NOT localStorage (which WKWebView
+// drops on an abrupt restart). This store is a thin façade over that value.
 
-/** Docked-panel width bounds (px). */
-const MIN_WIDTH = 260;
-const MAX_WIDTH = 1000;
-const DEFAULT_WIDTH = 380;
-const WIDTH_KEY = 'agent-desktop:terminals-width';
-
-function clampWidth(px: number): number {
-  return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.round(px)));
-}
-
-function loadWidth(): number {
-  if (typeof localStorage === 'undefined') return DEFAULT_WIDTH;
-  try {
-    const v = Number(localStorage.getItem(WIDTH_KEY));
-    return Number.isFinite(v) && v > 0 ? clampWidth(v) : DEFAULT_WIDTH;
-  } catch {
-    return DEFAULT_WIDTH;
-  }
-}
+import { uiPrefs } from '../settings/uiPrefs.svelte';
 
 export class TasksPanelUI {
   /** Whether the right-docked panel is currently shown. */
   open = $state(false);
 
   /** The docked panel width in px (drag-resizable, persisted across restarts). */
-  width = $state(loadWidth());
+  get width(): number {
+    return uiPrefs.data.terminalsWidth;
+  }
 
   /** Toggle the panel on/off. */
   toggle(): void {
     this.open = !this.open;
   }
 
-  /** Set the panel width (clamped to [MIN,MAX]) and persist the choice. */
+  /** Set the panel width (clamped) and persist the choice. */
   setWidth(px: number): void {
-    this.width = clampWidth(px);
-    if (typeof localStorage !== 'undefined') {
-      try {
-        localStorage.setItem(WIDTH_KEY, String(this.width));
-      } catch {
-        /* ignore quota / disabled storage */
-      }
-    }
+    uiPrefs.setTerminalsWidth(px);
   }
 }
 
