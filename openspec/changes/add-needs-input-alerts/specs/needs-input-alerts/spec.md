@@ -153,26 +153,35 @@ been prompted at least once, subsequent entries into "Needs input" alert normall
 ### Requirement: Desktop notification content and permission
 
 When the desktop channel alerts, the system SHALL show an OS desktop notification
-whose title indicates an agent needs input and whose body identifies the agent
-together with its pending question or most recent message, clipped to a single
-line. The agent SHALL be identified by its generated session title when one is
-available, falling back to its workspace/cwd display name otherwise — so the
-notification matches the name shown on the agent's card rather than a bare
-"Session N". The system SHALL request OS notification permission when
+whose TITLE reads "<Project Name>: <Agent Title>" and whose BODY is the agent's
+most recently sent message — its pending question when it is waiting on one, else
+its last assistant message — collapsed to a single clipped line. The Agent Title
+SHALL be the agent's generated session title when one is available, falling back to
+its workspace/cwd display name otherwise (so it matches the name shown on the
+agent's card rather than a bare "Session N"). The Project Name SHALL be the display
+name of the agent's owning project; when the agent belongs to no project the title
+SHALL be the Agent Title alone, with no project prefix or separator. When the agent
+has neither a pending question nor a last message, the body SHALL fall back to a
+generic needs-input prompt. The system SHALL request OS notification permission when
 the desktop channel is set to any mode other than `off` and permission has not yet
 been granted. When permission is denied, or when running outside the desktop shell
 (e.g. the web preview) so notifications are unavailable, the desktop channel SHALL
 silently no-op without throwing; the sound channel SHALL be unaffected.
 
-#### Scenario: Notification shown with agent context
+#### Scenario: Notification titled with project and agent
 
-- **WHEN** the desktop channel alerts for an agent named "parser" that is asking a question
-- **THEN** a desktop notification is shown whose title indicates an agent needs input and whose body includes "parser" and the question text on one line
+- **WHEN** the desktop channel alerts for an agent titled "parser" in the project "Acme API" that is asking "Which migration strategy should I use?"
+- **THEN** a desktop notification is shown whose title is "Acme API: parser" and whose body is "Which migration strategy should I use?" on one line
 
 #### Scenario: Notification uses the generated session title
 
 - **WHEN** the desktop channel alerts for an agent whose generated session title is "Fix login dialog" while its workspace name is still "Session 1"
-- **THEN** the notification body identifies the agent as "Fix login dialog", not "Session 1"
+- **THEN** the notification title identifies the agent as "Fix login dialog", not "Session 1"
+
+#### Scenario: Notification title without a project
+
+- **WHEN** the desktop channel alerts for an agent titled "parser" that belongs to no project
+- **THEN** the notification title is "parser" with no project prefix or separator
 
 #### Scenario: Permission requested on enable
 

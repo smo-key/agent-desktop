@@ -14,6 +14,7 @@
   import { openWith } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
+  import { compactMode } from '$lib/settings/compactMode.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
   import VoicePanel from '$lib/voice/VoicePanel.svelte';
   import ModelOnboarding from '$lib/onboarding/ModelOnboarding.svelte';
@@ -46,7 +47,7 @@
   import { projectTasks } from '$lib/tasks/projectTasks.svelte';
   import { taskAgentReturnedToUser } from '$lib/tasks/agentTask';
   import { activeProjectId } from '$lib/tasks/activeProject';
-  import { projectForId } from '$lib/projects/projects';
+  import { projectForId, projectLabel } from '$lib/projects/projects';
   import { setGitTerminalOpener } from '$lib/projects/projectGitActions';
   import { setAgentTaskLauncher } from '$lib/projects/prActions';
   import { buildLaunchPlan } from '$lib/launcher/plan';
@@ -65,7 +66,10 @@
   // sound/desktop alert can fire whether the user is in the overview or driving an
   // agent in the grid. See design D7b/D7c.
   import { buildRoster } from '$lib/overview/roster';
-  import { toRosterWorkspaces } from '$lib/overview/rosterInputs';
+  import { toRosterWorkspaces, toNavWorkspaces } from '$lib/overview/rosterInputs';
+  import { activationIntent } from '$lib/overview/activate';
+  import { focusRequest } from '$lib/overview/focusRequest.svelte';
+  import { listen } from '@tauri-apps/api/event';
   import { runtimeMap } from '$lib/overview/runtime';
   import { coordinatorNeedsInput } from '$lib/orchestration/coordinatorNeedsInput.svelte';
   import { windowFocus } from '$lib/overview/windowFocus.svelte';
@@ -95,6 +99,8 @@
     void titleSettings.load();
     // Load the auto-advance focus preference (opt-in; defaults OFF).
     void autoAdvance.load();
+    // Load the compact-mode preference (opt-in; defaults OFF / full three-line rows).
+    void compactMode.load();
     // Load the needs-input alert channel modes (opt-in; both default OFF / silent).
     void notifications.load();
     // Load the persisted one-time onboarding flag FIRST so a returning user who has
@@ -244,6 +250,27 @@
       unlistenVoice = unlisten;
     });
 
+    // Listen for a clicked needs-input notification (`agent-notification-activated`
+    // from the custom macOS notify path; capability `alert-click-focus`). Raise +
+    // focus the window, switch to the overview, and — when a live leaf still carries
+    // the alerting agent's pane — request the inbox select it. A dead pane focuses
+    // the window only (the inbox no-ops the request).
+    let unlistenNotifyClick: (() => void) | undefined;
+    void listen<{ paneId: string }>('agent-notification-activated', (ev) => {
+      const paneId = ev.payload?.paneId;
+      void getCurrentWindow()
+        .show()
+        .then(() => getCurrentWindow().unminimize())
+        .then(() => getCurrentWindow().setFocus())
+        .catch(() => {});
+      view.show('overview');
+      if (!paneId) return;
+      const intent = activationIntent(paneId, toNavWorkspaces(workspace.workspaces));
+      if (intent.selectPaneId) focusRequest.request(intent.selectPaneId);
+    }).then((un) => {
+      unlistenNotifyClick = un;
+    });
+
     return () => {
       stopWatching?.();
       unlistenSnapshots?.();
@@ -252,6 +279,7 @@
       unlistenExecutor?.();
       unlistenTermClose?.();
       unlistenVoice?.();
+      unlistenNotifyClick?.();
       events.onEvent = undefined;
     };
   });
@@ -371,13 +399,18 @@
       events.activityMap(),
       new Set(Object.keys(coordinatorNeedsInput.all()))
     ).map((r) => {
-      // Identify the agent in its desktop notification by its GENERATED session
+      // Enrich the row for its desktop notification: the TITLE reads
+      // "<Project Name>: <Agent Title>". The Agent Title is the GENERATED session
       // title (the label on its card) when we have one, falling back to the
-      // workspace/cwd name — so a notification reads "Fix login dialog — …" rather
-      // than the bare "Session N". Only `notificationBody` reads `name`; the focus/
-      // coordinator logic keys on `paneId`, so this override is alert-display only.
+      // workspace/cwd `name` — so it reads "Fix login dialog" rather than the bare
+      // "Session N". The Project Name is the agent's owning project's display name
+      // (dropped when it has none). `notificationTitle`/`Body` read `name`/
+      // `projectName`; the focus/coordinator logic keys on `paneId`, so both
+      // overrides are alert-display only.
       const title = titles.titleFor(r.paneId);
-      return title ? { ...r, name: title } : r;
+      const proj = projectForId(projects.list, r.projectId);
+      const projectName = proj ? projectLabel(proj) : null;
+      return { ...r, name: title ?? r.name, projectName };
     })
   );
   // Clear a coordinator's explicit needs-input flag once it resumes (status back to

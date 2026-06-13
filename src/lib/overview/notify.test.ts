@@ -231,23 +231,38 @@ describe('No alerts before an agent\'s first prompt', () => {
 });
 
 describe('Desktop notification content and permission', () => {
-  it('Notification shown with agent context', () => {
-    const title = notificationTitle();
-    const body = notificationBody(
-      row({ name: 'parser', question: 'Which migration strategy should I use?' })
-    );
-    expect(title.toLowerCase()).toContain('needs input');
-    expect(body).toContain('parser');
-    expect(body).toContain('Which migration strategy should I use?');
+  it('Notification titled with project and agent', () => {
+    const r = row({
+      name: 'parser',
+      projectName: 'Acme API',
+      question: 'Which migration strategy should I use?'
+    });
+    expect(notificationTitle(r)).toBe('Acme API: parser');
+    const body = notificationBody(r);
+    expect(body).toBe('Which migration strategy should I use?');
+    expect(body).not.toContain('parser'); // the name lives in the title now
     expect(body).not.toContain('\n'); // one line
   });
 
   it('Notification uses the generated session title', () => {
-    // The pure body identifies the agent by `row.name`; the route resolves that name
+    // The pure title identifies the agent by `row.name`; the route resolves that name
     // to the generated session title (falling back to the "Session N" workspace name),
     // so a titled agent reads as its title, never "Session 1".
-    const body = notificationBody(row({ name: 'Fix login dialog', question: 'Proceed?' }));
-    expect(body).toContain('Fix login dialog');
-    expect(body).not.toContain('Session 1');
+    const title = notificationTitle(row({ name: 'Fix login dialog', question: 'Proceed?' }));
+    expect(title).toContain('Fix login dialog');
+    expect(title).not.toContain('Session 1');
+  });
+
+  it('Notification title without a project', () => {
+    // No project → the title is the agent title alone, with no prefix or separator.
+    const title = notificationTitle(row({ name: 'parser', projectName: null }));
+    expect(title).toBe('parser');
+    expect(title).not.toContain(':');
+  });
+
+  it('Body falls back to a needs-input prompt with no message', () => {
+    const body = notificationBody(row({ name: 'parser', question: null, summary: null }));
+    expect(body.length).toBeGreaterThan(0);
+    expect(body).not.toContain('\n');
   });
 });

@@ -97,8 +97,13 @@ Add `@tauri-apps/plugin-notification` + `tauri-plugin-notification`, registered 
 `lib.rs`, with `notification:default` granted in `capabilities/default.json`. The
 shell checks/asks permission (`isPermissionGranted` / `requestPermission`) when the
 desktop channel is set to non-`off`, then `sendNotification({ title, body })` with
-title "Agent needs input" and body = agent name + its pending question or last
-message (clipped). *Alternative — web `Notification` API:* rejected; unreliable in
+title = "<Project Name>: <Agent Title>" (project prefix dropped when the agent has
+no project; Agent Title = generated session title, falling back to the workspace/cwd
+name) and body = the agent's most recently sent message — its pending question, else
+its last assistant message — clipped to one line (generic fallback when neither
+exists). The route resolves the project name from `row.projectId` and the title from
+`titles.titleFor(paneId)`, attaching both to the alert row before the pure
+`notificationTitle`/`notificationBody` read them. *Alternative — web `Notification` API:* rejected; unreliable in
 the Tauri webview and no macOS permission integration. In a non-Tauri/web context
 (`dev:web`) the invoke fails harmlessly and is swallowed.
 

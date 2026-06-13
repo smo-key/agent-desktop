@@ -111,19 +111,26 @@ export function channelsToAlert(
   };
 }
 
-/** PURE: the desktop notification title (constant). */
-export function notificationTitle(): string {
-  return 'Agent needs input';
+/**
+ * PURE: the desktop notification title for a row — "<Project Name>: <Agent Title>".
+ * The Agent Title is `row.name` (resolved at the callsite to the generated session
+ * title, falling back to the workspace/cwd name). The Project Name is `row.projectName`
+ * (resolved at the callsite from `row.projectId`); when the agent has no project the
+ * title is the Agent Title alone, with no prefix or separator.
+ */
+export function notificationTitle(row: AgentRow): string {
+  return row.projectName ? `${row.projectName}: ${row.name}` : row.name;
 }
 
 /**
- * PURE: the desktop notification body for a row — the agent's name followed by its
- * pending question or last message, collapsed to one clipped line. Falls back to
- * just the name when there is no question/summary.
+ * PURE: the desktop notification body for a row — the agent's most recently sent
+ * message, collapsed to one clipped line: its pending question when waiting on one,
+ * else its last assistant message. The agent's name is NOT included (it lives in the
+ * title). Falls back to a generic needs-input prompt when there is no question/summary.
  */
 export function notificationBody(row: AgentRow): string {
   const question =
     row.questions && row.questions.length > 0 ? row.questions[0].question : row.question;
   const detail = clipLine(question) ?? clipLine(row.summary);
-  return detail ? `${row.name} — ${detail}` : row.name;
+  return detail ?? 'Needs your input';
 }

@@ -55,3 +55,17 @@ for the desktop channel. Offer only `off` / `app-unfocused` for desktop; sound k
 - [x] 10.1 Add a pure `clampDesktopMode` to `src/lib/settings/notifications.svelte.ts` (`off`/`app-unfocused` pass through; `agent-unfocused`/`always` → `app-unfocused`) and apply it in `load()` and `setDesktopMode()`. Extend `notifications.test.ts` first: the clamp's table, a legacy desktop mode clamped on load, and `setDesktopMode('always')` clamped.
 - [x] 10.2 In `src/lib/ui/SettingsModal.svelte`, remove the `agent-unfocused` and `always` options from the DESKTOP picker only (leave the sound picker's four intact).
 - [x] 10.3 Run `npm run check` and the touched tests; fix any failures.
+
+## 11. Notification reads "Project: Agent" with the latest message as the body
+
+Supersedes the title/body shape of task 5.2: the title becomes "<Project Name>:
+<Agent Title>" (project prefix dropped when the agent has no project) and the body
+becomes the agent's most recently sent message alone (no longer prefixed with the
+agent name, which now lives in the title).
+
+- [x] 11.1 Add an optional alert-display field `projectName?: string | null` to `AgentRow` (`src/lib/overview/roster.ts`), documented as set only at the alert callsite (parallel to the `name` title override). `rowFor` need not set it.
+- [x] 11.2 Update the `Desktop notification content and permission` scenarios in `src/lib/overview/notify.test.ts` to the new spec: `notificationTitle(row)` returns "Acme API: parser" (and "parser" alone when no project), and `notificationBody(row)` returns the question/last-message alone, one line, with a generic fallback when neither exists. Keep `it(...)` titles matching the spec `#### Scenario:` names.
+- [x] 11.3 In `src/lib/overview/notify.ts`, change `notificationTitle()` to `notificationTitle(row: AgentRow)` returning `projectName ? "${projectName}: ${name}" : name`, and change `notificationBody(row)` to return the clipped pending-question-else-summary alone (generic needs-input fallback when neither). Make 11.2 pass.
+- [x] 11.4 In `src/lib/overview/alerts.svelte.ts`, call `notificationTitle(row)` (pass the row) in `desktopNotify`.
+- [x] 11.5 In `src/routes/+page.svelte`, when building `alertRows`, also resolve `projectName` from `projectForId(projects.list, r.projectId)` (via `projectLabel`) and attach it to the row alongside the `name` title override.
+- [x] 11.6 Run `npm run check` and the touched tests; fix any failures.

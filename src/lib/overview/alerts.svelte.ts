@@ -22,6 +22,15 @@ import {
   requestPermission,
   sendNotification
 } from '@tauri-apps/plugin-notification';
+import { invoke } from '@tauri-apps/api/core';
+
+/** Whether we're running on macOS, where clicks are delivered via the custom
+ *  `notify_agent` Rust path (capability `alert-click-focus`) rather than the
+ *  plugin (which discards desktop clicks). Cheap, dependency-free webview check. */
+function isMacOS(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Mac/i.test(navigator.userAgent ?? navigator.platform ?? '');
+}
 
 // --- Sound channel: a short synthesized two-tone "ding" -----------------------
 
@@ -109,11 +118,21 @@ export async function ensureDesktopPermission(): Promise<boolean> {
 }
 
 /** Show a desktop notification for `row`. No-op when permission is denied or the
- *  notification API is unavailable (web preview); never throws. */
+ *  notification API is unavailable (web preview); never throws.
+ *
+ *  On macOS we route through the custom `notify_agent` Rust command so a body
+ *  click can focus the agent (the plugin discards desktop clicks). Elsewhere we
+ *  send via the plugin (no click handling). Both share the title/body builders. */
 async function desktopNotify(row: AgentRow): Promise<void> {
   try {
     if (!(await ensureDesktopPermission())) return;
-    sendNotification({ title: notificationTitle(), body: notificationBody(row) });
+    const title = notificationTitle(row);
+    const body = notificationBody(row);
+    if (isMacOS()) {
+      await invoke('notify_agent', { paneId: row.paneId, title, body });
+    } else {
+      sendNotification({ title, body });
+    }
   } catch {
     /* non-Tauri / unavailable — swallow */
   }

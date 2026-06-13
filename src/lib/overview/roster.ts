@@ -400,6 +400,11 @@ export interface AgentRow {
   status: AgentStatus;
   /** The project this agent belongs to (registry `projectId`), or null if none. */
   projectId: string | null;
+  /** The owning project's display NAME, resolved for the desktop notification title
+   *  ("<projectName>: <name>"). Alert-display only and OPTIONAL: it is attached at the
+   *  alert callsite (parallel to the `name` title override), not by `rowFor`; roster
+   *  fixtures and non-alert consumers may omit it. Null/undefined → no project prefix. */
+  projectName?: string | null;
   /** The SPECIALIST this pane was spawned AS (registry `specialist`), or null if
    *  it was not spawned as a specialist. Surfaced as a roster badge so a
    *  coordinator-spawned specialist agent is visibly attributed (task 5.4).

@@ -33,10 +33,14 @@ instant an agent starts waiting on you.
   for a never-prompted agent (per the per-pane `everPrompted` signal) until it has
   been prompted at least once. The agent still shows in the "Needs input" lane;
   only the sound/desktop alert is withheld.
-- **Notifications use the generated session title**: the desktop notification
-  identifies the agent by its generated session title (the same label shown on its
-  card) when available, falling back to the workspace/cwd name — so a notification
-  reads "Fix login dialog — …" rather than "Session 1 — …".
+- **Notifications read "Project: Agent" with the latest message as the body**: the
+  desktop notification's TITLE is "<Project Name>: <Agent Title>" (the agent
+  identified by its generated session title — the same label shown on its card —
+  falling back to the workspace/cwd name, and the project prefix dropped when the
+  agent has no project), and its BODY is the agent's most recently sent message
+  (its pending question, else its last assistant message) on one clipped line. So a
+  notification reads title "Acme API: Fix login dialog" / body "Which migration
+  strategy should I use?" rather than the old "Agent needs input" / "Session 1 — …".
 
 ## Capabilities
 
