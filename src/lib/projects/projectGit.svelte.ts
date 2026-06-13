@@ -20,6 +20,11 @@ function finiteOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+/** A real boolean, else null (guards a missing field / non-boolean). */
+function boolOrNull(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
 /** A clean `string[]` of the changed paths: an array of strings, else `[]`
  *  (guards a missing field / non-array / non-string entries). */
 function stringArray(value: unknown): string[] {
@@ -44,6 +49,7 @@ export function normalizeGitMap(payload: unknown): GitMap {
       modified: finiteOrNull(g.modified),
       ahead: finiteOrNull(g.ahead),
       behind: finiteOrNull(g.behind),
+      upstream: boolOrNull(g.upstream),
       files: stringArray(g.files)
     };
   }

@@ -11,7 +11,15 @@ describe('normalizeGitMap', () => {
 
   it('coerces each entry to a stable GitStatus shape', () => {
     const out = normalizeGitMap({
-      '/a': { branch: 'main', dirty: true, modified: 4, ahead: 2, behind: 0, files: ['a.ts', 'b.ts'] },
+      '/a': {
+        branch: 'main',
+        dirty: true,
+        modified: 4,
+        ahead: 2,
+        behind: 0,
+        upstream: true,
+        files: ['a.ts', 'b.ts']
+      },
       '/b': { branch: null, dirty: null, modified: null, ahead: null, behind: null }
     });
     expect(out['/a']).toEqual({
@@ -20,22 +28,40 @@ describe('normalizeGitMap', () => {
       modified: 4,
       ahead: 2,
       behind: 0,
+      upstream: true,
       files: ['a.ts', 'b.ts']
     });
-    // A missing `files` field normalizes to an empty array (no list).
+    // A missing `files`/`upstream` field normalizes to [] / null respectively.
     expect(out['/b']).toEqual({
       branch: null,
       dirty: null,
       modified: null,
       ahead: null,
       behind: null,
+      upstream: null,
       files: []
     });
   });
 
+  it('carries upstream=false for an unpushed branch', () => {
+    const out = normalizeGitMap({
+      '/a': { branch: 'feat', dirty: false, modified: 0, ahead: 3, behind: 0, upstream: false, files: [] }
+    });
+    expect(out['/a'].upstream).toBe(false);
+    expect(out['/a'].ahead).toBe(3);
+  });
+
   it('drops malformed numbers/strings to null and skips non-object entries', () => {
     const out = normalizeGitMap({
-      '/a': { branch: 123, dirty: 'yes', modified: 'lots', ahead: Number.NaN, behind: 'x', files: 'nope' },
+      '/a': {
+        branch: 123,
+        dirty: 'yes',
+        modified: 'lots',
+        ahead: Number.NaN,
+        behind: 'x',
+        upstream: 'maybe',
+        files: 'nope'
+      },
       '/b': 'not-an-object'
     });
     expect(out['/a']).toEqual({
@@ -44,6 +70,7 @@ describe('normalizeGitMap', () => {
       modified: null,
       ahead: null,
       behind: null,
+      upstream: null,
       files: []
     });
     expect('/b' in out).toBe(false);

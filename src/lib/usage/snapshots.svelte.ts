@@ -26,6 +26,13 @@ export interface GitStatus {
   ahead?: number | null;
   behind?: number | null;
   /**
+   * Whether the current branch tracks an UPSTREAM (has been published to a remote):
+   * `true` when it does, `false` for a local-only branch never pushed, `null`/absent
+   * off-repo or when git couldn't answer (the statusline snapshot omits it). The
+   * footer's ↑ pill offers a first-time publish when this is `false`.
+   */
+  upstream?: boolean | null;
+  /**
    * The changed file PATHS (capped backend-side at 50) for the uncommitted-files
    * hover list. Additive + OPTIONAL: the statusline snapshot omits it, and a
    * legacy `git_status_for` payload without it still types. Absent/empty means no

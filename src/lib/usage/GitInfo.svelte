@@ -38,10 +38,13 @@
   // 0/null, so a clean tree can't be clicked. The hover tooltip shows only the
   // COUNT of changed files (e.g. "3 uncommitted files").
   //
-  // When `pushProject` is provided (the footer only), the AHEAD (↑) pill becomes
-  // a BUTTON that opens the push popover whenever `ahead > 0`, listing the commits
-  // that would be sent with a pinned "Push now" action. It stays INERT when
-  // `ahead === 0`/null so a clean (nothing-to-push) state can't be clicked.
+  // When `pushProject` is provided (the footer only), the AHEAD (↑) pill is ALWAYS
+  // a BUTTON that opens the push popover — the user takes the secondary "Push now"
+  // action there in every case. It reads HIGHLIGHTED whenever there is something to
+  // do (commits to push, OR an unpublished branch that pushing would publish — even
+  // at zero commits) and falls to a NEUTRAL empty state (mirroring the open-PRs zero
+  // state) only when the branch is published and fully in sync. It is disabled ONLY
+  // while a push/pull for the project is in flight (`busy`).
   import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import type { GitStatus } from './snapshots.svelte';
@@ -56,7 +59,7 @@
     repoWebUrl,
     commitWebUrl
   } from '$lib/projects/projectGitActions';
-  import { pushPopoverOpen as canPushPopover } from './pushPopover';
+  import { pushPopoverOpen as canPushPopover, aheadPillEnabled } from './pushPopover';
   import { invoke } from '@tauri-apps/api/core';
   import { sortPrsForPopover, type OpenPr } from '$lib/projects/openPrsActions';
   import { openInEditor } from '$lib/overview/editor';
@@ -155,10 +158,29 @@
   }
 
   // ── Push popover state ────────────────────────────────────────────────────
-  // The ahead (↑) pill opens the push popover when `pushProject` is wired AND
-  // `ahead > 0`. Otherwise the pill calls `onPush` directly (project pane) or
-  // is inert. The popover lazily fetches the commit list on open.
-  const pushable = $derived(canPushPopover(git?.ahead, !!pushProject));
+  // The ahead (↑) pill opens the push popover whenever `pushProject` is wired — in
+  // ALL cases, so the user always takes the secondary action inside the popover.
+  // Otherwise the pill calls `onPush` directly (no-popover surface) or is inert.
+  // The popover lazily fetches the commit list on open.
+  const pushable = $derived(canPushPopover(!!pushProject));
+
+  // Whether the ↑ pill reads HIGHLIGHTED (something to do — commits to push, or an
+  // unpublished branch to publish) vs the NEUTRAL empty state (published + in sync,
+  // or count unknown). Drives the `.zero` styling that mirrors the open-PRs zero pill.
+  const aheadEnabled = $derived(aheadPillEnabled(git?.ahead, git?.upstream));
+
+  // The ↑ pill's hover tooltip, reflecting what a click/push would do: publish an
+  // unpublished branch, push pending commits, or (in sync) just review.
+  const aheadTooltip = $derived.by(() => {
+    const n = git?.ahead ?? 0;
+    const commits = `${n} commit${n === 1 ? '' : 's'}`;
+    if (git?.upstream === false) {
+      return n > 0
+        ? `Publish this branch — ${commits} to upload`
+        : 'Publish this branch to its remote';
+    }
+    return n > 0 ? `${commits} to push — click to review` : 'Up to date with the remote';
+  });
 
   let pushPopoverOpenState = $state(false);
   let pushPillEl = $state<HTMLButtonElement | null>(null);
@@ -308,33 +330,34 @@
       {/if}
       {#if always || (git.ahead != null && git.ahead > 0)}
         {#if pushable}
-          <!-- Commits to push present + footer wired a pushProject: a clickable PUSH
-               button. Clicking opens the push popover which lists the commits and
-               pins a "Push now" action. INERT when ahead === 0/null. -->
+          <!-- Footer wired a pushProject: the ↑ pill is ALWAYS a clickable button
+               that opens the push popover (the user pushes/publishes there in every
+               case). Highlighted when there's something to do, NEUTRAL (`.zero`,
+               mirroring the open-PRs empty pill) when published + in sync. Disabled
+               only while a sync is in flight. -->
           <button
             type="button"
             class="pill ahead action"
-            class:zero={(git.ahead ?? 0) === 0}
+            class:zero={!aheadEnabled}
             bind:this={pushPillEl}
             onclick={openPushPopover}
             disabled={busy}
-            use:tooltip={busy ? 'Sync in progress…' : 'Click to review'}
+            use:tooltip={busy ? 'Sync in progress…' : aheadTooltip}
           >
             <Icon name="arrow-up" size={12} />
             <span class="txt">{git.ahead ?? 0}</span>
           </button>
         {:else if onPush && !pushProject}
           <!-- Direct-push fallback for a surface that wires onPush WITHOUT a
-               pushProject (no popover). In the footer both are wired together, so
-               this never fires there — footer `ahead === 0` falls through to the
-               inert span below (nothing to push → SHALL NOT push). -->
+               pushProject (no popover). The footer always wires both, so this never
+               fires there. -->
           <button
             type="button"
             class="pill ahead action"
-            class:zero={(git.ahead ?? 0) === 0}
+            class:zero={!aheadEnabled}
             onclick={onPush}
             disabled={busy}
-            use:tooltip={busy ? 'Sync in progress…' : 'Push to origin'}
+            use:tooltip={busy ? 'Sync in progress…' : aheadTooltip}
           >
             <Icon name="arrow-up" size={12} />
             <span class="txt">{git.ahead ?? 0}</span>
@@ -342,8 +365,8 @@
         {:else}
           <span
             class="pill ahead"
-            class:zero={(git.ahead ?? 0) === 0}
-            use:tooltip={`${git.ahead ?? 0} commit${(git.ahead ?? 0) === 1 ? '' : 's'} ahead of upstream`}
+            class:zero={!aheadEnabled}
+            use:tooltip={aheadTooltip}
           >
             <Icon name="arrow-up" size={12} />
             <span class="txt">{git.ahead ?? 0}</span>
