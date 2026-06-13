@@ -23,6 +23,13 @@ out to `git push` / `git pull --ff-only` in that folder, run NON-INTERACTIVELY
 prompt fails fast instead of hanging. Pull is fast-forward only, so a divergent
 branch fails cleanly without ever leaving the worktree mid-merge.
 
+A Push of a branch that already tracks an upstream runs `git push`. A Push of an
+UNPUBLISHED branch (one with no upstream — never uploaded) instead runs
+`git push -u <remote> HEAD`, where `<remote>` is `origin` when present, else the
+first configured remote; this PUBLISHES the branch (creates the remote branch and
+records tracking), so a later Push is a plain `git push`. "No upstream" is
+therefore NOT a push failure.
+
 On SUCCESS, the action shows a non-blocking toast naming the project and echoing
 git's message. On FAILURE, the action opens an interactive terminal in the
 project's folder that runs the failed git command, so the user sees git's full
@@ -49,11 +56,19 @@ completes (success or failure), so the operation cannot be re-triggered mid-run.
 - **THEN** the app runs `git pull` in that folder, bringing the new commits in
 - **AND** shows a success toast naming the project.
 
+#### Scenario: Push publishes an unpushed branch and sets its upstream
+
+- **WHEN** the user picks **Push** on a project whose current branch has no upstream
+  (was never published) and a remote is configured
+- **THEN** the app runs `git push -u <remote> HEAD` in that folder, creating the
+  branch on the remote and recording tracking
+- **AND** a later Push of that branch is a plain `git push`.
+
 #### Scenario: Push or pull failure opens a terminal
 
-- **WHEN** a Push or Pull cannot complete (no upstream, rejected non-fast-forward,
-  a divergent branch on pull, or no network / a remote that would prompt) AND a
-  terminal surface is available
+- **WHEN** a Push or Pull cannot complete (rejected non-fast-forward, a divergent
+  branch on pull, or no network / a remote that would prompt) AND a terminal
+  surface is available
 - **THEN** the app opens an interactive terminal in the project's folder running
   the failed git command (`git push` / `git pull`)
 - **AND** the action does not throw, and a failed pull leaves the worktree
