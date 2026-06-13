@@ -13,13 +13,19 @@ surfacing is missing.
 ## What Changes
 
 - Nest workflow-spawned subagents as indented rows under their parent agent in
-  the Inbox session list, on the **In-flight** and **Needs-you** lanes only
-  (paused/archived lanes stay compact).
+  the Inbox session list, under **every** session row (all lanes), not just the
+  focused/active one.
+- Show only **live** subagents: a subagent drops off the list as soon as it exits
+  (any terminal status — `done`/`completed`/`success` or `error`/`failed`), so the
+  list reflects in-flight work and does not accumulate finished rows.
 - Group the nested rows by workflow, then by workflow phase, preserving phase
   order. The grouping is always expanded (no collapse control).
-- Each subagent mini-row shows a status indicator (running / done / error), the
-  subagent label, and its **duration alive** — `durationMs` when the subagent has
-  finished, otherwise `now − startedAt` ticking off the Inbox's existing clock.
+- Each subagent mini-row shows a **blue** (in-flight) status dot, the subagent
+  label, and its **duration alive** — `durationMs` when present, otherwise
+  `now − startedAt` ticking off the Inbox's existing clock.
+- Add a **Sessions-panel setting to show/hide subagents**, persisted as the
+  `subagentsVisible` slice of `settings.json` and **defaulting to shown**; when off,
+  no subagent rows render under any agent.
 - Extend the `Subagent` wire shape (Rust `subagents.rs` + TS `subagents.svelte.ts`)
   with `phaseTitle`, `phaseIndex`, `startedAt`, and `durationMs`, all pulled from
   the `workflowProgress` agent rows the parser already reads. Purely additive,

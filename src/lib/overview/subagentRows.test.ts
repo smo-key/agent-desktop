@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   groupSubagentsByPhase,
   formatDurationAlive,
-  subagentsVisibleOnLane,
+  isSubagentExited,
+  liveSubagents,
 } from './subagentRows';
 import type { Subagent } from './subagents.svelte';
 
@@ -12,8 +13,8 @@ function sub(overrides: Partial<Subagent> & { id: string }): Subagent {
 }
 
 describe('groupSubagentsByPhase', () => {
-  // Scenario: "Subagents appear nested under their parent agent on active lanes"
-  it('Subagents appear nested under their parent agent on active lanes', () => {
+  // Scenario: "Subagents appear nested under their parent agent"
+  it('Subagents appear nested under their parent agent', () => {
     const subs: Subagent[] = [
       sub({ id: 'a1', label: 'spec:a', workflowId: 'wf_1', phaseTitle: 'Design', phaseIndex: 2 }),
       sub({ id: 'a2', label: 'spec:b', workflowId: 'wf_1', phaseTitle: 'Capabilities', phaseIndex: 1 }),
@@ -35,10 +36,6 @@ describe('groupSubagentsByPhase', () => {
     // wf_2 nests its single phase + subagent under itself.
     expect(groups[1].phases[0].phaseTitle).toBe('Build');
     expect(groups[1].phases[0].subagents.map((s) => s.id)).toEqual(['b1']);
-
-    // These rows render on the active lanes.
-    expect(subagentsVisibleOnLane('attn')).toBe(true);
-    expect(subagentsVisibleOnLane('flight')).toBe(true);
   });
 
   it('routes subagents missing workflow id or phase into trailing null buckets, never dropping them', () => {
@@ -83,13 +80,38 @@ describe('formatDurationAlive', () => {
   });
 });
 
-describe('subagentsVisibleOnLane', () => {
-  // Scenario: "Subagents are hidden on inactive lanes"
-  it('Subagents are hidden on inactive lanes', () => {
-    expect(subagentsVisibleOnLane('paused')).toBe(false);
-    expect(subagentsVisibleOnLane('done')).toBe(false);
-    // ...and shown on the active ones.
-    expect(subagentsVisibleOnLane('attn')).toBe(true);
-    expect(subagentsVisibleOnLane('flight')).toBe(true);
+describe('isSubagentExited', () => {
+  // Scenario: "Exited subagents drop off the list"
+  it('treats known finished/errored states as exited; live/unknown as not', () => {
+    // Terminal — the subagent has exited (success OR failure).
+    for (const s of ['done', 'completed', 'success', 'error', 'failed', 'DONE', 'Failed']) {
+      expect(isSubagentExited(s)).toBe(true);
+    }
+    // Live / pending / unknown — still shown (never hidden on uncertainty).
+    for (const s of ['running', 'queued', 'active', 'weird', '', null, undefined]) {
+      expect(isSubagentExited(s)).toBe(false);
+    }
+  });
+});
+
+describe('liveSubagents', () => {
+  // Scenario: "Exited subagents drop off the list"
+  it('Exited subagents drop off the list', () => {
+    const subs: Subagent[] = [
+      sub({ id: 'run1', status: 'running' }),
+      sub({ id: 'done1', status: 'done' }),
+      sub({ id: 'err1', status: 'error' }),
+      sub({ id: 'queued1', status: 'queued' }),
+      sub({ id: 'unknown1', status: null }),
+    ];
+    expect(liveSubagents(subs).map((s) => s.id)).toEqual(['run1', 'queued1', 'unknown1']);
+  });
+
+  it('returns an empty array when every subagent has exited', () => {
+    const subs: Subagent[] = [
+      sub({ id: 'd', status: 'done' }),
+      sub({ id: 'e', status: 'failed' }),
+    ];
+    expect(liveSubagents(subs)).toEqual([]);
   });
 });

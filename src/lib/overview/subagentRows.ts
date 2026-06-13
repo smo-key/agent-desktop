@@ -1,13 +1,12 @@
 // PURE view-model for the nested SUBAGENT ROWS shown under a parent agent in the
 // Inbox (spec: agent-overview / Surface Subagents). The Inbox passes a session's
-// `Subagent[]` (from `subagents.forSession(sessionId)`) through `groupSubagentsByPhase`
-// to render workflow → phase groups, gates rendering by lane with
-// `subagentsVisibleOnLane`, and labels each row's "duration alive" with
+// `Subagent[]` (from `subagents.forSession(sessionId)`) through `liveSubagents` to
+// drop any that have EXITED (`isSubagentExited`), then `groupSubagentsByPhase` to
+// render workflow → phase groups, and labels each row's "duration alive" with
 // `formatDurationAlive`. Framework-free (no Svelte/Tauri imports) so it is trivially
 // unit-tested; the Inbox is thin glue over these functions.
 
 import type { Subagent } from './subagents.svelte';
-import type { AgentLane } from './roster';
 
 /** A workflow's subagents, bucketed by phase. `phases` is ordered by `phaseIndex`. */
 export interface WorkflowGroup {
@@ -28,12 +27,27 @@ export interface PhaseGroup {
 }
 
 /**
- * PURE: which lanes show nested subagent rows. Only the two ACTIVE lanes — `attn`
- * (Needs you) and `flight` (In flight) — surface subagents; the `paused` and `done`
- * (Archived) lanes stay compact and show none.
+ * PURE: whether a subagent has EXITED — a known terminal state, either success
+ * (`done`/`completed`/`success`) or failure (`error`/`failed`). Case-insensitive.
+ * A live (`running`/`queued`), unknown, or absent status is NOT exited, so a
+ * subagent is never hidden on uncertainty. Mirrors the Inbox `subStatusClass`
+ * terminal vocabulary (the `done` + `error` buckets).
  */
-export function subagentsVisibleOnLane(lane: AgentLane): boolean {
-  return lane === 'attn' || lane === 'flight';
+export function isSubagentExited(status?: string | null): boolean {
+  const s = (status ?? '').toLowerCase();
+  return (
+    s === 'done' || s === 'completed' || s === 'success' || s === 'error' || s === 'failed'
+  );
+}
+
+/**
+ * PURE: keep only the subagents that are still ALIVE (not exited), preserving input
+ * order. The Inbox runs a session's subagents through this before grouping so a
+ * subagent drops off the nested rows the moment it terminates — only in-flight
+ * subagents stay visible. Never mutates input.
+ */
+export function liveSubagents(subs: Subagent[]): Subagent[] {
+  return subs.filter((s) => !isSubagentExited(s.status));
 }
 
 /**

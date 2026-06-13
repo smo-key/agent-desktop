@@ -59,10 +59,11 @@
   import { summaries } from './summaries.svelte';
   import { costs } from './costs.svelte';
   import { subagents } from './subagents.svelte';
+  import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
   import {
     groupSubagentsByPhase,
     formatDurationAlive,
-    subagentsVisibleOnLane,
+    liveSubagents,
     type WorkflowGroup
   } from './subagentRows';
   import { projects } from '$lib/projects/projects.svelte';
@@ -408,13 +409,16 @@
     return workspace.sessionIn(r.workspaceId, r.paneId).sessionId ?? null;
   }
 
-  /** The workflow → phase groups of subagents to nest under a row, or [] when the
-   *  lane is inactive (Paused/Archived show none) or the session has no subagents. */
-  function subagentGroupsFor(r: AgentRow, lane: AgentLane): WorkflowGroup[] {
-    if (!subagentsVisibleOnLane(lane)) return [];
+  /** The workflow → phase groups of LIVE subagents to nest under a row (every
+   *  session/lane, not just the focused one), or [] when the user has hidden
+   *  subagents (the Sessions-panel setting), the session has none, or all have
+   *  exited. Exited (done/errored) subagents are filtered out, so only in-flight
+   *  ones remain. */
+  function subagentGroupsFor(r: AgentRow): WorkflowGroup[] {
+    if (!subagentsVisible.prefs.enabled) return [];
     const sid = sessionIdOf(r);
     if (!sid) return [];
-    return groupSubagentsByPhase(subagents.forSession(sid));
+    return groupSubagentsByPhase(liveSubagents(subagents.forSession(sid)));
   }
 
   /** Map a subagent's verbatim status to a row class. Known terminal states map to
@@ -1223,12 +1227,13 @@
   </button>
 {/snippet}
 
-<!-- Nested workflow subagents under a parent agent row. Rendered only on the active
-     lanes (Needs you / In flight); grouped by workflow then phase, always expanded.
-     Each row: a status dot, the subagent label, and its "duration alive" (ticking off
-     the same `nowMs` clock the roster uses for relative times). -->
-{#snippet subagentBlock(r: AgentRow, lane: AgentLane)}
-  {@const groups = subagentGroupsFor(r, lane)}
+<!-- Nested LIVE subagents under a parent agent row, on EVERY session/lane (not just
+     the focused one). Exited (done/errored) subagents are filtered out so only
+     in-flight ones show; grouped by workflow then phase, always expanded. Each row:
+     a status dot, the subagent label, and its "duration alive" (ticking off the same
+     `nowMs` clock the roster uses for relative times). -->
+{#snippet subagentBlock(r: AgentRow)}
+  {@const groups = subagentGroupsFor(r)}
   {#each groups as g (g.workflowId ?? '∅')}
     <div class="sa-wf">
       {#each g.phases as p (p.phaseTitle ?? '∅')}
@@ -1278,6 +1283,7 @@
                yet" empty state sits BELOW them (task 10.6). -->
           {#if pin.coordinator}
             {@render sessionRow(pin.coordinator, laneForRow(pin.coordinator), true)}
+            {@render subagentBlock(pin.coordinator)}
             <hr class="coord-rule" />
           {:else if pin.showStart && activeCoordProject}
             <button
@@ -1330,7 +1336,7 @@
                 </div>
                 {#each visible as r (r.paneId)}
                   {@render sessionRow(r, lane)}
-                  {@render subagentBlock(r, lane)}
+                  {@render subagentBlock(r)}
                 {/each}
                 {#if lane === 'done' && items.length > ARCHIVED_PREVIEW}
                   <button
@@ -1611,7 +1617,7 @@
   .sa-dot { flex: none; width: 6px; height: 6px; border-radius: var(--r-full); background: var(--fg-4); }
   .sa-dot.done { background: var(--nominal-500); }
   .sa-dot.error { background: var(--abort-500); }
-  .sa-dot.running { background: var(--caution-500); }
+  .sa-dot.running { background: var(--info-500); }
   .sa-label {
     flex: 1; min-width: 0; font-size: 11px; color: var(--fg-2);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1628,7 +1634,7 @@
   .fhead .ttl-btn { display: inline-flex; align-items: center; max-width: 100%; padding: 2px 6px; margin: -2px -6px; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; cursor: text; text-align: left; font-family: var(--font-sans); }
   .fhead .ttl-btn:hover { background: rgba(255, 255, 255, 0.04); border-color: var(--line-subtle); }
   /* The inline rename input mirrors the session-rail rename affordance. */
-  .fhead .ttl-edit { flex: 1 1 auto; min-width: 0; max-width: 100%; font-weight: 600; font-size: 13.5px; font-family: var(--font-sans); color: var(--fg-1); background: var(--space-800); border: 1px solid var(--blue-500); box-shadow: var(--focus-ring); border-radius: var(--r-sm); padding: 2px 6px; outline: none; }
+  .fhead .ttl-edit { flex: 0 1 auto; min-width: 0; max-width: 60%; font-weight: 600; font-size: 13.5px; font-family: var(--font-sans); color: var(--fg-1); background: var(--space-800); border: 1px solid var(--blue-500); box-shadow: var(--focus-ring); border-radius: var(--r-sm); padding: 2px 6px; outline: none; }
   .fhead .spc { flex: 1; }
   .fhead .nav { display: flex; gap: 4px; flex: none; }
   .fhead .nav button { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-sm); background: var(--space-750); border: 1px solid var(--line-subtle); color: var(--fg-3); cursor: pointer; font-size: 13px; }

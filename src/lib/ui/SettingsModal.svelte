@@ -16,6 +16,7 @@
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
   import { notifications, type AlertMode } from '$lib/settings/notifications.svelte';
   import { ensureDesktopPermission } from '$lib/overview/alerts.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
@@ -149,6 +150,16 @@
                 <option value="default">Default</option>
                 <option value="compact">Compact</option>
               </select>
+            </div>
+          </li>
+          <li class="row">
+            <span class="desc">Show subagents under each session</span>
+            <div class="control">
+              <input
+                type="checkbox"
+                checked={subagentsVisible.prefs.enabled}
+                onchange={(e) => subagentsVisible.setEnabled(e.currentTarget.checked)}
+              />
             </div>
           </li>
         </ul>

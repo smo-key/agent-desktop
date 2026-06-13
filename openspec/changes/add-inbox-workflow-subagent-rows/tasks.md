@@ -29,6 +29,13 @@
 - [x] 6.5 Rust tests: a standalone subagent surfaces with its `description` label + duration (`standalone_task_subagents_appear_under_their_parent_agent`); status is `done` when the parent has a `tool_result` and `running` when it does not (`standalone_subagent_status_reflects_the_parent_result`); malformed/absent sidecars are tolerated.
 - [x] 6.6 BUGFIX (caught in 5.3 live verify): `parse_session_subagents` early-returned on a missing `workflows/` dir, so it never reached the standalone parser — and a standalone-only session (the dominant case) has NO `workflows/` dir, so its subagents never surfaced (real sessions returned 0). The `make_session` test helper always created `workflows/`, masking it. Fix: treat a missing/unreadable `workflows/` dir as "no workflow subagents" and still parse standalone subagents. Regression test: `standalone_subagents_surface_without_a_workflows_dir`.
 
+## 7. Live-only rows, all lanes, blue dot, visibility setting (follow-up)
+
+- [x] 7.1 Show subagents under EVERY session row on all lanes, not just active/focused ones: drop the `subagentsVisibleOnLane` lane gate in `Inbox.svelte` (and render the nested block under the pinned coordinator too). Remove the now-unused `subagentsVisibleOnLane` helper + its test.
+- [x] 7.2 Filter out EXITED subagents so only live ones show: add pure `isSubagentExited(status)` + `liveSubagents(subs)` in `subagentRows.ts` (terminal = done/completed/success/error/failed; running/queued/unknown/null stay), run a session's subagents through `liveSubagents` before grouping. Unit-test both (`Exited subagents drop off the list`).
+- [x] 7.3 Color the live status dot BLUE: `.sa-dot.running` → `var(--info-500)` (was `--caution-500`).
+- [x] 7.4 Add a Sessions-panel setting to show/hide subagents, default SHOWN: new `subagentsVisible` settings store (`settings/subagentsVisible.svelte.ts`, `subagentsVisible` slice, default ON) loaded on mount; gate `subagentGroupsFor` on `subagentsVisible.prefs.enabled`; add a checkbox row under the "Sessions panel" group in `SettingsModal.svelte`. Unit-test the parser/store + the gating predicate.
+
 ## 5. Verify
 
 - [x] 5.1 Run the Rust tests (`cargo test` for the subagents module) and the TS unit tests (`npm test` for the new helper specs); confirm green.

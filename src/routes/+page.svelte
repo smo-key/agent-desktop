@@ -15,6 +15,7 @@
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
   import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
   import VoicePanel from '$lib/voice/VoicePanel.svelte';
@@ -113,6 +114,8 @@
     void autoAdvance.load();
     // Load the compact-mode preference (opt-in; defaults OFF / full three-line rows).
     void compactMode.load();
+    // Load the subagents-visibility preference (defaults ON / subagents shown).
+    void subagentsVisible.load();
     // Load the needs-input alert channel modes (opt-in; both default OFF / silent).
     void notifications.load();
     // Load the persisted one-time onboarding flag FIRST so a returning user who has
