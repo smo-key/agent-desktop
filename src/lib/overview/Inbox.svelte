@@ -251,7 +251,7 @@
   // `attnSeeded` are plain (untracked) trackers, like `lastShownId` above; seeding
   // on the first roster means agents ALREADY needing attention at mount don't flash
   // — only genuine transitions do.
-  const FLASH_MS = 1200;
+  const FLASH_MS = 2500;
   let prevAttn = new Map<string, boolean>();
   let attnSeeded = false;
   let flashPanes = $state(new Set<string>());
@@ -1535,11 +1535,11 @@
   .row:hover { background: rgba(255,255,255,0.025); }
   .row.sel { background: rgba(61,123,255,0.10); border-left-color: var(--blue-500); }
   .row.attn.sel { background: var(--orange-tint); border-left-color: var(--orange-500); }
-  /* When an agent JUST enters "needs you", flash its card from 50% red to clear in
-     1.2s. An overlay pseudo-element keeps the wash behind the row's content and
-     above its base (hover/sel) background; it ends fully transparent so there is no
-     snap back to normal. One-shot — the `.flash-attn` class is held only while it
-     runs (see `flashPanes`). */
+  /* When an agent JUST enters "needs you", flash its card from 50% of the orange
+     accent to clear in 2.5s. An overlay pseudo-element keeps the wash behind the
+     row's content and above its base (hover/sel) background; it ends fully
+     transparent so there is no snap back to normal. One-shot — the `.flash-attn`
+     class is held only while it runs (see `flashPanes` / `FLASH_MS`). */
   .row.flash-attn { position: relative; }
   .row.flash-attn > * { position: relative; z-index: 1; }
   .row.flash-attn::after {
@@ -1548,8 +1548,8 @@
     inset: 0;
     z-index: 0;
     pointer-events: none;
-    background: var(--abort-500);
-    animation: needsYouFlash 1.2s var(--ease-out) forwards;
+    background: var(--orange-500);
+    animation: needsYouFlash 2.5s var(--ease-out) forwards;
   }
   @keyframes needsYouFlash { from { opacity: 0.5; } to { opacity: 0; } }
   @media (prefers-reduced-motion: reduce) {
