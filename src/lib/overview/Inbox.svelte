@@ -369,17 +369,20 @@
   // Honor an INBOUND select request from outside the inbox — a clicked needs-input
   // notification (capability `alert-click-focus`). The always-mounted route writes
   // `focusRequest` from the activation event; we select that agent here through the
-  // normal `selectAgent` path. Gated on the nonce so a repeat click re-selects the
-  // same agent (and so this effect's other reactive reads don't re-fire it). A
-  // request for a pane no live row carries is ignored — the window is already
-  // focused by the route, matching the "dead pane → focus-only" behavior.
-  let lastFocusReqNonce = focusRequest.nonce;
+  // normal `selectAgent` path and CONSUME the request. The inbox mounts only in
+  // overview mode, so a click from grid view sets the request BEFORE this component
+  // exists; consuming a HELD request (rather than diffing a baseline captured at
+  // mount, which would already equal the just-issued request and swallow it) makes
+  // delivery independent of mount timing, and consuming prevents a stale request from
+  // re-firing on a later remount. A request for a pane no live row carries is consumed
+  // without selecting — the window is already focused by the route, matching the
+  // "dead pane → focus-only" behavior. (While idle, `paneId` is null and the effect
+  // returns before reading `viewRows`, so it does not re-run on every roster tick.)
   $effect(() => {
-    const nonce = focusRequest.nonce;
     const paneId = focusRequest.paneId;
-    if (nonce === lastFocusReqNonce) return;
-    lastFocusReqNonce = nonce;
-    if (paneId !== null && viewRows.some((r) => r.paneId === paneId)) {
+    if (paneId === null) return;
+    focusRequest.consume();
+    if (viewRows.some((r) => r.paneId === paneId)) {
       selectAgent(paneId);
     }
   });
