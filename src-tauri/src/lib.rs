@@ -3,6 +3,7 @@ pub mod claude_title;
 pub mod events;
 pub mod git;
 pub mod models;
+pub mod notify_click;
 pub mod orchestration;
 pub mod polish;
 pub mod pr;
@@ -1414,6 +1415,7 @@ pub fn run() {
             worktree_remove,
             events_for,
             orchestration_reply,
+            notify_click::notify_agent,
             transcribe::voice_transcribe_final,
             transcribe::voice_transcribe_stream,
             models::voice_download_models,

@@ -15,6 +15,7 @@ dependencies = [
  "block2",
  "futures-util",
  "log",
+ "mac-notification-sys",
  "notify",
  "objc2",
  "objc2-app-kit",

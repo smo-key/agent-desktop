@@ -75,3 +75,11 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSEvent"] }
 objc2-foundation = "0.3"
 block2 = "0.6"
+
+# Custom macOS notification path for clickable needs-input alerts (capability
+# `alert-click-focus`). The bundled notification plugin discards click events on
+# desktop, so on macOS we send via this crate (which notify_rust wraps) with
+# `wait_for_click(true)` to capture the body click and emit the alerting agent's
+# paneId back to the frontend. Already in the tree transitively via the plugin;
+# pinned here as a direct dep for the click-response API.
+mac-notification-sys = "0.6"
