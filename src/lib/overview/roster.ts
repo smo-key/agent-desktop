@@ -247,15 +247,17 @@ export interface PaneRuntime {
   /** The process exit code once exited, else null (and null for an unknown code). */
   exitCode: number | null;
   /**
-   * Whether Claude Code is ACTIVELY WORKING per a recent-terminal indicator that
-   * the event hooks miss (a foreground command running, or in-session background
-   * work — see `detectTerminalBusy`). Optional: absent/false means "no indicator",
-   * in which case status derivation is exactly as before this flag existed. The
-   * TerminalPane sets it via `noteBusy`; `rowFor` reads it the same channel as
-   * `exited`, to keep a LIVE non-coordinator agent In flight rather than Needs
-   * input while such work is in flight.
+   * Epoch ms of the LAST time a recent-terminal active-work indicator was observed
+   * (a foreground command running, or in-session background work — see
+   * `detectTerminalBusy`), or null/absent if never observed. The indicator is part
+   * of a continuously-redrawing TUI sampled per output chunk, so a single sample
+   * can momentarily miss an affordance that is still present; `rowFor` therefore
+   * treats the In-flight override as active while this timestamp is within
+   * `BUSY_GRACE_MS` of now, holding through a flicker instead of bouncing. The
+   * TerminalPane stamps it via `noteBusy` (only on a POSITIVE detection); a negative
+   * detection leaves it unchanged so the window lapses naturally once work ends.
    */
-  terminalBusy?: boolean;
+  terminalBusyAt?: number | null;
   /**
    * The pane's PREVIOUSLY-derived (final) status — the hysteresis memory for the
    * silence-based demotion. The Overview records each row's final status here after
@@ -330,6 +332,21 @@ export const WORKING_WINDOW_MS = 2500;
  * `WORKING_WINDOW_MS`.
  */
 export const IDLE_GRACE_MS = 10_000;
+
+/**
+ * Hold window (ms) for the active-work (terminalBusy) In-flight override. The
+ * active-work affordance is screen-scraped from a continuously-redrawing TUI on
+ * each PTY chunk and sampled by the ~1 s roster heartbeat, so the raw signal can
+ * flicker or briefly miss an affordance that is still present. The override is
+ * therefore held In flight while the LAST positive detection is within this
+ * window; a fresh detection re-arms it immediately (promotion stays responsive),
+ * and it lapses only after the affordance has been absent for the whole window.
+ * Tuned to comfortably exceed the 1 s heartbeat and typical spinner-redraw gaps
+ * while still returning a finished agent to its normal status within a few
+ * seconds. Distinct from `IDLE_GRACE_MS` (silence demotion) — different signal,
+ * shorter window.
+ */
+export const BUSY_GRACE_MS = 3000;
 
 /** One pane in a workspace, as the roster needs it (framework-free projection). */
 export interface RosterPane {
@@ -586,21 +603,30 @@ function rowFor(
   // TERMINAL-BUSY In-flight override (agent-status-derivation): Claude Code may be
   // actively working while its event hooks report idle — a foreground command
   // running in the terminal, or in-session background work (a dynamic workflow /
-  // another agent still running). The TerminalPane sets `runtime.terminalBusy` from
-  // `detectTerminalBusy` in that case. For a LIVE, NON-coordinator pane with NO
-  // pending AskUserQuestion, show it In flight (`working`) rather than Needs input,
-  // so it stays out of attention until the work finishes or the user interrupts it
-  // (the affordance disappears → terminalBusy clears → normal derivation resumes).
+  // another agent still running). The TerminalPane stamps `runtime.terminalBusyAt`
+  // from `detectTerminalBusy` on each positive detection. For a LIVE, NON-coordinator
+  // pane with NO pending AskUserQuestion, show it In flight (`working`) rather than
+  // Needs input, so it stays out of attention until the work finishes or the user
+  // interrupts it.
   //
-  // Strictly ADDITIVE and fail-safe: gated on terminalBusy === true, so when the
-  // flag is false/absent the result is byte-for-byte the prior derivation. The
-  // coordinator path is untouched (decided above by coordinatorNeedsInput), an
-  // exited/closed pane is never re-flagged working (a dead process is never
-  // working), and a pending question keeps Needs input regardless of any indicator.
+  // HYSTERESIS (fix-needs-you-bounce): the affordance is screen-scraped from a
+  // continuously-redrawing TUI per output chunk and sampled by the ~1 s heartbeat,
+  // so the raw signal flickers — a single sample can miss an affordance still
+  // present. Keying the override on the LAST positive detection within
+  // `BUSY_GRACE_MS` (rather than the instantaneous sample) holds In flight through a
+  // flicker, killing the ~1 Hz In-flight↔Needs-you bounce; a fresh detection re-arms
+  // it immediately and it lapses a few seconds after the affordance truly ends.
+  //
+  // Strictly ADDITIVE and fail-safe: with no detection ever (or once the window has
+  // lapsed) the result is byte-for-byte the prior derivation. The coordinator path is
+  // untouched (decided above by coordinatorNeedsInput), an exited/closed pane is never
+  // re-flagged working (a dead process is never working), and a pending question keeps
+  // Needs input regardless of any indicator.
   const hasPendingQuestion =
     question != null || (Array.isArray(questions) && questions.length > 0);
   if (
-    runtime?.terminalBusy === true &&
+    runtime?.terminalBusyAt != null &&
+    nowMs - runtime.terminalBusyAt <= BUSY_GRACE_MS &&
     pane.role !== 'coordinator' &&
     !closed &&
     !runtime.exited &&

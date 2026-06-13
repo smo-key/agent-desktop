@@ -45,15 +45,18 @@ export function noteExit(paneId: string, code: number | null): void {
 }
 
 /**
- * Record whether Claude Code is ACTIVELY WORKING in this pane per a recent-terminal
- * indicator the event hooks miss (a foreground command running, or in-session
- * background work — see `detectTerminalBusy`). The TerminalPane recomputes this from
- * the live xterm tail on each output chunk; `rowFor` reads it (the same channel as
- * `exited`) to keep a live non-coordinator agent In flight rather than Needs input.
- * Cheap: a single field write. Leaving it unset is treated as "no indicator".
+ * Record an active-work observation for this pane — a recent-terminal indicator the
+ * event hooks miss (a foreground command running, or in-session background work —
+ * see `detectTerminalBusy`). The TerminalPane recomputes the indicator from the live
+ * xterm tail on each output chunk and calls this with the result and the current
+ * time. A POSITIVE detection stamps `terminalBusyAt = nowMs`; a NEGATIVE detection
+ * leaves the timestamp UNCHANGED, so the In-flight override (`rowFor`) holds through
+ * the redrawing TUI's flicker and lapses only after `BUSY_GRACE_MS` of no detection
+ * (see `BUSY_GRACE_MS`). Cheap: at most a single field write. Never observed → unset
+ * → treated as "no indicator" (fail-safe).
  */
-export function noteBusy(paneId: string, busy: boolean): void {
-  entryFor(paneId).terminalBusy = busy;
+export function noteBusy(paneId: string, busy: boolean, nowMs: number): void {
+  if (busy) entryFor(paneId).terminalBusyAt = nowMs;
 }
 
 /**

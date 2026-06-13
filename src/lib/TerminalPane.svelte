@@ -575,13 +575,14 @@
           noteOutput(paneId, Date.now());
           // Re-detect the "actively working" affordance from the live terminal tail
           // (a foreground command running, or in-session background work) — the
-          // event hooks miss these, so the roster reads it via `runtime.terminalBusy`
-          // to keep the agent In flight rather than Needs input. The spinner line is
-          // re-rendered continuously while work runs, so per-chunk sampling tracks it
-          // closely and clears the instant the affordance disappears. `term.write`
-          // above is async; reading the buffer now reflects the PRIOR frame, which is
-          // fine for a persistent indicator (at worst a one-chunk lag).
-          noteBusy(paneId, detectTerminalBusy(recentTerminalText()));
+          // event hooks miss these, so the roster reads it via `runtime.terminalBusyAt`
+          // to keep the agent In flight rather than Needs input. Pass the current time:
+          // a POSITIVE detection stamps the timestamp; `rowFor` holds In flight while it
+          // is within `BUSY_GRACE_MS`, so the redrawing spinner's per-chunk flicker (and
+          // the 1 s heartbeat sampling) does not bounce the row. `term.write` above is
+          // async; reading the buffer now reflects the PRIOR frame (at worst a one-chunk
+          // lag), which the grace window also absorbs.
+          noteBusy(paneId, detectTerminalBusy(recentTerminalText()), Date.now());
           // First/each output byte (re)starts the readiness quiet window; the
           // gate delivers the initial prompt once output settles (TUI ready).
           readiness?.noteOutput();

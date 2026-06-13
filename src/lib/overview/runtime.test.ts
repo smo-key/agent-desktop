@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   clearRuntime,
   getRuntime,
+  noteBusy,
   noteExit,
   noteOutput,
   noteStatus,
@@ -65,6 +66,20 @@ describe('runtime registry', () => {
     // It is overwritten by the next recorded status.
     noteStatus('p1', 'waiting');
     expect(getRuntime('p1')!.lastStatus).toBe('waiting');
+  });
+
+  it('noteBusy stamps the last positive detection; a negative detection holds it (hysteresis)', () => {
+    const t1 = 8_000_000;
+    // A positive detection stamps terminalBusyAt.
+    noteBusy('p1', true, t1);
+    expect(getRuntime('p1')!.terminalBusyAt).toBe(t1);
+    // A later NEGATIVE detection leaves the timestamp unchanged (the override holds
+    // through a flickering/briefly-missed affordance instead of clearing instantly).
+    noteBusy('p1', false, t1 + 1_000);
+    expect(getRuntime('p1')!.terminalBusyAt).toBe(t1);
+    // A later POSITIVE detection re-arms it to the new time (promotion stays responsive).
+    noteBusy('p1', true, t1 + 2_000);
+    expect(getRuntime('p1')!.terminalBusyAt).toBe(t1 + 2_000);
   });
 
   it('noteStatus never resurrects an idle pane (no entry → stays idle)', () => {

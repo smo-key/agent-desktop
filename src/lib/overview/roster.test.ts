@@ -16,6 +16,7 @@ import {
   LANE_ORDER,
   WORKING_WINDOW_MS,
   IDLE_GRACE_MS,
+  BUSY_GRACE_MS,
   type AgentRow,
   type PaneRuntime,
   type RosterWorkspace,
@@ -878,15 +879,21 @@ describe('roster — coordinator needs-input suppression', () => {
 // In-flight vs Needs-input override (agent-status-derivation): when Claude Code is
 // actively working but its event hooks report idle, a LIVE non-coordinator pane with
 // NO pending question is shown In flight (`working`) rather than Needs input. The
-// signal is the per-pane `terminalBusy` runtime flag (set from detectTerminalBusy).
-// The override is strictly additive: terminalBusy false/absent → exactly the prior
-// derivation; it never applies to the coordinator or to a pending-question row.
+// signal is the per-pane `terminalBusyAt` timestamp (the last positive
+// detectTerminalBusy observation); the override holds while that timestamp is within
+// `BUSY_GRACE_MS` of now (hysteresis — fix-needs-you-bounce), so a flickering /
+// briefly-missed affordance does not bounce the row. The override is strictly
+// additive: timestamp absent or older than the window → exactly the prior derivation;
+// it never applies to the coordinator or to a pending-question row.
 describe('roster — terminal-busy In-flight override', () => {
   const now = 1_000_000;
   // PTY alive and quiet PAST the working window → the byte heuristic alone reads
   // `waiting` (the Needs-input state the override must correct when busy).
   const quiet = (over: Partial<PaneRuntime> = {}): [string, PaneRuntime] =>
     rt('p', { lastOutputAt: now - WORKING_WINDOW_MS - 5_000, ...over });
+  // A FRESH busy observation (this tick): timestamp == now, well within BUSY_GRACE_MS.
+  const busyNow = (over: Partial<PaneRuntime> = {}): [string, PaneRuntime] =>
+    quiet({ terminalBusyAt: now, ...over });
   const normalWs: RosterWorkspace = {
     id: 'w1',
     name: 'N',
@@ -896,28 +903,52 @@ describe('roster — terminal-busy In-flight override', () => {
   // Scenario 1: a foreground command running (terminal shows the interrupt /
   // run-in-background affordance) → In flight, not Needs input.
   it('foreground-run busy → working (would otherwise be waiting)', () => {
-    const runtime = runtimeOf(quiet({ terminalBusy: true }));
+    const runtime = runtimeOf(busyNow());
     const [row] = buildRoster({}, [normalWs], runtime, now);
     expect(row.status).toBe('working');
     expect(needsAttention(row)).toBe(false);
   });
 
   // Scenario 3: the main turn returned but a dynamic workflow / another agent is
-  // still running. Same channel (terminalBusy true) → In flight. (The distinction
+  // still running. Same channel (terminalBusyAt fresh) → In flight. (The distinction
   // between the two affordances lives in detectTerminalBusy; here the override is
   // the same: a busy live pane stays working.)
   it('background-workflow busy → working even when an event status says waiting', () => {
-    const runtime = runtimeOf(quiet({ terminalBusy: true }));
+    const runtime = runtimeOf(busyNow());
     const [row] = buildRoster({}, [normalWs], runtime, now, {}, WORKING_WINDOW_MS, {
       p: { status: 'waiting', currentAction: null, question: null, questions: null }
     });
     expect(row.status).toBe('working');
   });
 
+  // HYSTERESIS (fix-needs-you-bounce): a momentary missed detection does not bounce.
+  // The affordance was last seen part-way through the grace window (this tick's scrape
+  // missed it), but the timestamp is still within BUSY_GRACE_MS → held In flight.
+  it('a momentary missed detection does not bounce the agent', () => {
+    // Last positive detection was BUSY_GRACE_MS - 1 ms ago: still within the window,
+    // even though `now` did not refresh it (the current scrape missed the affordance).
+    const runtime = runtimeOf(quiet({ terminalBusyAt: now - (BUSY_GRACE_MS - 1) }));
+    const [row] = buildRoster({}, [normalWs], runtime, now, {}, WORKING_WINDOW_MS, {
+      p: { status: 'waiting', currentAction: null, question: null, questions: null }
+    });
+    expect(row.status).toBe('working');
+  });
+
+  // HYSTERESIS lapse: once the affordance has been absent for the whole grace window
+  // (timestamp older than BUSY_GRACE_MS), the override releases and the row returns to
+  // its normally-derived status (here the stale event `waiting`).
+  it('status returns to normal a grace window after the command ends', () => {
+    const runtime = runtimeOf(quiet({ terminalBusyAt: now - (BUSY_GRACE_MS + 1) }));
+    const [row] = buildRoster({}, [normalWs], runtime, now, {}, WORKING_WINDOW_MS, {
+      p: { status: 'waiting', currentAction: null, question: null, questions: null }
+    });
+    expect(row.status).toBe('waiting');
+  });
+
   // Scenario 4: a pending AskUserQuestion → Needs input REGARDLESS of any
   // active-work indicator. The override must not apply when a question is pending.
   it('pending question → still waiting despite terminalBusy', () => {
-    const runtime = runtimeOf(quiet({ terminalBusy: true }));
+    const runtime = runtimeOf(busyNow());
     const [row] = buildRoster({}, [normalWs], runtime, now, {}, WORKING_WINDOW_MS, {
       p: { status: 'waiting', currentAction: null, question: 'pick one?', questions: null }
     });
@@ -926,7 +957,7 @@ describe('roster — terminal-busy In-flight override', () => {
   });
 
   it('pending structured questions → still waiting despite terminalBusy', () => {
-    const runtime = runtimeOf(quiet({ terminalBusy: true }));
+    const runtime = runtimeOf(busyNow());
     const [row] = buildRoster({}, [normalWs], runtime, now, {}, WORKING_WINDOW_MS, {
       p: {
         status: 'waiting',
@@ -939,15 +970,9 @@ describe('roster — terminal-busy In-flight override', () => {
   });
 
   // Scenario 5: no indicator present → status derived EXACTLY as before. A quiet
-  // pane with terminalBusy absent/false stays `waiting`.
-  it('no indicator (terminalBusy absent) → unchanged (waiting)', () => {
+  // pane with terminalBusyAt absent stays `waiting`.
+  it('no indicator (terminalBusyAt absent) → unchanged (waiting)', () => {
     const runtime = runtimeOf(quiet());
-    const [row] = buildRoster({}, [normalWs], runtime, now);
-    expect(row.status).toBe('waiting');
-  });
-
-  it('terminalBusy explicitly false → unchanged (waiting)', () => {
-    const runtime = runtimeOf(quiet({ terminalBusy: false }));
     const [row] = buildRoster({}, [normalWs], runtime, now);
     expect(row.status).toBe('waiting');
   });
@@ -955,7 +980,7 @@ describe('roster — terminal-busy In-flight override', () => {
   // The override is gated on a LIVE process: an exited pane is never re-flagged
   // working (a dead process is never working — mirrors the exit rule).
   it('exited pane is finished even if terminalBusy lingers', () => {
-    const runtime = runtimeOf(rt('p', { exited: true, exitCode: 0, terminalBusy: true }));
+    const runtime = runtimeOf(rt('p', { exited: true, exitCode: 0, terminalBusyAt: now }));
     const [row] = buildRoster({}, [normalWs], runtime, now);
     expect(row.status).toBe('finished');
   });
@@ -970,7 +995,7 @@ describe('roster — terminal-busy In-flight override', () => {
       name: 'C',
       panes: [{ paneId: 'p', cwd: '/x', isApp: true, role: 'coordinator', projectId: 'A' }]
     };
-    const runtime = runtimeOf(quiet({ terminalBusy: true }));
+    const runtime = runtimeOf(busyNow());
     const [row] = buildRoster({}, [coordWs], runtime, now, {}, WORKING_WINDOW_MS, {
       p: { status: 'waiting', currentAction: null, question: null, questions: null, everPrompted: true }
     });
