@@ -51,17 +51,22 @@ jobs:
         with:
           node-version: 20
 
-      # Skip-ci / release-commit guard. GitHub Actions does NOT honor [skip ci]
-      # natively on push, so we guard here: the version-sync commit (which carries
-      # [skip ci] and a chore(release): subject) must NOT start another release.
+      # Skip-ci guard. GitHub Actions does NOT honor [skip ci] natively on push,
+      # so we guard here: the version-sync commit (which carries [skip ci]) must
+      # NOT start another release. We deliberately match ONLY [skip ci], not the
+      # `chore(release):` subject — a hand-authored `chore(release): …` commit
+      # (without [skip ci]) is allowed to drive a release. Loop safety for the
+      # gate's own sync commit still holds via two independent layers: it carries
+      # [skip ci] (caught here), and release-gate.sh refuses to re-release once
+      # tag v<version> exists (idempotency backstop).
       - name: Skip-ci guard
         id: skipci
         run: |
           MSG="$(git log -1 --pretty=%B)"
           echo "head commit subject: $(git log -1 --pretty=%s)"
-          if printf '%s' "$MSG" | grep -qE '\[skip ci\]|^chore\(release\):'; then
+          if printf '%s' "$MSG" | grep -qE '\[skip ci\]'; then
             echo "skip=true" >>"$GITHUB_OUTPUT"
-            echo "Head commit is a release/skip-ci commit; will not release."
+            echo "Head commit carries [skip ci]; will not release."
           else
             echo "skip=false" >>"$GITHUB_OUTPUT"
           fi

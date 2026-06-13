@@ -28,7 +28,7 @@
 ## 5. Release workflow
 
 - [x] 5.1 Create `.github/workflows/release.yml` triggered on `push: main` and `workflow_dispatch` (with a publish/no-publish input), with `permissions: contents: write`.
-- [x] 5.2 Implement the `gate` job: run version-bump detection (4.2); when releasing, run version sync (4.1) + `CHANGELOG.md` regen (2.x), commit `chore(release): v<version> [skip ci]` to `main`, create + push annotated tag `v<version>`. (Includes a skip-ci/`chore(release):` head-commit guard so the sync commit cannot loop.)
+- [x] 5.2 Implement the `gate` job: run version-bump detection (4.2); when releasing, run version sync (4.1) + `CHANGELOG.md` regen (2.x), commit `chore(release): v<version> [skip ci]` to `main`, create + push annotated tag `v<version>`. (Includes a `[skip ci]` head-commit guard so the sync commit cannot loop; a hand-authored `chore(release):` commit without `[skip ci]` is allowed to drive a release, with the tag-idempotency check in `release-gate.sh` as the loop backstop.)
 - [x] 5.3 Implement the build matrix (`fail-fast: false`) over the five targets with correct runners (`macos-14`, `macos-13`, `windows-latest`, `ubuntu-22.04`, `ubuntu-22.04-arm`); set up Node, Rust (target triple), and on Linux install the Tauri system deps (webkit2gtk, gtk, librsvg, appindicator, patchelf, cmake/build-essential).
 - [x] 5.4 Add Cargo + sidecar caching keyed on `Cargo.lock` + target triple + pinned whisper/llama tags.
 - [x] 5.5 In each build job: provision sidecars (section 1) + model, run `yarn check:gate`, then build/bundle via `tauri-action` (or Tauri CLI) producing the platform installers. (Updater-bundle signing env is wired forward-compatibly; actual signed update bundles emit once the updater plugin is configured in task 3.x.)
