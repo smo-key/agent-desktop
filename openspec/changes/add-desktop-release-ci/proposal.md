@@ -19,10 +19,12 @@ lets the app update itself.
   `Cargo.lock`, commits the sync back to `main` (with `[skip ci]`), and creates +
   pushes an annotated tag `v<version>` on that commit. Re-running never
   re-releases an existing tag (idempotent).
-- **Five-target build matrix.** Each release builds, on its native runner:
-  macOS arm64 (`aarch64-apple-darwin`), macOS Intel (`x86_64-apple-darwin`),
+- **Four-target build matrix.** Each release builds, on its native runner:
+  macOS arm64 (`aarch64-apple-darwin`),
   Windows x86_64 (`x86_64-pc-windows-msvc`), Linux x86_64
   (`x86_64-unknown-linux-gnu`), and Linux arm64 (`aarch64-unknown-linux-gnu`).
+  macOS Intel (`x86_64-apple-darwin`) is excluded — its only runner, `macos-13`,
+  is being retired by GitHub, and Apple-Silicon builds plus Rosetta cover Intel.
 - **Cross-platform sidecar provisioning.** The `fetch-whisper.sh`,
   `fetch-llama.sh`, and `fetch-models.sh` scripts gain host-OS/arch detection so
   each runner natively builds `whisper-cli`, `whisper-server`, and `llama-server`
@@ -36,7 +38,7 @@ lets the app update itself.
   `cliff.toml`) generates grouped release notes (Features / Fixes / etc.) from the
   conventional commits since the previous tag. CI maintains a committed
   `CHANGELOG.md` and uses the same notes as the GitHub Release body.
-- **One GitHub Release per version**, with all five platforms' installers
+- **One GitHub Release per version**, with all four platforms' installers
   (`.dmg`, `.msi`/NSIS `.exe`, `.deb`/AppImage) attached.
 - **In-app auto-update.** Adds the Tauri updater plugin and an update-signing
   keypair (in secrets); CI emits and attaches the signed update bundles +

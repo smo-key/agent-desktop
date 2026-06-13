@@ -3,7 +3,7 @@ name: Release
 # Releases on a version bump to main: when package.json's version is higher than
 # the latest v* tag, the gate job syncs the manifests, regenerates CHANGELOG.md,
 # commits `chore(release): v<version> [skip ci]`, tags v<version>, and the build
-# matrix produces + publishes signed installers for all five targets to a single
+# matrix produces + publishes signed installers for all four targets to a single
 # GitHub Release.
 #
 # A manual workflow_dispatch (force_publish) can drive a build for testing.
@@ -42,14 +42,14 @@ jobs:
       tag: ${{ steps.decide.outputs.tag }}
     steps:
       - name: Checkout (full history + tags)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
 
       # Skip-ci guard. GitHub Actions does NOT honor [skip ci] natively on push,
       # so we guard here: the version-sync commit (which carries [skip ci]) must
@@ -134,7 +134,7 @@ jobs:
 
       - name: Upload release notes artifact
         if: steps.decide.outputs.should_release == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-notes
           path: RELEASE_NOTES.md
@@ -151,13 +151,13 @@ jobs:
       release_id: ${{ steps.create.outputs.result }}
     steps:
       - name: Download release notes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-notes
 
       - name: Create draft release
         id: create
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           TAG: ${{ needs.gate.outputs.tag }}
         with:
@@ -189,8 +189,6 @@ jobs:
         include:
           - runner: macos-14
             triple: aarch64-apple-darwin
-          - runner: macos-13
-            triple: x86_64-apple-darwin
           # Pin to windows-2022 (Visual Studio 2022). `windows-latest` moved to
           # the windows-2025 image, which ships Visual Studio 2026 — the sidecar
           # cmake invocations request the "Visual Studio 17 2022" generator and
@@ -208,14 +206,14 @@ jobs:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.gate.outputs.tag }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
           cache: yarn
 
       # Fail fast with a clear message rather than a cryptic `tauri build` error:
@@ -251,7 +249,7 @@ jobs:
             build-essential
 
       - name: Cache cargo + target
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -265,7 +263,7 @@ jobs:
       # the expensive from-source build only reruns when a pin or triple changes.
       - name: Cache sidecars
         id: sidecar-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: src-tauri/binaries
           key: sidecars-${{ matrix.triple }}-w${{ env.WHISPER_TAG }}-l${{ env.LLAMA_TAG }}-${{ hashFiles('scripts/fetch-whisper.sh', 'scripts/fetch-llama.sh', 'scripts/lib/target-triple.sh') }}
@@ -337,7 +335,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Publish (undraft) the release
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
         with:

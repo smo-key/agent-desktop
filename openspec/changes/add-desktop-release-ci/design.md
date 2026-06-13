@@ -11,7 +11,7 @@ bash scripts, and signing/notarization is already env-var driven (CI-ready) via
 `.github/` directory. The repo uses conventional commits.
 
 This design covers a GitHub Actions pipeline that releases on version bump,
-across five OS/arch targets, signed + notarized where applicable, with a
+across four OS/arch targets, signed + notarized where applicable, with a
 conventional-commit changelog and in-app auto-update.
 
 ## Goals / Non-Goals
@@ -21,7 +21,7 @@ conventional-commit changelog and in-app auto-update.
   multi-platform GitHub Release.
 - `package.json` is the single source of version truth; the other manifests are
   derived by CI.
-- Real, voice-capable builds on all five targets (sidecars built per OS/arch).
+- Real, voice-capable builds on all four targets (sidecars built per OS/arch).
 - Signed + notarized macOS builds from CI secrets, with a graceful unsigned
   fallback so forks/PRs still build.
 - Grouped release notes + maintained `CHANGELOG.md` from conventional commits.
@@ -68,11 +68,10 @@ the user's choice for CI auto-sync. Building straight from the pushed commit
 without a tag — rejected because the GitHub Release and updater endpoint key off
 `v<version>`.
 
-### 3. Build matrix (five native runners)
+### 3. Build matrix (four native runners)
 | Target triple | Runner | Bundles |
 |---|---|---|
 | `aarch64-apple-darwin` | `macos-14` | `.dmg`, `.app`, updater `.app.tar.gz` |
-| `x86_64-apple-darwin` | `macos-13` | `.dmg`, `.app`, updater `.app.tar.gz` |
 | `x86_64-pc-windows-msvc` | `windows-2022` | `.msi`, NSIS `.exe`, updater `.nsis.zip` |
 | `x86_64-unknown-linux-gnu` | `ubuntu-22.04` | `.deb`, AppImage, updater `.AppImage.tar.gz` |
 | `aarch64-unknown-linux-gnu` | `ubuntu-22.04-arm` | `.deb`, AppImage, updater `.AppImage.tar.gz` |
@@ -162,7 +161,7 @@ build-from-source only reruns when the pin or toolchain changes.
   protection exception for the release bot, and make the sync commit idempotent.
 - **Release loop from the sync commit** → mitigated by `[skip ci]` *and* the
   tag-existence/version-greater idempotency guard (belt and suspenders).
-- **Slow first builds** (whisper + llama from source on five runners) →
+- **Slow first builds** (whisper + llama from source on four runners) →
   mitigated by caching keyed on the pinned tags; first run is slow, steady state
   is fast. CI minutes on macOS/arm runners cost more — accepted.
 - **Sidecar build breakage on a new OS** (MSVC quirks, Linux arm64) → highest on

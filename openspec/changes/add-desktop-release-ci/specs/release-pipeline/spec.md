@@ -60,11 +60,14 @@ On a release run, the pipeline SHALL set the version in
 
 ### Requirement: Multi-platform build matrix
 
-The pipeline SHALL build the app natively for five targets — `aarch64-apple-darwin`,
-`x86_64-apple-darwin`, `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`, and
+The pipeline SHALL build the app natively for four targets — `aarch64-apple-darwin`,
+`x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`, and
 `aarch64-unknown-linux-gnu` — each on a runner of its own architecture, with
 `fail-fast` disabled so one target's failure does not cancel the others. Linux
-runners SHALL install the Tauri system dependencies before building.
+runners SHALL install the Tauri system dependencies before building. (The macOS
+Intel target `x86_64-apple-darwin` is intentionally excluded: it requires the
+`macos-13` Intel runner, which GitHub is retiring, and Apple-Silicon `.dmg`s
+plus Rosetta cover Intel Macs.)
 
 #### Scenario: All targets build their native installers
 
