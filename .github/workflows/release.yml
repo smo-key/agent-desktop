@@ -22,11 +22,13 @@ on:
 permissions:
   contents: write
 
-# Pinned upstream source tags for the sidecars, mirrored from scripts/fetch-*.sh.
-# Used only as cache-key inputs so a cache is reused until the pin changes.
+# Pinned upstream source tags for the sidecars. These are passed into the
+# provision step AND used as cache-key inputs, so the from-source build is
+# reproducible and a cache is reused until the pin changes. LLAMA_TAG must be a
+# concrete tag (not a moving branch like `master`) for both to hold.
 env:
   WHISPER_TAG: v1.7.4
-  LLAMA_TAG: master
+  LLAMA_TAG: b4000
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -133,10 +135,48 @@ jobs:
           path: RELEASE_NOTES.md
 
   # ---------------------------------------------------------------------------
-  # build: native build matrix; runs only when gate decided to release.
+  # create-release: make ONE draft Release up front so the parallel matrix jobs
+  # upload to a known release id instead of racing to create it.
+  # ---------------------------------------------------------------------------
+  create-release:
+    needs: gate
+    if: needs.gate.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.result }}
+    steps:
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+
+      - name: Create draft release
+        id: create
+        uses: actions/github-script@v7
+        env:
+          TAG: ${{ needs.gate.outputs.tag }}
+        with:
+          result-encoding: string
+          script: |
+            const fs = require('fs');
+            let body = '';
+            try { body = fs.readFileSync('RELEASE_NOTES.md', 'utf8'); } catch (e) {}
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: process.env.TAG,
+              name: process.env.TAG,
+              body,
+              draft: true,
+              prerelease: false,
+            });
+            return data.id;
+
+  # ---------------------------------------------------------------------------
+  # build: native build matrix; uploads to the draft release created above.
   # ---------------------------------------------------------------------------
   build:
-    needs: gate
+    needs: [gate, create-release]
     if: needs.gate.outputs.should_release == 'true'
     strategy:
       fail-fast: false
@@ -153,6 +193,10 @@ jobs:
           - runner: ubuntu-22.04-arm
             triple: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
+    # Job-level so the unsigned-build warning's `if:` can read it (step-level env
+    # is NOT in scope during that step's own `if:` evaluation).
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v4
@@ -163,23 +207,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      # Pull the git-cliff release notes the gate job produced, into a step
-      # output for the Release body.
-      - name: Download release notes
-        uses: actions/download-artifact@v4
-        with:
-          name: release-notes
-
-      - name: Read release notes
-        id: notes
-        shell: bash
-        run: |
-          {
-            echo "body<<RELEASE_NOTES_EOF"
-            cat RELEASE_NOTES.md
-            echo "RELEASE_NOTES_EOF"
-          } >>"$GITHUB_OUTPUT"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -229,6 +256,8 @@ jobs:
         shell: bash
         env:
           TARGET_TRIPLE: ${{ matrix.triple }}
+          WHISPER_TAG: ${{ env.WHISPER_TAG }}
+          LLAMA_TAG: ${{ env.LLAMA_TAG }}
         run: |
           ./scripts/fetch-whisper.sh
           ./scripts/fetch-llama.sh
@@ -244,8 +273,6 @@ jobs:
       # producing an unsigned-but-successful build.
       - name: Warn on unsigned macOS build
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE == ''
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
         run: |
           echo "::warning::APPLE_CERTIFICATE secret is empty; macOS artifact will be UNSIGNED (fork/PR fallback)."
 
@@ -272,11 +299,29 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          # Attach every target's installers (+ updater artifacts once enabled)
-          # to the single Release v<version>; tauri-action creates-or-updates it.
-          tagName: ${{ needs.gate.outputs.tag }}
-          releaseName: ${{ needs.gate.outputs.tag }}
-          releaseBody: ${{ steps.notes.outputs.body }}
-          releaseDraft: false
-          prerelease: false
+          # Upload every target's installers (+ updater artifacts once enabled)
+          # to the single draft Release created by the create-release job. Using
+          # releaseId (not tagName) avoids the parallel-create race.
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: --target ${{ matrix.triple }}
+
+  # ---------------------------------------------------------------------------
+  # publish-release: flip the draft to published once every matrix leg uploaded.
+  # ---------------------------------------------------------------------------
+  publish-release:
+    needs: [gate, create-release, build]
+    if: needs.gate.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish (undraft) the release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: Number(process.env.RELEASE_ID),
+              draft: false,
+            });

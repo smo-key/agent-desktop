@@ -106,8 +106,11 @@ else
 fi
 
 # --- 3. Cargo.lock -----------------------------------------------------------
-# Keep the lockfile's agent-desktop entry in step. Prefer cargo (authoritative);
-# fall back to a warning if cargo is unavailable (CI always has it).
+# Keep the lockfile's own `agent-desktop` package entry in step. We edit the
+# entry DIRECTLY rather than via `cargo update --precise`: agent-desktop is the
+# local workspace crate (unpublished), and `--precise <ver>` to an unpublished
+# version errors ("not found in registry"). A direct edit is deterministic and
+# needs no cargo; the next `cargo build` accepts a lock that matches Cargo.toml.
 CUR_LOCK=""
 if [[ -f "$CARGO_LOCK" ]]; then
   CUR_LOCK="$(awk '
@@ -120,21 +123,27 @@ fi
 if [[ "$CUR_LOCK" == "$VERSION" ]]; then
   echo "✓ Cargo.lock already at $VERSION"
 elif [[ "$DRY_RUN" == "1" ]]; then
-  echo "  Cargo.lock: ${CUR_LOCK:-<unknown>} -> $VERSION (via 'cargo update -p agent-desktop --precise $VERSION')"
-elif command -v cargo >/dev/null 2>&1; then
-  echo "  Cargo.lock: ${CUR_LOCK:-<unknown>} -> $VERSION (cargo update)"
-  # Run inside src-tauri so cargo finds the manifest. --offline avoids network;
-  # the package is local so no registry fetch is needed for a precise bump. If
-  # the offline attempt fails, retry without --offline.
-  (
-    cd "$ROOT_DIR/src-tauri"
-    if ! cargo update -p agent-desktop --precise "$VERSION" --offline 2>/dev/null; then
-      cargo update -p agent-desktop --precise "$VERSION"
-    fi
-  )
+  echo "  Cargo.lock: ${CUR_LOCK:-<unknown>} -> $VERSION (direct edit of the agent-desktop entry)"
+elif [[ -f "$CARGO_LOCK" ]]; then
+  echo "  Cargo.lock: ${CUR_LOCK:-<unknown>} -> $VERSION"
+  # Replace the version on the `agent-desktop` [[package]] block only (its
+  # `name` line is immediately followed by `version` in Cargo.lock).
+  # shellcheck disable=SC2016  # ${v} is a JS template literal, not shell
+  node -e '
+    const fs = require("fs");
+    const [p, v] = process.argv.slice(1);
+    const src = fs.readFileSync(p, "utf8");
+    const out = src.replace(
+      /(\[\[package\]\]\nname = "agent-desktop"\nversion = )"[^"]*"/,
+      `$1"${v}"`
+    );
+    if (out === src) {
+      console.error("  WARNING: agent-desktop entry not found in Cargo.lock; left unchanged");
+    }
+    fs.writeFileSync(p, out);
+  ' "$CARGO_LOCK" "$VERSION"
 else
-  echo "  WARNING: cargo not found; leaving Cargo.lock unchanged" >&2
-  echo "           (CI has cargo; the lock will be synced there)." >&2
+  echo "  WARNING: $CARGO_LOCK not found; skipping lockfile sync" >&2
 fi
 
 echo ""
