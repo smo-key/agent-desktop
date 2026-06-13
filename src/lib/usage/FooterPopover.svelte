@@ -62,10 +62,10 @@
 
   // ── Keyboard handler ──────────────────────────────────────────────────────
   // Bound at the window level (see <svelte:window> below) so Escape closes the
-  // popover regardless of where focus is. On open the panel autofocuses its first
-  // focusable control (use:autofocus within), but a row can be clicked/blurred and
-  // focus moved out, so a panel-local handler alone wouldn't suffice. Guarded by
-  // `open` so closed instances are inert.
+  // popover regardless of where focus is. On open the body autofocuses its first
+  // focusable row (use:autofocus within), but the body may have no focusable row
+  // (empty/loading) so focus can sit outside the panel — a panel-local handler
+  // alone wouldn't suffice. Guarded by `open` so closed instances are inert.
   function onKeyDown(e: KeyboardEvent) {
     if (!open) return;
     if (e.key === 'Escape') {
@@ -96,7 +96,6 @@
     role="dialog"
     aria-modal="true"
     tabindex="-1"
-    use:autofocus={{ within: true }}
   >
     {#if title}
       <div class="fp-title">
@@ -104,7 +103,12 @@
       </div>
     {/if}
 
-    <div class="fp-body">
+    <!-- Autofocus the body (not the whole panel) so focus lands on the first
+         navigational row and NEVER on the pinned action button below — a stray
+         Enter must not fire a consequential commit/push. When the body has no
+         focusable row (empty/loading, or a non-GitHub push list), nothing is
+         focused and focus stays on the trigger. -->
+    <div class="fp-body" use:autofocus={{ within: true }}>
       {@render body()}
     </div>
 
