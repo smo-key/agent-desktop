@@ -49,7 +49,7 @@
     rowSub as rowSubText
   } from './inbox';
   import { toRosterWorkspaces, toNavWorkspaces } from './rosterInputs';
-  import { runtimeMap } from './runtime';
+  import { noteStatus, runtimeMap } from './runtime';
   import { navigateTarget } from './navigate';
   import { focusAgent } from './focusAgent.svelte';
   import { focusRequest } from './focusRequest.svelte';
@@ -167,6 +167,12 @@
   $effect(() => {
     for (const r of allRows) {
       if (r.role === 'coordinator') coordinatorNeedsInput.clearOnWorking(r.paneId, r.status);
+      // Record each row's FINAL (post-override) status as the hysteresis memory for the
+      // next derivation: a pane shown `working` holds In flight through a brief silence
+      // instead of bouncing to `waiting` (see deriveStatus / IDLE_GRACE_MS). The runtime
+      // registry is non-reactive, so this write does not retrigger the roster recompute;
+      // `rowFor` reads the value recorded on the previous tick.
+      noteStatus(r.paneId, r.status);
     }
   });
   const rows = $derived(filterRowsByProject(allRows, projectFilter.selected));

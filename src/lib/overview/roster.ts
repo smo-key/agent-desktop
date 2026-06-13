@@ -256,6 +256,15 @@ export interface PaneRuntime {
    * input while such work is in flight.
    */
   terminalBusy?: boolean;
+  /**
+   * The pane's PREVIOUSLY-derived (final) status — the hysteresis memory for the
+   * silence-based demotion. The Overview records each row's final status here after
+   * every roster rebuild (`noteStatus`); `deriveStatus` reads it as `prevStatus` so a
+   * pane already shown `working` holds In flight through a brief silence (see
+   * `IDLE_GRACE_MS`) instead of bouncing to `waiting`. Optional: absent means "no
+   * prior status", in which case derivation is the single-window behavior (fail-safe).
+   */
+  lastStatus?: AgentStatus;
 }
 
 /** The live `pane_id -> runtime` map the Overview feeds into `buildRoster`. */
@@ -308,6 +317,19 @@ export type ActivityMap = Record<string, RowActivity>;
  * `waiting` promptly.
  */
 export const WORKING_WINDOW_MS = 2500;
+
+/**
+ * Demotion hysteresis window (ms). PROMOTION to `working` stays responsive at
+ * `WORKING_WINDOW_MS` (output within it → working), but an agent ALREADY shown
+ * `working` holds that status through continued silence until THIS longer window
+ * elapses before silence alone demotes it to `waiting`. This kills the
+ * `working ↔ waiting` bounce for a quiet-but-active agent (thinking, or a long
+ * non-streaming tool): it stays In flight as long as it produces output at least
+ * this often, and only a sustained idle gap reads Needs input. Any new output
+ * resets the silence measurement, so re-promotion is immediate. Must exceed
+ * `WORKING_WINDOW_MS`.
+ */
+export const IDLE_GRACE_MS = 10_000;
 
 /** One pane in a workspace, as the roster needs it (framework-free projection). */
 export interface RosterPane {
@@ -467,7 +489,8 @@ function finiteOrNull(value: unknown): number | null {
 export function deriveStatus(
   runtime: PaneRuntime | undefined,
   nowMs: number,
-  workingWindowMs: number = WORKING_WINDOW_MS
+  workingWindowMs: number = WORKING_WINDOW_MS,
+  prevStatus?: AgentStatus
 ): AgentStatus {
   if (!runtime) return 'idle';
   if (runtime.exited) {
@@ -475,7 +498,16 @@ export function deriveStatus(
     return code !== null && code !== 0 ? 'error' : 'finished';
   }
   if (runtime.lastOutputAt === null) return 'working';
-  return nowMs - runtime.lastOutputAt <= workingWindowMs ? 'working' : 'waiting';
+  const silent = nowMs - runtime.lastOutputAt;
+  // Responsive promote: recent output → working.
+  if (silent <= workingWindowMs) return 'working';
+  // Demotion hysteresis: a pane that was ALREADY working holds In flight through
+  // continued silence until the longer idle-grace window elapses, so a quiet-but-
+  // active agent does not bounce working↔waiting. The hold applies ONLY to a pane
+  // that was working (a settled `waiting` pane is not re-promoted); with no prior
+  // status (`undefined`) this branch is skipped → single-window behavior (fail-safe).
+  if (prevStatus === 'working' && silent <= IDLE_GRACE_MS) return 'working';
+  return 'waiting';
 }
 
 /** The last path segment of a cwd (e.g. `/home/u/parser` -> `parser`), or null. */
@@ -514,7 +546,9 @@ function rowFor(
   // Status precedence: a process exit is AUTHORITATIVE (a dead process is never
   // "working"); otherwise the event-sourced status wins; the PTY-byte heuristic is
   // the fallback only when events haven't determined a status (or none arrived).
-  const ptyStatus = deriveStatus(runtime, nowMs, workingWindowMs);
+  // `runtime.lastStatus` (the pane's previously-shown final status, recorded by the
+  // Overview after each rebuild) drives the silence-demotion hysteresis in deriveStatus.
+  const ptyStatus = deriveStatus(runtime, nowMs, workingWindowMs, runtime?.lastStatus);
   // A CLOSED (Completed) agent is always `finished` (Completed lane), regardless of
   // how its PTY exited — overrides the exit-code/event-derived status.
   const closed = pane.closed === true;

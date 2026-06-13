@@ -15,6 +15,7 @@ import {
   archivedPaneIds,
   LANE_ORDER,
   WORKING_WINDOW_MS,
+  IDLE_GRACE_MS,
   type AgentRow,
   type PaneRuntime,
   type RosterWorkspace,
@@ -341,6 +342,109 @@ describe('roster — Agent status heuristic', () => {
 
     // No runtime at all (pane not wired yet) => idle.
     expect(deriveStatus(undefined, now)).toBe('idle');
+  });
+});
+
+describe('roster — silence does not bounce a working agent (demotion hysteresis)', () => {
+  const now = 1_000_000; // epoch ms
+  const live = (silentMs: number): PaneRuntime => ({
+    lastOutputAt: now - silentMs,
+    exited: false,
+    exitCode: null
+  });
+
+  it('A working agent holds In flight through silence within the idle-grace band', () => {
+    // Quiet past the short working window but within the longer idle-grace window:
+    // a pane that WAS working stays working (no bounce to Needs input).
+    const silent = WORKING_WINDOW_MS + 1_000;
+    expect(silent).toBeLessThan(IDLE_GRACE_MS);
+    expect(deriveStatus(live(silent), now, WORKING_WINDOW_MS, 'working')).toBe('working');
+    // The band is inclusive at the idle-grace boundary.
+    expect(deriveStatus(live(IDLE_GRACE_MS), now, WORKING_WINDOW_MS, 'working')).toBe('working');
+  });
+
+  it('Confirmed idle past the idle-grace window reads Needs input', () => {
+    expect(deriveStatus(live(IDLE_GRACE_MS + 1), now, WORKING_WINDOW_MS, 'working')).toBe('waiting');
+  });
+
+  it('New output re-promotes immediately regardless of prior status', () => {
+    expect(deriveStatus(live(100), now, WORKING_WINDOW_MS, 'waiting')).toBe('working');
+  });
+
+  it('A settled waiting pane is not re-promoted by the hold', () => {
+    // prevStatus 'waiting' + quiet past the short window stays waiting (the hold
+    // only applies to a pane that was working).
+    expect(deriveStatus(live(WORKING_WINDOW_MS + 1), now, WORKING_WINDOW_MS, 'waiting')).toBe(
+      'waiting'
+    );
+  });
+
+  it('No recorded prior status falls back to the single-window behavior (fail-safe)', () => {
+    // Exactly the pre-change result at the boundary: <= window working, > window waiting.
+    expect(deriveStatus(live(WORKING_WINDOW_MS), now, WORKING_WINDOW_MS, undefined)).toBe('working');
+    expect(deriveStatus(live(WORKING_WINDOW_MS + 1), now, WORKING_WINDOW_MS, undefined)).toBe(
+      'waiting'
+    );
+  });
+
+  it('A positive signal (process exit) demotes immediately even when prevStatus was working', () => {
+    expect(
+      deriveStatus(
+        { lastOutputAt: now - 50, exited: true, exitCode: 0 },
+        now,
+        WORKING_WINDOW_MS,
+        'working'
+      )
+    ).toBe('finished');
+    expect(
+      deriveStatus(
+        { lastOutputAt: now - 50, exited: true, exitCode: 1 },
+        now,
+        WORKING_WINDOW_MS,
+        'working'
+      )
+    ).toBe('error');
+  });
+
+  it('rowFor threads the pane runtime lastStatus so the hold survives a quiet tick', () => {
+    // A live non-coordinator pane, quiet within the idle-grace band, with no
+    // event-sourced status: prior status 'working' on the runtime keeps it In flight.
+    const silent = WORKING_WINDOW_MS + 1_000;
+    const wsX = ws('wX', 'X', [{ paneId: 'p', cwd: '/r' }]);
+    const held = buildRoster(
+      {},
+      [wsX],
+      runtimeOf(rt('p', { lastOutputAt: now - silent, lastStatus: 'working' })),
+      now
+    );
+    expect(held[0].status).toBe('working');
+    // Without the prior-working latch the same silence reads waiting.
+    const bounced = buildRoster({}, [wsX], runtimeOf(rt('p', { lastOutputAt: now - silent })), now);
+    expect(bounced[0].status).toBe('waiting');
+  });
+
+  it('An event-sourced waiting overrides the hysteresis hold', () => {
+    const silent = WORKING_WINDOW_MS + 1_000;
+    const wsX = ws('wX', 'X', [{ paneId: 'p', cwd: '/r' }]);
+    const evAct: Record<string, EventActivity> = {
+      p: {
+        status: 'waiting',
+        currentAction: null,
+        question: null,
+        questions: null,
+        everPrompted: true
+      }
+    };
+    const [row] = buildRoster(
+      {},
+      [wsX],
+      runtimeOf(rt('p', { lastOutputAt: now - silent, lastStatus: 'working' })),
+      now,
+      {},
+      WORKING_WINDOW_MS,
+      evAct
+    );
+    expect(row.status).toBe('waiting');
   });
 });
 
