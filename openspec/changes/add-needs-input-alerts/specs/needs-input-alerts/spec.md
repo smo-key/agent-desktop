@@ -129,12 +129,36 @@ observation SHALL alert.
 - **WHEN** an agent enters Needs input on a roster recompute after the first observation
 - **THEN** an alert is raised for that agent (subject to channel modes)
 
+### Requirement: No alerts before an agent's first prompt
+
+The system SHALL NOT raise any alert (sound or desktop) for an agent that has never
+been prompted — one launched with no initial prompt that is sitting at an empty
+prompt awaiting its first instruction. An agent counts as prompted once it has
+received its first user prompt or otherwise begun a turn (the per-pane
+`everPrompted` signal). Suppression applies ONLY to the alert channels: such an
+agent still surfaces in the "Needs input" lane (it genuinely awaits your first
+prompt) and is still tracked in the edge detector's baseline. Once the agent has
+been prompted at least once, subsequent entries into "Needs input" alert normally.
+
+#### Scenario: Freshly launched with no prompt
+
+- **WHEN** an agent is launched with no initial prompt and goes `waiting` at its empty prompt before it has ever been prompted
+- **THEN** no sound chime plays and no desktop notification is shown for that agent
+
+#### Scenario: Alerts resume after the first prompt
+
+- **WHEN** a never-prompted agent is given its first prompt (so it has begun a turn) and later re-enters "Needs input"
+- **THEN** an alert is raised for that entry (subject to channel modes)
+
 ### Requirement: Desktop notification content and permission
 
 When the desktop channel alerts, the system SHALL show an OS desktop notification
 whose title indicates an agent needs input and whose body identifies the agent
-(its display name) together with its pending question or most recent message,
-clipped to a single line. The system SHALL request OS notification permission when
+together with its pending question or most recent message, clipped to a single
+line. The agent SHALL be identified by its generated session title when one is
+available, falling back to its workspace/cwd display name otherwise — so the
+notification matches the name shown on the agent's card rather than a bare
+"Session N". The system SHALL request OS notification permission when
 the desktop channel is set to any mode other than `off` and permission has not yet
 been granted. When permission is denied, or when running outside the desktop shell
 (e.g. the web preview) so notifications are unavailable, the desktop channel SHALL
@@ -144,6 +168,11 @@ silently no-op without throwing; the sound channel SHALL be unaffected.
 
 - **WHEN** the desktop channel alerts for an agent named "parser" that is asking a question
 - **THEN** a desktop notification is shown whose title indicates an agent needs input and whose body includes "parser" and the question text on one line
+
+#### Scenario: Notification uses the generated session title
+
+- **WHEN** the desktop channel alerts for an agent whose generated session title is "Fix login dialog" while its workspace name is still "Session 1"
+- **THEN** the notification body identifies the agent as "Fix login dialog", not "Session 1"
 
 #### Scenario: Permission requested on enable
 

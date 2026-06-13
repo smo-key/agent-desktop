@@ -200,6 +200,36 @@ describe('No alerts for pre-existing waiters at launch', () => {
   });
 });
 
+describe('No alerts before an agent\'s first prompt', () => {
+  it('Freshly launched with no prompt', () => {
+    // A never-prompted agent (launched with no initial prompt) goes `waiting` at its
+    // empty prompt: it is NOT a fresh alert entry, so no channel fires. (It still
+    // counts toward the attention lane + baseline — only the alert is withheld.)
+    const prev = new Set<string>(); // primed, agent was working/starting
+    const fresh = newlyNeedsAttention(prev, [
+      row({ paneId: 'p1', status: 'waiting', everPrompted: false })
+    ]);
+    expect(fresh).toEqual([]);
+  });
+
+  it('Alerts resume after the first prompt', () => {
+    // Once the agent has been prompted (`everPrompted` true), a fresh entry alerts.
+    const prev = new Set<string>();
+    const fresh = newlyNeedsAttention(prev, [
+      row({ paneId: 'p1', status: 'waiting', everPrompted: true })
+    ]);
+    expect(fresh.map((r) => r.paneId)).toEqual(['p1']);
+  });
+
+  it('Unspecified everPrompted still alerts (legacy/fixtures)', () => {
+    // A row that does not carry the signal (undefined) is treated as promptable, so
+    // legacy rows / fixtures keep their prior alerting behavior.
+    const prev = new Set<string>();
+    const fresh = newlyNeedsAttention(prev, [row({ paneId: 'p1', status: 'waiting' })]);
+    expect(fresh.map((r) => r.paneId)).toEqual(['p1']);
+  });
+});
+
 describe('Desktop notification content and permission', () => {
   it('Notification shown with agent context', () => {
     const title = notificationTitle();
@@ -210,5 +240,14 @@ describe('Desktop notification content and permission', () => {
     expect(body).toContain('parser');
     expect(body).toContain('Which migration strategy should I use?');
     expect(body).not.toContain('\n'); // one line
+  });
+
+  it('Notification uses the generated session title', () => {
+    // The pure body identifies the agent by `row.name`; the route resolves that name
+    // to the generated session title (falling back to the "Session N" workspace name),
+    // so a titled agent reads as its title, never "Session 1".
+    const body = notificationBody(row({ name: 'Fix login dialog', question: 'Proceed?' }));
+    expect(body).toContain('Fix login dialog');
+    expect(body).not.toContain('Session 1');
   });
 });

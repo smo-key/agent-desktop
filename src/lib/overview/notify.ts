@@ -50,18 +50,29 @@ export function attentionIds(rows: AgentRow[]): Set<string> {
 }
 
 /**
- * PURE: the rows that have JUST entered "Needs input" — those `needsAttention` now
- * but absent from `prev`. `prev === null` is the un-primed initial state: the very
- * first observation primes the baseline and returns NOTHING, so agents already
- * waiting when the app/inbox mounts never alert. Only entries seen AFTER priming
- * are returned. Preserves roster order; never mutates inputs.
+ * PURE: the rows that have JUST entered "Needs input" and should ALERT — those
+ * `needsAttention` now but absent from `prev`. `prev === null` is the un-primed
+ * initial state: the very first observation primes the baseline and returns NOTHING,
+ * so agents already waiting when the app/inbox mounts never alert. Only entries seen
+ * AFTER priming are returned.
+ *
+ * A row that has NEVER been prompted (`everPrompted === false`) is excluded: an agent
+ * launched with no initial prompt sits `waiting` at its empty prompt, and you just
+ * launched it yourself, so alerting there is pure noise. This gates the ALERTS only —
+ * such an agent still surfaces in the attention lane (via `needsAttention`) and is
+ * still folded into the caller's baseline (`attentionIds`), so once it HAS been
+ * prompted a later entry into "Needs input" alerts normally. A row that does not carry
+ * the signal (`undefined`) is treated as promptable, preserving legacy/fixture
+ * behavior. Preserves roster order; never mutates inputs.
  */
 export function newlyNeedsAttention(
   prev: ReadonlySet<string> | null,
   rows: AgentRow[]
 ): AgentRow[] {
   if (prev === null) return [];
-  return rows.filter((r) => needsAttention(r) && !prev.has(r.paneId));
+  return rows.filter(
+    (r) => needsAttention(r) && !prev.has(r.paneId) && r.everPrompted !== false
+  );
 }
 
 /**

@@ -37,3 +37,11 @@
 
 - [x] 8.1 Run `npm run check:gate` (type-check, tests, coverage) and fix any failures.
 - [ ] 8.2 Manual smoke in `npm run dev`: configure each mode, confirm sound and desktop alerts fire on a real agent entering Needs input under the expected focus/view conditions, and that defaults are silent.
+
+## 9. No alerts before first prompt + notification uses generated title
+
+- [x] 9.1 Add `everPrompted?: boolean` to `AgentRow` (`src/lib/overview/roster.ts`) and set it in `rowFor` from `event?.everPrompted === true`.
+- [x] 9.2 Extend `src/lib/overview/notify.test.ts`: a never-prompted (`everPrompted: false`) row that newly enters Needs input is excluded from `newlyNeedsAttention`; a prompted (`everPrompted: true`) and an unspecified (`undefined`, legacy/fixtures) row are still returned.
+- [x] 9.3 In `newlyNeedsAttention` (`src/lib/overview/notify.ts`), also exclude rows with `everPrompted === false` (suppress alerts for an agent launched with no prompt; `undefined` still alerts so fixtures/legacy are unaffected). Make 9.2 pass. Document that this gates ALERTS only — the attention lane is unchanged.
+- [x] 9.4 In `src/routes/+page.svelte`, resolve each alert row's `name` to `titles.titleFor(paneId) ?? name` when building `alertRows`, so `notificationBody` shows the generated title rather than the "Session N" workspace name.
+- [x] 9.5 Run `npm run check:gate` and fix any failures.

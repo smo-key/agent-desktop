@@ -27,6 +27,16 @@ instant an agent starts waiting on you.
   (the feature is silent and opt-in out of the box).
 - The desktop channel requests the OS notification permission (macOS) when first
   enabled (set to anything other than `off`).
+- **No alerts before an agent's first prompt**: an agent launched with no initial
+  prompt sits `waiting` at an empty prompt, but firing an alert there is just
+  noise — you launched it, you know it's waiting on you. Suppress both channels
+  for a never-prompted agent (per the per-pane `everPrompted` signal) until it has
+  been prompted at least once. The agent still shows in the "Needs input" lane;
+  only the sound/desktop alert is withheld.
+- **Notifications use the generated session title**: the desktop notification
+  identifies the agent by its generated session title (the same label shown on its
+  card) when available, falling back to the workspace/cwd name — so a notification
+  reads "Fix login dialog — …" rather than "Session 1 — …".
 
 ## Capabilities
 

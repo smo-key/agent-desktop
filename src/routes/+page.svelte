@@ -370,7 +370,15 @@
       undefined,
       events.activityMap(),
       new Set(Object.keys(coordinatorNeedsInput.all()))
-    )
+    ).map((r) => {
+      // Identify the agent in its desktop notification by its GENERATED session
+      // title (the label on its card) when we have one, falling back to the
+      // workspace/cwd name — so a notification reads "Fix login dialog — …" rather
+      // than the bare "Session N". Only `notificationBody` reads `name`; the focus/
+      // coordinator logic keys on `paneId`, so this override is alert-display only.
+      const title = titles.titleFor(r.paneId);
+      return title ? { ...r, name: title } : r;
+    })
   );
   // Clear a coordinator's explicit needs-input flag once it resumes (status back to
   // `working`). This mirror of the Inbox effect must ALSO run here on the always-

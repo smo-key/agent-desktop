@@ -432,6 +432,13 @@ export interface AgentRow {
   /** The user-message COUNT captured when the preview began; the inbox unarchives the
    *  session when the live count strictly exceeds it. Undefined when not previewing. */
   previewCount?: number | null;
+  /** Whether this agent has EVER been prompted — it has received its first user prompt
+   *  or otherwise begun a turn (event-sourced `everPrompted`, sticky). `false` for an
+   *  agent launched with no initial prompt that is still sitting at an empty prompt.
+   *  The needs-input ALERTS use this to stay silent until the first prompt (an agent
+   *  you just launched yourself is no surprise); it does NOT affect the attention lane.
+   *  Optional: `rowFor` always sets it, but roster fixtures may omit it. */
+  everPrompted?: boolean;
 }
 
 /** Coerce to a finite number, else null (guards NaN/Infinity/strings). */
@@ -601,7 +608,8 @@ function rowFor(
     paused: pane.paused === true,
     pausedCount: pane.pausedCount ?? null,
     preview: pane.preview === true,
-    previewCount: pane.previewCount ?? null
+    previewCount: pane.previewCount ?? null,
+    everPrompted: event?.everPrompted === true
   };
 }
 
