@@ -53,11 +53,19 @@ prev/next status per row (like `shouldClearPin`):* rejected because a set-diff o
 the whole roster is simpler, handles agents appearing/disappearing, and needs no
 per-row previous-status bookkeeping.
 
-### D2 — Prime on first observation
-The shell initializes `prev` as "unset" and, on the **first** roster it ever sees,
-seeds `prev` with the current attention set and fires nothing. Only entries
-observed *after* priming alert. This prevents a burst of alerts for agents already
-waiting when the app (or the inbox) mounts.
+### D2 — Prime through a startup settle window
+The pure core primes on `prev === null` (first observation fires nothing). But the
+always-mounted driver's first ticks run BEFORE `restorePersistedLayout()` resolves,
+against an EMPTY roster — and panes re-spawn / snapshots+events seed asynchronously
+after `restored` flips, so a resumed session re-derives its quiet "waiting" prompt
+*seconds* into launch. Priming once on the empty roster would therefore let every
+restored waiter look "fresh" and alert. So the driver stays in **prime mode** —
+calling `controller.prime(rows)` each tick (track the baseline, fire nothing) — until
+the app is SETTLED: `restored && notifications.loaded` AND a short grace
+(`ALERT_SETTLE_MS`, ~6s) has elapsed. Only after that does it `process(...)`. This
+folds launch-time and resume-settling waiters into the baseline; only genuinely new
+entries after settling alert. (The grace suppresses a real new alert only in the
+first few seconds of launch, when the user is necessarily looking at the app.)
 
 ### D3 — Per-channel mode is the single control (no separate enable flag)
 Each channel's mode includes `off`, so `mode` *is* the enable switch. Prefs shape:
@@ -116,7 +124,11 @@ mounted route `+page.svelte` owns the alert `$effect`: it builds the roster via
 workspace, runtime registry, activity, events, coordinator-needs-input) on its own
 1s clock, and calls `alerts.process(rows, ctx)`. The `alerts` controller is driven
 from this single place, so there is no double-firing. `viewedPaneId` is
-`view.isGrid ? workspace.focusedId : focusAgent.paneId`.
+`view.isGrid ? workspace.focusedPaneId : focusAgent.paneId` — note `focusedPaneId`
+(the focused leaf's PANE id), NOT `focusedId` (the leaf/node id), so the
+`agent-unfocused` comparison `viewedPaneId === row.paneId` actually matches in grid
+view. The route also mirrors the Inbox's coordinator `clearOnWorking` so a
+coordinator's needs-input flag still clears while the user is in grid view.
 
 ### D7c — `focusAgent` store publishes the inbox's shown agent
 The overview's "currently viewed" agent is the inbox focus pane's agent, which is

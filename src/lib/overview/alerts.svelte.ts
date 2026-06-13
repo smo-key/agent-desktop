@@ -1,10 +1,11 @@
 // Reactive shell for the needs-input alerts (capability `needs-input-alerts`). Holds
-// the previous-attention baseline, reads the live channel prefs + focus context,
-// delegates the WHICH/WHETHER decisions to the pure core (`notify.ts`), and performs
-// the side effects: a synthesized two-tone chime (WebAudio) and a native OS desktop
-// notification (Tauri notification plugin). The Inbox calls `process(rows, ctx)` from
-// an `$effect`; the baseline primes on the first call so launch-time waiters never
-// alert. Side effects are LIVE/MANUAL (no headless coverage of the chime/notification).
+// the previous-attention baseline, delegates the WHICH/WHETHER decisions to the pure
+// core (`notify.ts`), and performs the side effects: a synthesized two-tone chime
+// (WebAudio) and a native OS desktop notification (Tauri notification plugin). The
+// always-mounted route (`+page.svelte`) drives it: while the app is still settling at
+// startup it calls `prime(rows)` (track the baseline, fire nothing) and once settled
+// `process(rows, ctx)`. Side effects are LIVE/MANUAL (no headless coverage of the
+// chime / notification / OS permission).
 
 import {
   attentionIds,
@@ -31,7 +32,8 @@ let audioCtx: AudioContext | null = null;
 function getAudioContext(): AudioContext | null {
   if (typeof window === 'undefined') return null;
   const Ctor =
-    window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    window.AudioContext ??
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   if (!Ctor) return null;
   if (!audioCtx) {
     try {
@@ -43,59 +45,64 @@ function getAudioContext(): AudioContext | null {
   return audioCtx;
 }
 
-/** Play a brief rising two-tone chime. No-op when WebAudio is unavailable. */
+/** Play a brief rising two-tone chime. No-op when WebAudio is unavailable. When the
+ *  context is suspended (autoplay policy), the tones are scheduled only AFTER
+ *  `resume()` resolves so the very first chime isn't clipped. */
 export function playChime(): void {
   const ctx = getAudioContext();
   if (!ctx) return;
-  try {
-    if (ctx.state === 'suspended') void ctx.resume();
-    const now = ctx.currentTime;
-    // Two short sine notes (A5 → D6), each with a quick attack + decay envelope.
-    for (const [freq, at] of [
-      [880, 0],
-      [1174.66, 0.12]
-    ] as const) {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      const t0 = now + at;
-      gain.gain.setValueAtTime(0.0001, t0);
-      gain.gain.exponentialRampToValueAtTime(0.18, t0 + 0.012);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(t0);
-      osc.stop(t0 + 0.2);
+  const schedule = () => {
+    try {
+      const now = ctx.currentTime;
+      // Two short sine notes (A5 → D6), each with a quick attack + decay envelope.
+      for (const [freq, at] of [
+        [880, 0],
+        [1174.66, 0.12]
+      ] as const) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const t0 = now + at;
+        gain.gain.setValueAtTime(0.0001, t0);
+        gain.gain.exponentialRampToValueAtTime(0.18, t0 + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(t0);
+        osc.stop(t0 + 0.2);
+      }
+    } catch {
+      /* audio glitch — never let an alert throw */
     }
-  } catch {
-    /* audio glitch — never let an alert throw */
+  };
+  if (ctx.state === 'suspended') {
+    void ctx.resume().then(schedule).catch(() => {});
+  } else {
+    schedule();
   }
 }
 
 // --- Desktop channel: native OS notification via the Tauri plugin -------------
 
-/** Cached permission so we don't re-prompt on every alert. */
-let desktopPermission: 'granted' | 'denied' | 'default' | null = null;
+/** Whether we have already prompted for permission this session (so we ask at most
+ *  once). The LIVE grant state is always re-queried from the OS, so granting in
+ *  System Settings after a denial recovers without an app restart. */
+let permissionRequested = false;
 
 /**
  * Ensure OS notification permission, requesting it once if needed. Returns whether
- * notifications may be shown. Swallows errors (e.g. running in the web preview, no
- * Tauri shell) and reports not-granted. Safe to call eagerly (when the user enables
- * the desktop channel) or lazily (before sending).
+ * notifications may be shown. Re-queries the live OS grant on every call (so a user
+ * who enables permission in System Settings recovers without restarting) and prompts
+ * at most once. Swallows errors (e.g. running in the web preview, no Tauri shell) and
+ * reports not-granted. Safe to call eagerly (when the user enables the desktop
+ * channel) or lazily (before sending).
  */
 export async function ensureDesktopPermission(): Promise<boolean> {
   try {
-    if (desktopPermission === 'granted') return true;
-    if (desktopPermission === 'denied') return false;
-    let granted = await isPermissionGranted();
-    if (!granted) {
-      const result = await requestPermission();
-      desktopPermission = result;
-      granted = result === 'granted';
-    } else {
-      desktopPermission = 'granted';
-    }
-    return granted;
+    if (await isPermissionGranted()) return true;
+    if (permissionRequested) return false;
+    permissionRequested = true;
+    return (await requestPermission()) === 'granted';
   } catch {
     return false;
   }
@@ -115,13 +122,22 @@ async function desktopNotify(row: AgentRow): Promise<void> {
 // --- The controller ------------------------------------------------------------
 
 /**
- * Drives the alerts off the live roster. `process(rows, ctx)` is called whenever the
- * roster or focus context changes; it fires each channel for agents that JUST entered
- * "Needs input", per that channel's mode. Primes on the first call (fires nothing).
+ * Drives the alerts off the live roster. The always-mounted route calls `prime(rows)`
+ * while the app is still settling at startup (track the baseline, fire nothing) and
+ * `process(rows, ctx)` once settled — fires each channel for agents that JUST entered
+ * "Needs input", per that channel's mode.
  */
 export class AlertController {
-  /** The paneIds in "Needs input" as of the last call; null until primed. */
+  /** The paneIds in "Needs input" as of the last call; null until first primed. */
   private prev: ReadonlySet<string> | null = null;
+
+  /** Track the current attention set as the baseline WITHOUT firing — used while the
+   *  app is still settling at startup so agents that surface as waiting during restore
+   *  (e.g. a resumed session re-deriving its prompt) are folded into the baseline and
+   *  never alert. Idempotent. */
+  prime(rows: AgentRow[]): void {
+    this.prev = attentionIds(rows);
+  }
 
   /** React to a fresh roster: alert the channels for newly-attention agents. */
   process(rows: AgentRow[], ctx: AlertContext): void {
@@ -135,12 +151,7 @@ export class AlertController {
       if (ch.desktop) void desktopNotify(row);
     }
   }
-
-  /** Drop the baseline so the next `process` re-primes (e.g. on inbox unmount). */
-  reset(): void {
-    this.prev = null;
-  }
 }
 
-/** The singleton alert controller, driven by the Inbox. */
+/** The singleton alert controller, driven by the always-mounted route. */
 export const alerts = new AlertController();

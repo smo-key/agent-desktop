@@ -350,9 +350,9 @@
   // NEEDS-INPUT ALERTS driver (capability `needs-input-alerts`). Built off the same
   // module singletons the Inbox roster uses, on its own 1s clock so a working→waiting
   // flip is detected promptly. `alerts.process` fires the sound/desktop channels for
-  // agents that JUST entered "Needs input" (each per its own mode), priming on the
-  // first tick so launch-time waiters never alert. Driven ONLY here (single source,
-  // always mounted) so no alert ever fires twice and alerts keep working in grid view.
+  // agents that JUST entered "Needs input" (each per its own mode). Driven ONLY here
+  // (single source, always mounted) so no alert ever fires twice and alerts keep
+  // working in grid view (the Inbox is mounted only in overview mode).
   let alertNowMs = $state(Date.now());
   $effect(() => {
     const id = setInterval(() => (alertNowMs = Date.now()), 1000);
@@ -372,17 +372,39 @@
       new Set(Object.keys(coordinatorNeedsInput.all()))
     )
   );
-  // The agent the user is "viewing": the focused grid pane in grid view, else the
-  // inbox focus agent — used by the `agent-unfocused` alert mode.
-  const viewedPaneId = $derived.by((): string | null => {
-    if (!view.isGrid) return focusAgent.paneId;
-    try {
-      return workspace.focusedId || null;
-    } catch {
-      return null;
+  // Clear a coordinator's explicit needs-input flag once it resumes (status back to
+  // `working`). This mirror of the Inbox effect must ALSO run here on the always-
+  // mounted route, otherwise the flag would never clear while the user is in grid view
+  // (Inbox unmounted), pinning a coordinator in attention. Idempotent with the Inbox's.
+  $effect(() => {
+    for (const r of alertRows) {
+      if (r.role === 'coordinator') coordinatorNeedsInput.clearOnWorking(r.paneId, r.status);
     }
   });
+  // The agent the user is "viewing": the focused grid PANE in grid view (focusedPaneId,
+  // not the leaf id), else the inbox focus agent — used by the `agent-unfocused` mode.
+  const viewedPaneId = $derived(view.isGrid ? workspace.focusedPaneId : focusAgent.paneId);
+  // Alerts stay PRIMED (baseline tracked, nothing fired) until the app has SETTLED:
+  // the layout has restored, prefs have loaded, and a short grace has elapsed. The
+  // grace is load-bearing — the roster fills in asynchronously after `restored` (panes
+  // re-spawn, snapshots/events seed), and a resumed session that re-derives its quiet
+  // "waiting" prompt during that window must count as a pre-existing waiter, NOT a new
+  // entry. Priming each tick keeps the baseline current so those waiters never alert.
+  const ALERT_SETTLE_MS = 6000;
+  let alertReadyAtMs: number | null = null;
   $effect(() => {
+    if (restored && notifications.loaded && alertReadyAtMs === null) {
+      alertReadyAtMs = alertNowMs;
+    }
+    const settled =
+      restored &&
+      notifications.loaded &&
+      alertReadyAtMs !== null &&
+      alertNowMs - alertReadyAtMs >= ALERT_SETTLE_MS;
+    if (!settled) {
+      alerts.prime(alertRows); // track the baseline; fire nothing while still settling
+      return;
+    }
     alerts.process(alertRows, { appFocused: windowFocus.focused, viewedPaneId });
   });
 
