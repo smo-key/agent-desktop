@@ -22,19 +22,19 @@
 
 ## 4. Version sync + tagging
 
-- [ ] 4.1 Add a script/step that reads `package.json` version and writes it into `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and `Cargo.lock` (e.g. `cargo update -p agent-desktop --precise <v>`).
-- [ ] 4.2 Add gate logic that compares `package.json` version to the latest `v*` tag and outputs `should_release` + the version, and refuses if `v<version>` already exists.
+- [x] 4.1 Add a script/step that reads `package.json` version and writes it into `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and `Cargo.lock` (e.g. `cargo update -p agent-desktop --precise <v>`). (`scripts/sync-version.sh`)
+- [x] 4.2 Add gate logic that compares `package.json` version to the latest `v*` tag and outputs `should_release` + the version, and refuses if `v<version>` already exists. (`scripts/release-gate.sh`)
 
 ## 5. Release workflow
 
-- [ ] 5.1 Create `.github/workflows/release.yml` triggered on `push: main` and `workflow_dispatch` (with a publish/no-publish input), with `permissions: contents: write`.
-- [ ] 5.2 Implement the `gate` job: run version-bump detection (4.2); when releasing, run version sync (4.1) + `CHANGELOG.md` regen (2.x), commit `chore(release): v<version> [skip ci]` to `main`, create + push annotated tag `v<version>`.
-- [ ] 5.3 Implement the build matrix (`fail-fast: false`) over the five targets with correct runners (`macos-14`, `macos-13`, `windows-latest`, `ubuntu-22.04`, `ubuntu-22.04-arm`); set up Node, Rust (target triple), and on Linux install the Tauri system deps (webkit2gtk, gtk, librsvg, appindicator, patchelf, cmake/build-essential).
-- [ ] 5.4 Add Cargo + sidecar caching keyed on `Cargo.lock` + target triple + pinned whisper/llama tags.
-- [ ] 5.5 In each build job: provision sidecars (section 1) + model, run `npm run check:gate`, then build/bundle via `tauri-action` (or Tauri CLI) producing the platform installers + signed updater bundles.
-- [ ] 5.6 Wire macOS signing/notarization: import `.p12` from `APPLE_CERTIFICATE`/`APPLE_CERTIFICATE_PASSWORD` into a temporary keychain, export `APPLE_SIGNING_IDENTITY` + a notary credential set; skip + warn (unsigned) when the cert secret is absent.
-- [ ] 5.7 Pass `TAURI_SIGNING_PRIVATE_KEY` (+ password) so update bundles are signed.
-- [ ] 5.8 Publish a single GitHub Release `v<version>` with git-cliff release notes as the body and all targets' installers + `latest.json` attached.
+- [x] 5.1 Create `.github/workflows/release.yml` triggered on `push: main` and `workflow_dispatch` (with a publish/no-publish input), with `permissions: contents: write`.
+- [x] 5.2 Implement the `gate` job: run version-bump detection (4.2); when releasing, run version sync (4.1) + `CHANGELOG.md` regen (2.x), commit `chore(release): v<version> [skip ci]` to `main`, create + push annotated tag `v<version>`. (Includes a skip-ci/`chore(release):` head-commit guard so the sync commit cannot loop.)
+- [x] 5.3 Implement the build matrix (`fail-fast: false`) over the five targets with correct runners (`macos-14`, `macos-13`, `windows-latest`, `ubuntu-22.04`, `ubuntu-22.04-arm`); set up Node, Rust (target triple), and on Linux install the Tauri system deps (webkit2gtk, gtk, librsvg, appindicator, patchelf, cmake/build-essential).
+- [x] 5.4 Add Cargo + sidecar caching keyed on `Cargo.lock` + target triple + pinned whisper/llama tags.
+- [x] 5.5 In each build job: provision sidecars (section 1) + model, run `npm run check:gate`, then build/bundle via `tauri-action` (or Tauri CLI) producing the platform installers. (Updater-bundle signing env is wired forward-compatibly; actual signed update bundles emit once the updater plugin is configured in task 3.x.)
+- [x] 5.6 Wire macOS signing/notarization: import `.p12` from `APPLE_CERTIFICATE`/`APPLE_CERTIFICATE_PASSWORD` into a temporary keychain, export `APPLE_SIGNING_IDENTITY` + a notary credential set; skip + warn (unsigned) when the cert secret is absent. (tauri-action performs the temp-keychain import from the cert env; a step warns when `APPLE_CERTIFICATE` is empty.)
+- [x] 5.7 Pass `TAURI_SIGNING_PRIVATE_KEY` (+ password) so update bundles are signed. (Env passed to tauri-action; effective once the updater plugin from task 3.x lands.)
+- [x] 5.8 Publish a single GitHub Release `v<version>` with git-cliff release notes as the body and all targets' installers attached. (`latest.json`/updater artifacts attach once the updater plugin from task 3.x is configured.)
 
 ## 6. Secrets, docs, and verification
 

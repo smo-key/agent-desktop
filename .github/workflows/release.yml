@@ -1,0 +1,282 @@
+name: Release
+
+# Releases on a version bump to main: when package.json's version is higher than
+# the latest v* tag, the gate job syncs the manifests, regenerates CHANGELOG.md,
+# commits `chore(release): v<version> [skip ci]`, tags v<version>, and the build
+# matrix produces + publishes signed installers for all five targets to a single
+# GitHub Release.
+#
+# A manual workflow_dispatch (force_publish) can drive a build for testing.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_publish:
+        description: "Force a release build even without a version bump (uses the current package.json version)"
+        type: boolean
+        default: false
+
+# Needs write access to push the sync commit + tag and create/update the Release.
+permissions:
+  contents: write
+
+# Pinned upstream source tags for the sidecars, mirrored from scripts/fetch-*.sh.
+# Used only as cache-key inputs so a cache is reused until the pin changes.
+env:
+  WHISPER_TAG: v1.7.4
+  LLAMA_TAG: master
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # gate: decide whether to release; if so, sync version, changelog, commit, tag.
+  # ---------------------------------------------------------------------------
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.decide.outputs.should_release }}
+      version: ${{ steps.decide.outputs.version }}
+      tag: ${{ steps.decide.outputs.tag }}
+    steps:
+      - name: Checkout (full history + tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Skip-ci / release-commit guard. GitHub Actions does NOT honor [skip ci]
+      # natively on push, so we guard here: the version-sync commit (which carries
+      # [skip ci] and a chore(release): subject) must NOT start another release.
+      - name: Skip-ci guard
+        id: skipci
+        run: |
+          MSG="$(git log -1 --pretty=%B)"
+          echo "head commit subject: $(git log -1 --pretty=%s)"
+          if printf '%s' "$MSG" | grep -qE '\[skip ci\]|^chore\(release\):'; then
+            echo "skip=true" >>"$GITHUB_OUTPUT"
+            echo "Head commit is a release/skip-ci commit; will not release."
+          else
+            echo "skip=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      # Compute should_release from the version vs the latest tag (idempotent).
+      # The force_publish dispatch input overrides a "no bump" decision but still
+      # respects the tag-already-exists guard inside release-gate.sh.
+      - name: Gate decision
+        id: decide
+        run: |
+          if [ "${{ steps.skipci.outputs.skip }}" = "true" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "should_release=false" >>"$GITHUB_OUTPUT"
+            echo "Skip-ci guard tripped; not releasing."
+            exit 0
+          fi
+          bash scripts/release-gate.sh
+          # release-gate.sh has already written should_release/version/tag to
+          # $GITHUB_OUTPUT. Re-read them so we can apply the force override.
+          SR="$(grep -E '^should_release=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force_publish }}" = "true" ] && [ "$SR" != "true" ]; then
+            echo "force_publish set: overriding should_release=true"
+            echo "should_release=true" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync version into manifests
+        if: steps.decide.outputs.should_release == 'true'
+        run: bash scripts/sync-version.sh "${{ steps.decide.outputs.version }}"
+
+      # Install the pinned git-cliff and regenerate the FULL changelog plus the
+      # since-last-tag release notes (saved for the Release body).
+      - name: Install git-cliff
+        if: steps.decide.outputs.should_release == 'true'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff@2.13.1
+
+      - name: Generate changelog + release notes
+        if: steps.decide.outputs.should_release == 'true'
+        run: |
+          # Full changelog (committed alongside the sync commit).
+          git-cliff --tag "${{ steps.decide.outputs.tag }}" -o CHANGELOG.md
+          # Release body: just the commits since the previous tag, header stripped.
+          git-cliff --unreleased --tag "${{ steps.decide.outputs.tag }}" --strip header -o RELEASE_NOTES.md
+          echo "----- RELEASE_NOTES.md -----"
+          cat RELEASE_NOTES.md
+
+      - name: Commit sync + tag
+        if: steps.decide.outputs.should_release == 'true'
+        env:
+          VERSION: ${{ steps.decide.outputs.version }}
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "No manifest changes to commit (already in sync)."
+          else
+            git commit -m "chore(release): ${TAG} [skip ci]"
+          fi
+          git push origin HEAD:main
+          # Annotated tag on the (possibly just-committed) release commit.
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
+
+      - name: Upload release notes artifact
+        if: steps.decide.outputs.should_release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: RELEASE_NOTES.md
+
+  # ---------------------------------------------------------------------------
+  # build: native build matrix; runs only when gate decided to release.
+  # ---------------------------------------------------------------------------
+  build:
+    needs: gate
+    if: needs.gate.outputs.should_release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            triple: aarch64-apple-darwin
+          - runner: macos-13
+            triple: x86_64-apple-darwin
+          - runner: windows-latest
+            triple: x86_64-pc-windows-msvc
+          - runner: ubuntu-22.04
+            triple: x86_64-unknown-linux-gnu
+          - runner: ubuntu-22.04-arm
+            triple: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.tag }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Pull the git-cliff release notes the gate job produced, into a step
+      # output for the Release body.
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+
+      - name: Read release notes
+        id: notes
+        shell: bash
+        run: |
+          {
+            echo "body<<RELEASE_NOTES_EOF"
+            cat RELEASE_NOTES.md
+            echo "RELEASE_NOTES_EOF"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+
+      # Linux Tauri system dependencies + sidecar build deps.
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev \
+            patchelf \
+            cmake \
+            build-essential
+
+      - name: Cache cargo + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-${{ matrix.triple }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ matrix.triple }}-
+
+      # Sidecar cache keyed on the pinned whisper/llama source tags + triple, so
+      # the expensive from-source build only reruns when a pin or triple changes.
+      - name: Cache sidecars
+        id: sidecar-cache
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/binaries
+          key: sidecars-${{ matrix.triple }}-w${{ env.WHISPER_TAG }}-l${{ env.LLAMA_TAG }}-${{ hashFiles('scripts/fetch-whisper.sh', 'scripts/fetch-llama.sh', 'scripts/lib/target-triple.sh') }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Provision sidecars + model for this matrix triple. Bash steps run under
+      # Git Bash on Windows (the fetch scripts drive the MSVC cmake generator).
+      - name: Provision sidecars + model
+        shell: bash
+        env:
+          TARGET_TRIPLE: ${{ matrix.triple }}
+        run: |
+          ./scripts/fetch-whisper.sh
+          ./scripts/fetch-llama.sh
+          ./scripts/fetch-models.sh
+          ./scripts/validate-sidecars.sh
+
+      # Quality gate must pass BEFORE packaging; a failure fails the job.
+      - name: Quality gate
+        run: npm run check:gate
+
+      # Warn (do not fail) when macOS signing secrets are absent, e.g. on a fork
+      # or untrusted PR. tauri-action skips signing when the cert env is empty,
+      # producing an unsigned-but-successful build.
+      - name: Warn on unsigned macOS build
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE == ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        run: |
+          echo "::warning::APPLE_CERTIFICATE secret is empty; macOS artifact will be UNSIGNED (fork/PR fallback)."
+
+      - name: Build + publish to GitHub Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS signing: tauri-action imports the cert into a temporary keychain
+          # itself. When APPLE_CERTIFICATE is empty it skips signing (unsigned).
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          # Notary credentials — App Store Connect API key set ...
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
+          # ... or the Apple ID set (either is accepted by tauri/notarytool).
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Updater bundle signing (forward-compatible: used once the updater
+          # plugin is configured in a later task).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          # Attach every target's installers (+ updater artifacts once enabled)
+          # to the single Release v<version>; tauri-action creates-or-updates it.
+          tagName: ${{ needs.gate.outputs.tag }}
+          releaseName: ${{ needs.gate.outputs.tag }}
+          releaseBody: ${{ steps.notes.outputs.body }}
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.triple }}

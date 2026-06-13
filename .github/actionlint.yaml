@@ -1,0 +1,11 @@
+# actionlint configuration.
+#
+# `macos-13` is the GitHub-hosted Intel macOS runner used to build the
+# `x86_64-apple-darwin` target. Newer actionlint snapshots drop it from their
+# bundled label list (Intel macOS runners are being phased out), but it is still
+# a valid hosted label today. We declare it here so actionlint does not flag it.
+# NOTE: when `macos-13` is fully retired, switch the x86_64-apple-darwin matrix
+# leg to the then-current Intel label (e.g. `macos-15-intel`).
+self-hosted-runner:
+  labels:
+    - macos-13
