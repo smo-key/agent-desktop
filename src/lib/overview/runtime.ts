@@ -10,7 +10,7 @@
 // Overview's existing heartbeat clock drives recomputation instead, so a status
 // change is reflected within ~1s with zero per-chunk reactivity cost.
 
-import type { AgentStatus, PaneRuntime, RuntimeMap } from './roster';
+import { RESIZE_REDRAW_MS, type AgentStatus, type PaneRuntime, type RuntimeMap } from './roster';
 
 const runtimes = new Map<string, PaneRuntime>();
 
@@ -31,10 +31,29 @@ function entryFor(paneId: string): PaneRuntime {
  */
 export function noteOutput(paneId: string, nowMs: number): void {
   const r = entryFor(paneId);
-  r.lastOutputAt = nowMs;
   // Output after an "exit" would be contradictory; keep the alive state coherent.
   r.exited = false;
   r.exitCode = null;
+  // Ignore the activity stamp for output that is the SIGWINCH redraw from a
+  // self-initiated resize (see `noteResize` / `RESIZE_REDRAW_MS`): merely selecting
+  // an idle agent makes its pane visible → refit → resize → redraw, which must not
+  // read as work. Alive-coherence above still applies; only `lastOutputAt` is held.
+  if (r.resizeAt != null && nowMs - r.resizeAt <= RESIZE_REDRAW_MS) return;
+  r.lastOutputAt = nowMs;
+}
+
+/**
+ * Record a SELF-INITIATED terminal resize for this pane (the app pushing a
+ * `pty_resize`). The resize makes Claude's TUI redraw via SIGWINCH, emitting output
+ * that is NOT work; `noteOutput` ignores the activity stamp for output within
+ * `RESIZE_REDRAW_MS` of this time, so selecting an idle agent does not flash it In
+ * flight. Records ONLY when an entry already exists — like `noteStatus`, it must
+ * never fabricate one (a never-output pane derives `working` regardless, so resize
+ * suppression is moot for it). Cheap: at most a single field write.
+ */
+export function noteResize(paneId: string, nowMs: number): void {
+  const r = runtimes.get(paneId);
+  if (r) r.resizeAt = nowMs;
 }
 
 /** Record that a pane's process exited with `code` (null when unknown). */

@@ -5,10 +5,11 @@ import {
   noteBusy,
   noteExit,
   noteOutput,
+  noteResize,
   noteStatus,
   runtimeMap
 } from './runtime';
-import { deriveStatus } from './roster';
+import { deriveStatus, RESIZE_REDRAW_MS } from './roster';
 
 // The imperative runtime registry is app-side glue (no spec scenario of its own —
 // the status SEMANTICS are covered by roster.test.ts). These tests pin its
@@ -80,6 +81,36 @@ describe('runtime registry', () => {
     // A later POSITIVE detection re-arms it to the new time (promotion stays responsive).
     noteBusy('p1', true, t1 + 2_000);
     expect(getRuntime('p1')!.terminalBusyAt).toBe(t1 + 2_000);
+  });
+
+  it('noteOutput ignores a resize-redraw burst so selecting an idle pane stays waiting', () => {
+    const t = 9_000_000;
+    // An old real output → the pane is idle (quiet well past the working window).
+    noteOutput('p1', t - 10_000);
+    expect(deriveStatus(getRuntime('p1'), t)).toBe('waiting');
+    // A self-initiated resize at t; the SIGWINCH redraw arrives ~immediately after.
+    noteResize('p1', t);
+    noteOutput('p1', t + 100);
+    // The redraw burst (within RESIZE_REDRAW_MS) does NOT advance lastOutputAt, so
+    // the idle pane is not promoted to working by merely being selected.
+    expect(getRuntime('p1')!.lastOutputAt).toBe(t - 10_000);
+    expect(deriveStatus(getRuntime('p1'), t + 100)).toBe('waiting');
+    // Real output PAST the resize window stamps normally → working again.
+    const past = t + RESIZE_REDRAW_MS + 1;
+    noteOutput('p1', past);
+    expect(getRuntime('p1')!.lastOutputAt).toBe(past);
+    expect(deriveStatus(getRuntime('p1'), past)).toBe('working');
+  });
+
+  it('noteResize never fabricates an entry; with no resize, noteOutput stamps as before', () => {
+    // No entry yet → noteResize must not create one (mirrors noteStatus).
+    noteResize('p1', 1);
+    expect(getRuntime('p1')).toBeUndefined();
+    // With no recent resize, output stamps exactly as before (fail-safe).
+    const t = 2_000_000;
+    noteOutput('p1', t);
+    expect(getRuntime('p1')!.lastOutputAt).toBe(t);
+    expect(deriveStatus(getRuntime('p1'), t)).toBe('working');
   });
 
   it('noteStatus never resurrects an idle pane (no entry → stays idle)', () => {

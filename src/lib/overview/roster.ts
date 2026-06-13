@@ -259,6 +259,15 @@ export interface PaneRuntime {
    */
   terminalBusyAt?: number | null;
   /**
+   * Epoch ms of the last SELF-INITIATED terminal resize (the app pushing a
+   * `pty_resize`), or null/absent if none. A resize makes Claude's TUI redraw via
+   * SIGWINCH, producing output that is NOT work; `noteOutput` ignores the activity
+   * stamp for output within `RESIZE_REDRAW_MS` of this time, so selecting an idle
+   * agent (which makes its pane visible → refit → resize) does not flash it In
+   * flight. Set by `noteResize`; absent means "no recent resize" (fail-safe).
+   */
+  resizeAt?: number | null;
+  /**
    * The pane's PREVIOUSLY-derived (final) status — the hysteresis memory for the
    * silence-based demotion. The Overview records each row's final status here after
    * every roster rebuild (`noteStatus`); `deriveStatus` reads it as `prevStatus` so a
@@ -347,6 +356,19 @@ export const IDLE_GRACE_MS = 10_000;
  * shorter window.
  */
 export const BUSY_GRACE_MS = 3000;
+
+/**
+ * Suppression window (ms) for output caused by a self-initiated terminal resize.
+ * When the app pushes a `pty_resize` (e.g. a pane becomes visible after its
+ * workspace is selected), Claude's TUI redraws via SIGWINCH and emits output —
+ * which would otherwise stamp `lastOutputAt` and read as `working` for the whole
+ * `WORKING_WINDOW_MS`, making a merely-selected idle agent flash In flight. Output
+ * arriving within this window after a recorded resize (`PaneRuntime.resizeAt`) is
+ * ignored for the silence/activity signal. Kept FAR below `WORKING_WINDOW_MS` so a
+ * genuinely working agent that gets resized is never demoted (its pre-resize stamp
+ * is still fresh, and real output resumes stamping once this short window lapses).
+ */
+export const RESIZE_REDRAW_MS = 750;
 
 /** One pane in a workspace, as the roster needs it (framework-free projection). */
 export interface RosterPane {

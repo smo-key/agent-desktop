@@ -17,7 +17,7 @@
     READY_MAX_MS
   } from './launcher/initialInput';
   import { LaunchSpinner, spinnerLabel } from './launcher/spinner';
-  import { noteOutput, noteExit, noteBusy, clearRuntime } from './overview/runtime';
+  import { noteOutput, noteExit, noteBusy, noteResize, clearRuntime } from './overview/runtime';
   import { detectTerminalBusy } from './overview/terminalBusy';
   import { events } from './overview/events.svelte';
 
@@ -744,9 +744,13 @@
       }
 
       // Resize round-trip: xterm computes new cols/rows on fit(); onResize then
-      // propagates them to the PTY (SIGWINCH → TUIs reflow).
+      // propagates them to the PTY (SIGWINCH → TUIs reflow). Mark the resize so the
+      // resulting redraw output is not read as work-activity (see noteResize) — e.g.
+      // selecting an idle agent makes its pane visible → refit → resize → redraw,
+      // which must not flash the agent In flight.
       onResizeSub = term.onResize(({ cols, rows }) => {
         if (ptyId === undefined) return;
+        noteResize(paneId, Date.now());
         void invoke('pty_resize', { id: ptyId, cols, rows }).catch(() => {});
       });
 
