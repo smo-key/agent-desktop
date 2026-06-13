@@ -34,6 +34,7 @@
 # EXPECT_RE is a real extended regex (not a glob): it must assert the arch so a
 # wrong-arch binary is REJECTED. Note `PE32\+` escapes the literal '+' (which is
 # a quantifier in ERE) and requires x86-64 so a 32-bit or ARM64 Windows PE fails.
+# shellcheck disable=SC2034  # these are consumed by the scripts that source this
 _triple_metadata() {
   local triple="$1"
   case "$triple" in

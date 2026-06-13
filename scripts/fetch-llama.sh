@@ -57,7 +57,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/target-triple.sh"
 resolve_target  # sets TARGET_TRIPLE, TARGET_OS, OSX_ARCH, EXE_SUFFIX, EXPECT_FORMAT
 
-LLAMA_TAG="${LLAMA_TAG:-master}"
+LLAMA_TAG="${LLAMA_TAG:-b4000}"
 REPO_URL="https://github.com/ggml-org/llama.cpp.git"
 
 BIN_DIR="$ROOT_DIR/src-tauri/binaries"

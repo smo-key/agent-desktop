@@ -53,8 +53,15 @@ signed, notarized macOS builds and signed updates — see
 `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD`,
 `APPLE_SIGNING_IDENTITY`, a notary set (`APPLE_API_ISSUER`/`APPLE_API_KEY`/
 `APPLE_API_KEY_PATH` **or** `APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID`), and
-`TAURI_SIGNING_PRIVATE_KEY` (+ `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`). Without the
-signing secrets the build still succeeds, producing **unsigned** artifacts.
+`TAURI_SIGNING_PRIVATE_KEY` (+ `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`).
+
+The **Apple** secrets are optional: without them the macOS build still succeeds,
+producing an **unsigned**, un-notarized app (Gatekeeper will warn on launch).
+`TAURI_SIGNING_PRIVATE_KEY` is **required**, however — because in-app updates are
+enabled (`bundle.createUpdaterArtifacts`), a release build fails without it. The
+workflow checks for it up front and stops with a clear message if it is missing,
+so generate the keypair (`tauri signer generate`) and set the secret before your
+first release.
 
 ## Contributing
 

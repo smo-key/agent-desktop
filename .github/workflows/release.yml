@@ -208,6 +208,19 @@ jobs:
         with:
           node-version: 20
 
+      # Fail fast with a clear message rather than a cryptic `tauri build` error:
+      # the updater is enabled (bundle.createUpdaterArtifacts + a committed
+      # pubkey), so Tauri requires the private key to emit/sign update artifacts.
+      - name: Verify updater signing key present
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set. In-app updates are enabled, so a release build cannot sign updater artifacts without it. Run 'tauri signer generate' and add the private key as the TAURI_SIGNING_PRIVATE_KEY repo secret (see README 'Releases')."
+            exit 1
+          fi
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
