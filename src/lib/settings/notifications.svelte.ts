@@ -14,6 +14,19 @@ export type { AlertMode, NotificationPrefs };
 /** The valid channel modes, used to validate a persisted value. */
 const ALERT_MODES: readonly AlertMode[] = ['off', 'app-unfocused', 'agent-unfocused', 'always'];
 
+/** The modes the DESKTOP channel offers. The focus-aware modes (`agent-unfocused`,
+ *  `always`) only differ from `app-unfocused` while the app is focused — and macOS
+ *  does not surface a notification from the focused app — so they are meaningless for
+ *  desktop notifications and omitted. The sound channel still offers all four. */
+export const DESKTOP_ALERT_MODES: readonly AlertMode[] = ['off', 'app-unfocused'];
+
+/** PURE: coerce a mode into one the desktop channel supports — any focus-aware mode
+ *  collapses to `app-unfocused` (its behavior on macOS), so a legacy persisted value
+ *  or a stale UI selection never leaves the desktop channel in an unsupported mode. */
+export function clampDesktopMode(mode: AlertMode): AlertMode {
+  return DESKTOP_ALERT_MODES.includes(mode) ? mode : 'app-unfocused';
+}
+
 /** Defaults for a fresh install: both channels OFF (silent, opt-in). */
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   sound: { mode: 'off' },
@@ -61,7 +74,9 @@ export class NotificationStore {
    *  throws. Call once on mount. */
   async load(): Promise<void> {
     const settings = await loadSettings();
-    this.prefs = parseNotificationPrefs(settings.notifications);
+    const prefs = parseNotificationPrefs(settings.notifications);
+    // Clamp a legacy/unsupported desktop mode down to a desktop-valid one.
+    this.prefs = { ...prefs, desktop: { mode: clampDesktopMode(prefs.desktop.mode) } };
     this.loaded = true;
   }
 
@@ -71,9 +86,10 @@ export class NotificationStore {
     void this.save();
   }
 
-  /** Set the desktop channel's mode and persist (best-effort). */
+  /** Set the desktop channel's mode and persist (best-effort). Clamps to a
+   *  desktop-valid mode so the channel never holds a focus-aware mode it can't honor. */
   setDesktopMode(mode: AlertMode): void {
-    this.prefs = { ...this.prefs, desktop: { mode } };
+    this.prefs = { ...this.prefs, desktop: { mode: clampDesktopMode(mode) } };
     void this.save();
   }
 

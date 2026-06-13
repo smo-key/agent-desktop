@@ -291,8 +291,6 @@
               >
                 <option value="off">Never</option>
                 <option value="app-unfocused">When app is in the background</option>
-                <option value="agent-unfocused">When not viewing that agent</option>
-                <option value="always">Always</option>
               </select>
             </div>
           </li>

@@ -45,3 +45,13 @@
 - [x] 9.3 In `newlyNeedsAttention` (`src/lib/overview/notify.ts`), also exclude rows with `everPrompted === false` (suppress alerts for an agent launched with no prompt; `undefined` still alerts so fixtures/legacy are unaffected). Make 9.2 pass. Document that this gates ALERTS only — the attention lane is unchanged.
 - [x] 9.4 In `src/routes/+page.svelte`, resolve each alert row's `name` to `titles.titleFor(paneId) ?? name` when building `alertRows`, so `notificationBody` shows the generated title rather than the "Session N" workspace name.
 - [x] 9.5 Run `npm run check:gate` and fix any failures.
+
+## 10. Restrict the desktop channel to focus-independent modes
+
+The focus-aware modes (`agent-unfocused`, `always`) only differ from `app-unfocused`
+while the app is focused, where macOS shows no notification — so they are meaningless
+for the desktop channel. Offer only `off` / `app-unfocused` for desktop; sound keeps all four.
+
+- [x] 10.1 Add a pure `clampDesktopMode` to `src/lib/settings/notifications.svelte.ts` (`off`/`app-unfocused` pass through; `agent-unfocused`/`always` → `app-unfocused`) and apply it in `load()` and `setDesktopMode()`. Extend `notifications.test.ts` first: the clamp's table, a legacy desktop mode clamped on load, and `setDesktopMode('always')` clamped.
+- [x] 10.2 In `src/lib/ui/SettingsModal.svelte`, remove the `agent-unfocused` and `always` options from the DESKTOP picker only (leave the sound picker's four intact).
+- [x] 10.3 Run `npm run check` and the touched tests; fix any failures.

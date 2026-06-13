@@ -14,6 +14,8 @@ vi.mock('./persist', () => ({
 
 import {
   parseNotificationPrefs,
+  clampDesktopMode,
+  DESKTOP_ALERT_MODES,
   NotificationStore,
   DEFAULT_NOTIFICATION_PREFS,
   type NotificationPrefs
@@ -57,6 +59,28 @@ describe('Persisted channel modes with opt-in defaults', () => {
   });
 });
 
+describe('clampDesktopMode — desktop offers only off / app-unfocused', () => {
+  // Scenario: Desktop picker omits the focus-aware modes — the desktop channel's
+  // canonical option set is exactly off / app-unfocused (what SettingsModal renders).
+  it('Desktop picker omits the focus-aware modes', () => {
+    expect([...DESKTOP_ALERT_MODES]).toEqual(['off', 'app-unfocused']);
+    expect(DESKTOP_ALERT_MODES).not.toContain('agent-unfocused');
+    expect(DESKTOP_ALERT_MODES).not.toContain('always');
+  });
+
+  it('keeps the two desktop-valid modes', () => {
+    expect(clampDesktopMode('off')).toBe('off');
+    expect(clampDesktopMode('app-unfocused')).toBe('app-unfocused');
+  });
+
+  it('clamps the focus-aware modes to app-unfocused (macOS suppresses focused notifications)', () => {
+    // `agent-unfocused` / `always` only differ from `app-unfocused` while the app is
+    // focused, where macOS shows nothing — so they collapse to app-unfocused.
+    expect(clampDesktopMode('agent-unfocused')).toBe('app-unfocused');
+    expect(clampDesktopMode('always')).toBe('app-unfocused');
+  });
+});
+
 describe('NotificationStore', () => {
   it('defaults to OFF on a fresh / empty settings blob', async () => {
     loadSettingsMock.mockResolvedValueOnce({});
@@ -66,7 +90,7 @@ describe('NotificationStore', () => {
     expect(store.prefs).toEqual(DEFAULT_NOTIFICATION_PREFS);
   });
 
-  it('loads via parseNotificationPrefs from the notifications slice', async () => {
+  it('Legacy desktop mode is clamped on load', async () => {
     loadSettingsMock.mockResolvedValueOnce({
       voice: { enabled: false },
       notifications: { sound: { mode: 'agent-unfocused' }, desktop: { mode: 'always' } }
@@ -74,8 +98,8 @@ describe('NotificationStore', () => {
     const store = new NotificationStore();
     await store.load();
     expect(store.prefs).toEqual({
-      sound: { mode: 'agent-unfocused' },
-      desktop: { mode: 'always' }
+      sound: { mode: 'agent-unfocused' }, // sound keeps all four modes
+      desktop: { mode: 'app-unfocused' } // legacy `always` clamped to a desktop-valid mode
     });
   });
 
@@ -90,6 +114,12 @@ describe('NotificationStore', () => {
     store.setDesktopMode('app-unfocused');
     expect(store.prefs.desktop.mode).toBe('app-unfocused');
     expect(store.prefs.sound.mode).toBe('always'); // still untouched
+  });
+
+  it('setDesktopMode clamps a focus-aware mode to app-unfocused', () => {
+    const store = new NotificationStore();
+    store.setDesktopMode('always');
+    expect(store.prefs.desktop.mode).toBe('app-unfocused');
   });
 
   it('setSoundMode replaces prefs immutably', () => {

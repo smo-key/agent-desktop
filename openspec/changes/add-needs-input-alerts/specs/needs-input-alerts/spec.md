@@ -220,10 +220,20 @@ falling back to `off` for each channel.
 ### Requirement: Configure alerts from Settings
 
 The system SHALL expose the two channel modes in the Settings modal as two
-independent pickers — one for the sound channel and one for the desktop channel —
-each offering `off`, `app-unfocused`, `agent-unfocused`, and `always`. Changing a
-picker SHALL persist the new mode and take effect for subsequent alerts without a
-restart.
+independent pickers — one for the sound channel and one for the desktop channel.
+The sound picker SHALL offer all four modes (`off`, `app-unfocused`,
+`agent-unfocused`, `always`). The desktop picker SHALL offer only `off` and
+`app-unfocused`: the focus-aware modes (`agent-unfocused`, `always`) only differ
+from `app-unfocused` while the app window is focused, and the OS (macOS) does not
+surface a notification from the focused application, so they are meaningless for the
+desktop channel and SHALL NOT be offered. Changing a picker SHALL persist the new
+mode and take effect for subsequent alerts without a restart.
+
+To stay consistent when a desktop mode was persisted before this restriction (or
+otherwise carries a focus-aware value), the system SHALL clamp the desktop channel's
+mode to `app-unfocused` on load and on any set, so the desktop channel never holds a
+mode its picker does not offer. The sound channel is unaffected and retains all four
+modes.
 
 #### Scenario: Change a channel mode
 
@@ -234,3 +244,13 @@ restart.
 
 - **WHEN** the user sets the sound picker and the desktop picker to different modes
 - **THEN** each channel alerts according to its own mode
+
+#### Scenario: Desktop picker omits the focus-aware modes
+
+- **WHEN** the user opens the desktop-notification picker
+- **THEN** only `off` and `app-unfocused` are offered, and `agent-unfocused` and `always` are not
+
+#### Scenario: Legacy desktop mode is clamped on load
+
+- **WHEN** the persisted `notifications` slice records a desktop mode of `agent-unfocused` or `always`
+- **THEN** the desktop channel loads as `app-unfocused`, while the sound channel's mode is loaded unchanged
