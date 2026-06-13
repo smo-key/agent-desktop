@@ -27,6 +27,7 @@
 - [x] 6.3 Derive each standalone subagent's status from the parent transcript (`<project>/<session>.jsonl`, bounded tail): `running` iff its `toolUseId` appears as a `Task` `tool_use` with no matching `tool_result` in the tail; otherwise `done`. Scan the parent once per session, only when bare subagents exist.
 - [x] 6.4 Merge standalone subagents into `parse_session_subagents` alongside the workflow subagents (no overlap: workflow agents live under `subagents/workflows/`, standalone directly under `subagents/`).
 - [x] 6.5 Rust tests: a standalone subagent surfaces with its `description` label + duration (`standalone_task_subagents_appear_under_their_parent_agent`); status is `done` when the parent has a `tool_result` and `running` when it does not (`standalone_subagent_status_reflects_the_parent_result`); malformed/absent sidecars are tolerated.
+- [x] 6.6 BUGFIX (caught in 5.3 live verify): `parse_session_subagents` early-returned on a missing `workflows/` dir, so it never reached the standalone parser — and a standalone-only session (the dominant case) has NO `workflows/` dir, so its subagents never surfaced (real sessions returned 0). The `make_session` test helper always created `workflows/`, masking it. Fix: treat a missing/unreadable `workflows/` dir as "no workflow subagents" and still parse standalone subagents. Regression test: `standalone_subagents_surface_without_a_workflows_dir`.
 
 ## 5. Verify
 

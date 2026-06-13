@@ -264,39 +264,43 @@ fn non_empty(v: Option<&str>) -> Option<String> {
 pub fn parse_session_subagents(session_dir: &Path, session_id: &str) -> Vec<Subagent> {
     let mut out = Vec::new();
     let workflows_dir = session_dir.join("workflows");
-    let Ok(entries) = std::fs::read_dir(&workflows_dir) else {
-        return out;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        // Only top-level `*.json` run records; skip `scripts/` (a subdir, not a
-        // file) and any non-json sibling.
-        let is_json = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("json"));
-        if !is_json {
-            continue;
-        }
-        let Ok(meta) = entry.metadata() else { continue };
-        if !meta.is_file() {
-            continue;
-        }
-        // The workflow id is the file stem (`wf_e4241c06-5ee.json` -> `wf_…`).
-        let workflow_id = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue; // unreadable -> skip this run record, keep the rest.
-        };
-        let Ok(record) = serde_json::from_str::<WorkflowRecord>(&text) else {
-            continue; // malformed JSON -> skip this run record, keep the rest.
-        };
-        for prog in record.workflow_progress {
-            if let Some(sub) = prog.into_subagent(session_id, &workflow_id) {
-                out.push(sub);
+    // A missing/unreadable `workflows/` dir just means this session ran no
+    // `Workflow()` — the DOMINANT real-world case, since sessions spawn standalone
+    // `Task`/`Agent` subagents far more often than workflows. We must NOT return
+    // here: standalone subagents (parsed below) live under `subagents/` with no
+    // `workflows/` dir at all. So only the workflow-record loop is skipped.
+    if let Ok(entries) = std::fs::read_dir(&workflows_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // Only top-level `*.json` run records; skip `scripts/` (a subdir, not a
+            // file) and any non-json sibling.
+            let is_json = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+            if !is_json {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else { continue };
+            if !meta.is_file() {
+                continue;
+            }
+            // The workflow id is the file stem (`wf_e4241c06-5ee.json` -> `wf_…`).
+            let workflow_id = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue; // unreadable -> skip this run record, keep the rest.
+            };
+            let Ok(record) = serde_json::from_str::<WorkflowRecord>(&text) else {
+                continue; // malformed JSON -> skip this run record, keep the rest.
+            };
+            for prog in record.workflow_progress {
+                if let Some(sub) = prog.into_subagent(session_id, &workflow_id) {
+                    out.push(sub);
+                }
             }
         }
     }
@@ -718,6 +722,38 @@ fn lock_sessions(set: &WatchedSessions) -> std::sync::MutexGuard<'_, Vec<Session
 mod tests {
     use super::*;
     use std::sync::mpsc;
+
+    /// Regression (the bug this change shipped with): a session that spawned ONLY
+    /// standalone `Task`/`Agent` subagents has NO `workflows/` dir — the dominant
+    /// real-world case. The standalone subagents must still surface. (Before the fix,
+    /// `parse_session_subagents` returned early on the missing `workflows/` dir and
+    /// never ran the standalone parser, so these never appeared in the Inbox.)
+    #[test]
+    fn standalone_subagents_surface_without_a_workflows_dir() {
+        let tmp = TempDir::new("no-workflows");
+        let session = make_session(tmp.path(), "-Users-arthur-git-app", "sess-NW");
+        // Simulate a real standalone-only session: NO workflows/ dir exists.
+        std::fs::remove_dir_all(session.join("workflows")).unwrap();
+        assert!(!session.join("workflows").exists(), "precondition: no workflows/ dir");
+
+        write_standalone_meta(&session, "asolo", "Trace the data pipeline", "toolu_x");
+        write_standalone_jsonl(
+            &session,
+            "asolo",
+            &["2026-06-13T10:00:00.000Z", "2026-06-13T10:00:42.000Z"],
+        );
+        write_parent_transcript(
+            &session,
+            "sess-NW",
+            &[&task_use_line("toolu_x"), &tool_result_line("toolu_x")],
+        );
+
+        let subs = parse_session_subagents(&session, "sess-NW");
+        assert_eq!(subs.len(), 1, "standalone subagent surfaces even with no workflows/ dir");
+        assert_eq!(subs[0].id, "asolo");
+        assert_eq!(subs[0].label.as_deref(), Some("Trace the data pipeline"));
+        assert_eq!(subs[0].status.as_deref(), Some("done"));
+    }
 
     /// A throwaway dir under the system temp dir, removed on drop. Mirrors the
     /// helper in [`crate::usage`]/[`crate::task`] tests.
