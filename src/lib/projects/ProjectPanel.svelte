@@ -209,6 +209,7 @@
         class="pp-rail-ic"
         class:active={projectFilter.selected === c.project.id}
         onclick={() => projectFilter.select(c.project.id)}
+        oncontextmenu={(e) => openMenu(e, c.project)}
         aria-label={c.project.name}
         use:tooltip={{ text: c.project.name, placement: 'right' }}
       >
