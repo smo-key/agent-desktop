@@ -47,13 +47,14 @@ NOT a dialog for this purpose and is EXCLUDED.
 - **THEN** the primary "Download models" button receives focus, so Enter starts
   the download
 
-#### Scenario: A footer popover focuses its first focusable control
+#### Scenario: A footer popover focuses its first navigational row, never its action
 
 - **WHEN** a footer popover opens
-- **THEN** the first focusable control inside the panel receives focus — the first
-  list row when the body has rows, otherwise the pinned action button — and when
-  the body has no focusable content, focus is NOT trapped on the non-interactive
-  panel container
+- **THEN** the first focusable row in its scrollable body receives focus; the
+  pinned action button (e.g. Commit now / Push now) is NEVER the autofocus target,
+  so a stray Enter cannot fire a consequential commit/push; and when the body has
+  no focusable row (empty/loading, or a non-GitHub push list), focus is left on the
+  trigger rather than trapped on the panel
 
 ### Requirement: Shared autofocus action
 

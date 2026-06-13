@@ -32,8 +32,10 @@ should be a guarantee across every dialog, not a per-dialog accident.
   - **WorktreeDialog** → the close × (per-row Open/Prune are too consequential —
     Prune is destructive — to be the default Enter target).
   - **ModelOnboarding** → the primary "Download models" CTA.
-  - **FooterPopover** → the first focusable descendant of the panel (a list row
-    when present, otherwise the pinned action button), via `{ within: true }`.
+  - **FooterPopover** → the first focusable row in the popover BODY, via
+    `{ within: true }` on the body. The pinned action button (Commit now /
+    Push now) is deliberately NOT a target, so a stray Enter can't fire a
+    consequential commit/push; an empty/loading body leaves focus on the trigger.
 - **Out of scope:** the VoicePanel floating overlay (no meaningful first control;
   excluded by request). Form dialogs that already focus their first text input
   keep their existing behavior — they already satisfy the guarantee.
