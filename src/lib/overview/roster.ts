@@ -364,9 +364,10 @@ export const BUSY_GRACE_MS = 3000;
  * which would otherwise stamp `lastOutputAt` and read as `working` for the whole
  * `WORKING_WINDOW_MS`, making a merely-selected idle agent flash In flight. Output
  * arriving within this window after a recorded resize (`PaneRuntime.resizeAt`) is
- * ignored for the silence/activity signal. Kept FAR below `WORKING_WINDOW_MS` so a
- * genuinely working agent that gets resized is never demoted (its pre-resize stamp
- * is still fresh, and real output resumes stamping once this short window lapses).
+ * ignored for the silence/activity signal — but ONLY for an otherwise-idle pane
+ * (`lastOutputAt` already older than `WORKING_WINDOW_MS`). A genuinely working pane
+ * keeps stamping, so no storm of resizes can freeze its `lastOutputAt` and demote
+ * it; the suppression strictly targets the idle-select flash.
  */
 export const RESIZE_REDRAW_MS = 750;
 

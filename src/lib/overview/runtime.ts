@@ -10,7 +10,13 @@
 // Overview's existing heartbeat clock drives recomputation instead, so a status
 // change is reflected within ~1s with zero per-chunk reactivity cost.
 
-import { RESIZE_REDRAW_MS, type AgentStatus, type PaneRuntime, type RuntimeMap } from './roster';
+import {
+  RESIZE_REDRAW_MS,
+  WORKING_WINDOW_MS,
+  type AgentStatus,
+  type PaneRuntime,
+  type RuntimeMap
+} from './roster';
 
 const runtimes = new Map<string, PaneRuntime>();
 
@@ -38,7 +44,13 @@ export function noteOutput(paneId: string, nowMs: number): void {
   // self-initiated resize (see `noteResize` / `RESIZE_REDRAW_MS`): merely selecting
   // an idle agent makes its pane visible → refit → resize → redraw, which must not
   // read as work. Alive-coherence above still applies; only `lastOutputAt` is held.
-  if (r.resizeAt != null && nowMs - r.resizeAt <= RESIZE_REDRAW_MS) return;
+  //
+  // Guarded to OTHERWISE-IDLE panes only (`lastOutputAt` already older than the
+  // working window): a genuinely working pane keeps stamping, so even a storm of
+  // resizes (a drag) can never freeze its `lastOutputAt` and demote it. This makes
+  // the suppression strictly target the idle-select flash.
+  const idle = r.lastOutputAt != null && nowMs - r.lastOutputAt > WORKING_WINDOW_MS;
+  if (idle && r.resizeAt != null && nowMs - r.resizeAt <= RESIZE_REDRAW_MS) return;
   r.lastOutputAt = nowMs;
 }
 

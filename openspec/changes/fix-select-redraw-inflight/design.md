@@ -23,7 +23,11 @@ the resize itself (the reflow is legitimately needed when the size changes).
 `onResize` (the only place the app pushes `pty_resize`) records a per-pane
 `resizeAt = now`. `noteOutput` ignores the `lastOutputAt` stamp for output that
 arrives within `RESIZE_REDRAW_MS` of `resizeAt` — that output is the SIGWINCH
-redraw, not work. Output outside the window stamps normally.
+redraw, not work — **but only when the pane is otherwise idle** (`lastOutputAt`
+already older than `WORKING_WINDOW_MS`). A genuinely working pane keeps stamping,
+so even a storm of resizes (a drag continuously re-arming `resizeAt`) can never
+freeze its `lastOutputAt` and demote it; the suppression strictly targets the
+idle-select flash. Output outside the window stamps normally.
 
 - The redraw arrives asynchronously (invoke → Rust → ioctl → SIGWINCH → redraw →
   channel), so a synchronous flag set in the effect would clear too early; a
@@ -48,10 +52,11 @@ agent has an entry (from prior output); a never-output pane derives `working`
 
 ## Risks / Trade-offs
 
-- [A user resizes a genuinely working agent → its real output is ignored for up to
-  750 ms] → No demotion: the pre-resize stamp is < 2500 ms old, and event-sourced
-  / terminalBusy signals also hold it In flight. After 750 ms real output stamps
-  again.
+- [A user resizes (or storm-resizes via a drag) a genuinely working agent] → No
+  suppression at all: the idle-only guard means a pane with recent output keeps
+  stamping `lastOutputAt`, so its working status is never frozen or demoted by any
+  number of resizes. Suppression applies only to a pane already past the working
+  window (idle), which is exactly the idle-select case.
 - [A resize that produces NO output] → `resizeAt` is set but there is nothing to
   suppress; the next real output (outside the window) stamps normally. Harmless.
 

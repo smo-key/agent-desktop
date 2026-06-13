@@ -102,6 +102,25 @@ describe('runtime registry', () => {
     expect(deriveStatus(getRuntime('p1'), past)).toBe('working');
   });
 
+  it('a resize storm never suppresses a genuinely working agent (no demotion)', () => {
+    const t = 9_500_000;
+    // A working agent: fresh real output (within the working window).
+    noteOutput('p1', t);
+    expect(deriveStatus(getRuntime('p1'), t)).toBe('working');
+    // A storm of resizes spaced inside the redraw window, each with real output:
+    // because the pane is NOT idle (recent lastOutputAt), output is never suppressed,
+    // so lastOutputAt keeps advancing and the agent stays working throughout.
+    let last = t;
+    for (let i = 1; i <= 20; i++) {
+      const at = t + i * 500;
+      noteResize('p1', at);
+      noteOutput('p1', at);
+      last = at;
+    }
+    expect(getRuntime('p1')!.lastOutputAt).toBe(last);
+    expect(deriveStatus(getRuntime('p1'), last)).toBe('working');
+  });
+
   it('noteResize never fabricates an entry; with no resize, noteOutput stamps as before', () => {
     // No entry yet → noteResize must not create one (mirrors noteStatus).
     noteResize('p1', 1);
