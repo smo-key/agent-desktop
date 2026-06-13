@@ -118,6 +118,15 @@ fn has_remote(dir: &str) -> bool {
     run_git(dir, &["remote"]).map(|s| !s.is_empty()).unwrap_or(false)
 }
 
+/// Whether HEAD is on a real branch (not a DETACHED or unborn HEAD).
+/// `git symbolic-ref -q HEAD` succeeds only when HEAD points at a branch ref.
+/// A detached HEAD is not publishable, so the ↑ pill must treat it as "no branch"
+/// (note `rev-parse --abbrev-ref HEAD` reports the literal `"HEAD"` when detached —
+/// it does NOT return None — so the branch name alone can't distinguish the case).
+fn on_branch(dir: &str) -> bool {
+    run_git(dir, &["symbolic-ref", "-q", "HEAD"]).is_some()
+}
+
 /// Compute the git status for a single folder. Mirrors the statusline wrapper:
 /// each field is left null when its git query fails.
 pub fn status_for_dir(dir: &str) -> GitStatus {
@@ -148,12 +157,14 @@ pub fn status_for_dir(dir: &str) -> GitStatus {
         }
     }
     // Upstream + ahead. `upstream` records whether the branch is published (tracks a
-    // remote); it is left null only when there is no branch (off-repo / detached).
-    // `ahead` is the number of commits the next push would send: against the
-    // upstream when one exists, else (an unpublished branch) the commits not yet on
-    // ANY remote — i.e. what publishing the branch would upload. With no remote at
-    // all there is nowhere to push, so `ahead` stays null.
-    if out.branch.is_some() {
+    // remote); it is left null off-repo, on an unborn branch, or on a DETACHED HEAD
+    // (none of which is a publishable branch — and `rev-parse --abbrev-ref HEAD`
+    // reports the literal "HEAD" when detached, so we gate on `on_branch`, not just
+    // `branch.is_some()`). `ahead` is the number of commits the next push would send:
+    // against the upstream when one exists, else (an unpublished branch) the commits
+    // not yet on ANY remote — i.e. what publishing the branch would upload. With no
+    // remote at all there is nowhere to push, so `ahead` stays null.
+    if out.branch.is_some() && on_branch(dir) {
         let has_upstream = run_git(dir, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_some();
         out.upstream = Some(has_upstream);
         out.ahead = if has_upstream {
@@ -719,7 +730,10 @@ pub fn commits_to_push_for(dir: &str) -> Vec<PushCommit> {
     // blob. There is no leading-space significance here (unlike porcelain status).
     let stdout = if run_git(dir, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_some() {
         run_git_raw(dir, &["log", "--format=%H\x1f%s", "@{u}..HEAD"])
-    } else if has_remote(dir) {
+    } else if on_branch(dir) && has_remote(dir) {
+        // Unpublished branch: list what publishing would upload. Gated on `on_branch`
+        // so a DETACHED HEAD (not publishable) lists nothing — matching the null
+        // `ahead` count above, so the pill count and popover list never disagree.
         run_git_raw(dir, &["log", "--format=%H\x1f%s", "HEAD", "--not", "--remotes"])
     } else {
         None
@@ -1036,6 +1050,33 @@ mod tests {
             s.ahead,
             Some(0),
             "no commits beyond the remote yet, but the branch is still publishable"
+        );
+    }
+
+    #[test]
+    fn status_leaves_upstream_and_ahead_null_on_a_detached_head() {
+        // Regression: a DETACHED HEAD reports the literal branch "HEAD" from
+        // `rev-parse --abbrev-ref`, so it must NOT be treated as a publishable
+        // branch — upstream/ahead stay null (neutral, non-actionable ↑ pill) rather
+        // than offering a publish that `git push -u origin HEAD` can't perform.
+        let repo = TempRepo::new("detached");
+        let remote = bare_remote("detached");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+        // A second commit, then detach onto it.
+        fs::write(repo.path().join("x.md"), "x\n").unwrap();
+        run(repo.str(), &["add", "."]);
+        run(repo.str(), &["commit", "-q", "-m", "x"]);
+        run(repo.str(), &["checkout", "-q", "--detach", "HEAD"]);
+
+        let s = status_for_dir(repo.str());
+        assert_eq!(s.upstream, None, "a detached HEAD is not a publishable branch");
+        assert_eq!(s.ahead, None, "a detached HEAD reports no ahead count");
+        // The commit list must agree with the (null) count — empty, not the
+        // unpushed-commit list, so the pill and popover never disagree.
+        assert!(
+            commits_to_push_for(repo.str()).is_empty(),
+            "a detached HEAD lists no commits to push"
         );
     }
 
