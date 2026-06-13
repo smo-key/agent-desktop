@@ -75,6 +75,41 @@
     else start(def.id);
   }
 
+  // --- Drag-to-reorder the task list ------------------------------------------
+  // Dropping one row onto another reorders the active project's task list
+  // (projectTasks.reorder → reorderTask + per-project save), so the manual order
+  // survives restart. `dragId` is the row being dragged; `dragOverId` is the
+  // current drop target (for the highlight). The draggable element is a <div>,
+  // not a <button>: WKWebView (Tauri/macOS) won't start a native drag from a form
+  // control.
+  let dragId = $state<string | null>(null);
+  let dragOverId = $state<string | null>(null);
+
+  function onDragStart(e: DragEvent, id: string) {
+    dragId = id;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      // Some browsers refuse to start a drag unless data is set.
+      e.dataTransfer.setData('text/plain', id);
+    }
+  }
+  function onDragOver(e: DragEvent, id: string) {
+    if (!dragId || dragId === id) return;
+    e.preventDefault(); // allow the drop
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    dragOverId = id;
+  }
+  function onDrop(e: DragEvent, id: string) {
+    e.preventDefault();
+    if (dragId && dragId !== id) void projectTasks.reorder(dragId, id);
+    dragId = null;
+    dragOverId = null;
+  }
+  function onDragEnd() {
+    dragId = null;
+    dragOverId = null;
+  }
+
   // --- Right-click context menu (edit / delete, plus stop / dismiss) ----------
   let menu = $state<{ open: boolean; x: number; y: number; items: MenuItem[] }>({
     open: false,
@@ -135,10 +170,27 @@
           {@const running = dot === 'running'}
           {@const failed = dot === 'failed'}
           <li class="row">
-            <button
-              type="button"
+            <!-- A div (not a <button>): WKWebView (Tauri/macOS) refuses to start a
+                 native HTML5 drag from a form control, so the draggable row must be
+                 a plain element. role/tabindex/onkeydown restore button semantics. -->
+            <div
               class="rowbtn"
+              class:dragging={dragId === def.id}
+              class:dragover={dragOverId === def.id}
+              role="button"
+              tabindex="0"
+              draggable="true"
+              ondragstart={(e) => onDragStart(e, def.id)}
+              ondragover={(e) => onDragOver(e, def.id)}
+              ondrop={(e) => onDrop(e, def.id)}
+              ondragend={onDragEnd}
               onclick={() => rowClick(def)}
+              onkeydown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  rowClick(def);
+                }
+              }}
               oncontextmenu={(e) => openMenu(e, def)}
               use:tooltip={running ? 'Click to reveal' : 'Click to start'}
             >
@@ -148,7 +200,7 @@
                 <span class="t">{def.name}</span>
                 <span class="s">{subLabel(def)}</span>
               </span>
-            </button>
+            </div>
           </li>
         {/each}
       </ul>
@@ -264,6 +316,21 @@
   }
   .rowbtn:hover {
     background: rgba(255, 255, 255, 0.025);
+  }
+  /* Drag-to-reorder: the lifted row dims; the drop target shows a neutral ring (the
+     move lands AT the target's slot). `-webkit-user-drag: element` is required for
+     WebKit (WKWebView) to honor the drag — the `draggable` attribute alone is
+     unreliable there. */
+  .rowbtn[draggable='true'] {
+    cursor: grab;
+    -webkit-user-drag: element;
+  }
+  .rowbtn.dragging {
+    opacity: 0.45;
+  }
+  .rowbtn.dragover {
+    box-shadow: inset 0 0 0 1px var(--blue-300);
+    background: var(--blue-tint);
   }
   .dot {
     width: 7px;

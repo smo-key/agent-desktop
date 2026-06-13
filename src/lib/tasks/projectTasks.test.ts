@@ -4,6 +4,7 @@ import {
   addTask,
   removeTask,
   renameTask,
+  reorderTask,
   defaultTaskName,
   defaultAgentName,
   parseTasks,
@@ -107,6 +108,46 @@ describe('project-terminals — Rename a terminal', () => {
     map = addTask(map, 'p', t({ id: 'b' }));
     map = removeTask(map, 'a');
     expect(tasksForProject(map, 'p').map((x) => x.id)).toEqual(['b']);
+  });
+});
+
+describe('project-terminals — Reorder tasks (drag-to-reorder)', () => {
+  it('moves a task to the slot of another within its project', () => {
+    let map: TasksByProject = {};
+    map = addTask(map, 'p', t({ id: 'a' }));
+    map = addTask(map, 'p', t({ id: 'b' }));
+    map = addTask(map, 'p', t({ id: 'c' }));
+    // Drop 'a' onto 'c' → a lands at c's slot (array-move).
+    map = reorderTask(map, 'a', 'c');
+    expect(tasksForProject(map, 'p').map((x) => x.id)).toEqual(['b', 'c', 'a']);
+    // Drop 'c' onto 'b' → c lands at b's slot.
+    map = reorderTask(map, 'c', 'b');
+    expect(tasksForProject(map, 'p').map((x) => x.id)).toEqual(['c', 'b', 'a']);
+  });
+
+  it('is a no-op (same reference) across different projects or unknown/same id', () => {
+    let map: TasksByProject = {};
+    map = addTask(map, 'p', t({ id: 'a' }));
+    map = addTask(map, 'p', t({ id: 'b' }));
+    map = addTask(map, 'q', t({ id: 'c' }));
+    // Different projects: never merge across buckets.
+    expect(reorderTask(map, 'a', 'c')).toBe(map);
+    // Unknown id.
+    expect(reorderTask(map, 'a', 'zzz')).toBe(map);
+    // Same id.
+    expect(reorderTask(map, 'a', 'a')).toBe(map);
+    // Order in both projects is untouched.
+    expect(tasksForProject(map, 'p').map((x) => x.id)).toEqual(['a', 'b']);
+    expect(tasksForProject(map, 'q').map((x) => x.id)).toEqual(['c']);
+  });
+
+  it('does not mutate the input map', () => {
+    let map: TasksByProject = {};
+    map = addTask(map, 'p', t({ id: 'a' }));
+    map = addTask(map, 'p', t({ id: 'b' }));
+    const before = tasksForProject(map, 'p').map((x) => x.id);
+    reorderTask(map, 'b', 'a');
+    expect(tasksForProject(map, 'p').map((x) => x.id)).toEqual(before);
   });
 });
 
