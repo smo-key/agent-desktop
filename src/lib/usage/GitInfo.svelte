@@ -61,7 +61,14 @@
   } from '$lib/projects/projectGitActions';
   import { pushPopoverOpen as canPushPopover, aheadPillEnabled } from './pushPopover';
   import { invoke } from '@tauri-apps/api/core';
-  import { sortPrsForPopover, type OpenPr } from '$lib/projects/openPrsActions';
+  import {
+    sortPrsForPopover,
+    reviewStatus,
+    prUpdatedSeconds,
+    type OpenPr
+  } from '$lib/projects/openPrsActions';
+  import PrAuthorAvatar from './PrAuthorAvatar.svelte';
+  import { friendlyTime } from '$lib/overview/friendlyTime';
   import { openInEditor } from '$lib/overview/editor';
 
   /** Minimal project info needed to open the push popover and execute a push. */
@@ -242,9 +249,14 @@
   // page. Falls back to calling `onOpenPrs` directly if only the legacy prop is set.
   let openPrsPopoverOpen = $state(false);
   let openPrsPillEl = $state<HTMLButtonElement | null>(null);
+  // Snapshot of "now" (epoch ms) taken when the popover opens, so each row's
+  // relative last-updated time ("2h ago") is computed against a stable reference
+  // for the life of the popover — a transient view doesn't need per-second ticking.
+  let openPrsNowMs = $state(Date.now());
 
   function handleOpenPrsClick() {
     if (openPrsResult != null) {
+      openPrsNowMs = Date.now();
       openPrsPopoverOpen = true;
     } else if (onOpenPrs) {
       onOpenPrs();
@@ -569,6 +581,8 @@
     {#if sortedPrsForPopover.length > 0}
       <ul class="cp-file-list">
         {#each sortedPrsForPopover as pr (pr.number)}
+          {@const status = reviewStatus(pr.reviewDecision)}
+          {@const updatedSec = prUpdatedSeconds(pr.updatedAt)}
           <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <li
@@ -579,11 +593,20 @@
             onclick={() => handleOpenPrUrl(pr.url)}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleOpenPrUrl(pr.url); }}
           >
+            <PrAuthorAvatar author={pr.author} size={16} />
             <span class="opr-number">#{pr.number}</span>
             <span class="opr-title">{pr.title}</span>
             {#if pr.isDraft}
               <span class="opr-draft-badge">Draft</span>
             {/if}
+            {#if pr.updatedAt}
+              <span class="opr-updated" use:tooltip={`Updated ${new Date(pr.updatedAt).toLocaleString()}`}>
+                {friendlyTime(updatedSec, openPrsNowMs)}
+              </span>
+            {/if}
+            <span class="opr-status opr-status-{status.tone}" use:tooltip={status.label}>
+              <Icon name={status.icon} size={12} />
+            </span>
           </li>
         {/each}
       </ul>
@@ -896,6 +919,40 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1 1 auto;
+  }
+
+  /* Author avatar leads each row; space it from the PR number. */
+  .opr-pr-row :global(.pr-avatar) {
+    margin-right: 6px;
+  }
+
+  /* Relative last-updated time, sitting right of the title before the status icon. */
+  .opr-updated {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-4);
+    flex-shrink: 0;
+    margin-left: 8px;
+  }
+
+  /* Per-row review-status glyph (rightmost), colored by the review decision. */
+  .opr-status {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    margin-left: 6px;
+  }
+  .opr-status-approved {
+    color: var(--nominal-500);
+  }
+  .opr-status-changes {
+    color: var(--abort-500);
+  }
+  .opr-status-required {
+    color: var(--caution-500);
+  }
+  .opr-status-none {
+    color: var(--fg-4);
   }
 
   /* Draft PRs: dim title + row, showing draft badge. */

@@ -49,6 +49,9 @@ export const PROJECT_ICONS: Record<string, string> = {
   'dollar-sign':
     '<line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
   clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  // Plain hollow circle (Lucide `circle`), used as the neutral "no review
+  // requested" status glyph on open-PR popover rows.
+  circle: '<circle cx="12" cy="12" r="9"/>',
   // Git glyphs (Lucide), used by the footer's git status pills.
   'git-branch':
     '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
