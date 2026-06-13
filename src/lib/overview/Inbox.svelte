@@ -29,7 +29,6 @@
     LANE_ORDER,
     laneForRow,
     reorderLane,
-    moveId,
     orderRowsByLane,
     type AgentLane,
     type AgentRow,
@@ -52,6 +51,7 @@
   import { runtimeMap } from './runtime';
   import { navigateTarget } from './navigate';
   import { focusAgent } from './focusAgent.svelte';
+  import { focusRequest } from './focusRequest.svelte';
   import { activity } from './activity.svelte';
   import { events } from './events.svelte';
   import { titles } from './titles.svelte';
@@ -182,10 +182,10 @@
   const rows = $derived(filterRowsByProject(allRows, projectFilter.selected));
 
   // Per-lane DISPLAY ORDER. Every bucket lists its agents most-recently-added-to-
-  // that-column first by default; the Needs-you (attn) and Paused buckets are
-  // user-reorderable by dragging, and those two manual orders PERSIST across restarts
-  // (localStorage). The map holds paneIds top-first per lane. `reorderLane` keeps the
-  // established/manual order while jumping a newcomer to the top, and drops agents
+  // that-column first; the Needs-you (attn) and Paused orders PERSIST across restarts
+  // (localStorage) so a returning agent keeps its slot rather than jumping by load
+  // order. The map holds paneIds top-first per lane. `reorderLane` keeps the
+  // established order while jumping a newcomer to the top, and drops agents
   // that left the lane; `orderRowsByLane` projects it onto the rendered rows so the
   // lanes, the attention queue, and focus resolution all agree on order.
   const LANE_ORDER_KEY = 'agent-desktop:lane-order';
@@ -251,43 +251,6 @@
   });
 
   const viewRows = $derived(orderRowsByLane(rows, laneOrder));
-
-  // --- Drag-to-reorder within the Paused bucket --------------------------------
-  // Dropping a row onto another in the SAME draggable lane moves it to that slot
-  // (moveId over the lane's global order) and persists. The pinned coordinator row
-  // is never draggable. flight/done rows are not draggable (newest-first only).
-  // The Needs-you (attn) lane is intentionally NOT draggable.
-  const DRAGGABLE_LANES: ReadonlySet<AgentLane> = new Set<AgentLane>(['paused']);
-  let rowDrag = $state<{ lane: AgentLane; paneId: string } | null>(null);
-  let rowDragOver = $state<string | null>(null);
-
-  function onRowDragStart(e: DragEvent, lane: AgentLane, paneId: string) {
-    if (!DRAGGABLE_LANES.has(lane)) return;
-    rowDrag = { lane, paneId };
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', paneId); // some browsers require data to drag
-    }
-  }
-  function onRowDragOver(e: DragEvent, lane: AgentLane, paneId: string) {
-    if (!rowDrag || rowDrag.lane !== lane || rowDrag.paneId === paneId) return;
-    e.preventDefault(); // allow the drop (only within the same lane)
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    rowDragOver = paneId;
-  }
-  function onRowDrop(e: DragEvent, lane: AgentLane, paneId: string) {
-    e.preventDefault();
-    if (rowDrag && rowDrag.lane === lane && rowDrag.paneId !== paneId) {
-      laneOrder = { ...laneOrder, [lane]: moveId(laneOrder[lane], rowDrag.paneId, paneId) };
-      saveLaneOrder();
-    }
-    rowDrag = null;
-    rowDragOver = null;
-  }
-  function onRowDragEnd() {
-    rowDrag = null;
-    rowDragOver = null;
-  }
 
   const queue = $derived(attentionQueue(viewRows));
 
@@ -389,6 +352,24 @@
   // itself — it only publishes this selection (needs-input-alerts, design D7b/D7c).
   $effect(() => {
     focusAgent.paneId = focus?.paneId ?? null;
+  });
+
+  // Honor an INBOUND select request from outside the inbox — a clicked needs-input
+  // notification (capability `alert-click-focus`). The always-mounted route writes
+  // `focusRequest` from the activation event; we select that agent here through the
+  // normal `selectAgent` path. Gated on the nonce so a repeat click re-selects the
+  // same agent (and so this effect's other reactive reads don't re-fire it). A
+  // request for a pane no live row carries is ignored — the window is already
+  // focused by the route, matching the "dead pane → focus-only" behavior.
+  let lastFocusReqNonce = focusRequest.nonce;
+  $effect(() => {
+    const nonce = focusRequest.nonce;
+    const paneId = focusRequest.paneId;
+    if (nonce === lastFocusReqNonce) return;
+    lastFocusReqNonce = nonce;
+    if (paneId !== null && viewRows.some((r) => r.paneId === paneId)) {
+      selectAgent(paneId);
+    }
   });
 
   // --- Rename the focused session (header inline-edit) -----------------------
@@ -1099,13 +1080,6 @@
     type="button"
     class="row {lane}"
     class:sel={focus?.paneId === r.paneId}
-    class:dragging={rowDrag?.paneId === r.paneId}
-    class:dragover={rowDragOver === r.paneId}
-    draggable={DRAGGABLE_LANES.has(lane) && !isCoordPin}
-    ondragstart={(e) => onRowDragStart(e, lane, r.paneId)}
-    ondragover={(e) => onRowDragOver(e, lane, r.paneId)}
-    ondrop={(e) => onRowDrop(e, lane, r.paneId)}
-    ondragend={onRowDragEnd}
     onclick={() => onRowClick(r)}
     oncontextmenu={(e) => openAgentMenu(e, r, displayName(r.paneId, r.name))}
   >
@@ -1461,12 +1435,6 @@
   .row:hover { background: rgba(255,255,255,0.025); }
   .row.sel { background: rgba(61,123,255,0.10); border-left-color: var(--blue-500); }
   .row.attn.sel { background: var(--orange-tint); border-left-color: var(--orange-500); }
-  /* Drag-to-reorder within the Needs-you / Paused buckets: the lifted row dims; the
-     drop target shows a neutral ring (the move lands AT the target's slot, so a
-     directional edge line would mislead). */
-  .row[draggable='true'] { cursor: grab; }
-  .row.dragging { opacity: 0.45; }
-  .row.dragover { box-shadow: inset 0 0 0 1px var(--blue-300); background: rgba(61,123,255,0.08); }
   /* The coordinator top slot: a rule separating the pinned coordinator / Start
      affordance from the rest of the sessions (tasks 10.2–10.3). */
   .coord-rule { margin: 4px 16px 2px; border: none; border-top: 1px solid var(--line-default); }
