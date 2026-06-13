@@ -138,7 +138,7 @@
         <span class="label">Sessions panel</span>
         <ul class="rows">
           <li class="row">
-            <span class="desc">Density — Compact hides the context, model, and time line</span>
+            <span class="desc">Density</span>
             <div class="control">
               <!-- Focus the first setting control on open (skips the header ×). -->
               <select
