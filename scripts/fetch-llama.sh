@@ -130,11 +130,18 @@ cmake -S "$WORK_DIR/llama.cpp" -B "$WORK_DIR/build" \
   "${CMAKE_CONFIGURE_ARGS[@]}" \
   -DBUILD_SHARED_LIBS=OFF \
   -DLLAMA_BUILD_TESTS=OFF \
-  -DLLAMA_BUILD_EXAMPLES=OFF \
+  -DLLAMA_BUILD_EXAMPLES=ON \
   -DLLAMA_BUILD_SERVER=ON
 # BUILD_SHARED_LIBS=OFF links libllama/libggml STATICALLY into llama-server so the
 # copied binary is self-contained (a shared build leaves it depending on @rpath
 # dylibs in the deleted build tree, which fails to load as a sidecar).
+#
+# LLAMA_BUILD_EXAMPLES MUST be ON: at the pinned tag (b4000) the `llama-server`
+# target is defined under examples/server, and the root CMakeLists only does
+# `add_subdirectory(examples)` when LLAMA_BUILD_COMMON AND LLAMA_BUILD_EXAMPLES
+# are set. With EXAMPLES=OFF the target never exists ("No rule to make target
+# 'llama-server'"). Building below is still scoped to `--target llama-server`, so
+# enabling examples at configure time costs nothing extra to compile.
 cmake --build "$WORK_DIR/build" --config Release --target llama-server -j
 
 # Locate the produced binary (path varies slightly across llama.cpp versions and
