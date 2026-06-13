@@ -308,9 +308,9 @@
   // newest-first via `laneOrder` (no extra reverse needed).
   const renderGrouped = $derived(groupByLane(pin.rest));
 
-  // The Archived lane collapses to its latest 2 rows (it's reversed above, so the
-  // first 2 are the most recent) with a "Show all / Collapse" toggle below; long
-  // archives don't bury the live lanes. Default collapsed.
+  // The Archived lane collapses to its latest 2 rows (newest-first via `laneOrder`
+  // — see above; no reverse — so the first 2 ARE the most recent) with a "Show all /
+  // Collapse" toggle below; long archives don't bury the live lanes. Default collapsed.
   const ARCHIVED_PREVIEW = 2;
   let showAllArchived = $state(false);
 
