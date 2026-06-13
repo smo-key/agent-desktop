@@ -170,6 +170,69 @@ describe('deriveEventActivity', () => {
     expect(a.currentAction).toBeNull();
   });
 
+  // agent-status-derivation: a `SubagentStop` fires on the PARENT pane when an
+  // in-process Task subagent finishes — the parent's `Task` has NOT returned, so the
+  // parent is still mid-turn. It must NOT read as a turn end (no `waiting`, no
+  // in-flight clear). The parent's real turn end stays its own `Stop`.
+
+  it('Subagent finishes while the parent Task is in flight', () => {
+    const a = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('PreToolUse', { toolName: 'Task', summary: 'Task:explore' }),
+      ev('SubagentStop')
+    ]);
+    expect(a.status).toBe('working');
+    // The parent Task is still in flight, so its action stays current.
+    expect(a.currentAction).toBe('Task:explore');
+  });
+
+  it('One of several parallel subagents finishes', () => {
+    // Two Tasks in flight; one subagent stops while its sibling (and the parent) run.
+    const a = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('PreToolUse', { toolName: 'Task', summary: 'Task:a' }),
+      ev('PreToolUse', { toolName: 'Task', summary: 'Task:b' }),
+      ev('SubagentStop')
+    ]);
+    expect(a.status).toBe('working');
+  });
+
+  it('Subagent stop after the parent Task already returned defers to the PTY', () => {
+    // If `PostToolUse[Task]` arrives BEFORE the trailing `SubagentStop`, the Task is
+    // already cleared, so `SubagentStop` (now non-terminal) leaves no tool in flight
+    // and is not a `waiting` trigger → status is `null` (the roster falls back to the
+    // PTY heuristic). At that instant the parent has the subagent result and is
+    // generating its next step, so the live PTY is the right arbiter — NOT a forced
+    // `waiting`. This pins that accepted trade-off (vs. the old unconditional waiting).
+    const a = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('PreToolUse', { toolName: 'Task', summary: 'Task:a' }),
+      ev('PostToolUse', { toolName: 'Task' }),
+      ev('SubagentStop')
+    ]);
+    expect(a.status).toBeNull();
+    expect(a.currentAction).toBeNull();
+  });
+
+  it('The parent\'s own turn end still reads Needs input', () => {
+    // After a subagent finishes, the parent's OWN `Stop` still returns it to waiting.
+    const a = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('PreToolUse', { toolName: 'Task', summary: 'Task:a' }),
+      ev('SubagentStop'),
+      ev('Stop')
+    ]);
+    expect(a.status).toBe('waiting');
+    expect(a.currentAction).toBeNull();
+  });
+
+  it('A subagent run proves the session was prompted', () => {
+    // A subagent can only run after a prompt — so SubagentStop implies everPrompted
+    // (the store's sticky latch), keeping a coordinator out of the never-prompted state.
+    expect(impliesEverPrompted(ev('SubagentStop'))).toBe(true);
+    expect(deriveEventActivity([ev('SubagentStop')], true).everPrompted).toBe(true);
+  });
+
   it('Timeline accumulates tool events', () => {
     // appendBounded preserves order and bounds the ring.
     let list: AgentEvent[] = [];
