@@ -3,6 +3,21 @@
 All notable changes to this project are documented here.
 This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
 
+## [0.1.2] - 2026-06-13
+
+### Bug Fixes
+
+- **status**: Guard resize-redraw suppression to idle panes only
+- **status**: Don't read a resize redraw as work (idle-select In-flight flash)
+
+### Documentation
+
+- **openspec**: Sync + archive fix-select-redraw-inflight
+
+### CI/Build
+
+- **release**: Install JS deps with Yarn instead of npm ci
+
 ## [0.1.0] - 2026-06-13
 
 ### Features
@@ -194,6 +209,9 @@ This file is generated from the conventional-commit history by [git-cliff](https
 
 ### Bug Fixes
 
+- **inbox**: Expand title rename input to fill available width
+- **status**: Hysteresis on terminalBusy override to stop needs-you bounce
+- **subagents**: Detect live subagents spawned via the Agent tool
 - **rename**: Widen session rename inputs
 - **subagents**: Surface standalone Task subagents when no workflows/ dir
 - **alerts**: Deliver notification-click selection regardless of view
@@ -279,6 +297,7 @@ This file is generated from the conventional-commit history by [git-cliff](https
 
 ### Documentation
 
+- **openspec**: Sync + archive fix-needs-you-bounce
 - **openspec**: Sync + archive add-editor-link-workspace-root
 - **openspec**: Record consume-design + adversarial review fix in tasks
 - **openspec**: Archive durable-ui-preferences; promote ui-preferences spec
@@ -346,6 +365,8 @@ This file is generated from the conventional-commit history by [git-cliff](https
 
 ### Miscellaneous
 
+- **tasks**: Add Release agent task; advance release-ci change to implementing
+- **openspec**: Mark keyboard-nav-reveal manual verification complete
 - **openspec**: Remove duplicated pre-archive path for add-editor-link-workspace-root
 - **settings**: Simplify Density row description
 - **openspec**: Sync + archive add-keyboard-nav-reveal
