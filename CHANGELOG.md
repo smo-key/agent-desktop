@@ -3,10 +3,27 @@
 All notable changes to this project are documented here.
 This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
 
-## [Unreleased]
+## [0.1.0] - 2026-06-13
 
 ### Features
 
+- **inbox-subagents**: Live-only rows on all sessions, blue dot, visibility setting
+- **open-with**: Open project root as workspace when revealing a file
+- **orchestration**: Coordinator archives any spawned agent when its task is done
+- **inbox**: Surface standalone Task subagents under their parent
+- **updater**: In-app auto-update via Tauri updater plugin
+- **settings**: Make compact mode a Default/Compact dropdown, shown first
+- **inbox**: Use orange accent and 2.5s for the needs-you flash
+- **settings**: Persist UI-layout prefs durably instead of localStorage
+- **inbox**: Nest workflow subagents under their parent agent
+- **ci**: Add release workflow with version gate, sync, and build matrix
+- **inbox**: Flash a card red→clear when its agent enters needs-you
+- **alerts**: Title desktop notifications "Project: Agent", body is latest message
+- **inbox**: Reveal the keyboard-selected list item
+- **alerts**: Add clickable-notification scaffolding (Rust command + intent core)
+- **ci**: Add git-cliff changelog config and initial CHANGELOG
+- **tasks**: Drag-to-reorder the task launcher list
+- **inbox**: Remove drag-to-reorder from Needs-you and Paused lanes
 - **ci**: Make sidecar provisioning cross-platform
 - **ui**: Autofocus the first control when a dialog opens
 - **ui**: Add shared autofocus Svelte action
@@ -177,6 +194,18 @@ This file is generated from the conventional-commit history by [git-cliff](https
 
 ### Bug Fixes
 
+- **rename**: Widen session rename inputs
+- **subagents**: Surface standalone Task subagents when no workflows/ dir
+- **alerts**: Deliver notification-click selection regardless of view
+- **notify**: Set application before macOS notify_agent send
+- **overview**: Stop working agents bouncing to needs-you on brief silence
+- **ci**: Make updater-key requirement explicit; pin llama default
+- **updater**: Rotate updater signing pubkey to new keypair
+- **ui**: Scope footer-popover autofocus to the body, not the action
+- **ci**: Address release-workflow review (race, env scope, lockfile, pin)
+- **ci**: Assert sidecar arch in Windows validation regex
+- **tauri**: Disable native drag-drop so HTML5 DnD works in the webview
+- **projects**: Make project-list drag-to-reorder work in WKWebView
 - **alerts**: Correct viewedPaneId, startup priming, permission recovery
 - **git**: Keep detached HEAD non-publishable; capture footer-publish change
 - **footer**: Gate open-PR row updated-time on the parsed value
@@ -241,6 +270,7 @@ This file is generated from the conventional-commit history by [git-cliff](https
 
 ### Refactor
 
+- **open-with**: Align workspace-open with authored change + spec
 - **pr**: Extract parse_repo_url; fix rail rename overlay clipping
 - **footer**: Drop dead helpers superseded by popover/PR-bubble wiring
 - **project-terminals**: Drop selective auto-restart, superseded by project-folder storage
@@ -249,6 +279,11 @@ This file is generated from the conventional-commit history by [git-cliff](https
 
 ### Documentation
 
+- **openspec**: Sync + archive add-editor-link-workspace-root
+- **openspec**: Record consume-design + adversarial review fix in tasks
+- **openspec**: Archive durable-ui-preferences; promote ui-preferences spec
+- **ci**: Document the version-bump release flow and CI secrets
+- **openspec**: Archive add-sessions-compact-mode
 - **openspec**: Sync dialog-autofocus spec into durable specs
 - **openspec**: Propose add-alert-click-focus change
 - **openspec**: Propose add-desktop-release-ci change
@@ -305,8 +340,17 @@ This file is generated from the conventional-commit history by [git-cliff](https
 - **project-folder-storage**: Cover all 18 enforced scenarios by title
 - **tasks**: Enforce project-tasks + tasks-panel in scenario-coverage gate
 
+### CI/Build
+
+- Remove local signed-build path; signing is CI-only
+
 ### Miscellaneous
 
+- **openspec**: Remove duplicated pre-archive path for add-editor-link-workspace-root
+- **settings**: Simplify Density row description
+- **openspec**: Sync + archive add-keyboard-nav-reveal
+- **openspec**: Archive fix-working-status-bounce; sync agent-status-derivation
+- **openspec**: Archive add-dialog-autofocus (done)
 - **tasks**: Add Run Dev terminal task
 - **openspec**: Archive enrich-open-prs-popover
 - **project**: Track .agent-desktop/tasks.json
