@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
 
+## [0.1.3] - 2026-06-13
+
+### Bug Fixes
+
+- **ci**: Build llama with LLAMA_BUILD_EXAMPLES=ON so llama-server target exists
+
 ## [0.1.2] - 2026-06-13
 
 ### Bug Fixes
