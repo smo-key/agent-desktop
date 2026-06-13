@@ -21,6 +21,15 @@ export const WARNING_ICON = 'triangle-alert';
 /** The checkmark glyph (Icon name) shown when none await review (or unknown). */
 export const CHECKMARK_ICON = 'check';
 
+/** A PR's author, mirroring the Rust `PrAuthor` serde shape. */
+export interface PrAuthor {
+  login: string;
+  /** The author's display name, or `null` when gh reported it empty/absent. */
+  name: string | null;
+  /** Whether the author is a bot account (so the UI can show a bot glyph). */
+  isBot: boolean;
+}
+
 /** A single open PR entry, mirroring the Rust `OpenPr` serde shape. */
 export interface OpenPr {
   number: number;
@@ -29,6 +38,10 @@ export interface OpenPr {
   isDraft: boolean;
   /** The review decision, or `null` when no review has been requested yet. */
   reviewDecision: string | null;
+  /** The PR author, or `null` when gh omitted it / it had no usable login. */
+  author: PrAuthor | null;
+  /** ISO-8601 last-updated time, or `null` when unavailable. */
+  updatedAt: string | null;
 }
 
 /** The open-PRs result, mirroring the Rust `OpenPrs` serde shape. `count` is the
@@ -84,6 +97,89 @@ export function sortPrsForPopover(prs: OpenPr[]): OpenPr[] {
   const nonDraft = prs.filter((p) => !p.isDraft);
   const draft = prs.filter((p) => p.isDraft);
   return [...nonDraft, ...draft];
+}
+
+// ─────────────────────────── popover-row enrichment ───────────────────────────
+// PURE helpers backing each open-PR row's author avatar, last-updated time, and
+// review-status icon. Kept here (not in the component) so the mapping is
+// unit-tested apart from the DOM — mirroring openPrsView / sortPrsForPopover.
+
+/** The review-status bucket for a row's status icon — drives icon + color. */
+export type ReviewTone = 'approved' | 'changes' | 'required' | 'none';
+
+/** A row's review-status descriptor: which glyph to show, its tone, and a label. */
+export interface ReviewStatus {
+  /** Icon name from the vendored set. */
+  icon: string;
+  /** Tone bucket → CSS class / color. */
+  tone: ReviewTone;
+  /** Hover label describing the status. */
+  label: string;
+}
+
+/**
+ * PURE: map a PR's `reviewDecision` to its review-status descriptor.
+ *
+ * `APPROVED` → approved (check), `CHANGES_REQUESTED` → changes (x),
+ * `REVIEW_REQUIRED` → required (clock). Anything else — `null`, `''`, or an
+ * unrecognized value (no review requested yet) → the NEUTRAL state (circle). The
+ * icon is ALWAYS present so every row carries a status glyph.
+ */
+export function reviewStatus(reviewDecision: string | null | undefined): ReviewStatus {
+  switch (reviewDecision) {
+    case 'APPROVED':
+      return { icon: 'check', tone: 'approved', label: 'Approved' };
+    case 'CHANGES_REQUESTED':
+      return { icon: 'x', tone: 'changes', label: 'Changes requested' };
+    case 'REVIEW_REQUIRED':
+      return { icon: 'clock', tone: 'required', label: 'Review required' };
+    default:
+      return { icon: 'circle', tone: 'none', label: 'No review requested' };
+  }
+}
+
+/**
+ * PURE: the GitHub avatar URL for a login (`https://github.com/<login>.png`) at a
+ * small render size. Returns `null` when there is no usable login, so the caller
+ * falls back to a textual glyph instead of a broken image.
+ */
+export function authorAvatarUrl(login: string | null | undefined, size = 40): string | null {
+  if (!login) return null;
+  return `https://github.com/${encodeURIComponent(login)}.png?size=${size}`;
+}
+
+/**
+ * PURE: a single-character fallback glyph for an author — the first character of
+ * the display name, else the login — uppercased. Code-point aware (handles
+ * surrogate pairs). Returns `'?'` when neither is usable.
+ */
+export function authorInitial(author: PrAuthor | null | undefined): string {
+  const src = author?.name?.trim() || author?.login?.trim() || '';
+  const ch = [...src][0];
+  return ch ? ch.toUpperCase() : '?';
+}
+
+/**
+ * PURE: the hover label for an author — the display name when present, else
+ * `@login`, else `'unknown'`.
+ */
+export function authorLabel(author: PrAuthor | null | undefined): string {
+  const name = author?.name?.trim();
+  if (name) return name;
+  if (author?.login) return `@${author.login}`;
+  return 'unknown';
+}
+
+/**
+ * PURE: convert a PR's ISO-8601 `updatedAt` to unix SECONDS for `friendlyTime`.
+ * Returns `null` when the input is missing or unparseable, so the row hides the
+ * time instead of rendering a placeholder.
+ */
+export function prUpdatedSeconds(updatedAt: string | null | undefined): number | null {
+  if (!updatedAt) return null;
+  const ms = Date.parse(updatedAt);
+  if (!Number.isFinite(ms)) return null;
+  return Math.floor(ms / 1000);
 }
 
 /**
