@@ -26,11 +26,15 @@ surfacing is missing.
   all optional, tolerant of absent fields.
 - Add a pure, unit-tested `groupSubagentsByPhase()` helper that buckets a
   session's subagents into ordered workflow → phase groups.
-- Narrow the existing `Surface Subagents` requirement to match reality: it
-  currently claims standalone "Task-tool agents" are surfaced, but the parser
-  only reads workflow-run agents and nothing renders them. Standalone
-  `Task`/`Agent` subagents (bare `subagents/agent-*.jsonl` with no phase, status,
-  or duration data) are explicitly **out of scope** here and deferred.
+- Surface standalone `Task`/`Agent` subagents too (bare
+  `subagents/agent-<id>.meta.json` + `.jsonl`, not under `subagents/workflows/`).
+  These have no workflow or phase, so they render as a flat, ungrouped list under
+  the parent (the same renderer path used for workflow subagents with no phase).
+  Each carries: `label` from the meta's `description`, `startedAt`/`durationMs`
+  from the sidecar `.jsonl` timestamps, and a `status` of running/done derived
+  from the parent transcript's `tool_result` for the subagent's `toolUseId`.
+  (This is the primary real-world case — sessions spawn `Agent()`/`Task`
+  subagents far more often than `Workflow()` runs.)
 
 ## Capabilities
 
@@ -40,15 +44,19 @@ surfacing is missing.
 ### Modified Capabilities
 - `agent-overview`: the `Surface Subagents` requirement is modified to specify
   Inbox rendering — nested under the parent agent on the In-flight and Needs-you
-  lanes, grouped by workflow then phase, always expanded, each row showing status,
-  label, and duration alive — and is narrowed to workflow-spawned subagents
-  (standalone Task-tool agents deferred).
+  lanes, grouped by workflow then phase (workflow subagents) or as a flat list
+  (standalone Task subagents), always expanded, each row showing status, label,
+  and duration alive. It covers BOTH workflow-spawned subagents and standalone
+  `Task`/`Agent` subagents.
 
 ## Impact
 
 - **Rust**: `src-tauri/src/subagents.rs` — add `phase_title`, `phase_index`,
   `started_at`, `duration_ms` to the `Subagent` struct and its
-  `workflowProgress` parser; extend existing parser tests.
+  `workflowProgress` parser; add a parser for bare standalone `Task` subagents
+  (read `subagents/agent-*.meta.json` + `.jsonl` timestamps, derive done/running
+  from the parent transcript's `tool_result`s); extend parser tests.
+  `src-tauri/src/activity.rs` — widen `parse_iso_millis` to `pub(crate)` for reuse.
 - **Frontend**: `src/lib/overview/subagents.svelte.ts` — mirror the four new
   fields on the `Subagent` interface. New pure helper (`groupSubagentsByPhase`)
   with unit tests. `src/lib/overview/Inbox.svelte` — render the grouped rows for

@@ -20,8 +20,16 @@
 - [x] 4.2 Render the grouped result as always-expanded indented rows: a small workflow/phase group header, then each subagent mini-row with a status indicator (running/done/error, neutral fallback for unknown `status`), its label, and `formatDurationAlive(...)` driven by the Inbox's existing relative-time clock.
 - [x] 4.3 Confirm no subagent rows render for Paused/Archived lane rows, and that an agent with no subagents renders exactly as today (no empty group artifacts).
 
+## 6. Standalone Task subagents (the primary real-world case)
+
+- [x] 6.1 In `src-tauri/src/activity.rs`, widen `parse_iso_millis` to `pub(crate)` so the subagents parser can reuse it (no duplicate date math).
+- [x] 6.2 In `src-tauri/src/subagents.rs`, add a parser for bare standalone `Task` subagents: enumerate `subagents/agent-<id>.meta.json` directly under `subagents/` (skip the `workflows/` subdir), read `description` (→ label) and `toolUseId`, and derive `startedAt`/`durationMs` from the sibling `agent-<id>.jsonl`'s first/last entry timestamps. Emit with `workflow_id: None` (flat/ungrouped).
+- [x] 6.3 Derive each standalone subagent's status from the parent transcript (`<project>/<session>.jsonl`, bounded tail): `running` iff its `toolUseId` appears as a `Task` `tool_use` with no matching `tool_result` in the tail; otherwise `done`. Scan the parent once per session, only when bare subagents exist.
+- [x] 6.4 Merge standalone subagents into `parse_session_subagents` alongside the workflow subagents (no overlap: workflow agents live under `subagents/workflows/`, standalone directly under `subagents/`).
+- [x] 6.5 Rust tests: a standalone subagent surfaces with its `description` label + duration (`standalone_task_subagents_appear_under_their_parent_agent`); status is `done` when the parent has a `tool_result` and `running` when it does not (`standalone_subagent_status_reflects_the_parent_result`); malformed/absent sidecars are tolerated.
+
 ## 5. Verify
 
 - [x] 5.1 Run the Rust tests (`cargo test` for the subagents module) and the TS unit tests (`npm test` for the new helper specs); confirm green.
 - [x] 5.2 Run `openspec validate add-inbox-workflow-subagent-rows` and confirm the change is well-formed.
-- [ ] 5.3 Manually confirm in the running app that a session with a live workflow shows its subagents nested, grouped by phase, with status and a ticking duration; finished subagents show their final duration.
+- [ ] 5.3 Manually confirm in the running app that a session shows its subagents nested under the parent (workflow subagents grouped by phase; standalone `Task` subagents as a flat list), each with status and a ticking/settled duration.
