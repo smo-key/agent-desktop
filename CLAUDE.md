@@ -57,16 +57,22 @@ To update main specs mid-stream without archiving, use the
 `/openspec-verify-change` then `/openspec-archive-change`, or by asking to
 "wrap up" / "archive" the current change — either way, apply this gate.
 
-## Git — do not auto-create branches
+## Git — auto-commit completed work, but do not auto-create branches
 
-This repo runs with `branchPerTask: false` (`.claude/workflow.yaml`). Treat that
-as a **global** preference, not just a toggle for the workflow skills: do **not**
-create a branch on the developer's behalf for any reason, including ad-hoc
-commits made outside the workflow skills. In particular, the default "if on the
-default branch, branch first" reflex does **not** apply here.
+**Auto-commit.** When a unit of work is complete — a change implemented, a fix
+applied, artifacts updated — commit it on the **current branch** without waiting
+to be asked. This **overrides** the harness default of "commit or push only when
+the user asks." Keep commits scoped and well-described, splitting unrelated work
+into separate logical commits. Do **not** commit work you know to be incomplete
+or failing (failing tests, half-done tasks) — finish it, or say so, first.
+Pushing and opening PRs still happen only when the user asks.
 
-When asked to commit, commit on the **current branch** (typically `main`). If
-committing directly to the default branch seems risky for a given change, **ask**
-first — never silently branch. (The `openspec` workflow skills already honor
-`branchPerTask`; this rule exists to cover manual git actions, which is where the
-gap was.)
+**Never auto-branch.** This repo runs with `branchPerTask: false`
+(`.claude/workflow.yaml`). Treat that as a **global** preference, not just a
+toggle for the workflow skills: do **not** create a branch on the developer's
+behalf for any reason — this includes the auto-commits above. The default "if on
+the default branch, branch first" reflex does **not** apply here; commit on the
+current branch (typically `main`). If committing a given change directly to the
+default branch seems risky, **ask** first — but never silently branch. (The
+`openspec` workflow skills already honor `branchPerTask`; this rule also covers
+manual and auto-commit git actions, which is where the gap was.)
