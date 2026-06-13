@@ -23,7 +23,7 @@
 // "delegation never crashes the wrapper" property.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -233,9 +233,22 @@ describe('statusline-wrapper snapshot write', () => {
       expect(readdirSync(snapshotDir).filter((f) => f.endsWith('.tmp'))).toEqual([]);
     }
 
-    // An unwritable snapshot dir also must not crash the wrapper.
+    // An unwritable snapshot dir also must not crash the wrapper. We make the dir
+    // genuinely unwritable by rooting it under a regular FILE: the wrapper's
+    // recursive mkdir then fails fast and synchronously with ENOTDIR, which its
+    // try/catch swallows — exactly the "unwritable snapshot dir" contract.
+    //
+    // NB: do NOT use a path like `/proc/nonexistent/...` here. On Linux a
+    // recursive mkdir into procfs *blocks indefinitely* in the kernel — a
+    // synchronous syscall hang that no try/catch can guard — so the wrapper is
+    // SIGTERM'd by spawnSync's timeout (status === null) instead of exiting 0.
+    // That path also behaves differently on macOS (no /proc), so it never
+    // exercised the real contract. A file-as-parent reproduces "unwritable"
+    // deterministically on every platform.
+    const blockingFile = join(snapshotDir, 'not-a-dir');
+    writeFileSync(blockingFile, 'x');
     const res2 = runWrapper(basePayload(), {
-      AGENT_DESKTOP_SNAPSHOT_DIR: '/proc/nonexistent/cannot/write/here',
+      AGENT_DESKTOP_SNAPSHOT_DIR: join(blockingFile, 'cannot', 'write', 'here'),
     });
     expect(res2.status).toBe(0);
   });
