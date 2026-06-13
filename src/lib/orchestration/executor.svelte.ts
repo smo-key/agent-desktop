@@ -36,6 +36,7 @@ import { getRuntime } from '../overview/runtime';
 import { deriveStatus, type AgentStatus } from '../overview/roster';
 import { events } from '../overview/events.svelte';
 import { activity } from '../overview/activity.svelte';
+import { titles } from '../overview/titles.svelte';
 import { projects } from '../projects/projects.svelte';
 import { projectForId } from '../projects/projects';
 import { specialists } from '../specialists/specialists.svelte';
@@ -122,6 +123,10 @@ export interface ExecutorDeps {
    *  with an optional short reason/prompt — surfaced in the roster so the user is
    *  notified the coordinator needs them (vs. its default keep-working heuristic). */
   setCoordinatorNeedsInput: (paneId: string, message: string | null) => void;
+  /** The pane's GENERATED session title (the label shown on its card), or null when
+   *  none yet — used to identify an agent by a meaningful name instead of its raw
+   *  "Session N" workspace name in `list_agents` / `inspect_agent`. */
+  titleOf: (paneId: string) => string | null;
 }
 
 /** How long to keep retrying a busy `message_agent` target before erroring (ms). */
@@ -420,7 +425,10 @@ export class OrchestrationExecutor {
   private infoFor(pane: LocatedPane): AgentInfo {
     return {
       paneId: pane.paneId,
-      name: nameFor(pane),
+      // Prefer the generated session title (the card's label) so the orchestrator
+      // refers to "Fix login dialog" rather than "Session 1"; fall back to the
+      // workspace/cwd name when the agent has no title yet.
+      name: this.deps.titleOf(pane.paneId) ?? nameFor(pane),
       cwd: pane.session.cwd,
       projectId: pane.session.projectId ?? null,
       status: this.deps.statusOf(pane.paneId),
@@ -557,7 +565,8 @@ function realDeps(): ExecutorDeps {
     schedule: (run, ms) => {
       setTimeout(run, ms);
     },
-    setCoordinatorNeedsInput: (paneId, message) => coordinatorNeedsInput.set(paneId, message)
+    setCoordinatorNeedsInput: (paneId, message) => coordinatorNeedsInput.set(paneId, message),
+    titleOf: (paneId) => titles.titleFor(paneId)
   };
 }
 

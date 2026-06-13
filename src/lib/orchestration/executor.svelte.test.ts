@@ -64,6 +64,7 @@ function makeDeps(over: Partial<ExecutorDeps> = {}) {
     unarchive: (paneId) => unarchived.push(paneId),
     schedule: (run) => run(), // run synchronously for deterministic tests
     setCoordinatorNeedsInput: (paneId, message) => coordNeeds.push({ paneId, message }),
+    titleOf: () => null,
     ...over
   };
   return { deps, replies, launched, sent, archived, unarchived, coordNeeds };
@@ -238,6 +239,35 @@ describe('OrchestrationExecutor — read/list/inspect (4.3/4.4)', () => {
     await ex.onRequest({ id: 1, op: 'list_agents', args: { projectId: PROJ } });
     const agents = replies[0].outcome.result.agents;
     expect(agents.map((a: any) => a.paneId)).toEqual(['p1', 'p2']);
+  });
+
+  it('Agent identified by its generated title', async () => {
+    // list_agents + inspect_agent report the generated session title (via titleOf)
+    // as the agent's name, not its raw "Session N" workspace name.
+    const { deps, replies } = makeDeps({
+      panesInProject: () => [pane('p1'), pane('p2')],
+      locate: () => pane('p1'),
+      titleOf: (paneId) => (paneId === 'p1' ? 'Fix login dialog' : null)
+    });
+    const ex = new OrchestrationExecutor(deps);
+    await ex.onRequest({ id: 1, op: 'list_agents', args: { projectId: PROJ } });
+    const agents = replies[0].outcome.result.agents;
+    expect(agents.find((a: any) => a.paneId === 'p1').name).toBe('Fix login dialog');
+    await ex.onRequest({ id: 2, op: 'inspect_agent', args: { projectId: PROJ, paneId: 'p1' } });
+    expect(replies[1].outcome.result.name).toBe('Fix login dialog');
+  });
+
+  it('Falls back to the workspace name when untitled', async () => {
+    // With no generated title (titleOf → null), the name falls back to nameFor's
+    // workspace/cwd resolution (the cwd leaf "repo" here, since there's no live
+    // workspace registry in the test).
+    const { deps, replies } = makeDeps({
+      panesInProject: () => [pane('p2')],
+      titleOf: () => null
+    });
+    const ex = new OrchestrationExecutor(deps);
+    await ex.onRequest({ id: 1, op: 'list_agents', args: { projectId: PROJ } });
+    expect(replies[0].outcome.result.agents[0].name).toBe('repo');
   });
 
   it('inspect_agent returns a single agent identity + state', async () => {
