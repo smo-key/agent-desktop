@@ -4,9 +4,6 @@
 # OS
 .DS_Store
 
-# macOS signing/notarization credentials (local only; see .env.notarize.example)
-.env.notarize
-
 # Node / SvelteKit
 node_modules/
 build/

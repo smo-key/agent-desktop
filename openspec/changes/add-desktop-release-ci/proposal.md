@@ -76,7 +76,8 @@ lets the app update itself.
   `scripts/fetch-models.sh` (host detection); `src-tauri/tauri.conf.json`
   (updater plugin config, bundle targets per OS); `src-tauri/Cargo.toml` +
   `package.json` (updater plugin deps); app source (minimal update-check flow);
-  `README.md` / `.env.notarize.example` (document new secrets).
+  `README.md` (document new secrets — signing/notarization is CI-only, with no
+  local signed-build path).
 - **GitHub repo configuration (manual, out-of-band)**: signing/notary secrets,
   the updater keypair secret, and a release token (PAT or
   `permissions: contents: write`) able to push the version-sync commit + tag to a

@@ -5,8 +5,8 @@
 When Apple signing secrets are present, the macOS build jobs SHALL import the
 code-signing certificate into a temporary keychain and SHALL produce a build that
 is code-signed with the Developer ID identity, notarized by Apple, and stapled.
-The pipeline SHALL accept either notary credential set documented in
-`.env.notarize.example`: an App Store Connect API key (`APPLE_API_ISSUER`,
+The pipeline SHALL accept either notary credential set documented in the
+`README.md` Releases section: an App Store Connect API key (`APPLE_API_ISSUER`,
 `APPLE_API_KEY`, `APPLE_API_KEY_PATH`) or an Apple ID set (`APPLE_ID`,
 `APPLE_PASSWORD`, `APPLE_TEAM_ID`), alongside `APPLE_SIGNING_IDENTITY` and the
 certificate (`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`).

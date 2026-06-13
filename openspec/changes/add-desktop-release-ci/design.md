@@ -120,11 +120,11 @@ reproducible.
 A pre-build step imports the base64-decoded `.p12` into a temporary keychain
 (`APPLE_CERTIFICATE` + `APPLE_CERTIFICATE_PASSWORD`), unlocks it, and exports the
 notary credentials Tauri reads (`APPLE_SIGNING_IDENTITY` + an API-key set or
-Apple-ID set, per `.env.notarize.example`). When `APPLE_CERTIFICATE` is empty
-(forks, untrusted PRs), the macOS job skips the keychain import and builds
-unsigned, emitting a warning — the matrix entry still succeeds. We reuse the
-existing `scripts/package-mac-signed.sh` logic conceptually but drive it through
-`tauri-action` env so the same secrets flow works.
+Apple-ID set, documented in the `README.md` Releases section). When
+`APPLE_CERTIFICATE` is empty (forks, untrusted PRs), the macOS job skips the
+keychain import and builds unsigned, emitting a warning — the matrix entry still
+succeeds. Signing/notarization is CI-only and driven through `tauri-action` env;
+there is no local signed-build script.
 
 ### 6. Changelog via git-cliff
 A pinned `git-cliff` with a committed `cliff.toml` (conventional-commits preset,

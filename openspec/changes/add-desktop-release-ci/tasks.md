@@ -38,7 +38,7 @@
 
 ## 6. Secrets, docs, and verification
 
-- [x] 6.1 Document all required repo secrets and the version-bump release flow in `README.md` and extend `.env.notarize.example` with `APPLE_CERTIFICATE`/`APPLE_CERTIFICATE_PASSWORD` and the `TAURI_SIGNING_PRIVATE_KEY` notes.
+- [x] 6.1 Document all required repo secrets and the version-bump release flow in `README.md` (including `APPLE_CERTIFICATE`/`APPLE_CERTIFICATE_PASSWORD` and the `TAURI_SIGNING_PRIVATE_KEY` notes). Signing/notarization is CI-only — there is no local signed-build script or `.env.notarize.example`.
 - [x] 6.2 Validate the workflow YAML (`actionlint` or equivalent) and dry-run the gate logic (version compare, sync, skip-ci guard) locally where possible.
 - [x] 6.3 Confirm idempotency: re-running on an unchanged version and on an existing tag produces no new release; the `[skip ci]` sync commit does not start a release loop.
 - [ ] 6.4 Resolve the open questions from `design.md` with the maintainer (branch-protection token for write-back; arm64 Linux runner availability) and adjust the matrix/token config accordingly.
