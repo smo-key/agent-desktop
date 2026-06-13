@@ -1628,7 +1628,7 @@
   .fhead .ttl-btn { display: inline-flex; align-items: center; max-width: 100%; padding: 2px 6px; margin: -2px -6px; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; cursor: text; text-align: left; font-family: var(--font-sans); }
   .fhead .ttl-btn:hover { background: rgba(255, 255, 255, 0.04); border-color: var(--line-subtle); }
   /* The inline rename input mirrors the session-rail rename affordance. */
-  .fhead .ttl-edit { flex: 0 1 auto; min-width: 0; max-width: 60%; font-weight: 600; font-size: 13.5px; font-family: var(--font-sans); color: var(--fg-1); background: var(--space-800); border: 1px solid var(--blue-500); box-shadow: var(--focus-ring); border-radius: var(--r-sm); padding: 2px 6px; outline: none; }
+  .fhead .ttl-edit { flex: 1 1 auto; min-width: 0; max-width: 100%; font-weight: 600; font-size: 13.5px; font-family: var(--font-sans); color: var(--fg-1); background: var(--space-800); border: 1px solid var(--blue-500); box-shadow: var(--focus-ring); border-radius: var(--r-sm); padding: 2px 6px; outline: none; }
   .fhead .spc { flex: 1; }
   .fhead .nav { display: flex; gap: 4px; flex: none; }
   .fhead .nav button { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-sm); background: var(--space-750); border: 1px solid var(--line-subtle); color: var(--fg-3); cursor: pointer; font-size: 13px; }
