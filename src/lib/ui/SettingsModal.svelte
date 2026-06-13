@@ -135,17 +135,35 @@
       </header>
 
       <section class="group">
+        <span class="label">Sessions panel</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Density — Compact hides the context, model, and time line</span>
+            <div class="control">
+              <!-- Focus the first setting control on open (skips the header ×). -->
+              <select
+                value={compactMode.prefs.enabled ? 'compact' : 'default'}
+                onchange={(e) => compactMode.setEnabled(e.currentTarget.value === 'compact')}
+                use:autofocus
+              >
+                <option value="default">Default</option>
+                <option value="compact">Compact</option>
+              </select>
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group">
         <span class="label">Open files with</span>
         <ul class="rows">
-          {#each ROWS as row, i (row.bucket)}
+          {#each ROWS as row (row.bucket)}
             <li class="row">
               <span class="desc">{row.label}</span>
               <div class="control">
-                <!-- Focus the first setting control on open (skips the header ×). -->
                 <select
                   value={selectValue(row.bucket)}
                   onchange={(e) => onSelect(row.bucket, e.currentTarget.value)}
-                  use:autofocus={{ enabled: i === 0 }}
                 >
                   <option value={SYSTEM}>System Default</option>
                   {#each APP_CHOICES[row.bucket] as app (app)}
@@ -257,22 +275,6 @@
                 type="checkbox"
                 checked={autoAdvance.prefs.enabled}
                 onchange={(e) => autoAdvance.setEnabled(e.currentTarget.checked)}
-              />
-            </div>
-          </li>
-        </ul>
-      </section>
-
-      <section class="group">
-        <span class="label">Sessions panel</span>
-        <ul class="rows">
-          <li class="row">
-            <span class="desc">Compact mode — hide the context, model, and time line</span>
-            <div class="control">
-              <input
-                type="checkbox"
-                checked={compactMode.prefs.enabled}
-                onchange={(e) => compactMode.setEnabled(e.currentTarget.checked)}
               />
             </div>
           </li>

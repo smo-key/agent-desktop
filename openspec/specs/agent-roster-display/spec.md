@@ -134,13 +134,13 @@ queue-step behavior is unchanged (it follows the queue order — top is "next").
 
 ### Requirement: Compact mode hides the roster row's meta line
 
-The sessions panel SHALL offer an opt-in "Compact mode" preference, exposed as a
-toggle in Settings and persisted across restarts. The preference SHALL default
-to OFF. WHEN compact mode is enabled, every roster row SHALL omit its third
-content line — the meta line carrying the context-window measure, the model
-label, and the time since last activity — leaving the title and status sub-line.
-WHEN compact mode is disabled (the default), rows SHALL render all three lines as
-before.
+The sessions panel SHALL offer a density preference, exposed in Settings as a
+"Default" / "Compact" dropdown shown as the FIRST setting, and persisted across
+restarts. The preference SHALL default to "Default". WHEN "Compact" is selected,
+every roster row SHALL omit its third content line — the meta line carrying the
+context-window measure, the model label, and the time since last activity —
+leaving the title and status sub-line. WHEN "Default" is selected (the default),
+rows SHALL render all three lines as before.
 
 #### Scenario: Compact mode hides the meta line
 
@@ -153,9 +153,9 @@ before.
 - **WHEN** a roster row renders while compact mode is disabled (the default)
 - **THEN** the row shows the context/model/time meta line as its third line
 
-#### Scenario: The preference persists and defaults OFF
+#### Scenario: The preference persists and defaults to Default
 
-- **WHEN** the app loads on a fresh install with no stored compact-mode preference
-- **THEN** compact mode is OFF and rows render all three lines, and a user's
-  later toggle is restored on the next launch
+- **WHEN** the app loads on a fresh install with no stored density preference
+- **THEN** the density is "Default" and rows render all three lines, and a user's
+  later "Compact" selection is restored on the next launch
 
