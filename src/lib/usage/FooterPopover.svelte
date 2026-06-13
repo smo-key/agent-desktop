@@ -20,6 +20,7 @@
   // and `action` has `flex: 0 0 auto`.
 
   import type { Snippet } from 'svelte';
+  import { autofocus } from '$lib/ui/autofocus';
 
   let {
     open,
@@ -61,9 +62,10 @@
 
   // ── Keyboard handler ──────────────────────────────────────────────────────
   // Bound at the window level (see <svelte:window> below) so Escape closes the
-  // popover regardless of where focus is — the panel itself is never focused
-  // (unlike BranchPicker, which autofocuses its filter input), so a panel-local
-  // handler would never fire. Guarded by `open` so closed instances are inert.
+  // popover regardless of where focus is. On open the panel autofocuses its first
+  // focusable control (use:autofocus within), but a row can be clicked/blurred and
+  // focus moved out, so a panel-local handler alone wouldn't suffice. Guarded by
+  // `open` so closed instances are inert.
   function onKeyDown(e: KeyboardEvent) {
     if (!open) return;
     if (e.key === 'Escape') {
@@ -94,6 +96,7 @@
     role="dialog"
     aria-modal="true"
     tabindex="-1"
+    use:autofocus={{ within: true }}
   >
     {#if title}
       <div class="fp-title">

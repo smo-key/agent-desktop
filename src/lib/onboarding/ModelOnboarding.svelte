@@ -12,6 +12,7 @@
   import { voice } from '$lib/settings/voice.svelte';
   import { ensureModels, downloadRows, formatBytes } from '$lib/voice/models';
   import { modelDownload } from '$lib/voice/modelStore.svelte';
+  import { autofocus } from '$lib/ui/autofocus';
 
   // The models to fetch (friendly label + human size) and their summed total.
   const list = $derived(downloadRows(onboarding.missing));
@@ -87,7 +88,8 @@
         <p class="error" role="alert">{error}</p>
       {/if}
       <div class="actions">
-        <button type="button" class="primary" onclick={() => void download()}>
+        <!-- Focus the primary CTA on open so Enter starts the (Retry) download. -->
+        <button type="button" class="primary" onclick={() => void download()} use:autofocus>
           {error ? 'Retry download' : 'Download models'}
         </button>
         <button type="button" class="secondary" onclick={skip}>Skip for now</button>

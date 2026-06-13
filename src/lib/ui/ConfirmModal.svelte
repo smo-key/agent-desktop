@@ -7,6 +7,7 @@
   // pattern. Mounted once globally (see +page.svelte).
 
   import { confirmModal } from './confirmStore.svelte';
+  import { autofocus } from './autofocus';
 
   function cancel() {
     confirmModal.close();
@@ -47,7 +48,9 @@
       <p class="message">{confirmModal.message}</p>
 
       <div class="actions">
-        <button type="button" class="btn cancel" onclick={cancel}>Cancel</button>
+        <!-- Focus the safe (non-destructive) action on open so a stray Enter
+             dismisses rather than confirms. -->
+        <button type="button" class="btn cancel" onclick={cancel} use:autofocus>Cancel</button>
         <button type="button" class="btn danger" onclick={confirm}>
           {confirmModal.confirmLabel}
         </button>

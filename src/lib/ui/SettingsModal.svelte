@@ -6,6 +6,7 @@
   // HelpModal backdrop/dialog pattern. Dismiss with Esc / backdrop / close button.
 
   import { settingsModal } from './settingsStore.svelte';
+  import { autofocus } from './autofocus';
   import {
     openWith,
     APP_CHOICES,
@@ -135,13 +136,15 @@
       <section class="group">
         <span class="label">Open files with</span>
         <ul class="rows">
-          {#each ROWS as row (row.bucket)}
+          {#each ROWS as row, i (row.bucket)}
             <li class="row">
               <span class="desc">{row.label}</span>
               <div class="control">
+                <!-- Focus the first setting control on open (skips the header ×). -->
                 <select
                   value={selectValue(row.bucket)}
                   onchange={(e) => onSelect(row.bucket, e.currentTarget.value)}
+                  use:autofocus={{ enabled: i === 0 }}
                 >
                   <option value={SYSTEM}>System Default</option>
                   {#each APP_CHOICES[row.bucket] as app (app)}

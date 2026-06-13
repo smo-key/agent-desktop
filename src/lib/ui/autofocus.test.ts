@@ -75,6 +75,26 @@ describe('autofocus action', () => {
     expect(document.activeElement).not.toBe(panel);
   });
 
+  it('does nothing when { enabled: false }', () => {
+    const a = document.createElement('button');
+    const b = document.createElement('button');
+    document.body.append(a, b);
+    b.focus(); // pretend focus already sits elsewhere
+
+    autofocus(a, { enabled: false });
+
+    expect(document.activeElement).toBe(b); // unchanged
+  });
+
+  it('focuses when { enabled: true }', () => {
+    const btn = document.createElement('button');
+    document.body.appendChild(btn);
+
+    autofocus(btn, { enabled: true });
+
+    expect(document.activeElement).toBe(btn);
+  });
+
   it('returns an action object with a no-op destroy', () => {
     const btn = document.createElement('button');
     document.body.appendChild(btn);

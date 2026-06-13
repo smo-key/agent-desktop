@@ -14,6 +14,9 @@ export interface AutofocusOptions {
   /** Focus the first focusable DESCENDANT instead of the node itself. Use on a
    *  container whose interactive controls are provided by children / snippets. */
   within?: boolean;
+  /** When false, the action is inert — no focus. Lets a caller focus just one
+   *  element of a rendered list, e.g. `use:autofocus={{ enabled: i === 0 }}`. */
+  enabled?: boolean;
 }
 
 export interface AutofocusAction {
@@ -27,6 +30,8 @@ const FOCUSABLE =
   'button:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])';
 
 export function autofocus(node: HTMLElement, param?: AutofocusOptions): AutofocusAction {
+  if (param?.enabled === false) return { destroy() {} };
+
   const target = param?.within ? node.querySelector<HTMLElement>(FOCUSABLE) : node;
   // No focusable descendant (e.g. a loading/empty popover body) → leave focus be
   // rather than trapping it on a non-interactive container.
