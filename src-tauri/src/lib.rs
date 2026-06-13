@@ -234,19 +234,19 @@ fn path_within(root: &str, path: &str) -> bool {
 
 /// Build the argument vector passed to `open` (after the program name) for
 /// [`open_path`]. PURE so the launch wiring is unit-tested without spawning:
-/// - no app                       → `[path]`               (OS default handler)
-/// - app, no workspace root        → `["-a", app, path]`
-/// - app + workspace root          → `["-a", app, root, path]` (editor opens the
+/// - no app                  → `[path]`                    (OS default handler)
+/// - app, no workspace        → `["-a", app, path]`
+/// - app + workspace          → `["-a", app, workspace, path]` (editor opens the
 ///   folder as the workspace and reveals the file within it)
 ///
-/// A `root` without an `app` is ignored (the OS default handler can't be told a
-/// workspace), so it degrades to `[path]`.
-fn open_args(path: &str, app: Option<&str>, root: Option<&str>) -> Vec<String> {
+/// A `workspace` without an `app` is ignored (the OS default handler can't be told
+/// a workspace), so it degrades to `[path]`.
+fn open_args(path: &str, app: Option<&str>, workspace: Option<&str>) -> Vec<String> {
     match app {
         Some(app) => {
             let mut args = vec!["-a".to_string(), app.to_string()];
-            if let Some(root) = root {
-                args.push(root.to_string());
+            if let Some(workspace) = workspace {
+                args.push(workspace.to_string());
             }
             args.push(path.to_string());
             args
@@ -258,30 +258,31 @@ fn open_args(path: &str, app: Option<&str>, root: Option<&str>) -> Vec<String> {
 /// Open `path` in an application. With `app` set, launches that specific app
 /// (macOS `open -a <app> <path>`, e.g. "Brave Browser", "Cursor"); with `app`
 /// `None`/empty, opens in the OS default handler (`open <path>` — registered app
-/// for files, Finder for directories). When `root` is set alongside an `app` and
-/// actually contains `path`, the root is opened as the workspace too
-/// (`open -a <app> <root> <path>`) so a workspace-capable editor reveals the file
-/// inside the project rather than guessing a workspace from the file's folder; a
-/// root that doesn't contain the file (or has no app) is dropped. The frontend
-/// picks `app`/`root` from the user's open-with preferences. Mirrors
-/// `open_in_editor` — best-effort spawn-and-return; a launch failure is surfaced
-/// as a string the frontend logs/ignores.
+/// for files, Finder for directories). When `workspace` is set alongside an `app`
+/// and actually contains `path`, the workspace folder is opened too
+/// (`open -a <app> <workspace> <path>`) so a project-aware editor reveals the file
+/// inside the project rather than guessing a workspace from the file's folder. A
+/// `workspace` that doesn't contain the file (e.g. an absolute path clicked outside
+/// the project, or a non-file target like a URL) is dropped so no unrelated project
+/// is opened. The frontend picks `app`/`workspace` from the user's open-with
+/// preferences. Mirrors `open_in_editor` — best-effort spawn-and-return; a launch
+/// failure is surfaced as a string the frontend logs/ignores.
 #[tauri::command]
-fn open_path(path: String, app: Option<String>, root: Option<String>) -> Result<(), String> {
+fn open_path(path: String, app: Option<String>, workspace: Option<String>) -> Result<(), String> {
     let app = app.as_deref().map(str::trim).filter(|a| !a.is_empty());
-    let root = root
+    let workspace = workspace
         .as_deref()
         .map(str::trim)
-        .filter(|r| !r.is_empty())
-        // A workspace root is honored only with a named app and when it really
-        // contains the file — otherwise an unrelated project could be opened.
-        .filter(|r| app.is_some() && path_within(r, &path));
-    let args = open_args(&path, app, root);
+        .filter(|w| !w.is_empty())
+        // A workspace is honored only with a named app and when it really contains
+        // the file — otherwise an unrelated project could be opened.
+        .filter(|w| app.is_some() && path_within(w, &path));
+    let args = open_args(&path, app, workspace);
     std::process::Command::new("open")
         .args(&args)
         .spawn()
         .map(|_| ())
-        .map_err(|e| format!("open {path} (app {app:?}, root {root:?}): {e}"))
+        .map_err(|e| format!("open {path} (app {app:?}, workspace {workspace:?}): {e}"))
 }
 
 /// Title-budget constants for [`select_title_messages`]. `TITLE_MAX_MSGS` caps how

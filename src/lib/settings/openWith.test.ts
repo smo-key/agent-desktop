@@ -1,13 +1,26 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The Tauri `invoke` is mocked so `OpenWithStore.openFile` can be asserted without
+// a live backend (mirrors uiPrefs/prActions tests). The pure helpers below don't
+// touch it.
+const invokeMock = vi.fn(async (..._a: unknown[]): Promise<unknown> => undefined);
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
+
 import {
   classify,
   resolveApp,
-  workspaceRootFor,
+  isProjectAwareEditor,
+  OpenWithStore,
   parsePrefs,
   DEFAULT_PREFS,
   SYSTEM,
   type OpenWithPrefs
 } from './openWith.svelte';
+
+beforeEach(() => {
+  invokeMock.mockReset();
+  invokeMock.mockResolvedValue(undefined);
+});
 
 // Tests for the PURE open-with logic: extension → bucket classification, bucket →
 // app resolution under prefs, and tolerant parsing of persisted settings. The
@@ -83,46 +96,70 @@ describe('resolveApp', () => {
   });
 });
 
-describe('workspaceRootFor', () => {
+describe('isProjectAwareEditor', () => {
+  it('is true for the allowlisted project-aware editors', () => {
+    for (const app of ['Cursor', 'Visual Studio Code', 'Zed', 'Sublime Text']) {
+      expect(isProjectAwareEditor(app)).toBe(true);
+    }
+  });
+
+  it('is false for non-project-aware apps, custom names, and System Default', () => {
+    for (const app of ['TextEdit', 'Finder', 'Brave Browser', 'My Custom App']) {
+      expect(isProjectAwareEditor(app)).toBe(false);
+    }
+    expect(isProjectAwareEditor(undefined)).toBe(false);
+    expect(isProjectAwareEditor(null)).toBe(false);
+  });
+});
+
+describe('OpenWithStore.openFile', () => {
+  const withPrefs = (prefs: OpenWithPrefs): OpenWithStore => {
+    const store = new OpenWithStore();
+    store.prefs = prefs;
+    return store;
+  };
   const prefs: OpenWithPrefs = {
     code: 'Cursor',
     html: 'Brave Browser',
     markdown: 'Zed',
-    other: 'Finder'
+    other: 'TextEdit'
   };
 
-  it('returns the root for a code file opened in a workspace-capable editor', () => {
-    expect(workspaceRootFor(prefs, '/proj/src/a.ts', '/proj')).toBe('/proj');
+  it('forwards the workspace to a project-aware editor', async () => {
+    await withPrefs(prefs).openFile('/proj/src/a.ts', '/proj');
+    expect(invokeMock).toHaveBeenLastCalledWith('open_path', {
+      path: '/proj/src/a.ts',
+      app: 'Cursor',
+      workspace: '/proj'
+    });
   });
 
-  it('returns the root for a markdown file opened in a workspace-capable editor', () => {
-    expect(workspaceRootFor(prefs, '/proj/README.md', '/proj')).toBe('/proj');
+  it('omits the workspace for a System Default category', async () => {
+    await withPrefs(DEFAULT_PREFS).openFile('/proj/src/a.ts', '/proj');
+    expect(invokeMock).toHaveBeenLastCalledWith('open_path', {
+      path: '/proj/src/a.ts',
+      app: null,
+      workspace: null
+    });
   });
 
-  it('returns undefined when there is no root', () => {
-    expect(workspaceRootFor(prefs, '/proj/src/a.ts', null)).toBeUndefined();
-    expect(workspaceRootFor(prefs, '/proj/src/a.ts', '')).toBeUndefined();
+  it('omits the workspace for a non-project-aware app', async () => {
+    // `other` is "TextEdit" — a named app, but not a project-aware editor.
+    await withPrefs(prefs).openFile('/proj/photo.png', '/proj');
+    expect(invokeMock).toHaveBeenLastCalledWith('open_path', {
+      path: '/proj/photo.png',
+      app: 'TextEdit',
+      workspace: null
+    });
   });
 
-  it('returns undefined for non-editor buckets (html, other)', () => {
-    expect(workspaceRootFor(prefs, '/proj/index.html', '/proj')).toBeUndefined();
-    expect(workspaceRootFor(prefs, '/proj/photo.png', '/proj')).toBeUndefined();
-  });
-
-  it('returns undefined when the bucket is System Default (no app)', () => {
-    expect(workspaceRootFor(DEFAULT_PREFS, '/proj/src/a.ts', '/proj')).toBeUndefined();
-  });
-
-  it('returns undefined when the editor is not workspace-capable (e.g. TextEdit)', () => {
-    const p: OpenWithPrefs = { ...prefs, code: 'TextEdit' };
-    expect(workspaceRootFor(p, '/proj/src/a.ts', '/proj')).toBeUndefined();
-  });
-
-  it('honors all known workspace-capable editors', () => {
-    for (const app of ['Cursor', 'Visual Studio Code', 'Zed', 'Sublime Text']) {
-      const p: OpenWithPrefs = { ...prefs, code: app };
-      expect(workspaceRootFor(p, '/proj/src/a.ts', '/proj')).toBe('/proj');
-    }
+  it('omits the workspace when none is supplied', async () => {
+    await withPrefs(prefs).openFile('/proj/src/a.ts');
+    expect(invokeMock).toHaveBeenLastCalledWith('open_path', {
+      path: '/proj/src/a.ts',
+      app: 'Cursor',
+      workspace: null
+    });
   });
 });
 

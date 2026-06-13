@@ -100,26 +100,16 @@ export function resolveApp(prefs: OpenWithPrefs, path: string): string | undefin
 }
 
 /** Editors that open a folder as a workspace AND reveal a file within it when both
- *  are passed to `open -a <App> <folder> <file>`. Used to decide whether a file's
- *  project root should accompany it on open. */
-const WORKSPACE_EDITORS = new Set(['Cursor', 'Visual Studio Code', 'Zed', 'Sublime Text']);
+ *  are passed to `open -a <App> <folder> <file>`. These get a workspace root on
+ *  open; browsers, Finder, "System Default", and custom app names do not (passing a
+ *  folder would mishandle them). Lives next to `EDITORS`/`APP_CHOICES` so the
+ *  allowlist is maintained where the editor names are defined. */
+const PROJECT_AWARE_EDITORS = new Set(['Cursor', 'Visual Studio Code', 'Zed', 'Sublime Text']);
 
-/** PURE: the project root to open as the workspace alongside `path`, or `undefined`
- *  to open the file alone. A root is honored only for editor buckets (code/markdown)
- *  whose configured app is a workspace-capable editor; everything else (browsers,
- *  Finder, System Default, no root) opens the file by itself, preserving prior
- *  behavior. The backend still verifies the root actually contains the file. */
-export function workspaceRootFor(
-  prefs: OpenWithPrefs,
-  path: string,
-  root: string | null | undefined
-): string | undefined {
-  if (!root) return undefined;
-  const bucket = classify(path);
-  if (bucket !== 'code' && bucket !== 'markdown') return undefined;
-  const app = resolveApp(prefs, path);
-  if (!app || !WORKSPACE_EDITORS.has(app)) return undefined;
-  return root;
+/** PURE: whether `app` is a project-aware editor (opens a folder as a workspace). A
+ *  blank/undefined app (System Default) and any non-allowlisted name are not. */
+export function isProjectAwareEditor(app: string | null | undefined): boolean {
+  return app != null && PROJECT_AWARE_EDITORS.has(app);
 }
 
 /**
@@ -152,15 +142,17 @@ export class OpenWithStore {
   }
 
   /** Open `path` with the configured app for its bucket (or the OS default). When
-   *  `root` is supplied and the target is a workspace-capable editor (see
-   *  `workspaceRootFor`), the project root is opened as the workspace so the editor
-   *  reveals the file inside the project rather than guessing a workspace from the
-   *  file's folder. */
-  async openFile(path: string, root?: string | null): Promise<void> {
+   *  `workspace` is supplied and the resolved app is a project-aware editor (see
+   *  `isProjectAwareEditor`), that directory is passed as the editor's workspace
+   *  root so it opens the project and reveals the file inside it rather than
+   *  guessing a workspace from the file's folder. Browsers, Finder, System Default,
+   *  and custom apps open the file alone, as before. (The backend additionally
+   *  drops a workspace that does not actually contain the file.) */
+  async openFile(path: string, workspace?: string | null): Promise<void> {
     const app = resolveApp(this.prefs, path);
-    const ws = workspaceRootFor(this.prefs, path, root);
+    const ws = workspace && isProjectAwareEditor(app) ? workspace : null;
     try {
-      await invoke('open_path', { path, app: app ?? null, root: ws ?? null });
+      await invoke('open_path', { path, app: app ?? null, workspace: ws });
     } catch (err) {
       console.warn('open_path failed', err);
     }
