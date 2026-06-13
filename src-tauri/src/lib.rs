@@ -221,26 +221,67 @@ fn resolve_path(cwd: Option<String>, token: String) -> Result<Option<String>, St
         .map(|abs| abs.to_string_lossy().into_owned()))
 }
 
+/// True when `path` resolves to a location inside `root` (or equal to it). Both
+/// sides are canonicalized so symlinks (e.g. macOS `/var` → `/private/var`) and
+/// `..` segments compare correctly; a non-existent root or path yields `false`.
+/// PURE w.r.t. its inputs (reads only the filesystem); unit-tested.
+fn path_within(root: &str, path: &str) -> bool {
+    match (fs::canonicalize(root), fs::canonicalize(path)) {
+        (Ok(r), Ok(p)) => p.starts_with(&r),
+        _ => false,
+    }
+}
+
+/// Build the argument vector passed to `open` (after the program name) for
+/// [`open_path`]. PURE so the launch wiring is unit-tested without spawning:
+/// - no app                       → `[path]`               (OS default handler)
+/// - app, no workspace root        → `["-a", app, path]`
+/// - app + workspace root          → `["-a", app, root, path]` (editor opens the
+///   folder as the workspace and reveals the file within it)
+///
+/// A `root` without an `app` is ignored (the OS default handler can't be told a
+/// workspace), so it degrades to `[path]`.
+fn open_args(path: &str, app: Option<&str>, root: Option<&str>) -> Vec<String> {
+    match app {
+        Some(app) => {
+            let mut args = vec!["-a".to_string(), app.to_string()];
+            if let Some(root) = root {
+                args.push(root.to_string());
+            }
+            args.push(path.to_string());
+            args
+        }
+        None => vec![path.to_string()],
+    }
+}
+
 /// Open `path` in an application. With `app` set, launches that specific app
 /// (macOS `open -a <app> <path>`, e.g. "Brave Browser", "Cursor"); with `app`
 /// `None`/empty, opens in the OS default handler (`open <path>` — registered app
-/// for files, Finder for directories). The frontend picks `app` from the user's
-/// open-with preferences. Mirrors `open_in_editor` — best-effort spawn-and-return;
-/// a launch failure is surfaced as a string the frontend logs/ignores.
+/// for files, Finder for directories). When `root` is set alongside an `app` and
+/// actually contains `path`, the root is opened as the workspace too
+/// (`open -a <app> <root> <path>`) so a workspace-capable editor reveals the file
+/// inside the project rather than guessing a workspace from the file's folder; a
+/// root that doesn't contain the file (or has no app) is dropped. The frontend
+/// picks `app`/`root` from the user's open-with preferences. Mirrors
+/// `open_in_editor` — best-effort spawn-and-return; a launch failure is surfaced
+/// as a string the frontend logs/ignores.
 #[tauri::command]
-fn open_path(path: String, app: Option<String>) -> Result<(), String> {
-    let mut cmd = std::process::Command::new("open");
-    match app.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
-        Some(app) => {
-            cmd.args(["-a", app, &path]);
-        }
-        None => {
-            cmd.arg(&path);
-        }
-    }
-    cmd.spawn()
+fn open_path(path: String, app: Option<String>, root: Option<String>) -> Result<(), String> {
+    let app = app.as_deref().map(str::trim).filter(|a| !a.is_empty());
+    let root = root
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        // A workspace root is honored only with a named app and when it really
+        // contains the file — otherwise an unrelated project could be opened.
+        .filter(|r| app.is_some() && path_within(r, &path));
+    let args = open_args(&path, app, root);
+    std::process::Command::new("open")
+        .args(&args)
+        .spawn()
         .map(|_| ())
-        .map_err(|e| format!("open {path} (app {app:?}): {e}"))
+        .map_err(|e| format!("open {path} (app {app:?}, root {root:?}): {e}"))
 }
 
 /// Title-budget constants for [`select_title_messages`]. `TITLE_MAX_MSGS` caps how
@@ -1476,6 +1517,55 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn open_args_builds_per_app_and_root_combination() {
+        // No app → OS default handler gets just the path.
+        assert_eq!(open_args("/p/a.ts", None, None), vec!["/p/a.ts"]);
+        // App, no workspace root → open the file with that app.
+        assert_eq!(
+            open_args("/p/a.ts", Some("Cursor"), None),
+            vec!["-a", "Cursor", "/p/a.ts"]
+        );
+        // App + workspace root → open the project folder, then reveal the file.
+        assert_eq!(
+            open_args("/p/sub/a.ts", Some("Cursor"), Some("/p")),
+            vec!["-a", "Cursor", "/p", "/p/sub/a.ts"]
+        );
+        // A root with no app can't target a workspace → ignored.
+        assert_eq!(open_args("/p/a.ts", None, Some("/p")), vec!["/p/a.ts"]);
+    }
+
+    #[test]
+    fn path_within_checks_containment_with_canonicalization() {
+        let tmp = TempDir::new("within");
+        let root = tmp.path();
+        let sub = root.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let file = sub.join("a.ts");
+        fs::write(&file, "x").unwrap();
+
+        // A file under the root (even nested) is contained.
+        assert!(path_within(
+            root.to_str().unwrap(),
+            file.to_str().unwrap()
+        ));
+        // The root itself counts as within.
+        assert!(path_within(root.to_str().unwrap(), root.to_str().unwrap()));
+        // A sibling directory outside the root is not contained.
+        let other = TempDir::new("within-other");
+        let outside = other.path().join("b.ts");
+        fs::write(&outside, "y").unwrap();
+        assert!(!path_within(
+            root.to_str().unwrap(),
+            outside.to_str().unwrap()
+        ));
+        // A non-existent path (canonicalize fails) is not contained.
+        assert!(!path_within(
+            root.to_str().unwrap(),
+            sub.join("missing.ts").to_str().unwrap()
+        ));
     }
 
     #[test]

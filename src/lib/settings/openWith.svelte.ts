@@ -99,6 +99,29 @@ export function resolveApp(prefs: OpenWithPrefs, path: string): string | undefin
   return pref;
 }
 
+/** Editors that open a folder as a workspace AND reveal a file within it when both
+ *  are passed to `open -a <App> <folder> <file>`. Used to decide whether a file's
+ *  project root should accompany it on open. */
+const WORKSPACE_EDITORS = new Set(['Cursor', 'Visual Studio Code', 'Zed', 'Sublime Text']);
+
+/** PURE: the project root to open as the workspace alongside `path`, or `undefined`
+ *  to open the file alone. A root is honored only for editor buckets (code/markdown)
+ *  whose configured app is a workspace-capable editor; everything else (browsers,
+ *  Finder, System Default, no root) opens the file by itself, preserving prior
+ *  behavior. The backend still verifies the root actually contains the file. */
+export function workspaceRootFor(
+  prefs: OpenWithPrefs,
+  path: string,
+  root: string | null | undefined
+): string | undefined {
+  if (!root) return undefined;
+  const bucket = classify(path);
+  if (bucket !== 'code' && bucket !== 'markdown') return undefined;
+  const app = resolveApp(prefs, path);
+  if (!app || !WORKSPACE_EDITORS.has(app)) return undefined;
+  return root;
+}
+
 /**
  * Reactive open-with preferences store. Singleton, imported by the settings modal
  * (read/write) and the terminal/transcript file-open paths (read via `openFile`).
@@ -128,11 +151,16 @@ export class OpenWithStore {
     void this.save();
   }
 
-  /** Open `path` with the configured app for its bucket (or the OS default). */
-  async openFile(path: string): Promise<void> {
+  /** Open `path` with the configured app for its bucket (or the OS default). When
+   *  `root` is supplied and the target is a workspace-capable editor (see
+   *  `workspaceRootFor`), the project root is opened as the workspace so the editor
+   *  reveals the file inside the project rather than guessing a workspace from the
+   *  file's folder. */
+  async openFile(path: string, root?: string | null): Promise<void> {
     const app = resolveApp(this.prefs, path);
+    const ws = workspaceRootFor(this.prefs, path, root);
     try {
-      await invoke('open_path', { path, app: app ?? null });
+      await invoke('open_path', { path, app: app ?? null, root: ws ?? null });
     } catch (err) {
       console.warn('open_path failed', err);
     }

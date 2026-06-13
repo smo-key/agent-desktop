@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classify,
   resolveApp,
+  workspaceRootFor,
   parsePrefs,
   DEFAULT_PREFS,
   SYSTEM,
@@ -79,6 +80,49 @@ describe('resolveApp', () => {
   it('treats all-system defaults as system everywhere', () => {
     expect(resolveApp(DEFAULT_PREFS, 'index.html')).toBeUndefined();
     expect(resolveApp(DEFAULT_PREFS, 'main.ts')).toBeUndefined();
+  });
+});
+
+describe('workspaceRootFor', () => {
+  const prefs: OpenWithPrefs = {
+    code: 'Cursor',
+    html: 'Brave Browser',
+    markdown: 'Zed',
+    other: 'Finder'
+  };
+
+  it('returns the root for a code file opened in a workspace-capable editor', () => {
+    expect(workspaceRootFor(prefs, '/proj/src/a.ts', '/proj')).toBe('/proj');
+  });
+
+  it('returns the root for a markdown file opened in a workspace-capable editor', () => {
+    expect(workspaceRootFor(prefs, '/proj/README.md', '/proj')).toBe('/proj');
+  });
+
+  it('returns undefined when there is no root', () => {
+    expect(workspaceRootFor(prefs, '/proj/src/a.ts', null)).toBeUndefined();
+    expect(workspaceRootFor(prefs, '/proj/src/a.ts', '')).toBeUndefined();
+  });
+
+  it('returns undefined for non-editor buckets (html, other)', () => {
+    expect(workspaceRootFor(prefs, '/proj/index.html', '/proj')).toBeUndefined();
+    expect(workspaceRootFor(prefs, '/proj/photo.png', '/proj')).toBeUndefined();
+  });
+
+  it('returns undefined when the bucket is System Default (no app)', () => {
+    expect(workspaceRootFor(DEFAULT_PREFS, '/proj/src/a.ts', '/proj')).toBeUndefined();
+  });
+
+  it('returns undefined when the editor is not workspace-capable (e.g. TextEdit)', () => {
+    const p: OpenWithPrefs = { ...prefs, code: 'TextEdit' };
+    expect(workspaceRootFor(p, '/proj/src/a.ts', '/proj')).toBeUndefined();
+  });
+
+  it('honors all known workspace-capable editors', () => {
+    for (const app of ['Cursor', 'Visual Studio Code', 'Zed', 'Sublime Text']) {
+      const p: OpenWithPrefs = { ...prefs, code: app };
+      expect(workspaceRootFor(p, '/proj/src/a.ts', '/proj')).toBe('/proj');
+    }
   });
 });
 

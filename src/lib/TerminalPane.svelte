@@ -445,7 +445,11 @@
       if (e.button !== 0 || !metaDown || !armedPath) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      void openWith.openFile(armedPath);
+      // Pass the pane cwd (the agent's working dir = project root) so a
+      // workspace-capable editor opens the project and reveals the file within
+      // it, rather than guessing a workspace from the file's folder. A URL arm
+      // (cwd irrelevant) falls in a non-editor bucket and ignores the root.
+      void openWith.openFile(armedPath, cwd);
     };
     host.addEventListener('mousedown', onHostDownCapture, true);
 
