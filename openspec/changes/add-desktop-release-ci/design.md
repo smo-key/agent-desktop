@@ -146,7 +146,7 @@ on confirmation. The keypair is generated once (`tauri signer generate`) and the
 private key stored as a secret; the public key is committed in `tauri.conf.json`.
 
 ### 8. Quality gate & caching
-Before packaging, each runner runs `npm run check:gate` (svelte-check + vitest +
+Before packaging, each runner runs `yarn check:gate` (svelte-check + vitest +
 scenario coverage). We cache `~/.cargo`, `src-tauri/target` (keyed on
 `Cargo.lock` + target triple), and the built `src-tauri/binaries/*` sidecars
 (keyed on the pinned whisper/llama tags + triple) so the expensive

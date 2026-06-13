@@ -31,10 +31,11 @@
 - [x] 5.2 Implement the `gate` job: run version-bump detection (4.2); when releasing, run version sync (4.1) + `CHANGELOG.md` regen (2.x), commit `chore(release): v<version> [skip ci]` to `main`, create + push annotated tag `v<version>`. (Includes a skip-ci/`chore(release):` head-commit guard so the sync commit cannot loop.)
 - [x] 5.3 Implement the build matrix (`fail-fast: false`) over the five targets with correct runners (`macos-14`, `macos-13`, `windows-latest`, `ubuntu-22.04`, `ubuntu-22.04-arm`); set up Node, Rust (target triple), and on Linux install the Tauri system deps (webkit2gtk, gtk, librsvg, appindicator, patchelf, cmake/build-essential).
 - [x] 5.4 Add Cargo + sidecar caching keyed on `Cargo.lock` + target triple + pinned whisper/llama tags.
-- [x] 5.5 In each build job: provision sidecars (section 1) + model, run `npm run check:gate`, then build/bundle via `tauri-action` (or Tauri CLI) producing the platform installers. (Updater-bundle signing env is wired forward-compatibly; actual signed update bundles emit once the updater plugin is configured in task 3.x.)
+- [x] 5.5 In each build job: provision sidecars (section 1) + model, run `yarn check:gate`, then build/bundle via `tauri-action` (or Tauri CLI) producing the platform installers. (Updater-bundle signing env is wired forward-compatibly; actual signed update bundles emit once the updater plugin is configured in task 3.x.)
 - [x] 5.6 Wire macOS signing/notarization: import `.p12` from `APPLE_CERTIFICATE`/`APPLE_CERTIFICATE_PASSWORD` into a temporary keychain, export `APPLE_SIGNING_IDENTITY` + a notary credential set; skip + warn (unsigned) when the cert secret is absent. (tauri-action performs the temp-keychain import from the cert env; a step warns when `APPLE_CERTIFICATE` is empty.)
 - [x] 5.7 Pass `TAURI_SIGNING_PRIVATE_KEY` (+ password) so update bundles are signed. (Env passed to tauri-action; effective once the updater plugin from task 3.x lands.)
 - [x] 5.8 Publish a single GitHub Release `v<version>` with git-cliff release notes as the body and all targets' installers attached. (`latest.json`/updater artifacts attach once the updater plugin from task 3.x is configured.)
+- [x] 5.9 Install JS deps with Yarn (Classic): build job runs `yarn install --frozen-lockfile` (not `npm ci`) against a committed `yarn.lock`, with `actions/setup-node` `cache: yarn`. Repo standardizes on Yarn (`package.json` scripts, `.githooks/pre-commit`, README); `package-lock.json` removed.
 
 ## 6. Secrets, docs, and verification
 

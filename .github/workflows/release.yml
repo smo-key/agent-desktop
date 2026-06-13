@@ -207,6 +207,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: yarn
 
       # Fail fast with a clear message rather than a cryptic `tauri build` error:
       # the updater is enabled (bundle.createUpdaterArtifacts + a committed
@@ -261,7 +262,7 @@ jobs:
           key: sidecars-${{ matrix.triple }}-w${{ env.WHISPER_TAG }}-l${{ env.LLAMA_TAG }}-${{ hashFiles('scripts/fetch-whisper.sh', 'scripts/fetch-llama.sh', 'scripts/lib/target-triple.sh') }}
 
       - name: Install dependencies
-        run: npm ci
+        run: yarn install --frozen-lockfile
 
       # Provision sidecars + model for this matrix triple. Bash steps run under
       # Git Bash on Windows (the fetch scripts drive the MSVC cmake generator).
@@ -279,7 +280,7 @@ jobs:
 
       # Quality gate must pass BEFORE packaging; a failure fails the job.
       - name: Quality gate
-        run: npm run check:gate
+        run: yarn check:gate
 
       # Warn (do not fail) when macOS signing secrets are absent, e.g. on a fork
       # or untrusted PR. tauri-action skips signing when the cert env is empty,

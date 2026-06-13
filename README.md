@@ -13,20 +13,20 @@ A desktop app to manage AI coding agents — for people who run lots of agents b
 
 ## Getting Started
 
-Prerequisites: [Node.js](https://nodejs.org/) and the [Rust toolchain](https://www.rust-lang.org/tools/install) (for Tauri).
+Prerequisites: [Node.js](https://nodejs.org/), [Yarn](https://classic.yarnpkg.com/) (Classic / v1), and the [Rust toolchain](https://www.rust-lang.org/tools/install) (for Tauri).
 
 ```bash
 # Install dependencies, git hooks, and bundled model sidecars
-npm run setup
+yarn setup
 
 # Run the desktop app in development
-npm run dev
+yarn dev
 
 # Build a production app bundle
-npm run build
+yarn build
 ```
 
-To run just the web frontend (without the Tauri shell), use `npm run dev:web`.
+To run just the web frontend (without the Tauri shell), use `yarn dev:web`.
 
 ## Releases
 
@@ -74,7 +74,7 @@ producing an **unsigned**, un-notarized app (Gatekeeper will warn on launch).
 `TAURI_SIGNING_PRIVATE_KEY` is the only hard requirement — the workflow checks
 for it up front and stops with a clear message if it is missing.
 
-For a quick local (unsigned, no-updater) build, run `npm run build`, which builds
+For a quick local (unsigned, no-updater) build, run `yarn build`, which builds
 with `bundle.createUpdaterArtifacts` disabled so it needs no signing key.
 
 ## Contributing
@@ -83,7 +83,7 @@ with `bundle.createUpdaterArtifacts` disabled so it needs no signing key.
 2. Create a branch and make your changes.
 3. Run the checks before opening a PR:
    ```bash
-   npm run check:gate   # type-check, tests, and coverage
+   yarn check:gate   # type-check, tests, and coverage
    ```
 4. This project tracks behavior in [OpenSpec](openspec/) — when you change requirements or scope, update the relevant specs alongside your code.
 5. Push to your fork and open a pull request against this repository.

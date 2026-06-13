@@ -80,7 +80,7 @@ runners SHALL install the Tauri system dependencies before building.
 
 ### Requirement: Quality gate before packaging
 
-Each build job SHALL run `npm run check:gate` (svelte-check, vitest, and scenario
+Each build job SHALL run `yarn check:gate` (svelte-check, vitest, and scenario
 coverage) and SHALL NOT package or publish an artifact if the gate fails.
 
 #### Scenario: Gate fails

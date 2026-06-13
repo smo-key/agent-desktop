@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "setup": "npm install && npm run setup:hooks && npm run setup:sidecars",
+    "setup": "yarn install && yarn setup:hooks && yarn setup:sidecars",
     "setup:hooks": "git config core.hooksPath .githooks",
     "setup:sidecars": "./scripts/fetch-models.sh && ./scripts/fetch-whisper.sh && ./scripts/fetch-llama.sh",
     "postinstall": "git config core.hooksPath .githooks 2>/dev/null || true",
@@ -17,7 +17,7 @@
     "test": "vitest run",
     "coverage": "node tools/check-scenario-coverage.mjs",
     "lint:storage": "node tools/check-localstorage.mjs",
-    "check:gate": "npm run check && npm run test && npm run coverage && npm run lint:storage",
+    "check:gate": "yarn check && yarn test && yarn coverage && yarn lint:storage",
     "tauri": "tauri"
   },
   "devDependencies": {

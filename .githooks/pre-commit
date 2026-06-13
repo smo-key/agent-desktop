@@ -2,11 +2,11 @@
 # agent-desktop pre-commit gate (openspec tasks.md 1.7).
 # Fast checks only — type-check, scenario-coverage, and openspec validity.
 # (cargo test / vitest are intentionally omitted to keep commits fast; run
-# `npm run check:gate` for the full suite.)  Skip once with: git commit --no-verify
+# `yarn check:gate` for the full suite.)  Skip once with: git commit --no-verify
 set -e
 
 echo "[pre-commit] svelte-check…"
-npm run --silent check
+yarn --silent check
 
 echo "[pre-commit] scenario coverage gate…"
 node tools/check-scenario-coverage.mjs >/dev/null
