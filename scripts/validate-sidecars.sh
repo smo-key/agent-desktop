@@ -43,8 +43,7 @@ fi
 
 echo "→ Validating sidecars for $TARGET_TRIPLE (expect: $EXPECT_FORMAT) ..."
 
-# Convert the EXPECT_FORMAT glob (e.g. "Mach-O*arm64") into a grep -E pattern.
-EXPECT_RE="${EXPECT_FORMAT//\*/.*}"
+# EXPECT_RE (set by resolve_target) is a real ERE asserting format AND arch.
 
 status=0
 for name in whisper-cli whisper-server llama-server; do

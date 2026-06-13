@@ -81,8 +81,8 @@ fi
 # so a real provisioning run replaces it. A real binary is large and matches the
 # expected on-disk FORMAT for the target (Mach-O / ELF / PE32+).
 if [[ -x "$DEST" && "${FORCE:-0}" != "1" ]]; then
-  # shellcheck disable=SC2254  # EXPECT_FORMAT intentionally contains a glob
-  if file "$DEST" 2>/dev/null | grep -qiE "${EXPECT_FORMAT//\*/.*}"; then
+  # EXPECT_RE (from resolve_target) asserts the target's format AND arch.
+  if file "$DEST" 2>/dev/null | grep -qiE "$EXPECT_RE"; then
     echo "✓ llama-server sidecar already present: $DEST"
     echo "  (set FORCE=1 to rebuild)"
     exit 0

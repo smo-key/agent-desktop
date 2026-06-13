@@ -23,24 +23,30 @@
 #   TARGET_OS       one of: darwin | linux | windows  (derived from the triple)
 #   OSX_ARCH        the value for -DCMAKE_OSX_ARCHITECTURES, or "" when N/A
 #   EXE_SUFFIX      ".exe" on Windows, otherwise ""
-#   EXPECT_FORMAT   human-readable expected `file` format substring (for validation)
+#   EXPECT_FORMAT   human-readable expected `file` format (for messages only)
+#   EXPECT_RE       an ERE (grep -E) that asserts BOTH the binary format AND the
+#                   architecture of a provisioned sidecar (used for validation)
 
 # Map a Rust target triple -> derived OS / cmake-arch / exe-suffix metadata.
-# Sets TARGET_OS, OSX_ARCH, EXE_SUFFIX, EXPECT_FORMAT for the given triple.
+# Sets TARGET_OS, OSX_ARCH, EXE_SUFFIX, EXPECT_FORMAT, EXPECT_RE for the triple.
 # Returns non-zero (with a message on stderr) for an unsupported triple.
+#
+# EXPECT_RE is a real extended regex (not a glob): it must assert the arch so a
+# wrong-arch binary is REJECTED. Note `PE32\+` escapes the literal '+' (which is
+# a quantifier in ERE) and requires x86-64 so a 32-bit or ARM64 Windows PE fails.
 _triple_metadata() {
   local triple="$1"
   case "$triple" in
     aarch64-apple-darwin)
-      TARGET_OS="darwin"; OSX_ARCH="arm64";  EXE_SUFFIX="";     EXPECT_FORMAT="Mach-O*arm64" ;;
+      TARGET_OS="darwin"; OSX_ARCH="arm64";  EXE_SUFFIX="";     EXPECT_FORMAT="Mach-O arm64";  EXPECT_RE="Mach-O.*arm64" ;;
     x86_64-apple-darwin)
-      TARGET_OS="darwin"; OSX_ARCH="x86_64"; EXE_SUFFIX="";     EXPECT_FORMAT="Mach-O*x86_64" ;;
+      TARGET_OS="darwin"; OSX_ARCH="x86_64"; EXE_SUFFIX="";     EXPECT_FORMAT="Mach-O x86_64"; EXPECT_RE="Mach-O.*x86_64" ;;
     x86_64-unknown-linux-gnu)
-      TARGET_OS="linux";  OSX_ARCH="";       EXE_SUFFIX="";     EXPECT_FORMAT="ELF*x86-64" ;;
+      TARGET_OS="linux";  OSX_ARCH="";       EXE_SUFFIX="";     EXPECT_FORMAT="ELF x86-64";    EXPECT_RE="ELF.*(x86-64|x86_64)" ;;
     aarch64-unknown-linux-gnu)
-      TARGET_OS="linux";  OSX_ARCH="";       EXE_SUFFIX="";     EXPECT_FORMAT="ELF*aarch64" ;;
+      TARGET_OS="linux";  OSX_ARCH="";       EXE_SUFFIX="";     EXPECT_FORMAT="ELF aarch64";   EXPECT_RE="ELF.*(aarch64|ARM aarch64)" ;;
     x86_64-pc-windows-msvc)
-      TARGET_OS="windows"; OSX_ARCH="";      EXE_SUFFIX=".exe"; EXPECT_FORMAT="PE32+*Windows" ;;
+      TARGET_OS="windows"; OSX_ARCH="";      EXE_SUFFIX=".exe"; EXPECT_FORMAT="PE32+ x86-64 (MS Windows)"; EXPECT_RE="PE32\\+.*(x86-64|x86_64).*Windows" ;;
     *)
       echo "ERROR: unsupported target triple '$triple'." >&2
       echo "  Supported: aarch64-apple-darwin, x86_64-apple-darwin," >&2
@@ -67,7 +73,10 @@ _detect_host_triple() {
       case "$host_arch" in
         x86_64|amd64)  echo "x86_64-unknown-linux-gnu" ;;
         aarch64|arm64) echo "aarch64-unknown-linux-gnu" ;;
-        *)             echo "aarch64-apple-darwin" ;;  # default: Apple Silicon
+        # A detected Linux host with an unknown arch must NOT cross-wire to the
+        # Darwin default (that would build with macOS cmake flags on Linux).
+        # Emit a Linux triple so _triple_metadata rejects it with a clear error.
+        *)             echo "${host_arch}-unknown-linux-gnu" ;;
       esac ;;
     MINGW*|MSYS*|CYGWIN*)
       # Git Bash / MSYS on Windows. Only x86_64 MSVC is supported today.
