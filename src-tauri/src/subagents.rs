@@ -45,7 +45,7 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// How many bytes of the parent transcript's TAIL to scan for `Task` tool_use /
+/// How many bytes of the parent transcript's TAIL to scan for `Agent`/`Task` tool_use /
 /// tool_result ids when deriving standalone-subagent status. A live subagent's
 /// `tool_use` is necessarily recent (near the tail); anything not found in the
 /// tail has scrolled out (old) and is treated as finished. Bounds the per-recompute
@@ -356,8 +356,8 @@ struct SubagentMeta {
     tool_use_id: Option<String>,
 }
 
-/// The parent transcript's tool state, scanned once per session: the set of `Task`
-/// `tool_use` ids seen in the tail, and the set of `tool_use_id`s that already have
+/// The parent transcript's tool state, scanned once per session: the set of
+/// `Agent`/`Task` `tool_use` ids seen in the tail, and the set of `tool_use_id`s that already have
 /// a `tool_result`. A standalone subagent is RUNNING iff its id is a pending
 /// tool_use (present in `task_uses`, absent from `results`); otherwise DONE.
 #[derive(Debug, Default)]
@@ -479,7 +479,7 @@ fn jsonl_span(path: &Path) -> (Option<i64>, Option<i64>) {
 }
 
 /// Scan the parent session transcript (`<project>/<session_id>.jsonl`, a bounded
-/// tail) for the `Task` tool_use ids and the `tool_use_id`s that already have a
+/// tail) for the `Agent`/`Task` tool_use ids and the `tool_use_id`s that already have a
 /// `tool_result`. A truncated first line from the tail cut simply fails to parse
 /// and is skipped. Missing transcript -> empty state (everything reads as done).
 fn scan_parent_tool_state(session_dir: &Path, session_id: &str) -> ParentToolState {
@@ -504,7 +504,15 @@ fn scan_parent_tool_state(session_dir: &Path, session_id: &str) -> ParentToolSta
         };
         for block in content {
             match block.get("type").and_then(Value::as_str) {
-                Some("tool_use") if block.get("name").and_then(Value::as_str) == Some("Task") => {
+                // The subagent-spawning tool is named `Agent` in this app's harness
+                // (and historically `Task`); match BOTH so a live subagent is
+                // detected regardless of which name the transcript used.
+                Some("tool_use")
+                    if matches!(
+                        block.get("name").and_then(Value::as_str),
+                        Some("Agent") | Some("Task")
+                    ) =>
+                {
                     if let Some(id) = block.get("id").and_then(Value::as_str) {
                         state.task_uses.insert(id.to_string());
                     }
@@ -862,6 +870,14 @@ mod tests {
         )
     }
 
+    /// A parent `tool_use` line for an `Agent` (the current name of the subagent-
+    /// spawning tool in this app's harness) with the given id.
+    fn agent_use_line(tool_id: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"tool_use","id":"{tool_id}","name":"Agent","input":{{}}}}]}}}}"#
+        )
+    }
+
     /// A parent `tool_result` line completing the given tool_use id.
     fn tool_result_line(tool_id: &str) -> String {
         format!(
@@ -903,6 +919,39 @@ mod tests {
         let l = crate::activity::parse_iso_millis(last).unwrap();
         assert_eq!(s.started_at, Some(f));
         assert_eq!(s.duration_ms, Some(l - f), "duration spans the jsonl");
+    }
+
+    /// Regression (live subagents never showed): the subagent-spawning tool is
+    /// named `Agent` in this app's harness (historically `Task`). A standalone
+    /// subagent whose parent recorded the spawn as an `Agent` `tool_use` with no
+    /// `tool_result` yet MUST be detected as `running`. Before the fix the scan
+    /// only recognized `Task`, so every `Agent`-spawned subagent was marked `done`
+    /// and the live-only Inbox filter hid it the entire time it was alive.
+    #[test]
+    fn standalone_running_detected_for_agent_tool() {
+        let tmp = TempDir::new("agent-tool");
+        let session = make_session(tmp.path(), "-Users-arthur-git-app", "sess-AG");
+        write_standalone_meta(&session, "alive", "Wait then reply C", "toolu_ag");
+        write_standalone_jsonl(&session, "alive", &["2026-06-13T10:00:00.000Z"]);
+        // Parent launched the subagent via the `Agent` tool; no tool_result yet.
+        write_parent_transcript(&session, "sess-AG", &[&agent_use_line("toolu_ag")]);
+
+        let subs = parse_session_subagents(&session, "sess-AG");
+        assert_eq!(subs.len(), 1);
+        assert_eq!(
+            subs[0].status.as_deref(),
+            Some("running"),
+            "an Agent tool_use with no result must read as running"
+        );
+
+        // And once the parent records its result, it settles to done.
+        write_parent_transcript(
+            &session,
+            "sess-AG",
+            &[&agent_use_line("toolu_ag"), &tool_result_line("toolu_ag")],
+        );
+        let settled = parse_session_subagents(&session, "sess-AG");
+        assert_eq!(settled[0].status.as_deref(), Some("done"));
     }
 
     /// Spec scenario: "Standalone subagent status reflects the parent result".
