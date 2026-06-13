@@ -115,6 +115,22 @@ pub struct Subagent {
     /// subagents by workflow under the parent.
     #[serde(default)]
     pub workflow_id: Option<String>,
+    /// The workflow phase title this subagent ran under (e.g. `Capabilities`), or
+    /// `null`. Lets the UI sub-group a workflow's subagents by phase.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_title: Option<String>,
+    /// The workflow phase index (ordinal) this subagent ran under, or `null`. Used
+    /// to order phase groups in the UI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_index: Option<i64>,
+    /// When the subagent started, as a Unix epoch in MILLISECONDS, or `null`. Lets
+    /// the UI compute "duration alive" for a still-running subagent (`now - startedAt`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<i64>,
+    /// The subagent's total run duration in MILLISECONDS once finished, or `null`
+    /// while still running. The UI prefers this over `now - startedAt` when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +179,18 @@ struct ProgressEntry {
     /// Context-window usage 0..100, when recorded (reserved).
     #[serde(default, rename = "contextPct")]
     context_pct: Option<f64>,
+    /// Workflow phase title this agent ran under, e.g. `Capabilities`.
+    #[serde(default, rename = "phaseTitle")]
+    phase_title: Option<String>,
+    /// Workflow phase ordinal this agent ran under.
+    #[serde(default, rename = "phaseIndex")]
+    phase_index: Option<i64>,
+    /// Start time as a Unix epoch in milliseconds.
+    #[serde(default, rename = "startedAt")]
+    started_at: Option<i64>,
+    /// Total run duration in milliseconds, once finished.
+    #[serde(default, rename = "durationMs")]
+    duration_ms: Option<i64>,
 }
 
 impl ProgressEntry {
@@ -190,6 +218,10 @@ impl ProgressEntry {
             usage: if usage.is_empty() { None } else { Some(usage) },
             parent_session: parent_session.to_string(),
             workflow_id: non_empty(Some(workflow_id)),
+            phase_title: non_empty(self.phase_title.as_deref()),
+            phase_index: self.phase_index,
+            started_at: self.started_at,
+            duration_ms: self.duration_ms,
         })
     }
 }
@@ -534,7 +566,8 @@ mod tests {
                 {"type":"workflow_phase","index":1,"title":"Capabilities"},
                 {"type":"workflow_agent","index":1,"label":"spec:terminal-core",
                  "agentId":"a45490d0ade2c7a7c","model":"claude-opus-4-8[1m]",
-                 "state":"done","tokens":22423,"toolCalls":2,"durationMs":41710},
+                 "state":"done","tokens":22423,"toolCalls":2,"durationMs":41710,
+                 "phaseIndex":1,"phaseTitle":"Capabilities","startedAt":1780373405182},
                 {"type":"workflow_agent","index":2,"label":"spec:tiling-layout",
                  "agentId":"aafb262f94f1397db","model":"claude-opus-4-8[1m]",
                  "state":"running","tokens":12000}
@@ -566,12 +599,22 @@ mod tests {
                 context_pct: None
             })
         );
+        // Phase + timing fields are surfaced when the agent row carries them.
+        assert_eq!(first.phase_title.as_deref(), Some("Capabilities"));
+        assert_eq!(first.phase_index, Some(1));
+        assert_eq!(first.started_at, Some(1780373405182));
+        assert_eq!(first.duration_ms, Some(41710));
 
         let second = &subs[1];
         assert_eq!(second.id, "aafb262f94f1397db");
         assert_eq!(second.label.as_deref(), Some("spec:tiling-layout"));
         assert_eq!(second.status.as_deref(), Some("running"));
         assert_eq!(second.usage.unwrap().tokens, Some(12000));
+        // A row that omits the phase/timing fields parses them to None.
+        assert!(second.phase_title.is_none(), "no phaseTitle -> null");
+        assert!(second.phase_index.is_none(), "no phaseIndex -> null");
+        assert!(second.started_at.is_none(), "no startedAt -> null");
+        assert!(second.duration_ms.is_none(), "no durationMs -> null");
     }
 
     /// Spec scenario: "Partial subagent metadata does not break the roster".

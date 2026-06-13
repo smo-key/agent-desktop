@@ -58,6 +58,13 @@
   import { titles } from './titles.svelte';
   import { summaries } from './summaries.svelte';
   import { costs } from './costs.svelte';
+  import { subagents } from './subagents.svelte';
+  import {
+    groupSubagentsByPhase,
+    formatDurationAlive,
+    subagentsVisibleOnLane,
+    type WorkflowGroup
+  } from './subagentRows';
   import { projects } from '$lib/projects/projects.svelte';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
   import {
@@ -390,6 +397,25 @@
    *  agent lives in a non-active workspace. Null for a non-claude/shell pane. */
   function sessionIdOf(r: AgentRow): string | null {
     return workspace.sessionIn(r.workspaceId, r.paneId).sessionId ?? null;
+  }
+
+  /** The workflow → phase groups of subagents to nest under a row, or [] when the
+   *  lane is inactive (Paused/Archived show none) or the session has no subagents. */
+  function subagentGroupsFor(r: AgentRow, lane: AgentLane): WorkflowGroup[] {
+    if (!subagentsVisibleOnLane(lane)) return [];
+    const sid = sessionIdOf(r);
+    if (!sid) return [];
+    return groupSubagentsByPhase(subagents.forSession(sid));
+  }
+
+  /** Map a subagent's verbatim status to a row class. Known terminal states map to
+   *  `done`/`error`; everything else (running/queued/unknown/null) is the neutral
+   *  `running` style, so an unrecognized state never throws or looks broken. */
+  function subStatusClass(status?: string | null): 'done' | 'error' | 'running' {
+    const s = (status ?? '').toLowerCase();
+    if (s === 'done' || s === 'completed' || s === 'success') return 'done';
+    if (s === 'error' || s === 'failed') return 'error';
+    return 'running';
   }
 
   /** Enter header edit mode for the focused session, seeding the draft with the
@@ -1188,6 +1214,33 @@
   </button>
 {/snippet}
 
+<!-- Nested workflow subagents under a parent agent row. Rendered only on the active
+     lanes (Needs you / In flight); grouped by workflow then phase, always expanded.
+     Each row: a status dot, the subagent label, and its "duration alive" (ticking off
+     the same `nowMs` clock the roster uses for relative times). -->
+{#snippet subagentBlock(r: AgentRow, lane: AgentLane)}
+  {@const groups = subagentGroupsFor(r, lane)}
+  {#each groups as g (g.workflowId ?? '∅')}
+    <div class="sa-wf">
+      {#each g.phases as p (p.phaseTitle ?? '∅')}
+        {#if p.phaseTitle}
+          <div class="sa-phase">{p.phaseTitle}</div>
+        {/if}
+        {#each p.subagents as s (s.id)}
+          {@const dur = formatDurationAlive(s, nowMs)}
+          <div class="sa-row">
+            <span class="sa-dot {subStatusClass(s.status)}"></span>
+            <span class="sa-label" use:tooltip={s.label ?? s.id}>{s.label ?? s.id}</span>
+            {#if dur}
+              <span class="sa-dur" use:tooltip={'Time alive'}>{dur}</span>
+            {/if}
+          </div>
+        {/each}
+      {/each}
+    </div>
+  {/each}
+{/snippet}
+
 <div class="inbox-shell" class:project-collapsed={projectPaneCollapsed}>
   <ProjectPanel
     rows={allRows}
@@ -1268,6 +1321,7 @@
                 </div>
                 {#each visible as r (r.paneId)}
                   {@render sessionRow(r, lane)}
+                  {@render subagentBlock(r, lane)}
                 {/each}
                 {#if lane === 'done' && items.length > ARCHIVED_PREVIEW}
                   <button
@@ -1531,6 +1585,32 @@
   .row .nm .meta .ctx { gap: 5px; }
   .row .nm .meta .ctx .ctxbar { display: inline-flex; width: 34px; }
   .row .nm .meta .ctx .ctxbar :global(.bar) { width: 34px; min-width: 34px; flex: 0 0 34px; height: 4px; }
+
+  /* Nested workflow subagents under a parent agent row (active lanes only). Indented
+     to sit under the parent's name (icon 30 + gap 11 + padding 16). A subtle left
+     guide rail ties each workflow's phases + rows to the parent above. */
+  .sa-wf { margin: 1px 0 3px 0; padding-left: 57px; }
+  .sa-phase {
+    padding: 3px 16px 1px 0; font-family: var(--font-mono); font-size: 9px;
+    text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--fg-4);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sa-row {
+    display: flex; align-items: center; gap: 7px; padding: 2px 16px 2px 0;
+    border-left: 1px solid var(--line-subtle); margin-left: -8px; padding-left: 8px;
+  }
+  .sa-dot { flex: none; width: 6px; height: 6px; border-radius: var(--r-full); background: var(--fg-4); }
+  .sa-dot.done { background: var(--nominal-500); }
+  .sa-dot.error { background: var(--abort-500); }
+  .sa-dot.running { background: var(--caution-500); }
+  .sa-label {
+    flex: 1; min-width: 0; font-size: 11px; color: var(--fg-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sa-dur {
+    flex: none; font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    font-size: 10px; color: var(--fg-4);
+  }
 
   .col-focus { background: var(--space-850); min-width: 0; display: flex; flex-direction: column; min-height: 0; }
   .fhead { flex: none; display: flex; align-items: center; gap: 11px; padding: 11px 18px; border-bottom: 1px solid var(--line-subtle); background: var(--space-900); }
