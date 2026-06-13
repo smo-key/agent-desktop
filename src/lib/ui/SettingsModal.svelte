@@ -14,6 +14,8 @@
   } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
+  import { notifications, type AlertMode } from '$lib/settings/notifications.svelte';
+  import { ensureDesktopPermission } from '$lib/overview/alerts.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
   import {
     ensureModels,
@@ -252,6 +254,46 @@
                 checked={autoAdvance.prefs.enabled}
                 onchange={(e) => autoAdvance.setEnabled(e.currentTarget.checked)}
               />
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <span class="label">Notifications</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Sound when an agent needs input</span>
+            <div class="control">
+              <select
+                value={notifications.prefs.sound.mode}
+                onchange={(e) =>
+                  notifications.setSoundMode(e.currentTarget.value as AlertMode)}
+              >
+                <option value="off">Never</option>
+                <option value="app-unfocused">When app is in the background</option>
+                <option value="agent-unfocused">When not viewing that agent</option>
+                <option value="always">Always</option>
+              </select>
+            </div>
+          </li>
+          <li class="row">
+            <span class="desc">Desktop notification when an agent needs input</span>
+            <div class="control">
+              <select
+                value={notifications.prefs.desktop.mode}
+                onchange={(e) => {
+                  const mode = e.currentTarget.value as AlertMode;
+                  notifications.setDesktopMode(mode);
+                  // Request OS notification permission as soon as the channel is enabled.
+                  if (mode !== 'off') void ensureDesktopPermission();
+                }}
+              >
+                <option value="off">Never</option>
+                <option value="app-unfocused">When app is in the background</option>
+                <option value="agent-unfocused">When not viewing that agent</option>
+                <option value="always">Always</option>
+              </select>
             </div>
           </li>
         </ul>

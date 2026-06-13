@@ -37,6 +37,12 @@ tauri-plugin-dialog = "2.7.1"
 # `whisper-cli-<target-triple>` and runs it; see src/transcribe.rs.
 tauri-plugin-shell = "2"
 
+# Native OS desktop notifications for the needs-input alerts (capability
+# `needs-input-alerts`): when an agent enters the "Needs input" state the frontend
+# requests permission and posts a notification via @tauri-apps/plugin-notification.
+# Scope is granted by `notification:default` in capabilities/default.json.
+tauri-plugin-notification = "2"
+
 # Streaming HTTP client for download-on-first-run of voice MODELS (Milestone 4 /
 # tasks.md 5.2). `stream` gives us a chunked `bytes_stream()` so we can sum bytes
 # and emit progress; rustls avoids a system-OpenSSL build dependency.

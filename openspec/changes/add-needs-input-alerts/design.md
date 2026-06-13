@@ -104,9 +104,26 @@ focused. The webview keeps running in the background, so background chimes work.
 ### D7 — OS window focus as its own tiny reactive store
 `windowFocus.svelte.ts` exposes `appFocused` derived from `window` `focus`/`blur`
 and `document.visibilitychange` (focused = has focus AND visible). Isolated so the
-pure core stays free of browser globals and the value is mockable. `viewedPaneId`
-is computed in `Inbox.svelte` from `view.mode` (inbox focus agent vs.
-`workspace.focusedId`) and passed in.
+pure core stays free of browser globals and the value is mockable.
+
+### D7b — Drive alerts from the always-mounted route, not the Inbox
+`Inbox.svelte` is mounted **only in overview mode** (`{#if view.isOverview}` in
+`+page.svelte`); the grid view is kept mounted-but-hidden. So the alert driver
+must NOT live in the Inbox — it would go silent the moment the user digs into an
+agent (grid view), then burst-fire stale alerts on return. Instead the always-
+mounted route `+page.svelte` owns the alert `$effect`: it builds the roster via
+`buildRoster(...)` off the same module singletons the Inbox uses (snapshots,
+workspace, runtime registry, activity, events, coordinator-needs-input) on its own
+1s clock, and calls `alerts.process(rows, ctx)`. The `alerts` controller is driven
+from this single place, so there is no double-firing. `viewedPaneId` is
+`view.isGrid ? workspace.focusedId : focusAgent.paneId`.
+
+### D7c — `focusAgent` store publishes the inbox's shown agent
+The overview's "currently viewed" agent is the inbox focus pane's agent, which is
+`Inbox.svelte`-local state. A tiny `focusAgent.svelte.ts` singleton holds that
+paneId; the Inbox publishes its shown agent into it via one `$effect`, and the
+route's alert driver reads it for the overview-mode `viewedPaneId` (grid mode reads
+`workspace.focusedId` directly). This is the Inbox's ONLY change — it does not grow.
 
 ### D8 — Module boundaries
 - `notify.ts` (pure): `newlyNeedsAttention`, `shouldAlert`, the `AlertMode` type.
@@ -115,10 +132,15 @@ is computed in `Inbox.svelte` from `view.mode` (inbox focus agent vs.
   `DEFAULT_NOTIFICATION_PREFS` (both `off`), pure `parseNotificationPrefs`,
   `load()`, `setSoundMode`/`setDesktopMode`, persists the `notifications` slice.
 - `windowFocus.svelte.ts`: `appFocused` reactive store.
+- `focusAgent.svelte.ts`: a one-field reactive singleton holding the inbox's
+  currently-shown agent paneId (published by the Inbox, read by the route driver).
 - `alerts.svelte.ts` (reactive shell): holds `prev`/primed state, reads prefs +
   focus + `viewedPaneId`, calls the pure core, performs side effects (permission,
-  `sendNotification`, `playChime`). Exposes a single `process(rows, ctx)` the
-  inbox calls from its existing per-second `$effect`.
+  `sendNotification`, `playChime`). Exposes a single `process(rows, ctx)`.
+- `+page.svelte` (always-mounted route): builds the alert roster off the shared
+  singletons on a 1s clock and calls `alerts.process(...)` (see D7b); starts the
+  `windowFocus` listeners.
+- `Inbox.svelte`: one `$effect` publishing its shown agent into `focusAgent`.
 - `SettingsModal.svelte`: a "Notifications" section with two mode pickers.
 
 ## Risks / Trade-offs

@@ -50,6 +50,7 @@
   import { toRosterWorkspaces, toNavWorkspaces } from './rosterInputs';
   import { runtimeMap } from './runtime';
   import { navigateTarget } from './navigate';
+  import { focusAgent } from './focusAgent.svelte';
   import { activity } from './activity.svelte';
   import { events } from './events.svelte';
   import { titles } from './titles.svelte';
@@ -379,6 +380,14 @@
 
   // The focused (shown) agent row.
   const focus = $derived(viewRows.find((r) => r.paneId === shownId) ?? null);
+
+  // Publish the shown agent so the always-mounted alert driver (+page.svelte) can
+  // resolve the OVERVIEW-mode `viewedPaneId` for the `agent-unfocused` alert mode.
+  // The Inbox is mounted only in overview mode, so it must NOT own the alert driver
+  // itself — it only publishes this selection (needs-input-alerts, design D7b/D7c).
+  $effect(() => {
+    focusAgent.paneId = focus?.paneId ?? null;
+  });
 
   // --- Rename the focused session (header inline-edit) -----------------------
   // Click the focus-pane header title (or pick "Rename" in the agent card menu) to

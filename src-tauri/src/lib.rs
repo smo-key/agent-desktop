@@ -1251,6 +1251,11 @@ pub fn run() {
         // capabilities/default.json (`shell:allow-execute` + the externalBin
         // entry). See src/transcribe.rs.
         .plugin(tauri_plugin_shell::init())
+        // Notification plugin: native OS desktop notifications for the needs-input
+        // alerts (capability `needs-input-alerts`). The frontend requests permission
+        // and posts notifications via @tauri-apps/plugin-notification; the scope is
+        // granted by `notification:default` in capabilities/default.json.
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

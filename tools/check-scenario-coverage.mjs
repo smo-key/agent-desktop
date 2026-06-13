@@ -143,6 +143,16 @@ const ENFORCED_CAPABILITIES = new Set([
   // the rendered footer pill being actionable, the project-pane pill staying read-
   // only, and the no-branch pill not opening — are MANUAL below.
   'git-branch-switching',
+  // needs-input-alerts: sound + desktop notifications when an agent enters the
+  // "Needs input" state. Every PURE scenario is unit-tested under exactly one title
+  // each — notify.test.ts (the edge detector: entry/stay/re-entry/paused-excluded,
+  // priming; the four per-channel modes × focus/viewed-agent; channel independence;
+  // the notification title/body content) and notifications.test.ts (the settings
+  // slice: opt-in defaults, load, malformed→off, merge-save, change a mode). The
+  // three genuinely live aspects (the OS notification permission prompt + its
+  // denied/non-Tauri no-op) are headless-exempt (MANUAL below); the chime + the
+  // Settings pickers' rendered wiring are confirmed live in the same pass.
+  'needs-input-alerts',
 ]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by
@@ -378,6 +388,17 @@ const MANUAL_SCENARIOS = {
     'footer_pill_is_actionable',
     'non_footer_pill_stays_read_only',
     'no_branch_to_switch',
+  ]),
+  // needs-input-alerts: the OS-notification permission flow is genuinely live —
+  // requesting permission when the desktop channel is enabled, and the silent no-op
+  // when permission is denied or the app runs outside the Tauri shell — all bound to
+  // the @tauri-apps/plugin-notification API with no pure surface to assert headless.
+  // (The "notification shown with agent context" content IS unit-tested via the pure
+  // notificationTitle/notificationBody helpers.)
+  'needs-input-alerts': new Set([
+    'permission_requested_on_enable',
+    'permission_denied',
+    'non_desktop_context',
   ]),
 };
 

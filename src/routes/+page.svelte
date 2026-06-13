@@ -60,6 +60,18 @@
   import { triggersTranscriptRead, SAFETY_POLL_MS } from '$lib/overview/poll';
   import { appSessionRefs } from '$lib/overview/sessionRefs';
   import { type SpatialDir } from '$lib/layout/tree';
+  // Needs-input alerts (capability `needs-input-alerts`): the alert driver lives here
+  // on the always-mounted route (the Inbox is mounted only in overview mode), so a
+  // sound/desktop alert can fire whether the user is in the overview or driving an
+  // agent in the grid. See design D7b/D7c.
+  import { buildRoster } from '$lib/overview/roster';
+  import { toRosterWorkspaces } from '$lib/overview/rosterInputs';
+  import { runtimeMap } from '$lib/overview/runtime';
+  import { coordinatorNeedsInput } from '$lib/orchestration/coordinatorNeedsInput.svelte';
+  import { windowFocus } from '$lib/overview/windowFocus.svelte';
+  import { focusAgent } from '$lib/overview/focusAgent.svelte';
+  import { alerts } from '$lib/overview/alerts.svelte';
+  import { notifications } from '$lib/settings/notifications.svelte';
 
   // True once the persisted layout has loaded (or fallen back to fresh). We hold
   // off rendering the workspace area until then so we never flash a throwaway
@@ -83,6 +95,8 @@
     void titleSettings.load();
     // Load the auto-advance focus preference (opt-in; defaults OFF).
     void autoAdvance.load();
+    // Load the needs-input alert channel modes (opt-in; both default OFF / silent).
+    void notifications.load();
     // Load the persisted one-time onboarding flag FIRST so a returning user who has
     // already seen the gate never sees a flash of it, then load voice-input
     // preferences and check whether the on-device models that selection needs are
@@ -331,6 +345,45 @@
   // such change; `retain` is a no-op (no reactive write) when nothing is stale.
   $effect(() => {
     snapshots.retain(workspace.allPaneIds());
+  });
+
+  // NEEDS-INPUT ALERTS driver (capability `needs-input-alerts`). Built off the same
+  // module singletons the Inbox roster uses, on its own 1s clock so a working→waiting
+  // flip is detected promptly. `alerts.process` fires the sound/desktop channels for
+  // agents that JUST entered "Needs input" (each per its own mode), priming on the
+  // first tick so launch-time waiters never alert. Driven ONLY here (single source,
+  // always mounted) so no alert ever fires twice and alerts keep working in grid view.
+  let alertNowMs = $state(Date.now());
+  $effect(() => {
+    const id = setInterval(() => (alertNowMs = Date.now()), 1000);
+    return () => clearInterval(id);
+  });
+  // Track OS window focus + visibility while mounted (the route is the app root).
+  $effect(() => windowFocus.start());
+  const alertRows = $derived(
+    buildRoster(
+      snapshots.byPane,
+      toRosterWorkspaces(workspace.workspaces),
+      runtimeMap(),
+      alertNowMs,
+      activity.bySession,
+      undefined,
+      events.activityMap(),
+      new Set(Object.keys(coordinatorNeedsInput.all()))
+    )
+  );
+  // The agent the user is "viewing": the focused grid pane in grid view, else the
+  // inbox focus agent — used by the `agent-unfocused` alert mode.
+  const viewedPaneId = $derived.by((): string | null => {
+    if (!view.isGrid) return focusAgent.paneId;
+    try {
+      return workspace.focusedId || null;
+    } catch {
+      return null;
+    }
+  });
+  $effect(() => {
+    alerts.process(alertRows, { appFocused: windowFocus.focused, viewedPaneId });
   });
 
   // AUTO-ARCHIVE TASK AGENTS: a Claude session spawned by an agent task is meant to
