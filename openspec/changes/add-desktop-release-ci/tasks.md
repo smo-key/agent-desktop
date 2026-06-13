@@ -1,11 +1,11 @@
 ## 1. Cross-platform sidecar provisioning
 
-- [ ] 1.1 Refactor `scripts/fetch-whisper.sh` to derive target triple + cmake arch from the host (`uname`), with `TARGET_TRIPLE`/`TARGET_ARCH` env override; default `aarch64-apple-darwin`. Keep idempotency + placeholder handling.
-- [ ] 1.2 Refactor `scripts/fetch-llama.sh` the same way (host detection + override + default arm64).
-- [ ] 1.3 Make both scripts emit the binary named `<name>-<triple>` and append `.exe` on Windows; on Windows drive cmake with the MSVC/Visual Studio generator (runnable under Git Bash). On Linux build with the system gcc/clang toolchain for the host arch.
-- [ ] 1.4 Confirm `scripts/fetch-models.sh` works on macOS, Linux, and Windows (Git Bash) — adjust curl/wget usage if needed so `ggml-tiny.bin` provisions everywhere.
-- [ ] 1.5 Add a sidecar validation helper (script or workflow step) that checks each provisioned sidecar is an executable of the expected binary format + arch for the target, failing fast on mismatch/missing.
-- [ ] 1.6 Update `src-tauri/binaries/README.md` (and `models/README.md` if present) to document the cross-platform provisioning + override env.
+- [x] 1.1 Refactor `scripts/fetch-whisper.sh` to derive target triple + cmake arch from the host (`uname`), with `TARGET_TRIPLE`/`TARGET_ARCH` env override; default `aarch64-apple-darwin`. Keep idempotency + placeholder handling.
+- [x] 1.2 Refactor `scripts/fetch-llama.sh` the same way (host detection + override + default arm64).
+- [x] 1.3 Make both scripts emit the binary named `<name>-<triple>` and append `.exe` on Windows; on Windows drive cmake with the MSVC/Visual Studio generator (runnable under Git Bash). On Linux build with the system gcc/clang toolchain for the host arch.
+- [x] 1.4 Confirm `scripts/fetch-models.sh` works on macOS, Linux, and Windows (Git Bash) — adjust curl/wget usage if needed so `ggml-tiny.bin` provisions everywhere.
+- [x] 1.5 Add a sidecar validation helper (script or workflow step) that checks each provisioned sidecar is an executable of the expected binary format + arch for the target, failing fast on mismatch/missing.
+- [x] 1.6 Update `src-tauri/binaries/README.md` (and `models/README.md` if present) to document the cross-platform provisioning + override env.
 
 ## 2. Changelog tooling
 
