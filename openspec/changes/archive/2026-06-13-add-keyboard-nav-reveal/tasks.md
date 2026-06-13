@@ -14,4 +14,4 @@
 ## 4. Verify
 - [x] 4.1 `npm run test` (or the repo's vitest command) passes, including the new helper tests. (1083 passing.)
 - [x] 4.2 `npm run check` / lint passes (no Svelte effect-loop warnings). (0 errors, 0 warnings.) Scenario-coverage gate (`npm run coverage`) passes — the two `projects` reveal scenarios are registered as headless-exempt (jsdom has no layout, so `scrollIntoView` can't be asserted).
-- [ ] 4.3 Manual verification in the running app: `⌘↑/↓` reveals off-screen sessions; `⌘↓` onto a hidden archived session expands the lane and reveals it; `⌘⇧↑/↓` reveals off-screen project rows; already-visible selections do not jump. (Needs the live Tauri app — left for in-app confirmation.)
+- [x] 4.3 Manual verification in the running app: `⌘↑/↓` reveals off-screen sessions; `⌘↓` onto a hidden archived session expands the lane and reveals it; `⌘⇧↑/↓` reveals off-screen project rows; already-visible selections do not jump. (Confirmed live in-app.)
