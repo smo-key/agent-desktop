@@ -89,37 +89,18 @@
   import { coordinatorNeedsInput } from '$lib/orchestration/coordinatorNeedsInput.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
 
   // --- Sessions / Tasks split (Sessions roster on top / Tasks bottom) ----------
   // The `.col-list` column splits into the Sessions roster (top, resizable) and
   // the bottom region (Tasks launcher + Agents library). The bottom region's
   // height is a persisted fraction of the column (clamped) so the Sessions area
   // resizes by dragging the gutter between them; driven via flex-basis.
-  const TASKS_FRAC_KEY = 'agent-desktop:tasks-launcher-frac';
-  const TASKS_FRAC_MIN = 0.15;
-  const TASKS_FRAC_MAX = 0.6;
-  const TASKS_FRAC_DEFAULT = 0.33;
-  function clampFrac(f: number): number {
-    return Math.max(TASKS_FRAC_MIN, Math.min(TASKS_FRAC_MAX, f));
-  }
-  function loadTasksFrac(): number {
-    if (typeof localStorage === 'undefined') return TASKS_FRAC_DEFAULT;
-    try {
-      const v = Number(localStorage.getItem(TASKS_FRAC_KEY));
-      return Number.isFinite(v) && v > 0 ? clampFrac(v) : TASKS_FRAC_DEFAULT;
-    } catch {
-      return TASKS_FRAC_DEFAULT;
-    }
-  }
-  let tasksFrac = $state(loadTasksFrac());
+  // The bottom region's height is a persisted fraction of the column, stored in
+  // the durable `ui` settings slice (`uiPrefs`) — NOT localStorage.
+  const tasksFrac = $derived(uiPrefs.data.tasksLauncherFrac);
   function setTasksFrac(f: number) {
-    tasksFrac = clampFrac(f);
-    if (typeof localStorage === 'undefined') return;
-    try {
-      localStorage.setItem(TASKS_FRAC_KEY, String(tasksFrac));
-    } catch {
-      /* ignore quota / disabled storage */
-    }
+    uiPrefs.setTasksLauncherFrac(f);
   }
   /** Drag the gutter: convert pointer Y within the column into a bottom fraction. */
   function startTasksResize(e: PointerEvent) {
@@ -190,39 +171,36 @@
   // established order while jumping a newcomer to the top, and drops agents
   // that left the lane; `orderRowsByLane` projects it onto the rendered rows so the
   // lanes, the attention queue, and focus resolution all agree on order.
-  const LANE_ORDER_KEY = 'agent-desktop:lane-order';
-  /** Load the persisted manual orders for the draggable lanes (attn + paused). The
-   *  non-draggable lanes (flight/done) start empty and re-derive newest-first. */
-  function loadLaneOrder(): Record<AgentLane, string[]> {
-    const base: Record<AgentLane, string[]> = { attn: [], flight: [], paused: [], done: [] };
-    if (typeof localStorage === 'undefined') return base;
-    try {
-      const raw = localStorage.getItem(LANE_ORDER_KEY);
-      if (!raw) return base;
-      const parsed = JSON.parse(raw) as Partial<Record<AgentLane, unknown>>;
-      for (const lane of ['attn', 'paused'] as const) {
-        const v = parsed?.[lane];
-        if (Array.isArray(v)) base[lane] = v.filter((x): x is string => typeof x === 'string');
-      }
-    } catch {
-      /* ignore bad JSON / disabled storage — fall back to defaults */
-    }
-    return base;
-  }
-  let laneOrder = $state<Record<AgentLane, string[]>>(loadLaneOrder());
+  // The manual orders for the draggable lanes (attn + paused) persist in the
+  // durable `ui` settings slice (`uiPrefs`), NOT localStorage. The non-draggable
+  // lanes (flight/done) start empty and re-derive newest-first each session.
+  let laneOrder = $state<Record<AgentLane, string[]>>({
+    attn: [],
+    flight: [],
+    paused: [],
+    done: []
+  });
+
+  // One-time seed from the durable prefs once they have hydrated (the settings
+  // load is async, kicked off on app mount). Until then `laneOrder` holds defaults
+  // and the reconcile effect below is gated off, so a returning agent's saved slot
+  // is never overwritten by mount-order before the saved order arrives.
+  let laneSeeded = $state(false);
+  $effect(() => {
+    if (laneSeeded || !uiPrefs.loaded) return;
+    laneOrder = {
+      attn: [...uiPrefs.data.laneOrder.attn],
+      flight: [],
+      paused: [...uiPrefs.data.laneOrder.paused],
+      done: []
+    };
+    laneSeeded = true;
+  });
 
   /** Persist ONLY the manually-reorderable lanes (attn + paused); flight/done are
    *  re-derived newest-first each session, so they are never stored. */
   function saveLaneOrder() {
-    if (typeof localStorage === 'undefined') return;
-    try {
-      localStorage.setItem(
-        LANE_ORDER_KEY,
-        JSON.stringify({ attn: laneOrder.attn, paused: laneOrder.paused })
-      );
-    } catch {
-      /* ignore quota / disabled storage */
-    }
+    uiPrefs.setLaneOrder({ attn: laneOrder.attn, paused: laneOrder.paused });
   }
 
   // Reconcile every lane's order against the live roster. Computed over `allRows`
@@ -230,6 +208,9 @@
   // sorts the filtered `rows` by this global order. Idempotent: a recompute with the
   // same lane membership returns the same arrays (no write / no thrash off the clock).
   $effect(() => {
+    // Hold off until the saved order has hydrated + seeded, so reconciliation never
+    // persists mount-order over a returning agent's saved slot (see `laneSeeded`).
+    if (!laneSeeded) return;
     const present: Record<AgentLane, string[]> = { attn: [], flight: [], paused: [], done: [] };
     for (const r of allRows) present[laneForRow(r)].push(r.paneId);
     const next: Record<AgentLane, string[]> = { ...laneOrder };
@@ -255,6 +236,37 @@
   const viewRows = $derived(orderRowsByLane(rows, laneOrder));
 
   const queue = $derived(attentionQueue(viewRows));
+
+  // Flash a card briefly when its agent JUST enters the "needs you" state — a real
+  // transition from not-attention → attention while we're watching (driven by the
+  // per-second `nowMs` clock flipping working → waiting). We hold the paneId in a
+  // reactive set for the 1.2s the CSS flash runs, then drop it. `prevAttn` /
+  // `attnSeeded` are plain (untracked) trackers, like `lastShownId` above; seeding
+  // on the first roster means agents ALREADY needing attention at mount don't flash
+  // — only genuine transitions do.
+  const FLASH_MS = 1200;
+  let prevAttn = new Map<string, boolean>();
+  let attnSeeded = false;
+  let flashPanes = $state(new Set<string>());
+  $effect(() => {
+    const seen = new Set<string>();
+    for (const r of viewRows) {
+      seen.add(r.paneId);
+      const now = needsAttention(r);
+      if (attnSeeded && prevAttn.get(r.paneId) === false && now) {
+        const id = r.paneId;
+        flashPanes.add(id);
+        flashPanes = new Set(flashPanes);
+        setTimeout(() => {
+          flashPanes.delete(id);
+          flashPanes = new Set(flashPanes);
+        }, FLASH_MS);
+      }
+      prevAttn.set(r.paneId, now);
+    }
+    for (const id of [...prevAttn.keys()]) if (!seen.has(id)) prevAttn.delete(id);
+    attnSeeded = true;
+  });
 
   // The active project for the coordinator pin: the concrete project chosen in the
   // project filter (null on All / Unassigned). Only with a concrete project does the
@@ -315,26 +327,11 @@
   }
 
   // Whether the project pane (left of the roster) is collapsed — remembered across
-  // app restarts via localStorage.
-  const COLLAPSE_KEY = 'agent-desktop:project-pane-collapsed';
-  function loadCollapsed(): boolean {
-    if (typeof localStorage === 'undefined') return false;
-    try {
-      return localStorage.getItem(COLLAPSE_KEY) === '1';
-    } catch {
-      return false;
-    }
-  }
-  let projectPaneCollapsed = $state(loadCollapsed());
+  // app restarts via the durable `ui` settings slice (`uiPrefs`), NOT localStorage
+  // (which WKWebView drops on an abrupt restart).
+  const projectPaneCollapsed = $derived(uiPrefs.data.projectPaneCollapsed);
   function toggleProjectPane() {
-    projectPaneCollapsed = !projectPaneCollapsed;
-    if (typeof localStorage !== 'undefined') {
-      try {
-        localStorage.setItem(COLLAPSE_KEY, projectPaneCollapsed ? '1' : '0');
-      } catch {
-        /* ignore quota / disabled storage */
-      }
-    }
+    uiPrefs.setProjectPaneCollapsed(!projectPaneCollapsed);
   }
 
   // Right-click context menu for a roster row (open / close the agent).
@@ -1126,6 +1123,7 @@
     type="button"
     class="row {lane}"
     class:sel={focus?.paneId === r.paneId}
+    class:flash-attn={flashPanes.has(r.paneId)}
     onclick={() => onRowClick(r)}
     oncontextmenu={(e) => openAgentMenu(e, r, displayName(r.paneId, r.name))}
   >
@@ -1483,6 +1481,26 @@
   .row:hover { background: rgba(255,255,255,0.025); }
   .row.sel { background: rgba(61,123,255,0.10); border-left-color: var(--blue-500); }
   .row.attn.sel { background: var(--orange-tint); border-left-color: var(--orange-500); }
+  /* When an agent JUST enters "needs you", flash its card from 50% red to clear in
+     1.2s. An overlay pseudo-element keeps the wash behind the row's content and
+     above its base (hover/sel) background; it ends fully transparent so there is no
+     snap back to normal. One-shot — the `.flash-attn` class is held only while it
+     runs (see `flashPanes`). */
+  .row.flash-attn { position: relative; }
+  .row.flash-attn > * { position: relative; z-index: 1; }
+  .row.flash-attn::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: var(--abort-500);
+    animation: needsYouFlash 1.2s var(--ease-out) forwards;
+  }
+  @keyframes needsYouFlash { from { opacity: 0.5; } to { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .row.flash-attn::after { animation: none; opacity: 0; }
+  }
   /* The coordinator top slot: a rule separating the pinned coordinator / Start
      affordance from the rest of the sessions (tasks 10.2–10.3). */
   .coord-rule { margin: 4px 16px 2px; border: none; border-top: 1px solid var(--line-default); }
