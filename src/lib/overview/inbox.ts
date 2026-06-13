@@ -288,3 +288,24 @@ export function deleteAllArchivedRequest(
     }
   };
 }
+
+/**
+ * PURE: decide whether keyboard navigation onto `selectedPaneId` should expand the
+ * collapsed Archived lane. The lane shows only its first `previewCount` rows (the
+ * newest-first `archivedPaneIds`) until "Show all" is toggled; a selection beyond
+ * that preview is not rendered, so it cannot be revealed without expanding. Returns
+ * true ONLY when the lane is still collapsed AND the selected pane is an archived row
+ * at or beyond `previewCount`. The `showingAll` short-circuit makes the caller's
+ * `showAllArchived = true` write monotonic (true → already-showing → false), so the
+ * driving effect converges instead of looping. A null/non-archived selection is false.
+ */
+export function archivedNavNeedsExpand(
+  selectedPaneId: string | null,
+  archivedPaneIds: string[],
+  previewCount: number,
+  showingAll: boolean
+): boolean {
+  if (showingAll || selectedPaneId === null) return false;
+  const idx = archivedPaneIds.indexOf(selectedPaneId);
+  return idx >= previewCount;
+}

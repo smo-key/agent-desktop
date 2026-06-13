@@ -16,6 +16,7 @@ import {
   rowSub,
   rowModelLabel,
   clipLine,
+  archivedNavNeedsExpand,
   ROW_SUB_MAX_LEN
 } from './inbox';
 import type { PendingQuestion } from './roster';
@@ -576,5 +577,40 @@ describe('rowModelLabel', () => {
     expect(r.contextPct).toBe(42);
     expect(rowModelLabel(r)).not.toContain('9.99');
     expect(rowModelLabel(r)).not.toContain('$');
+  });
+});
+
+describe('archivedNavNeedsExpand — auto-expand the Archived lane on nav', () => {
+  const PREVIEW = 2;
+  // done-lane order, newest-first; the first PREVIEW are visible while collapsed.
+  const archived = ['a', 'b', 'c', 'd'];
+
+  it('is false when the archived lane is empty', () => {
+    expect(archivedNavNeedsExpand('a', [], PREVIEW, false)).toBe(false);
+  });
+
+  it('is false for a null selection', () => {
+    expect(archivedNavNeedsExpand(null, archived, PREVIEW, false)).toBe(false);
+  });
+
+  it('is false when the selection is not an archived row', () => {
+    expect(archivedNavNeedsExpand('z', archived, PREVIEW, false)).toBe(false);
+  });
+
+  it('is false for a selection within the visible preview', () => {
+    expect(archivedNavNeedsExpand('a', archived, PREVIEW, false)).toBe(false); // index 0
+    expect(archivedNavNeedsExpand('b', archived, PREVIEW, false)).toBe(false); // index 1
+  });
+
+  it('is true for a selection at the preview boundary (first hidden row)', () => {
+    expect(archivedNavNeedsExpand('c', archived, PREVIEW, false)).toBe(true); // index 2
+  });
+
+  it('is true for a selection beyond the preview', () => {
+    expect(archivedNavNeedsExpand('d', archived, PREVIEW, false)).toBe(true); // index 3
+  });
+
+  it('is false when the lane is already showing all (monotonic — never loops)', () => {
+    expect(archivedNavNeedsExpand('d', archived, PREVIEW, true)).toBe(false);
   });
 });

@@ -15,6 +15,7 @@
   } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
+  import { compactMode } from '$lib/settings/compactMode.svelte';
   import { notifications, type AlertMode } from '$lib/settings/notifications.svelte';
   import { ensureDesktopPermission } from '$lib/overview/alerts.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
@@ -256,6 +257,22 @@
                 type="checkbox"
                 checked={autoAdvance.prefs.enabled}
                 onchange={(e) => autoAdvance.setEnabled(e.currentTarget.checked)}
+              />
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <span class="label">Sessions panel</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Compact mode — hide the context, model, and time line</span>
+            <div class="control">
+              <input
+                type="checkbox"
+                checked={compactMode.prefs.enabled}
+                onchange={(e) => compactMode.setEnabled(e.currentTarget.checked)}
               />
             </div>
           </li>

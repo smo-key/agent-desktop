@@ -348,9 +348,15 @@ const MANUAL_SCENARIOS = {
   //   - the FOOTER surface wiring the rendered ahead/behind git pills to the same
   //     (tested) pushProject/pullProject actions;
   //   - the project rows rendering with NO git status line (git moved to the footer).
+  // Two more are scroll-reveal behaviors: keyboard-cycling the project filter scrolls
+  // the active row into view (`scrollIntoView`), or leaves it put when already visible.
+  // jsdom has no layout, so `scrollIntoView` is a no-op there and the visible/not-visible
+  // distinction can't be asserted headless — confirmed live in-app.
   'projects': new Set([
     'push_and_pull_are_available_from_the_footer',
     'project_rows_carry_no_git_line',
+    'cycling_to_an_off_screen_project_scrolls_it_into_view',
+    'an_already_visible_project_filter_is_not_scrolled',
   ]),
   // tasks-panel: every scenario is a rendered-component / live-PTY behavior with no
   // pure surface to assert headless — confirmed live in-app.

@@ -45,6 +45,7 @@
     shouldAutoResume,
     deleteAllArchivedRequest,
     archiveWorkingConfirm,
+    archivedNavNeedsExpand,
     rowSub as rowSubText
   } from './inbox';
   import { toRosterWorkspaces, toNavWorkspaces } from './rosterInputs';
@@ -87,6 +88,7 @@
   import CoordinatorStart from '$lib/orchestration/CoordinatorStart.svelte';
   import { coordinatorNeedsInput } from '$lib/orchestration/coordinatorNeedsInput.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
+  import { compactMode } from '$lib/settings/compactMode.svelte';
 
   // --- Sessions / Tasks split (Sessions roster on top / Tasks bottom) ----------
   // The `.col-list` column splits into the Sessions roster (top, resizable) and
@@ -950,6 +952,50 @@
   // the render uses, so nav and render agree.
   const navTargets = $derived(coordinatorNavOrder(viewRows, activeCoordProjectId));
 
+  // The scrollable session-list container; the reveal effect scrolls the selected
+  // row into view within it on keyboard navigation.
+  let listScrollEl = $state<HTMLDivElement | null>(null);
+
+  // AUTO-EXPAND the Archived lane when navigation selects an archived session hidden
+  // beyond its collapsed preview — otherwise the row isn't rendered and can't be
+  // revealed. Fired ONCE per selection TRANSITION (guarded by `lastNavExpandId`, a
+  // plain non-reactive tracker like `lastShownId`), NOT continuously: re-asserting
+  // expansion every time the effect re-runs would defeat the manual "Collapse" button
+  // while a hidden archived row stays selected, and would re-evaluate every second
+  // (since `renderGrouped` recomputes on the roster's 1s clock). The early return on an
+  // unchanged selection also shrinks this effect's tracked deps to just `shownId`.
+  let lastNavExpandId: string | null = null;
+  $effect(() => {
+    const id = shownId;
+    if (id === lastNavExpandId) return;
+    lastNavExpandId = id;
+    if (
+      archivedNavNeedsExpand(
+        id,
+        renderGrouped.done.map((r) => r.paneId),
+        ARCHIVED_PREVIEW,
+        showAllArchived
+      )
+    ) {
+      showAllArchived = true;
+    }
+  });
+
+  // REVEAL the selected session: when the selection (or the Archived expansion that
+  // brings a hidden row into the DOM) changes, scroll the `.sel` row into view within
+  // the list after the DOM updates. `block: 'nearest'` no-ops when the row is already
+  // fully visible, so clicks / auto-advance to a visible row never jump the list. The
+  // `.sel` class covers lane rows AND the pinned-coordinator / start-affordance slot.
+  $effect(() => {
+    void shownId; // re-run when the selection changes
+    void showAllArchived; // and after an auto-expand renders a newly-visible row
+    const container = listScrollEl;
+    if (!container) return;
+    void tick().then(() => {
+      container.querySelector('.row.sel')?.scrollIntoView({ block: 'nearest' });
+    });
+  });
+
   /** Focus a nav target: a real pane selects normally (a closed/archived one is then
    *  auto-previewed by the focus effect, as before); the not-started `start` sentinel
    *  does exactly what clicking the affordance does (shows the Start empty-state). */
@@ -1121,20 +1167,22 @@
         {/if}
       </span>
       <span class="s" class:q={needsAttention(r)} use:tooltip={rowSub(r)}>{rowSub(r)}</span>
-      <span class="meta">
-        {#if showContext(r)}
-          <span class="m ctx" use:tooltip={'Context window used by this agent'}>
-            <span class="ctxbar"><StatusBar pct={r.contextPct} /></span>
-            {ctxLabel(r.contextPct)}
+      {#if !compactMode.prefs.enabled}
+        <span class="meta">
+          {#if showContext(r)}
+            <span class="m ctx" use:tooltip={'Context window used by this agent'}>
+              <span class="ctxbar"><StatusBar pct={r.contextPct} /></span>
+              {ctxLabel(r.contextPct)}
+            </span>
+          {/if}
+          <span class="m" use:tooltip={'Model'}>
+            <Icon name="cpu" size={11} />{rowModelLabel(r)}
           </span>
-        {/if}
-        <span class="m" use:tooltip={'Model'}>
-          <Icon name="cpu" size={11} />{rowModelLabel(r)}
+          <span class="m" use:tooltip={'Time since last activity'}>
+            <Icon name="clock" size={11} />{friendlyTime(r.lastTs, nowMs)}
+          </span>
         </span>
-        <span class="m" use:tooltip={'Time since last activity'}>
-          <Icon name="clock" size={11} />{friendlyTime(r.lastTs, nowMs)}
-        </span>
-      </span>
+      {/if}
     </span>
     {#if needsAttention(r)}
       <span class="badge {badgeClass(r)} dotonly"><span class="dot"></span></span>
@@ -1161,7 +1209,7 @@
       <!-- Middle region: the agent roster (or its empty state). Flexes to fill
            the space left between the header and the bottom Tasks launcher. -->
       <div class="agent-region">
-        <div class="list-scroll">
+        <div class="list-scroll" bind:this={listScrollEl}>
           <!-- Coordinator TOP SLOT (tasks 10.2–10.3, 10.6): the project's live
                coordinator pinned above all sessions, OR — when none is running —
                a focusable "Start coordinator" affordance. A rule separates it from

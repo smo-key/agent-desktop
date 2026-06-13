@@ -10,6 +10,7 @@
   // come from the PURE `projectCounts`/`unassignedCount` over the roster rows the
   // parent passes in. Creating a project persists it and selects it.
 
+  import { tick } from 'svelte';
   import type { AgentRow } from '../overview/roster';
   import type { Project, ProjectDraft } from './projects';
   import { projects } from './projects.svelte';
@@ -103,6 +104,21 @@
   const unassigned = $derived(unassignedCount(rows));
   const allAgents = $derived(allAgentsCount(rows));
 
+  // REVEAL the selected project filter: when the selection changes (e.g. the inbox's
+  // ⌘⇧↑/↓ cycles through a panel longer than its scrollport), scroll the active row
+  // into view after the DOM updates. `block: 'nearest'` no-ops when the row is already
+  // fully visible, so clicking a visible project never jumps the panel. Covers both the
+  // expanded rows (`.pp-item.active`) and the collapsed icon rail (`.pp-rail-ic.active`).
+  let panelEl = $state<HTMLElement | null>(null);
+  $effect(() => {
+    void projectFilter.selected; // re-run when the selection changes
+    const container = panelEl;
+    if (!container) return;
+    void tick().then(() => {
+      container.querySelector('.active')?.scrollIntoView({ block: 'nearest' });
+    });
+  });
+
   // --- Drag-to-reorder the project list -------------------------------------
   // The expanded project rows are draggable: dropping one onto another reorders
   // the persisted `projects` list (projects.reorder → reorderProjects + save), so
@@ -184,7 +200,7 @@
        Each filter icon carries a styled flyout tooltip (the shared `use:tooltip`
        action, placed to the right) with its name — no native `title` (those are
        slow + unstyled). -->
-  <aside class="ppanel rail" aria-label="Projects">
+  <aside class="ppanel rail" aria-label="Projects" bind:this={panelEl}>
     <button
       class="pp-rail-btn"
       onclick={() => onToggle?.()}
@@ -231,7 +247,7 @@
     {/if}
   </aside>
 {:else}
-<aside class="ppanel" aria-label="Projects">
+<aside class="ppanel" aria-label="Projects" bind:this={panelEl}>
   <div class="pp-head">
     <span class="pp-title">Workspace</span>
     <button
