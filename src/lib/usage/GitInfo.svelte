@@ -599,8 +599,12 @@
             {#if pr.isDraft}
               <span class="opr-draft-badge">Draft</span>
             {/if}
-            {#if pr.updatedAt}
-              <span class="opr-updated" use:tooltip={`Updated ${new Date(pr.updatedAt).toLocaleString()}`}>
+            {#if updatedSec != null}
+              <!-- Gate on the PARSED value (not raw truthiness) so a malformed
+                   updatedAt omits the piece entirely rather than rendering "—"
+                   with an "Invalid Date" tooltip. When non-null, Date.parse
+                   succeeded, so the tooltip's exact timestamp is always valid. -->
+              <span class="opr-updated" use:tooltip={`Updated ${new Date(pr.updatedAt ?? '').toLocaleString()}`}>
                 {friendlyTime(updatedSec, openPrsNowMs)}
               </span>
             {/if}
