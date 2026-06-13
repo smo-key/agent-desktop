@@ -256,18 +256,28 @@
   <div class="pp-label">Projects</div>
 
   {#each counts as c (c.project.id)}
-    <button
-      type="button"
+    <!-- A div (not a <button>): WKWebView (Tauri/macOS) refuses to start a native
+         HTML5 drag from a form control, so the draggable row must be a plain
+         element. role/tabindex/onkeydown restore the button semantics. -->
+    <div
       class="pp-item"
       class:active={projectFilter.selected === c.project.id}
       class:dragging={dragId === c.project.id}
       class:dragover={dragOverId === c.project.id}
+      role="button"
+      tabindex="0"
       draggable="true"
       ondragstart={(e) => onProjDragStart(e, c.project.id)}
       ondragover={(e) => onProjDragOver(e, c.project.id)}
       ondrop={(e) => onProjDrop(e, c.project.id)}
       ondragend={onProjDragEnd}
       onclick={() => projectFilter.select(c.project.id)}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          projectFilter.select(c.project.id);
+        }
+      }}
       oncontextmenu={(e) => openMenu(e, c.project)}
     >
       {#if c.project.logo}
@@ -278,7 +288,7 @@
       <span class="pp-name" use:tooltip={c.project.path}>{c.project.name}</span>
       {#if c.attn}<span class="pp-attn" use:tooltip={'Needs attention'}></span>{/if}
       <span class="pp-ct">{c.count}</span>
-    </button>
+    </div>
   {/each}
 
   {#if unassigned > 0}
@@ -448,6 +458,9 @@
     border: none;
     background: none;
     width: 100%;
+    /* The rows are <div>s (see markup): unlike <button>, a div is content-box by
+       default, so width:100% + padding would overflow the rail without this. */
+    box-sizing: border-box;
     text-align: left;
     cursor: pointer;
     color: var(--fg-2);
@@ -466,9 +479,12 @@
     background: var(--blue-tint);
     color: var(--blue-200);
   }
-  /* Drag-to-reorder: the lifted row dims; the drop target shows an insertion line. */
+  /* Drag-to-reorder: the lifted row dims; the drop target shows an insertion line.
+     `-webkit-user-drag: element` is required for WebKit (WKWebView) to honor the
+     native drag — the `draggable` attribute alone is unreliable there. */
   .pp-item[draggable='true'] {
     cursor: grab;
+    -webkit-user-drag: element;
   }
   .pp-item.dragging {
     opacity: 0.45;
