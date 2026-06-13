@@ -252,11 +252,12 @@
 
   const viewRows = $derived(orderRowsByLane(rows, laneOrder));
 
-  // --- Drag-to-reorder within the Needs-you (attn) + Paused buckets -------------
+  // --- Drag-to-reorder within the Paused bucket --------------------------------
   // Dropping a row onto another in the SAME draggable lane moves it to that slot
   // (moveId over the lane's global order) and persists. The pinned coordinator row
   // is never draggable. flight/done rows are not draggable (newest-first only).
-  const DRAGGABLE_LANES: ReadonlySet<AgentLane> = new Set<AgentLane>(['attn', 'paused']);
+  // The Needs-you (attn) lane is intentionally NOT draggable.
+  const DRAGGABLE_LANES: ReadonlySet<AgentLane> = new Set<AgentLane>(['paused']);
   let rowDrag = $state<{ lane: AgentLane; paneId: string } | null>(null);
   let rowDragOver = $state<string | null>(null);
 
