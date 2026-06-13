@@ -9,9 +9,9 @@
 
 ## 2. Changelog tooling
 
-- [ ] 2.1 Add a pinned `git-cliff` config `cliff.toml` at the repo root using the conventional-commits preset, grouping Features/Fixes/Docs/Chore/etc.
-- [ ] 2.2 Generate an initial `CHANGELOG.md` from existing history so the file exists before the first automated release.
-- [ ] 2.3 Verify locally that `git-cliff` produces (a) a since-last-tag release-notes snippet and (b) the full `CHANGELOG.md`, both from the same commit range.
+- [x] 2.1 Add a pinned `git-cliff` config `cliff.toml` at the repo root using the conventional-commits preset, grouping Features/Fixes/Docs/Chore/etc.
+- [x] 2.2 Generate an initial `CHANGELOG.md` from existing history so the file exists before the first automated release.
+- [x] 2.3 Verify locally that `git-cliff` produces (a) a since-last-tag release-notes snippet and (b) the full `CHANGELOG.md`, both from the same commit range.
 
 ## 3. Auto-update integration
 
