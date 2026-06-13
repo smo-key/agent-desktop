@@ -73,7 +73,7 @@ without a tag — rejected because the GitHub Release and updater endpoint key o
 |---|---|---|
 | `aarch64-apple-darwin` | `macos-14` | `.dmg`, `.app`, updater `.app.tar.gz` |
 | `x86_64-apple-darwin` | `macos-13` | `.dmg`, `.app`, updater `.app.tar.gz` |
-| `x86_64-pc-windows-msvc` | `windows-latest` | `.msi`, NSIS `.exe`, updater `.nsis.zip` |
+| `x86_64-pc-windows-msvc` | `windows-2022` | `.msi`, NSIS `.exe`, updater `.nsis.zip` |
 | `x86_64-unknown-linux-gnu` | `ubuntu-22.04` | `.deb`, AppImage, updater `.AppImage.tar.gz` |
 | `aarch64-unknown-linux-gnu` | `ubuntu-22.04-arm` | `.deb`, AppImage, updater `.AppImage.tar.gz` |
 
@@ -103,8 +103,11 @@ unchanged. Each runner builds its own-arch `whisper-cli`, `whisper-server`,
 `whisper-cli.exe`/`llama-server.exe` must be compiled with the MSVC toolchain;
 compiling inside WSL produces Linux ELF binaries, which cannot be a Windows
 sidecar. So on the Windows runner we run the bash provisioning script under **Git
-Bash** (preinstalled on `windows-latest`) and drive **cmake with the Visual
-Studio / MSVC generator** to emit native `.exe`s. WSL is therefore not used to
+Bash** (preinstalled on `windows-2022`) and drive **cmake with the Visual
+Studio / MSVC generator** to emit native `.exe`s. (The leg is pinned to
+`windows-2022` rather than `windows-latest`: the latter moved to the
+windows-2025 image with Visual Studio 2026, where the "Visual Studio 17 2022"
+generator finds no instance.) WSL is therefore not used to
 compile the Windows sidecars; the bash scripts are kept cross-shell instead.
 This is flagged as an open question for the user in case they specifically want a
 Linux-in-WSL distribution instead of a native Windows app (we are building both
