@@ -24,9 +24,7 @@ It needs no extra tooling, never runs `sudo`, and is short enough to
 [read first](https://smo-key.github.io/agent-desktop/install.sh) before you pipe
 it into a shell.
 
-**Windows or Intel Mac** (or to pick an installer by hand): download one from the
-[latest release](https://github.com/smo-key/agent-desktop/releases/latest).
-Windows and Intel-Mac builds are coming soon.
+**Windows or Intel Mac**: Coming soon
 
 ## Getting Started
 
