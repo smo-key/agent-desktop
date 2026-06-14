@@ -130,7 +130,7 @@
     return v !== SYSTEM && !APP_CHOICES[bucket].includes(v);
   }
 
-  // The <select>'s current value: SYSTEM, a known app, or the CUSTOM sentinel.
+  // The dropdown's current value: SYSTEM, a known app, or the CUSTOM sentinel.
   function selectValue(bucket: FileBucket): string {
     return isCustom(bucket) ? CUSTOM : openWith.prefs[bucket];
   }
