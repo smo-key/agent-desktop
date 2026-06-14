@@ -34,6 +34,11 @@
 # EXPECT_RE is a real extended regex (not a glob): it must assert the arch so a
 # wrong-arch binary is REJECTED. Note `PE32\+` escapes the literal '+' (which is
 # a quantifier in ERE) and requires x86-64 so a 32-bit or ARM64 Windows PE fails.
+# The patterns must be ORDER-INDEPENDENT w.r.t. how `file` emits its fields: the
+# Windows runner's `file` prints "PE32+ executable for MS Windows 6.00 (console),
+# x86-64, ..." — i.e. "MS Windows" BEFORE the arch — so the Windows RE asserts
+# only `PE32\+ ... x86-64` (PE32+ already implies a Windows PE; tacking on
+# `.*Windows` would require arch-before-Windows and spuriously fail).
 # shellcheck disable=SC2034  # these are consumed by the scripts that source this
 _triple_metadata() {
   local triple="$1"
@@ -47,7 +52,7 @@ _triple_metadata() {
     aarch64-unknown-linux-gnu)
       TARGET_OS="linux";  OSX_ARCH="";       EXE_SUFFIX="";     EXPECT_FORMAT="ELF aarch64";   EXPECT_RE="ELF.*(aarch64|ARM aarch64)" ;;
     x86_64-pc-windows-msvc)
-      TARGET_OS="windows"; OSX_ARCH="";      EXE_SUFFIX=".exe"; EXPECT_FORMAT="PE32+ x86-64 (MS Windows)"; EXPECT_RE="PE32\\+.*(x86-64|x86_64).*Windows" ;;
+      TARGET_OS="windows"; OSX_ARCH="";      EXE_SUFFIX=".exe"; EXPECT_FORMAT="PE32+ x86-64 (MS Windows)"; EXPECT_RE="PE32\\+.*(x86-64|x86_64)" ;;
     *)
       echo "ERROR: unsupported target triple '$triple'." >&2
       echo "  Supported: aarch64-apple-darwin, x86_64-apple-darwin," >&2
