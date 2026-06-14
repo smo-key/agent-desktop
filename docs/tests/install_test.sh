@@ -6,6 +6,9 @@ AGENT_DESKTOP_INSTALL_LIB=1
 export AGENT_DESKTOP_INSTALL_LIB
 # shellcheck disable=SC1090
 . "$HERE/../install.sh"
+# install.sh enables `set -eu`; relax it here so intentional non-zero assertions
+# don't abort the test file.
+set +eu
 
 # --- platform_key OS ARCH -> platform key (or non-zero for unsupported) ---
 
@@ -64,3 +67,35 @@ assert_fail "n means no"                  -- _yesno_default n yes
 assert_fail "garbage means no"            -- _yesno_default wat no
 assert_ok   "empty + default yes -> yes"  -- _yesno_default "" yes
 assert_fail "empty + default no  -> no"   -- _yesno_default "" no
+
+# --- resolve_asset KEY JSON_FILE -> "url<TAB>digest" ---
+
+assert_eq "$(resolve_asset linux-x64 "$FIX")" \
+  "$(printf '%s\t%s' "$APP_URL" "$APP_DIGEST")" "resolve_asset returns url + digest"
+assert_fail "resolve_asset fails on bad key"     -- resolve_asset bogus-key "$FIX"
+assert_fail "resolve_asset fails when no asset"  -- resolve_asset macos-arm64 /dev/null
+
+# --- desktop_entry_content EXEC_PATH -> .desktop body ---
+
+DEC=$(desktop_entry_content "/home/u/Agent Desktop.AppImage")
+assert_eq "$(printf '%s\n' "$DEC" | grep '^Exec=')" "Exec=/home/u/Agent Desktop.AppImage" "desktop Exec line"
+assert_eq "$(printf '%s\n' "$DEC" | grep '^Type=')" "Type=Application"                     "desktop Type line"
+assert_eq "$(printf '%s\n' "$DEC" | grep '^Name=')" "Name=Agent Desktop"                   "desktop Name line"
+assert_contains "$DEC" "Terminal=false" "desktop entry is not a terminal app"
+
+# --- unsupported_message OS ARCH -> friendly text ---
+
+UM=$(unsupported_message Windows x86_64)
+assert_contains "$UM" "Windows"     "unsupported names the OS"
+assert_contains "$UM" "coming soon" "unsupported says coming soon"
+assert_contains "$UM" "https://github.com/smo-key/agent-desktop/releases" "unsupported links releases page"
+
+# --- main on an unsupported platform exits non-zero without installing ---
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if AGENT_DESKTOP_OS=MINGW64_NT AGENT_DESKTOP_ARCH=x86_64 main >/dev/null 2>&1; then
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+  printf '  FAIL main exits non-zero on unsupported platform\n'
+else
+  printf '  ok   main exits non-zero on unsupported platform\n'
+fi

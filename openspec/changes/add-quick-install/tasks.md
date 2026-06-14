@@ -21,16 +21,16 @@
 
 ## 3. install.sh — side-effecting flows
 
-- [ ] 3.1 Implement the download step (HTTPS via `curl`, to a temp dir, cleaned
+- [x] 3.1 Implement the download step (HTTPS via `curl`, to a temp dir, cleaned
   up on exit/trap) wired to verification from 2.4.
-- [ ] 3.2 Implement the macOS install flow: mount dmg, copy `Agent Desktop.app`
+- [x] 3.2 Implement the macOS install flow: mount dmg, copy `Agent Desktop.app`
   to `/Applications` with `~/Applications` fallback (no sudo), best-effort
   `xattr -dr com.apple.quarantine`, unmount, optional launch.
-- [ ] 3.3 Implement the Linux install flow: place AppImage in `~/.local/bin`,
+- [x] 3.3 Implement the Linux install flow: place AppImage in `~/.local/bin`,
   `chmod +x`, write `.desktop` launcher entry, optional launch.
-- [ ] 3.4 Implement the unsupported-platform exit (message + releases link +
+- [x] 3.4 Implement the unsupported-platform exit (message + releases link +
   non-zero) and the no-matching-asset exit.
-- [ ] 3.5 Add `set -eu`, a top-of-file header comment (what it does + how to read
+- [x] 3.5 Add `set -eu`, a top-of-file header comment (what it does + how to read
   it before piping), and friendly progress output.
 
 ## 4. Hosting & docs

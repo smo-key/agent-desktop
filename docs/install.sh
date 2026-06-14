@@ -13,6 +13,13 @@
 # Windows and Intel Macs are coming soon.
 set -eu
 
+# --- configuration ----------------------------------------------------------
+
+GITHUB_REPO="smo-key/agent-desktop"
+RELEASES_PAGE="https://github.com/$GITHUB_REPO/releases"
+API_LATEST="https://api.github.com/repos/$GITHUB_REPO/releases/latest"
+APP_NAME="Agent Desktop"
+
 # --- pure logic (unit-tested via docs/tests) --------------------------------
 
 # platform_key OS ARCH -> echoes a platform key, or returns 1 if unsupported.
@@ -122,11 +129,147 @@ confirm() {
   fi
 }
 
+# resolve_asset KEY JSON_FILE -> "<url>\t<digest>" for the platform's installer.
+resolve_asset() {
+  suffix=$(asset_suffix "$1") || return 1
+  url=$(asset_url "$2" "$suffix") || return 1
+  digest=$(asset_digest "$2" "$suffix") || return 1
+  printf '%s\t%s\n' "$url" "$digest"
+}
+
+# desktop_entry_content EXEC_PATH -> a freedesktop .desktop launcher body.
+desktop_entry_content() {
+  cat <<EOF
+[Desktop Entry]
+Type=Application
+Name=$APP_NAME
+Exec=$1
+Terminal=false
+Categories=Development;Utility;
+EOF
+}
+
+# unsupported_message OS ARCH -> friendly text for platforms with no installer.
+unsupported_message() {
+  printf 'Agent Desktop has no installer for %s/%s yet.\n' "$1" "$2"
+  printf 'Windows and Intel-Mac builds are coming soon.\n'
+  printf 'Browse all downloads: %s\n' "$RELEASES_PAGE"
+}
+
+# --- side effects -----------------------------------------------------------
+
+_uname_s() { echo "${AGENT_DESKTOP_OS:-$(uname -s)}"; }
+_uname_m() { echo "${AGENT_DESKTOP_ARCH:-$(uname -m)}"; }
+
+log() { printf '%s\n' "$*"; }
+err() { printf '%s\n' "$*" >&2; }
+
+# fetch_latest_json DEST -> download the latest-release metadata (quiet).
+fetch_latest_json() {
+  curl -fsSL --proto '=https' --tlsv1.2 -o "$1" "$API_LATEST"
+}
+
+# download_file URL DEST -> download a release asset (with a progress bar).
+download_file() {
+  curl -fSL -# --proto '=https' --tlsv1.2 -o "$2" "$1"
+}
+
+# install_macos DMG_PATH -> mount, copy the app into place, clear quarantine.
+# Sets INSTALLED_PATH on success.
+install_macos() {
+  mnt=$(mktemp -d)
+  log "→ mounting disk image…"
+  hdiutil attach -nobrowse -quiet -mountpoint "$mnt" "$1"
+  src="$mnt/$APP_NAME.app"
+  [ -d "$src" ] || src=$(find "$mnt" -maxdepth 1 -name '*.app' -type d | head -n1)
+
+  dest_dir="/Applications"
+  [ -w "$dest_dir" ] || dest_dir="$HOME/Applications"
+  mkdir -p "$dest_dir"
+
+  log "→ installing to $dest_dir…"
+  rm -rf "$dest_dir/$APP_NAME.app"
+  cp -R "$src" "$dest_dir/$APP_NAME.app"
+  hdiutil detach -quiet "$mnt" >/dev/null 2>&1 || true
+
+  # Best-effort: clear the download quarantine so the first launch isn't blocked.
+  xattr -dr com.apple.quarantine "$dest_dir/$APP_NAME.app" 2>/dev/null || true
+  INSTALLED_PATH="$dest_dir/$APP_NAME.app"
+}
+
+# install_linux APPIMAGE_PATH -> place AppImage + register a launcher entry.
+# Sets INSTALLED_PATH on success.
+install_linux() {
+  bindir="$HOME/.local/bin"
+  appsdir="$HOME/.local/share/applications"
+  mkdir -p "$bindir" "$appsdir"
+  dest="$bindir/agent-desktop.AppImage"
+
+  log "→ installing to $dest…"
+  cp "$1" "$dest"
+  chmod +x "$dest"
+  desktop_entry_content "$dest" > "$appsdir/agent-desktop.desktop"
+  INSTALLED_PATH="$dest"
+}
+
+# launch_app PATH OS -> open the freshly installed app.
+launch_app() {
+  case "$2" in
+    Darwin) open -a "$1" >/dev/null 2>&1 || true ;;
+    Linux) ( "$1" >/dev/null 2>&1 & ) || true ;;
+  esac
+}
+
 # --- entry point ------------------------------------------------------------
 
 main() {
-  echo "Agent Desktop installer is not implemented yet."
-  return 1
+  os=$(_uname_s)
+  arch=$(_uname_m)
+  key=$(platform_key "$os" "$arch") || {
+    unsupported_message "$os" "$arch" >&2
+    return 1
+  }
+
+  command -v curl >/dev/null 2>&1 || { err "curl is required but not installed."; return 1; }
+
+  log "Agent Desktop installer"
+  log "→ platform: $os $arch"
+
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT INT TERM
+
+  json="$tmp/latest.json"
+  log "→ checking the latest release…"
+  fetch_latest_json "$json" || { err "Could not reach GitHub — check your connection."; return 1; }
+
+  resolved=$(resolve_asset "$key" "$json") || {
+    err "No installer for $os/$arch in the latest release. See $RELEASES_PAGE"
+    return 1
+  }
+  url=$(printf '%s' "$resolved" | cut -f1)
+  digest=$(printf '%s' "$resolved" | cut -f2)
+
+  file="$tmp/$(basename "$url")"
+  log "→ downloading $(basename "$url")…"
+  download_file "$url" "$file" || { err "Download failed."; return 1; }
+
+  log "→ verifying checksum…"
+  verify_sha256 "$file" "$digest" || {
+    err "Checksum verification failed — refusing to install."
+    return 1
+  }
+
+  INSTALLED_PATH=""
+  case "$key" in
+    macos-arm64) install_macos "$file" ;;
+    linux-*) install_linux "$file" ;;
+  esac
+
+  log "✓ Installed: $INSTALLED_PATH"
+
+  if is_interactive && confirm "Launch $APP_NAME now? [Y/n]" yes; then
+    launch_app "$INSTALLED_PATH" "$os"
+  fi
 }
 
 # Run main only when executed directly, not when sourced for tests.

@@ -15,6 +15,18 @@ assert_eq() {
   fi
 }
 
+# assert_contains HAYSTACK NEEDLE NAME
+assert_contains() {
+  TESTS_RUN=$((TESTS_RUN + 1))
+  case "$1" in
+    *"$2"*) printf '  ok   %s\n' "$3" ;;
+    *)
+      TESTS_FAILED=$((TESTS_FAILED + 1))
+      printf '  FAIL %s\n       missing: [%s]\n       in:      [%s]\n' "$3" "$2" "$1"
+      ;;
+  esac
+}
+
 # assert_ok NAME -- CMD...   (expects CMD to exit 0)
 assert_ok() {
   name=$1
