@@ -17,7 +17,8 @@
     "test": "vitest run",
     "coverage": "node tools/check-scenario-coverage.mjs",
     "lint:storage": "node tools/check-localstorage.mjs",
-    "check:gate": "yarn check && yarn test && yarn coverage && yarn lint:storage",
+    "test:install": "sh docs/tests/run.sh",
+    "check:gate": "yarn check && yarn test && yarn coverage && yarn lint:storage && yarn test:install",
     "tauri": "tauri"
   },
   "devDependencies": {

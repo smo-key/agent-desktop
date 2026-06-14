@@ -1,22 +1,22 @@
 ## 1. Test harness & fixtures
 
-- [ ] 1.1 Add a shell test harness under `docs/tests/` (plain `sh` assertion
+- [x] 1.1 Add a shell test harness under `docs/tests/` (plain `sh` assertion
   runner, no external deps) wired into the repo so it can be run locally and in
   CI; add a `yarn`/script entry to invoke it.
-- [ ] 1.2 Record a `releases/latest` JSON fixture (trimmed to the relevant
+- [x] 1.2 Record a `releases/latest` JSON fixture (trimmed to the relevant
   assets + `digest` fields) for tests to parse offline.
 
 ## 2. install.sh — pure logic (TDD)
 
-- [ ] 2.1 Test + implement platform detection: map `uname -s`/`uname -m` to a
+- [x] 2.1 Test + implement platform detection: map `uname -s`/`uname -m` to a
   platform key (macos-arm64, linux-x64, linux-arm64) and reject everything else.
-- [ ] 2.2 Test + implement asset-name pattern selection per platform key
+- [x] 2.2 Test + implement asset-name pattern selection per platform key
   (`*_aarch64.dmg`, `*_amd64.AppImage`, `*_aarch64.AppImage`).
-- [ ] 2.3 Test + implement jq-free extraction of `browser_download_url` and
+- [x] 2.3 Test + implement jq-free extraction of `browser_download_url` and
   `digest` for the matched asset from the fixture JSON.
-- [ ] 2.4 Test + implement sha256 verification helper (compare computed hash to
+- [x] 2.4 Test + implement sha256 verification helper (compare computed hash to
   the `sha256:`-prefixed digest, case-insensitive; success and mismatch paths).
-- [ ] 2.5 Test + implement TTY detection + prompt helper that reads from
+- [x] 2.5 Test + implement TTY detection + prompt helper that reads from
   `/dev/tty` when present and is a no-op (default safe answer) when absent.
 
 ## 3. install.sh — side-effecting flows
