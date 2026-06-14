@@ -200,3 +200,28 @@ SHA_TMP2=$(mktemp); printf 'hello' > "$SHA_TMP2"
 assert_ok "verify accepts uppercase SHA256: label" -- \
   verify_sha256 "$SHA_TMP2" "SHA256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
 rm -f "$SHA_TMP2"
+
+# Regression: stock macOS /bin/sh is bash 3.2, whose parameter scanner is not
+# multibyte-aware. An UNBRACED "$var" directly followed by a multibyte char (our
+# progress lines use … → ✓) folds the leading byte into the name -> unset var ->
+# `set -u` aborts. Forbid that adjacency in the script source; braces are safe.
+DANGER=$(grep -nE '\$[A-Za-z_][A-Za-z0-9_]*(…|→|✓)' "$HERE/../install.sh" || true)
+assert_eq "$DANGER" "" "no unbraced \$var immediately before a multibyte char"
+
+# The LAST asset (no following "name") must not bleed past the assets array and
+# bind a digest from a release-level field outside it.
+BLEED2JSON=$(mkjson <<'JSON'
+{
+  "assets": [
+    {
+      "name": "Agent.Desktop_0.2.0_aarch64.dmg",
+      "browser_download_url": "https://dl/Agent.Desktop_0.2.0_aarch64.dmg"
+    }
+  ],
+  "extra": {
+    "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+  }
+}
+JSON
+)
+assert_fail "last asset does not bind a digest from outside the array" -- asset_digest "$BLEED2JSON" _aarch64.dmg

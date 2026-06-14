@@ -44,14 +44,18 @@ asset_suffix() {
 
 # _asset_slice JSON_FILE SUFFIX -> the lines of the asset object whose "name"
 # value ends with SUFFIX, from its name line up to (excluding) the next asset's
-# name line. This scopes url/digest extraction to a single asset rather than
-# trusting line position. Assumes the pretty-printed, one-field-per-line JSON
-# that the GitHub REST API returns; on other shapes it fails closed.
+# name line or the close of the assets array. This scopes url/digest extraction
+# to a single asset rather than trusting line position. Assumes the pretty-
+# printed, one-field-per-line JSON the GitHub REST API returns (no nested "name"
+# key within an asset, no arrays inside an asset); on other shapes it fails
+# closed (yields nothing -> caller reports no verifiable installer).
 _asset_slice() {
   awk -v suf="$2" '
     function nameval(s) {
       sub(/.*"name"[[:space:]]*:[[:space:]]*"/, "", s); sub(/".*/, "", s); return s
     }
+    # A line closing an array ends the asset (and the assets array) we are in.
+    capturing && /^[[:space:]]*\]/ { exit }
     /"name"[[:space:]]*:/ {
       nm = nameval($0)
       if (length(nm) >= length(suf) && substr(nm, length(nm) - length(suf) + 1) == suf) {
@@ -208,7 +212,7 @@ install_macos() {
   # a step fails under `set -e` (e.g. neither Applications dir is writable).
   rc=0
   if [ -n "$src" ] && [ -d "$src" ] && mkdir -p "$dest_dir"; then
-    log "→ installing to $dest_dir…"
+    log "→ installing to ${dest_dir}…"
     rm -rf "$dest_dir/$APP_NAME.app" 2>/dev/null || true
     cp -R "$src" "$dest_dir/$APP_NAME.app" || rc=$?
   else
@@ -234,7 +238,7 @@ install_linux() {
   mkdir -p "$bindir" "$appsdir"
   dest="$bindir/agent-desktop.AppImage"
 
-  log "→ installing to $dest…"
+  log "→ installing to ${dest}…"
   cp "$1" "$dest"
   chmod +x "$dest"
   desktop_entry_content "$dest" > "$appsdir/agent-desktop.desktop"
