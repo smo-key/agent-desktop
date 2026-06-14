@@ -1,38 +1,108 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Orchestration test for the recurring hourly poll. The Tauri IPC (check/ask/
-// relaunch) is mocked, and updateStore is mocked so we can assert beginDownload
-// is invoked with the found update without touching the real singleton.
+// Orchestration tests for the launch check, the recurring hourly poll, and the
+// shared `runUpdateCheck`. The Tauri IPC (check/relaunch) is mocked, and
+// updateStore is mocked so we can assert beginDownload is invoked with the found
+// update without touching the real singleton. There is no dialog any more — both
+// launch and poll stage in the background, so nothing here mocks plugin-dialog.
 const checkMock = vi.fn();
 vi.mock('@tauri-apps/plugin-updater', () => ({ check: () => checkMock() }));
 vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: vi.fn(async () => {}) }));
-vi.mock('@tauri-apps/plugin-dialog', () => ({ ask: vi.fn(async () => false) }));
 
 const beginDownloadMock = vi.fn(async (..._a: unknown[]) => {});
 // Mutable snapshot so a test can simulate "this version is already staged".
+// Referenced LAZILY inside the factory's getter so the hoisted vi.mock doesn't hit
+// a TDZ on these module-scope bindings.
 let snapshot: { status: string; version: string | null } = { status: 'idle', version: null };
 vi.mock('./updateStore.svelte', () => ({
   updateStore: {
     get snapshot() {
       return snapshot;
     },
-    beginDownload: (...a: unknown[]) => beginDownloadMock(...a)
+    beginDownload: (...a: unknown[]) => beginDownloadMock(...a),
+    // Settable seam: checkForUpdate wires this to runUpdateCheck for the retry pill.
+    recheck: null as null | (() => Promise<unknown>)
   }
 }));
 
-import { startUpdatePolling } from './checkForUpdate';
+import { startUpdatePolling, checkForUpdateOnLaunch, runUpdateCheck } from './checkForUpdate';
+import { updateStore } from './updateStore.svelte'; // resolves to the mock above
 
 beforeEach(() => {
   vi.useFakeTimers();
   checkMock.mockReset();
   beginDownloadMock.mockClear();
   snapshot = { status: 'idle', version: null };
+  updateStore.recheck = null;
   vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
 });
 
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+describe('checkForUpdateOnLaunch', () => {
+  // Scenario: Launch check stages in the background (no dialog/prompt).
+  it('downloads a found update on launch without prompting', async () => {
+    checkMock.mockResolvedValue({ version: '2.0.0' });
+    await checkForUpdateOnLaunch();
+    expect(beginDownloadMock).toHaveBeenCalledWith({ version: '2.0.0' });
+  });
+
+  // Scenario: No update or check fails on launch — continue silently.
+  it('does nothing when there is no update', async () => {
+    checkMock.mockResolvedValue(null);
+    await checkForUpdateOnLaunch();
+    expect(beginDownloadMock).not.toHaveBeenCalled();
+  });
+
+  it('swallows a launch check that throws (offline)', async () => {
+    checkMock.mockRejectedValue(new Error('offline'));
+    await checkForUpdateOnLaunch();
+    expect(beginDownloadMock).not.toHaveBeenCalled();
+  });
+
+  // The launch check wires the store's retry seam to a fresh check cycle.
+  it('registers the recheck seam for the retry pill', async () => {
+    checkMock.mockResolvedValue(null);
+    await checkForUpdateOnLaunch();
+    expect(updateStore.recheck).toBe(runUpdateCheck);
+  });
+});
+
+describe('runUpdateCheck', () => {
+  it("returns 'started' and downloads when an update is found", async () => {
+    checkMock.mockResolvedValue({ version: '2.0.0' });
+    expect(await runUpdateCheck()).toBe('started');
+    expect(beginDownloadMock).toHaveBeenCalledWith({ version: '2.0.0' });
+  });
+
+  it("returns 'up-to-date' when no newer version exists", async () => {
+    checkMock.mockResolvedValue(null);
+    expect(await runUpdateCheck()).toBe('up-to-date');
+    expect(beginDownloadMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 'error' when the check throws", async () => {
+    checkMock.mockRejectedValue(new Error('offline'));
+    expect(await runUpdateCheck()).toBe('error');
+  });
+
+  it("returns 'noop' and closes the handle when the version is already staged", async () => {
+    snapshot = { status: 'ready', version: '2.0.0' };
+    const close = vi.fn(async () => {});
+    checkMock.mockResolvedValue({ version: '2.0.0', close });
+    expect(await runUpdateCheck()).toBe('noop');
+    expect(beginDownloadMock).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("returns 'unavailable' outside the Tauri runtime", async () => {
+    vi.stubGlobal('window', {});
+    expect(await runUpdateCheck()).toBe('unavailable');
+    expect(checkMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('startUpdatePolling', () => {

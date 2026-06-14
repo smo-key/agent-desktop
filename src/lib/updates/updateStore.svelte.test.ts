@@ -12,12 +12,18 @@ vi.mock('@tauri-apps/plugin-process', () => ({
 import { UpdateStore } from './updateStore.svelte';
 
 // Build a fake `Update` handle with controllable download() + spy install()/close().
+// download() captures the progress callback so a test can emit Started/Progress
+// events, and exposes resolve/reject thunks to settle the download promise.
 function fakeUpdate(version: string) {
   let resolveDownload!: () => void;
   let rejectDownload!: (e: unknown) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let onEvent: ((e: any) => void) | undefined;
   const download = vi.fn(
-    () =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (cb?: (e: any) => void) =>
       new Promise<void>((res, rej) => {
+        onEvent = cb;
         resolveDownload = res;
         rejectDownload = rej;
       })
@@ -34,7 +40,10 @@ function fakeUpdate(version: string) {
     install,
     close,
     resolveDownload: () => resolveDownload(),
-    rejectDownload: (e: unknown) => rejectDownload(e)
+    rejectDownload: (e: unknown) => rejectDownload(e),
+    started: (contentLength?: number) => onEvent?.({ event: 'Started', data: { contentLength } }),
+    progress: (chunkLength: number) => onEvent?.({ event: 'Progress', data: { chunkLength } }),
+    finished: () => onEvent?.({ event: 'Finished' })
   };
 }
 
@@ -65,15 +74,82 @@ describe('UpdateStore', () => {
     expect(f.close).not.toHaveBeenCalled(); // staged handle is kept, not closed
   });
 
-  it('beginDownload resets to idle AND closes the handle when the download fails', async () => {
+  it('beginDownload goes to failed AND closes the handle when the download fails', async () => {
     const s = new UpdateStore();
     const f = fakeUpdate('1.2.3');
     const p = s.beginDownload(f.update);
     f.rejectDownload(new Error('offline'));
     await p;
-    expect(s.status).toBe('idle');
-    expect(s.version).toBeNull();
+    // A download that was found-then-failed is actionable: surface the retryable
+    // 'failed' state in the title bar (NOT silent — that's only for check failures).
+    expect(s.status).toBe('failed');
     expect(f.close).toHaveBeenCalledOnce(); // failed handle released (no leak)
+  });
+
+  it('accumulates download progress and derives percent when total is known', async () => {
+    const s = new UpdateStore();
+    const f = fakeUpdate('1.2.3');
+    const p = s.beginDownload(f.update);
+    f.started(1000);
+    expect(s.totalBytes).toBe(1000);
+    expect(s.percent).toBe(0);
+    f.progress(250);
+    expect(s.downloadedBytes).toBe(250);
+    expect(s.percent).toBe(25);
+    f.progress(250);
+    expect(s.percent).toBe(50);
+    f.resolveDownload();
+    await p;
+    expect(s.status).toBe('ready');
+  });
+
+  it('leaves percent null (indeterminate) when the manifest reports no content length', async () => {
+    const s = new UpdateStore();
+    const f = fakeUpdate('1.2.3');
+    const p = s.beginDownload(f.update);
+    f.started(undefined); // no contentLength
+    f.progress(100);
+    expect(s.status).toBe('downloading');
+    expect(s.totalBytes).toBeNull();
+    expect(s.downloadedBytes).toBe(100);
+    expect(s.percent).toBeNull();
+    f.resolveDownload();
+    await p;
+  });
+
+  it('a new download resets progress from a prior run', async () => {
+    const s = new UpdateStore();
+    const first = fakeUpdate('1.0.0');
+    const p1 = s.beginDownload(first.update);
+    first.started(1000);
+    first.progress(400);
+    expect(s.downloadedBytes).toBe(400);
+    first.resolveDownload();
+    await p1;
+    // A genuinely newer version supersedes; its flip must zero the progress
+    // counters synchronously (before any await), so the prior run's bytes don't
+    // leak into the new pill.
+    const second = fakeUpdate('1.1.0');
+    void s.beginDownload(second.update);
+    expect(s.downloadedBytes).toBe(0);
+    expect(s.totalBytes).toBeNull();
+  });
+
+  it('retry() re-runs the injected recheck when failed, and is a no-op otherwise', async () => {
+    const s = new UpdateStore();
+    const recheck = vi.fn(async () => {});
+    s.recheck = recheck;
+    // Not failed → no-op.
+    await s.retry();
+    expect(recheck).not.toHaveBeenCalled();
+    // Drive a failure, then retry re-checks.
+    const f = fakeUpdate('1.2.3');
+    const p = s.beginDownload(f.update);
+    f.rejectDownload(new Error('offline'));
+    await p;
+    expect(s.status).toBe('failed');
+    await s.retry();
+    expect(recheck).toHaveBeenCalledOnce();
   });
 
   it('restartToUpdate installs the staged update then relaunches', async () => {

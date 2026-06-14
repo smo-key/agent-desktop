@@ -54,22 +54,34 @@ describe('projectRollup — Filter agents by project', () => {
     expect(unassignedCount(rows)).toBe(1);
   });
 
-  it('flags working independently of attention; precedence is the panel’s', () => {
-    const ps = [proj('a'), proj('b'), proj('c'), proj('d')];
+  it('Project flags a working agent', () => {
+    const ps = [proj('a'), proj('b')];
     const rs = [
-      row('w', 'a', 'working'), // working, none waiting -> blue
-      row('q', 'b', 'finished'), // nothing live -> no icon
-      row('x', 'c', 'waiting'), // needs you, also working sibling
-      row('y', 'c', 'working'), // both attn and working raised; panel shows red
-      { ...row('z', 'd', 'working'), paused: true } // paused -> not working
+      row('w', 'a', 'working'), // working, none waiting -> blue dot
+      row('q', 'b', 'finished') // nothing live -> no dot
     ];
     const counts = projectCounts(rs, ps);
     expect(counts.map((c) => [c.project.id, c.attn, c.working])).toEqual([
       ['a', false, true], // working only -> blue dot
-      ['b', false, false], // idle -> no dot
-      ['c', true, true], // both raised; ProjectPanel renders red (attn wins)
-      ['d', false, false] // the only working agent is paused
+      ['b', false, false] // finished -> no dot
     ]);
+    // A paused/archived working agent does NOT advertise as working.
+    expect(projectCounts([{ ...row('z', 'a', 'working'), paused: true }], ps)
+      .find((c) => c.project.id === 'a')?.working).toBe(false);
+  });
+
+  it('Attention outranks working', () => {
+    const ps = [proj('c')];
+    const counts = projectCounts(
+      [
+        row('x', 'c', 'waiting'), // needs you
+        row('y', 'c', 'working') // also working
+      ],
+      ps
+    );
+    // Both flags raised; the panel renders the red (attention) dot, blue only as fallback.
+    expect(counts[0].attn).toBe(true);
+    expect(counts[0].working).toBe(true);
   });
 
   it('Filter agents by project', () => {

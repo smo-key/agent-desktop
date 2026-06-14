@@ -25,6 +25,8 @@
   import { ensureDesktopPermission } from '$lib/overview/alerts.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
   import { appVersionLabel } from '$lib/settings/version';
+  import { updateStore } from '$lib/updates/updateStore.svelte';
+  import { runUpdateCheck } from '$lib/updates/checkForUpdate';
   import {
     ensureModels,
     modelsStatus,
@@ -148,11 +150,28 @@
     openWith.set(bucket, value);
   }
 
-  // App version for the footer: "dev" under a dev server, else "v<version>".
-  // Build-time constants — no reactivity needed.
+  // App version for the footer + the update row: "dev" under a dev server, else
+  // "v<version>". Build-time constants — no reactivity needed.
   const versionLabel = appVersionLabel({
     version: __APP_VERSION__,
     dev: import.meta.env.DEV
+  });
+
+  // Manual "Check for updates": the user-initiated outcome (checking / up to date /
+  // couldn't check). Download + ready/failed states come from the shared
+  // `updateStore` (which the row reads directly), so a manual-found update also
+  // lights the title-bar pill. `started`/`noop`/`unavailable` defer to the store.
+  let manualStatus = $state<'idle' | 'checking' | 'up-to-date' | 'error'>('idle');
+  async function checkForUpdates() {
+    manualStatus = 'checking';
+    const outcome = await runUpdateCheck();
+    manualStatus =
+      outcome === 'up-to-date' ? 'up-to-date' : outcome === 'error' ? 'error' : 'idle';
+  }
+  // Reset the manual result each time the modal opens, so it shows a fresh button
+  // rather than a stale "up to date" / "couldn't check" from a prior session.
+  $effect(() => {
+    if (settingsModal.open) manualStatus = 'idle';
   });
 
   function close() {
@@ -382,6 +401,46 @@
                 checked={titleSettings.prefs.cloudFallback}
                 onchange={(e) => titleSettings.setCloudFallback(e.currentTarget.checked)}
               />
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <span class="label">Software update</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Agent Desktop {versionLabel}</span>
+            <div class="control">
+              {#if updateStore.status === 'downloading'}
+                <span class="model-status">
+                  {updateStore.percent === null
+                    ? 'Downloading…'
+                    : `Downloading… ${updateStore.percent}%`}
+                </span>
+              {:else if updateStore.status === 'installing'}
+                <span class="model-status">Restarting…</span>
+              {:else if updateStore.status === 'ready'}
+                <button type="button" class="model-download" onclick={() => void updateStore.restartToUpdate()}>
+                  Update ready — restart
+                </button>
+              {:else if updateStore.status === 'failed'}
+                <button type="button" class="model-delete" onclick={() => void updateStore.retry()}>
+                  Update failed · retry
+                </button>
+              {:else if manualStatus === 'checking'}
+                <span class="model-status">Checking…</span>
+              {:else if manualStatus === 'up-to-date'}
+                <span class="model-status ready">You're up to date</span>
+              {:else if manualStatus === 'error'}
+                <button type="button" class="model-delete" onclick={checkForUpdates}>
+                  Couldn't check · retry
+                </button>
+              {:else}
+                <button type="button" class="model-download" onclick={checkForUpdates}>
+                  Check for updates
+                </button>
+              {/if}
             </div>
           </li>
         </ul>

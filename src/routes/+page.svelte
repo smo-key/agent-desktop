@@ -799,21 +799,60 @@
     <div class="tb-right" data-tauri-drag-region>
       <!-- Opt back into pointer events (the bar is a drag region) so the buttons are
            clickable. Gear opens Settings; "?" opens the shortcuts modal (⌘/ and ?). -->
-      <!-- Update-ready pill (desktop-auto-update spec): leftmost of the right-side
-           controls, shown only once a newer version has been downloaded + staged in
-           the background. Clicking installs the staged update and relaunches. -->
-      {#if updateStore.status === 'ready'}
+      <!-- Update pill (desktop-auto-update spec): leftmost of the right-side
+           controls, shown for any non-idle update state and morphing in place —
+           downloading (progress) → ready (gift, click to install+relaunch) →
+           installing; or failed (click to retry). Hidden when idle. -->
+      {#if updateStore.status !== 'idle'}
+        {@const st = updateStore.status}
+        {@const busy = st === 'downloading' || st === 'installing'}
         <button
           class="update-pill"
-          aria-label="Restart to update"
+          class:is-failed={st === 'failed'}
+          class:is-busy={busy}
+          disabled={busy}
+          aria-label={st === 'ready'
+            ? 'Restart to update'
+            : st === 'failed'
+              ? 'Update failed, click to retry'
+              : st === 'installing'
+                ? 'Restarting to update'
+                : 'Downloading update'}
           use:tooltip={{
-            text: `Agent Desktop ${updateStore.version} is ready`,
+            text:
+              st === 'ready'
+                ? `Agent Desktop ${updateStore.version} is ready`
+                : st === 'failed'
+                  ? 'Update failed — click to retry'
+                  : st === 'installing'
+                    ? 'Restarting…'
+                    : updateStore.percent === null
+                      ? `Downloading Agent Desktop ${updateStore.version}…`
+                      : `Downloading Agent Desktop ${updateStore.version}… ${updateStore.percent}%`,
             placement: 'bottom'
           }}
-          onclick={() => void updateStore.restartToUpdate()}
+          onclick={() => {
+            if (updateStore.status === 'ready') void updateStore.restartToUpdate();
+            else if (updateStore.status === 'failed') void updateStore.retry();
+          }}
         >
-          <Icon name="gift" size={13} />
-          <span>Restart to update</span>
+          <Icon
+            name={st === 'ready' ? 'gift' : st === 'failed' ? 'triangle-alert' : 'rotate-ccw'}
+            size={13}
+          />
+          <span>
+            {#if st === 'ready'}
+              Restart to update
+            {:else if st === 'failed'}
+              Update failed · retry
+            {:else if st === 'installing'}
+              Restarting…
+            {:else if updateStore.percent === null}
+              Updating…
+            {:else}
+              Updating… {updateStore.percent}%
+            {/if}
+          </span>
         </button>
       {/if}
       <button
@@ -1020,10 +1059,34 @@
       border-color var(--dur-fast),
       box-shadow var(--dur-fast);
   }
-  .update-pill:hover {
+  .update-pill:not(:disabled):hover {
     background: var(--orange-400);
     border-color: var(--orange-500);
     box-shadow: var(--glow-orange);
+  }
+  /* Downloading / installing: inert (no click), with the icon spinning to signal
+     work in progress. Full opacity — it's status, not a disabled control. */
+  .update-pill.is-busy {
+    cursor: default;
+  }
+  .update-pill.is-busy :global(.mc-icon) {
+    animation: update-pill-spin 0.9s linear infinite;
+  }
+  @keyframes update-pill-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  /* Failed download: danger-tinted, clickable to retry. */
+  .update-pill.is-failed {
+    background: var(--danger, #e5484d);
+    border-color: var(--danger, #e5484d);
+    color: #fff;
+  }
+  .update-pill.is-failed:hover {
+    background: #d93d42;
+    border-color: #d93d42;
+    box-shadow: none;
   }
 
   .help-btn {

@@ -1,17 +1,20 @@
-// Launch-time in-app update check (desktop-auto-update spec, "In-app update check
-// on launch"). On startup we ask the Tauri updater whether a newer version is
-// published; if so we prompt the user and, on confirmation, download/verify/
-// install it and relaunch. When there is no update, the check fails (offline), or
-// we're not running under the Tauri runtime (e.g. `vite dev` in a browser, or
-// tests), we continue SILENTLY — never blocking startup, never surfacing an error.
+// In-app update orchestration (desktop-auto-update spec). On launch, and then on a
+// recurring hourly poll, we ask the Tauri updater whether a newer version is
+// published; if so we download + STAGE it in the background — with no dialog — and
+// the title-bar pill surfaces progress / "Restart to update". When there is no
+// update, the check fails (offline), or we're not under the Tauri runtime (e.g.
+// `vite dev` in a browser, or tests), we continue SILENTLY: never blocking startup,
+// never surfacing a header error. (A found update whose DOWNLOAD then fails is the
+// one actionable case — updateStore surfaces a retryable "failed" pill.)
 //
-// All the runtime-bound effects live here; the branching decision is the PURE
-// `decideUpdateAction` (see decide.ts), which is unit-tested headlessly.
+// All runtime-bound effects live here; the branching decision is the PURE
+// `decideCheckAction` (see decide.ts), unit-tested headlessly. `runUpdateCheck` is
+// the single check→stage cycle shared by launch, the poll, the retry pill (via the
+// store's injected `recheck`), and the manual Settings check (which reads its
+// returned outcome).
 
 import { check } from '@tauri-apps/plugin-updater';
-import { relaunch } from '@tauri-apps/plugin-process';
-import { ask } from '@tauri-apps/plugin-dialog';
-import { decideCheckAction, decideUpdateAction } from './decide';
+import { decideCheckAction } from './decide';
 import { updateStore } from './updateStore.svelte';
 import { closeUpdate } from './resource';
 
@@ -31,88 +34,70 @@ function inTauri(): boolean {
   );
 }
 
+/** The outcome of one `runUpdateCheck`, consumed by the manual Settings check. */
+export type CheckOutcome =
+  | 'started' // a newer version was found and a background download was kicked off
+  | 'up-to-date' // no newer version available
+  | 'noop' // a newer version was found but is already downloading/staged
+  | 'error' // the check itself failed (offline / IPC) — no update found
+  | 'unavailable'; // not running under the Tauri runtime
+
 /**
- * Check for an update on launch and, if one is available and the user confirms,
- * install it and relaunch. Best-effort and non-blocking: ANY failure (no update,
+ * Run a single check→stage cycle. Best-effort and non-blocking: if an update is
+ * found it is handed to `updateStore.beginDownload` (fire-and-forget — progress is
+ * observed reactively via the store) and we return immediately. Any check failure
+ * is swallowed and reported as `'error'` so the background callers stay silent
+ * while the manual Settings check can surface it.
+ */
+export async function runUpdateCheck(): Promise<CheckOutcome> {
+  if (!inTauri()) return 'unavailable';
+  try {
+    const update = await check();
+    if (!update) return 'up-to-date';
+    const action = decideCheckAction(update, updateStore.snapshot);
+    if (action.kind === 'download') {
+      void updateStore.beginDownload(action.update);
+      return 'started';
+    }
+    // Already downloading/staged this version (launch-vs-poll race, or an hourly
+    // re-check of a staged version): drop the redundant handle so its backend
+    // resource isn't leaked, and start no second download.
+    await closeUpdate(update);
+    return 'noop';
+  } catch (err) {
+    // Offline / IPC error / no manifest. Continue silently in the background;
+    // `'error'` lets the manual Settings check surface "Couldn't check — retry".
+    console.warn('update check skipped:', err);
+    return 'error';
+  }
+}
+
+/**
+ * Check for an update on launch and, if one is available, download + stage it in
+ * the background (no prompt). Best-effort and non-blocking: ANY failure (no update,
  * offline, IPC error, non-Tauri context) is swallowed and the app continues
- * normally with nothing surfaced to the user.
+ * normally with nothing surfaced. Also wires the store's `retry()` seam.
  *
- * Returns a promise that resolves once the flow settles; callers `void` it from
+ * Returns a promise that resolves once the check settles; callers `void` it from
  * `onMount` so startup is never blocked.
  */
 export async function checkForUpdateOnLaunch(): Promise<void> {
-  // Bail immediately outside the Tauri runtime — `check()` would throw.
-  if (!inTauri()) return;
-
-  try {
-    const update = await check();
-
-    // No update available: the pure decision is a no-op; bail before any prompt.
-    if (!update) return;
-
-    // Already downloading/staged this version (e.g. a re-entrant launch): the
-    // "Restart to update" pill is the surface — don't also prompt. Close the
-    // freshly-obtained handle so its backend resource isn't leaked.
-    if (decideCheckAction(update, updateStore.snapshot).kind === 'ignore') {
-      await closeUpdate(update);
-      return;
-    }
-
-    const confirmed = await ask(
-      `Agent Desktop ${update.version} is available. Install it now? The app will restart.`,
-      { title: 'Update available', kind: 'info', okLabel: 'Install', cancelLabel: 'Later' }
-    );
-
-    const action = decideUpdateAction({ version: update.version }, confirmed);
-    if (action.kind === 'install') {
-      await update.downloadAndInstall();
-      await relaunch();
-      return;
-    }
-
-    // Declined ("Later"): download + stage in the background so the "Restart to
-    // update" pill appears. The user applies it whenever they like — we never
-    // discard a known update for the session. Not awaited: the launch flow
-    // returns immediately while the (large) bundle downloads in the background.
-    void updateStore.beginDownload(update);
-  } catch (err) {
-    // Offline / IPC error / no manifest / etc. Continue silently — never block
-    // startup, never surface an error to the user (spec: "No update or check fails").
-    console.warn('update check skipped:', err);
-  }
+  updateStore.recheck = runUpdateCheck;
+  await runUpdateCheck();
 }
 
 /**
  * Start the recurring background update check. In addition to the launch check
  * above, re-check every `intervalMs` (default: hourly) for the lifetime of the
- * session. Unlike launch, this NEVER shows a dialog — a newer version is
- * downloaded + staged in the background and surfaced only via the "Restart to
- * update" pill. Best-effort: any check/download failure is swallowed and retried
- * on the next tick. Outside the Tauri runtime it's a no-op.
+ * session. Never shows a dialog — a newer version is downloaded + staged in the
+ * background and surfaced only via the title-bar pill. Best-effort: any failure is
+ * swallowed and retried on the next tick. Outside the Tauri runtime it's a no-op.
  *
  * Returns a stop function (clears the interval) for the caller's teardown.
  */
 export function startUpdatePolling(intervalMs: number = POLL_INTERVAL_MS): () => void {
   if (!inTauri()) return () => {};
-
-  const tick = async (): Promise<void> => {
-    try {
-      const update = await check();
-      const action = decideCheckAction(update, updateStore.snapshot);
-      if (action.kind === 'download') {
-        // beginDownload owns the handle from here (stages it, or closes it if a
-        // concurrent download supersedes/duplicates it).
-        await updateStore.beginDownload(action.update);
-      } else if (update) {
-        // No-op for this version (already staged/downloading): release the
-        // freshly-obtained handle so the hourly re-check doesn't leak a resource.
-        await closeUpdate(update);
-      }
-    } catch (err) {
-      console.warn('update poll skipped:', err);
-    }
-  };
-
-  const id = setInterval(() => void tick(), intervalMs);
+  updateStore.recheck = runUpdateCheck;
+  const id = setInterval(() => void runUpdateCheck(), intervalMs);
   return () => clearInterval(id);
 }

@@ -67,11 +67,15 @@ user-initiated Settings check is the exception: it surfaces check failures inlin
 `⟳ Updating… N%` (or indeterminate) → `🎁 Restart to update` → `⟳ Restarting…`;
 `⚠ Update failed · retry` on failure. Only `ready` and `failed` are clickable.
 
-**6. Settings "Check for updates."** A row reads the current version (via
-`@tauri-apps/api/app` `getVersion()`, not a hardcoded constant) and a button runs a
-check that drives the same store (so progress/ready/failed are shared and also
-light the header pill). The Settings view derives its inline status from the shared
-store plus a manual-check-specific signal for `up to date` / `couldn't check`.
+**6. Settings "Check for updates."** A row shows the current version (reusing the
+existing build-time `__APP_VERSION__` / `appVersionLabel`, the same source as the
+Settings footer — consistent, and no extra IPC; the CI release sync keeps it in
+step with the real app version) and a button runs a check that drives the same
+store (so progress/ready/failed are shared and also light the header pill). The
+Settings view derives its inline status from the shared store plus a
+manual-check-specific signal for `up to date` / `couldn't check`. The check is the
+shared `runUpdateCheck`, whose returned `CheckOutcome` the row maps to the inline
+status; the same function is the store's injected `recheck` behind `retry()`.
 
 ## Risks / Trade-offs
 
