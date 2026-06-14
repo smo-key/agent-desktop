@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
 
+## [0.1.6] - 2026-06-14
+
+### Bug Fixes
+
+- **ci**: Correct Windows chrono flag form and macOS unsigned fallback
+
 ## [0.1.5] - 2026-06-14
 
 ### Bug Fixes
