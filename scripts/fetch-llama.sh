@@ -114,20 +114,7 @@ case "$TARGET_OS" in
     # NATIVE Windows: drive cmake with the Visual Studio / MSVC generator so it
     # emits a PE .exe (NOT a WSL/Linux ELF). The bundled VS generator targets
     # the host (x64) by default.
-    CMAKE_CONFIGURE_ARGS+=("-G" "Visual Studio 17 2022" "-A" "x64")
-    # llama.cpp@b4000's common/{log,common}.cpp reference std::chrono::system_clock
-    # (plus duration_cast/now) but never `#include <chrono>` — they relied on a
-    # transitive include that VS 2022's newer MSVC STL (14.4x) no longer provides,
-    # so the build fails with C2039 'system_clock'. Force-include <chrono> across
-    # all translation units on the MSVC leg to restore the build WITHOUT forking
-    # the pinned upstream source. Harmless (a standard header).
-    #
-    # Use the DASH form `-FIchrono`, not `/FIchrono`: MSVC accepts `-` or `/` for
-    # any option, but this step runs under Git Bash and MSYS2 path-conversion
-    # rewrites a leading-slash argument (`/FIchrono`) into a bogus Windows path
-    # (`C:/Program Files/Git/FIchrono`), making cl treat it as a source file. A
-    # dash-prefixed value has no slash to convert, so it reaches cl intact.
-    CMAKE_CONFIGURE_ARGS+=("-DCMAKE_CXX_FLAGS=-FIchrono") ;;
+    CMAKE_CONFIGURE_ARGS+=("-G" "Visual Studio 17 2022" "-A" "x64") ;;
 esac
 
 # --- Build -------------------------------------------------------------------
@@ -136,6 +123,24 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 
 echo "→ Cloning llama.cpp@$LLAMA_TAG (shallow) into $WORK_DIR ..."
 git clone --depth 1 --branch "$LLAMA_TAG" "$REPO_URL" "$WORK_DIR/llama.cpp"
+
+# Patch the pinned source for a missing standard include. llama.cpp@b4000's
+# common/{log,common}.cpp use std::chrono::system_clock (plus duration_cast/now)
+# but never `#include <chrono>`; they relied on a transitive include that VS
+# 2022's newer MSVC STL (14.4x) no longer provides, so the Windows build fails
+# with C2039 'system_clock'. We add the include IN-SOURCE (idempotently) rather
+# than via a force-include compiler flag: the Visual Studio generator applies
+# CMAKE_CXX_FLAGS project-wide, so `/FI`/`-FI chrono` leaks onto ggml's C
+# translation units and they error with STL1003 (a C++ header in a C compile).
+# Editing only the .cpp files cannot touch any C source. Harmless on Linux/macOS
+# (a standard header already present transitively there).
+for _f in common/log.cpp common/common.cpp; do
+  _file="$WORK_DIR/llama.cpp/$_f"
+  if [[ -f "$_file" ]] && ! grep -q '#include <chrono>' "$_file"; then
+    printf '#include <chrono>\n' | cat - "$_file" >"$_file.adtmp" && mv "$_file.adtmp" "$_file"
+    echo "  patched: prepended <chrono> include to $_f"
+  fi
+done
 
 echo "→ Building llama-server (Release) for $TARGET_TRIPLE ..."
 cmake -S "$WORK_DIR/llama.cpp" -B "$WORK_DIR/build" \
