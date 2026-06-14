@@ -11,7 +11,11 @@
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { decideUpdateAction } from './decide';
+import { decideCheckAction, decideUpdateAction } from './decide';
+import { updateStore } from './updateStore.svelte';
+
+/** Recurring background-check cadence: once per hour (spec: hourly re-check). */
+const POLL_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
  * Whether we're running inside the Tauri runtime. Outside it (browser `vite dev`,
@@ -45,19 +49,59 @@ export async function checkForUpdateOnLaunch(): Promise<void> {
     // No update available: the pure decision is a no-op; bail before any prompt.
     if (!update) return;
 
+    // Already downloading/staged this version (e.g. a re-entrant launch): the
+    // "Restart to update" pill is the surface — don't also prompt.
+    if (decideCheckAction(update, updateStore.snapshot).kind === 'ignore') return;
+
     const confirmed = await ask(
       `Agent Desktop ${update.version} is available. Install it now? The app will restart.`,
       { title: 'Update available', kind: 'info', okLabel: 'Install', cancelLabel: 'Later' }
     );
 
     const action = decideUpdateAction({ version: update.version }, confirmed);
-    if (action.kind !== 'install') return; // declined → continue normally.
+    if (action.kind === 'install') {
+      await update.downloadAndInstall();
+      await relaunch();
+      return;
+    }
 
-    await update.downloadAndInstall();
-    await relaunch();
+    // Declined ("Later"): download + stage in the background so the "Restart to
+    // update" pill appears. The user applies it whenever they like — we never
+    // discard a known update for the session. Not awaited: the launch flow
+    // returns immediately while the (large) bundle downloads in the background.
+    void updateStore.beginDownload(update);
   } catch (err) {
     // Offline / IPC error / no manifest / etc. Continue silently — never block
     // startup, never surface an error to the user (spec: "No update or check fails").
     console.warn('update check skipped:', err);
   }
+}
+
+/**
+ * Start the recurring background update check. In addition to the launch check
+ * above, re-check every `intervalMs` (default: hourly) for the lifetime of the
+ * session. Unlike launch, this NEVER shows a dialog — a newer version is
+ * downloaded + staged in the background and surfaced only via the "Restart to
+ * update" pill. Best-effort: any check/download failure is swallowed and retried
+ * on the next tick. Outside the Tauri runtime it's a no-op.
+ *
+ * Returns a stop function (clears the interval) for the caller's teardown.
+ */
+export function startUpdatePolling(intervalMs: number = POLL_INTERVAL_MS): () => void {
+  if (!inTauri()) return () => {};
+
+  const tick = async (): Promise<void> => {
+    try {
+      const update = await check();
+      const action = decideCheckAction(update, updateStore.snapshot);
+      if (action.kind === 'download') {
+        await updateStore.beginDownload(action.update);
+      }
+    } catch (err) {
+      console.warn('update poll skipped:', err);
+    }
+  };
+
+  const id = setInterval(() => void tick(), intervalMs);
+  return () => clearInterval(id);
 }

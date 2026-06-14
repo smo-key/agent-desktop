@@ -59,7 +59,8 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { events } from '$lib/overview/events.svelte';
   import { executor } from '$lib/orchestration/executor.svelte';
-  import { checkForUpdateOnLaunch } from '$lib/updates/checkForUpdate';
+  import { checkForUpdateOnLaunch, startUpdatePolling } from '$lib/updates/checkForUpdate';
+  import { updateStore } from '$lib/updates/updateStore.svelte';
   import { titles } from '$lib/overview/titles.svelte';
   import { triggersTranscriptRead, SAFETY_POLL_MS } from '$lib/overview/poll';
   import { appSessionRefs } from '$lib/overview/sessionRefs';
@@ -106,6 +107,11 @@
     // non-blocking: prompts + installs on confirm when a newer version is
     // published, and is a silent no-op offline / outside the Tauri runtime.
     void checkForUpdateOnLaunch();
+    // Then keep re-checking once an hour for the lifetime of the session. Unlike
+    // launch, the poll never prompts — a newer version downloads + stages in the
+    // background and surfaces only via the "Restart to update" pill. The returned
+    // stop fn (a no-op outside Tauri) is cleared on teardown below.
+    const stopUpdatePolling = startUpdatePolling();
     // Load the user's open-with preferences (seeds defaults on first run).
     void openWith.load();
     // Load session-title preferences (the opt-in cloud title fallback).
@@ -287,6 +293,7 @@
     });
 
     return () => {
+      stopUpdatePolling();
       stopWatching?.();
       unlistenSnapshots?.();
       unlistenSubagents?.();
@@ -792,6 +799,23 @@
     <div class="tb-right" data-tauri-drag-region>
       <!-- Opt back into pointer events (the bar is a drag region) so the buttons are
            clickable. Gear opens Settings; "?" opens the shortcuts modal (⌘/ and ?). -->
+      <!-- Update-ready pill (desktop-auto-update spec): leftmost of the right-side
+           controls, shown only once a newer version has been downloaded + staged in
+           the background. Clicking installs the staged update and relaunches. -->
+      {#if updateStore.status === 'ready'}
+        <button
+          class="update-pill"
+          aria-label="Restart to update"
+          use:tooltip={{
+            text: `Agent Desktop ${updateStore.version} is ready`,
+            placement: 'bottom'
+          }}
+          onclick={() => void updateStore.restartToUpdate()}
+        >
+          <Icon name="gift" size={13} />
+          <span>Restart to update</span>
+        </button>
+      {/if}
       <button
         class="tb-btn"
         class:active={tasksPanel.open}
@@ -966,6 +990,40 @@
     justify-content: flex-end;
     gap: 8px;
     min-width: 0;
+  }
+
+  /* "Restart to update" pill (desktop-auto-update spec). Solid-orange call to
+     action that sits leftmost in the right cluster only when an update is staged.
+     Dark text/icon for contrast on orange (mirrors the green count badge). */
+  .update-pill {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 22px;
+    padding: 0 10px;
+    border: 1px solid var(--orange-600);
+    border-radius: var(--r-full);
+    background: var(--orange-500);
+    color: #1a0d06;
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    /* The title bar is a drag region (pointer-events suppressed on children);
+       re-enable so the pill is hoverable/clickable. */
+    pointer-events: auto;
+    transition:
+      background var(--dur-fast),
+      border-color var(--dur-fast),
+      box-shadow var(--dur-fast);
+  }
+  .update-pill:hover {
+    background: var(--orange-400);
+    border-color: var(--orange-500);
+    box-shadow: var(--glow-orange);
   }
 
   .help-btn {
