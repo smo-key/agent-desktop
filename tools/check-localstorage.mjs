@@ -16,7 +16,7 @@
 // Run by the pre-commit hook and `npm run check:gate`.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -56,7 +56,11 @@ function collect(dir, out = []) {
 
 const violations = [];
 for (const file of collect(SRC_DIR)) {
-  const rel = relative(REPO_ROOT, file);
+  // Normalize to forward slashes so the ALLOWLIST (and the printed paths) match
+  // on Windows, where `relative` yields backslash separators (`src\lib\…`) that
+  // would never equal the POSIX-style allowlist entries — failing the gate for
+  // already-allowlisted caches on the Windows release leg only.
+  const rel = relative(REPO_ROOT, file).split(sep).join('/');
   if (ALLOWLIST.has(rel)) continue;
   const lines = readFileSync(file, 'utf8').split('\n');
   lines.forEach((line, i) => {
