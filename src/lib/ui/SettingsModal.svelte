@@ -20,6 +20,7 @@
   import { notifications, type AlertMode } from '$lib/settings/notifications.svelte';
   import { ensureDesktopPermission } from '$lib/overview/alerts.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
+  import { appVersionLabel } from '$lib/settings/version';
   import {
     ensureModels,
     modelsStatus,
@@ -103,6 +104,13 @@
   function onCustomInput(bucket: FileBucket, value: string) {
     openWith.set(bucket, value);
   }
+
+  // App version for the footer: "dev" under a dev server, else "v<version>".
+  // Build-time constants — no reactivity needed.
+  const versionLabel = appVersionLabel({
+    version: __APP_VERSION__,
+    dev: import.meta.env.DEV
+  });
 
   function close() {
     settingsModal.close();
@@ -345,6 +353,8 @@
           </li>
         </ul>
       </section>
+
+      <footer class="version">{versionLabel}</footer>
     </div>
   </div>
 {/if}
@@ -531,5 +541,16 @@
   .model-delete:not(:disabled):hover {
     border-color: var(--danger, #e5484d);
     background: var(--space-600);
+  }
+
+  /* Footer: the running app version (or "dev"), muted and centered. */
+  .version {
+    margin-top: 2px;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--fg-3);
+    user-select: text;
   }
 </style>
