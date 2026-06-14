@@ -11,4 +11,4 @@
 
 ## 3. Close-out
 - [x] 3.1 `openspec validate projects-panel-working-indicator`, `npm test`, and `npm run check` (for the changed files) pass
-- [ ] 3.2 Adversarial code review, verify, sync spec delta into `openspec/specs/`, archive
+- [x] 3.2 Adversarial code review (no findings), verify, sync spec delta into `openspec/specs/`, archive
