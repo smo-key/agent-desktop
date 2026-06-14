@@ -107,6 +107,24 @@ export class ProjectGitStore {
       console.warn('git_status_for (refreshOne) failed:', err);
     }
   }
+
+  /**
+   * Fetch each folder's remote-tracking refs in the background (the Rust
+   * `git_fetch_for` command, parallel + best-effort) so a later `refresh` reports
+   * an accurate ahead/behind count without a manual `git fetch`. This does NOT
+   * mutate the store — call `refresh` after it resolves to surface the advanced
+   * refs. Unlike the fast local status poll, this performs network I/O, so it is
+   * driven on a slow clock. An empty list is a no-op; a failure (e.g. outside
+   * Tauri) is logged once and swallowed (the next status poll simply stays stale).
+   */
+  async fetchRemotes(paths: string[]): Promise<void> {
+    if (paths.length === 0) return;
+    try {
+      await invoke('git_fetch_for', { paths });
+    } catch (err) {
+      console.warn('git_fetch_for failed; remote-tracking refs not refreshed:', err);
+    }
+  }
 }
 
 /** Singleton store, imported by the project pane + the route. */

@@ -14,10 +14,10 @@
 //! [`git_status_for`] command on a slow clock.
 
 use std::collections::HashMap;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
@@ -291,6 +291,109 @@ fn default_push_remote(dir: &str) -> String {
 /// on failure.
 pub fn pull(dir: &str) -> Result<String, String> {
     run_git_action(dir, &["pull", "--ff-only"])
+}
+
+// ───────────────────────── background fetch ─────────────────────────
+//
+// The ahead/behind counts in `status_for_dir` are measured against the LOCAL
+// remote-tracking ref (`@{upstream}`), which only advances on `git fetch`. The
+// status probe is deliberately local-only and fast, so it never fetches — which
+// leaves the "commits to pull" count frozen at the last fetch. A separate,
+// SLOWER background fetch refreshes those refs so the unchanged probe then
+// reports an accurate count, with no manual `git fetch`.
+
+/// The overall wall-clock cap on a single background `git fetch`. The
+/// non-interactive guards stop a *prompt* hang, and the ssh `ConnectTimeout`
+/// bounds an *ssh* connect — but an `https://` (or other non-ssh) remote, or a
+/// black-hole host, has NO git-level overall timeout, so a fetch could otherwise
+/// block for the OS TCP timeout (~75-130s) and pile up a stuck thread on every
+/// poll. This cap guarantees each background fetch thread is short-lived
+/// regardless of transport, so they can never accumulate.
+const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Fetch the project's remote-tracking refs so the local ahead/behind probe
+/// (which reads `@{upstream}`, advanced only by a fetch) reflects new remote
+/// commits. Returns whether a fetch actually ran successfully (clean, in-time
+/// exit).
+///
+/// A folder with NO remote is skipped (`false`) rather than shelling out a doomed
+/// fetch. Otherwise the fetch runs NON-INTERACTIVELY (`GIT_TERMINAL_PROMPT=0`, an
+/// ssh `BatchMode` with a bounded connect timeout) so a background thread can
+/// never hang on a prompt, and under an OVERALL [`FETCH_TIMEOUT`] so it can never
+/// hang on the network either (offline / credential-less / unreachable → killed
+/// → `false`).
+///
+/// Worktree-safe: a fetch updates only refs (remote-tracking refs, `FETCH_HEAD`,
+/// and — under a non-default fetch refspec — at most other NON-checked-out branch
+/// refs); it never touches the index, the worktree, or the checked-out branch
+/// (git refuses to fetch into the checked-out branch), so it is safe to run while
+/// the user works in the repo.
+pub fn fetch_dir(dir: &str) -> bool {
+    if dir.is_empty() || !has_remote(dir) {
+        return false;
+    }
+    run_git_fetch(dir, FETCH_TIMEOUT)
+}
+
+/// Run a bounded, non-interactive `git -C <dir> fetch`. Mirrors
+/// [`run_git_action`]'s guards (no credential prompt; ssh `BatchMode` + connect
+/// timeout) but adds an OVERALL wall-clock `timeout`: a stalled fetch is killed
+/// once the deadline passes so a background thread can never block indefinitely
+/// or accumulate across polls. stdio is nulled (the background path never reads
+/// fetch's output). Returns `true` only on a clean, in-time exit.
+fn run_git_fetch(dir: &str, timeout: Duration) -> bool {
+    let spawned = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .arg("fetch")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=10")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    // Past the deadline: kill the stalled fetch and reap it so the
+                    // thread (and the git child) cannot outlive the poll cycle.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return false;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
+/// Fetch remote-tracking refs for every `path` in PARALLEL, best-effort. Each
+/// folder is fetched on its own thread (mirroring [`status_for_paths`]) so total
+/// latency tracks the slowest single repo, and a folder that can't fetch (no
+/// remote / offline / off-repo) is simply skipped without blocking the others.
+/// Never fails: there is nothing to report — the next status poll reads whatever
+/// refs were advanced.
+pub fn fetch_remotes(paths: &[String]) {
+    let handles: Vec<_> = paths
+        .iter()
+        .cloned()
+        .map(|path| thread::spawn(move || fetch_dir(&path)))
+        .collect();
+    for handle in handles {
+        let _ = handle.join();
+    }
 }
 
 // ───────────────────────── branch operations ─────────────────────────
@@ -1183,6 +1286,137 @@ mod tests {
 
         let s = status_for_dir(repo.str());
         assert_eq!(s.behind, Some(0), "in sync with the upstream — nothing to pull");
+    }
+
+    #[test]
+    fn new_remote_commit_becomes_visible_without_a_manual_fetch() {
+        // The crux of the change: the local status probe never fetches, so a behind
+        // count is stale until something advances the remote-tracking ref. The
+        // background fetch must do exactly that, so the SAME probe then reports the
+        // pullable commits — with no manual `git fetch`.
+        let repo = TempRepo::new("bgfetch-behind");
+        let remote = bare_remote("bgfetch-behind");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+        // The remote's main moves two commits ahead; the local repo has NOT fetched.
+        advance_remote_branch(remote.str(), "main", "bgfetch-behind", 2);
+        // The background fetch advances the remote-tracking ref...
+        fetch_remotes(&[repo.str().to_string()]);
+        // ...so the SAME local status probe now reports the two pullable commits.
+        assert_eq!(
+            status_for_dir(repo.str()).behind,
+            Some(2),
+            "after the background fetch the upstream ref is current and behind reflects it"
+        );
+    }
+
+    #[test]
+    fn the_fast_status_probe_stays_local_only() {
+        // status_for_dir must NOT itself fetch: with the remote advanced but no
+        // fetch run, the probe still reads the STALE upstream ref (behind 0). The
+        // separate background fetch is what advances it (asserted above).
+        let repo = TempRepo::new("bgfetch-local-only");
+        let remote = bare_remote("bgfetch-local-only");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+        advance_remote_branch(remote.str(), "main", "bgfetch-local-only", 2);
+        assert_eq!(
+            status_for_dir(repo.str()).behind,
+            Some(0),
+            "the local-only probe does not fetch, so it sees nothing to pull yet"
+        );
+    }
+
+    #[test]
+    fn background_fetch_is_parallel_and_best_effort() {
+        // fetch_remotes fans out over many folders: a folder that CAN fetch is
+        // advanced, while a no-remote repo and a bogus path are silently skipped —
+        // one bad folder never blocks or fails the batch.
+        let repo = TempRepo::new("bgfetch-batch-ok");
+        let remote = bare_remote("bgfetch-batch-ok");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+        advance_remote_branch(remote.str(), "main", "bgfetch-batch-ok", 1);
+        let norem = TempRepo::new("bgfetch-batch-norem");
+
+        // A mix of: a fetchable repo, a remoteless repo, and an off-repo path.
+        fetch_remotes(&[
+            repo.str().to_string(),
+            norem.str().to_string(),
+            "/definitely/not/a/repo/anywhere".to_string(),
+        ]);
+
+        // The good repo was fetched (behind now reflects the remote)...
+        assert_eq!(
+            status_for_dir(repo.str()).behind,
+            Some(1),
+            "the fetchable repo in the batch was advanced"
+        );
+        // ...and the bad folders were harmless no-ops (the remoteless repo has no
+        // upstream to pull), proving the batch neither blocked nor errored.
+        assert_eq!(
+            status_for_dir(norem.str()).behind,
+            None,
+            "the remoteless repo has no upstream and was skipped without error"
+        );
+    }
+
+    #[test]
+    fn fetch_dir_is_a_safe_no_op_for_a_remoteless_or_bogus_folder() {
+        // fetch_dir directly: a repo with no remote has nothing to fetch, and an
+        // off-repo / blank path is a safe no-op — never a panic/error.
+        let repo = TempRepo::new("bgfetch-norem");
+        assert!(!fetch_dir(repo.str()), "a repo with no remote does not fetch");
+        assert!(!fetch_dir("/definitely/not/a/repo/anywhere"), "off-repo is a no-op");
+        assert!(!fetch_dir(""), "a blank dir is a no-op");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_git_fetch_abandons_a_stalled_transport_at_the_deadline() {
+        // The ssh ConnectTimeout does NOT bound a non-ssh / black-hole transport, so
+        // the OVERALL wall-clock timeout must kill a stalled fetch rather than block
+        // the thread for the OS network timeout. Use an `ext::` transport that hangs
+        // (a no-output `sleep`) so the fetch can never complete on its own.
+        let repo = TempRepo::new("bgfetch-timeout");
+        // The ext:: transport is restricted by default; allow it for THIS repo only.
+        run(repo.str(), &["config", "protocol.ext.allow", "always"]);
+        run(repo.str(), &["remote", "add", "origin", "ext::sh -c \"sleep 30\""]);
+
+        let start = Instant::now();
+        let ok = run_git_fetch(repo.str(), Duration::from_millis(500));
+        let elapsed = start.elapsed();
+
+        assert!(!ok, "a stalled fetch must report failure");
+        // Proves the kill path fired: without the timeout this would block ~30s.
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "the timeout must abandon the stalled fetch promptly, took {:?}",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn fetch_never_alters_the_working_tree() {
+        // A fetch only writes remote-tracking refs; it must never touch the index,
+        // the worktree, or the checked-out branch — safe to run mid-work.
+        let repo = TempRepo::new("bgfetch-worktree");
+        let remote = bare_remote("bgfetch-worktree");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+        advance_remote_branch(remote.str(), "main", "bgfetch-worktree", 1);
+        // Dirty the worktree with an uncommitted change before fetching.
+        fs::write(repo.path().join("README.md"), "locally edited\n").unwrap();
+        let before = status_for_dir(repo.str());
+
+        fetch_remotes(&[repo.str().to_string()]);
+
+        let after = status_for_dir(repo.str());
+        assert_eq!(after.dirty, before.dirty, "fetch must not change the dirty flag");
+        assert_eq!(after.modified, before.modified, "fetch must not touch the worktree");
+        assert_eq!(after.files, before.files, "fetch must not change the changed-paths list");
+        assert_eq!(after.branch, before.branch, "fetch must not switch branches");
+        assert_eq!(after.behind, Some(1), "the fetch advanced the upstream ref");
     }
 
     #[test]

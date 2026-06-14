@@ -1209,6 +1209,19 @@ fn git_pull(repo_path: String) -> Result<String, String> {
     git::pull(&repo_path)
 }
 
+/// Refresh the remote-tracking refs for the given project FOLDERS by fetching
+/// each (in parallel, best-effort). Unlike `git_status_for` (which is fast and
+/// local-only), this performs network I/O, so the frontend drives it on a SLOW
+/// background clock; the next `git_status_for` poll then reports an accurate
+/// ahead/behind count without any manual `git fetch`. Read-only and
+/// non-interactive — a folder with no remote / offline / no creds is a silent
+/// no-op — so this never fails the caller.
+#[tauri::command(async)]
+fn git_fetch_for(paths: Vec<String>) -> Result<(), String> {
+    git::fetch_remotes(&paths);
+    Ok(())
+}
+
 /// List the local and remote-tracking branches for `repo_path`, plus the name
 /// of the currently checked-out branch. Never fails: an off-repo path returns an
 /// all-empty `BranchList`. Used by the footer branch-switcher UI.
@@ -1534,6 +1547,7 @@ pub fn run() {
             subagents_for,
             activity_for,
             git_status_for,
+            git_fetch_for,
             git_push,
             git_pull,
             git::commits_to_push,

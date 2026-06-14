@@ -197,7 +197,15 @@
     projectTasks.setProjectsAccessor(() =>
       projects.list.map((p) => ({ id: p.id, path: p.path }))
     );
-    void projects.load().then(() => projectTasks.load());
+    void projects.load().then(() => {
+      projectTasks.load();
+      // Initial background remote fetch, once the project list is populated (the
+      // recurring interval below is mount-once and at mount the list is still
+      // empty). Refresh status after so the advanced ahead/behind surfaces promptly
+      // — "shortly after launch", not a full FETCH_POLL_MS cadence later.
+      const paths = projects.list.map((p) => p.path);
+      void projectGit.fetchRemotes(paths).then(() => projectGit.refresh(paths));
+    });
     // Terminals restore stopped now (auto-restart was dropped); the close handler is
     // kept (a no-op) so quit ordering is unchanged.
     let unlistenTermClose: (() => void) | undefined;
@@ -375,6 +383,32 @@
     const id = setInterval(() => {
       void projectGit.refresh(projects.list.map((p) => p.path));
     }, GIT_POLL_MS);
+    return () => clearInterval(id);
+  });
+
+  // PROJECT REMOTE FETCH (background). The fast poll above reads ahead/behind from
+  // LOCAL refs (`@{upstream}`), which only advance on `git fetch` — so without a
+  // fetch the "commits to pull" count is frozen at the last fetch. Refresh each
+  // project's remote-tracking refs on a SLOW background clock (the `git_fetch_for`
+  // command: bounded, parallel, best-effort, read-only, non-interactive in Rust),
+  // then re-run the status poll so the advanced refs surface promptly. Kept
+  // SEPARATE from GIT_POLL_MS so the local status stays fast and never blocks on
+  // the network.
+  //
+  // This effect owns ONLY the recurring interval, and reads no rune synchronously,
+  // so it mounts ONCE — unlike the local status poll above, an immediate re-fetch
+  // on every `projects.list` reassignment (coordinator start, drag-reorder, edit,
+  // reload) would be an off-schedule network fetch storm. The interval re-reads the
+  // live list each tick, so a newly added project is picked up within one cycle (and
+  // its LOCAL branch/status already shows at once via the fast 4s poll). The INITIAL
+  // fetch is kicked off in onMount once `projects.load()` resolves — at mount time
+  // the list is still empty, so an initial fetch here would fetch nothing.
+  const FETCH_POLL_MS = 180000;
+  $effect(() => {
+    const id = setInterval(() => {
+      const paths = projects.list.map((p) => p.path);
+      void projectGit.fetchRemotes(paths).then(() => projectGit.refresh(paths));
+    }, FETCH_POLL_MS);
     return () => clearInterval(id);
   });
 

@@ -362,6 +362,11 @@ const MANUAL_SCENARIOS = {
     'project_rows_carry_no_git_line',
     'cycling_to_an_off_screen_project_scrolls_it_into_view',
     'an_already_visible_project_filter_is_not_scrolled',
+    // background-fetch freshness is headlessly tested in git.rs + projectGit.svelte.test.ts;
+    // only the route wiring (onMount initial fetch chained onto projects.load(), plus the
+    // mount-once slow-interval $effect in +page.svelte) has no pure surface to assert —
+    // confirmed live in-app, like activity-timeline's route-interval scenarios.
+    'initial_fetch_shortly_after_launch',
   ]),
   // tasks-panel: every scenario is a rendered-component / live-PTY behavior with no
   // pure surface to assert headless — confirmed live in-app.

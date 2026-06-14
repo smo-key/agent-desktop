@@ -54,3 +54,23 @@ describe('ProjectGitStore.refreshOne', () => {
     expect(store.byPath['/a'].branch).toBe('main');
   });
 });
+
+describe('ProjectGitStore.fetchRemotes', () => {
+  it('invokes git_fetch_for with the given paths', async () => {
+    const store = new ProjectGitStore();
+    await store.fetchRemotes(['/a', '/b']);
+    expect(invokeMock).toHaveBeenCalledWith('git_fetch_for', { paths: ['/a', '/b'] });
+  });
+
+  it('an empty path list is a no-op and never invokes', async () => {
+    const store = new ProjectGitStore();
+    await store.fetchRemotes([]);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('a failed fetch is swallowed (best-effort, never throws)', async () => {
+    const store = new ProjectGitStore();
+    invokeMock.mockRejectedValueOnce('not tauri');
+    await expect(store.fetchRemotes(['/a'])).resolves.toBeUndefined();
+  });
+});
