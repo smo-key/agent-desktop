@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
 
+## [0.1.10] - 2026-06-14
+
+### Bug Fixes
+
+- **ci**: Normalize paths in localStorage gate for Windows
+
 ## [0.1.9] - 2026-06-14
 
 ### Bug Fixes

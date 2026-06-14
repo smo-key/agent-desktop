@@ -1,6 +1,6 @@
 [package]
 name = "agent-desktop"
-version = "0.1.9"
+version = "0.1.10"
 description = "A Tauri + SvelteKit desktop terminal for running and watching Claude Code sessions."
 authors = ["Arthur Pachachura"]
 license = ""
