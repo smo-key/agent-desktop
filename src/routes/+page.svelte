@@ -104,13 +104,13 @@
     // restart doesn't forget the layout.
     void uiPrefs.hydrate();
     // Check for an in-app update (desktop-auto-update spec). Best-effort and
-    // non-blocking: prompts + installs on confirm when a newer version is
-    // published, and is a silent no-op offline / outside the Tauri runtime.
+    // non-blocking: when a newer version is published it downloads + stages in the
+    // background with NO dialog, surfacing via the title-bar pill; a silent no-op
+    // offline / outside the Tauri runtime.
     void checkForUpdateOnLaunch();
-    // Then keep re-checking once an hour for the lifetime of the session. Unlike
-    // launch, the poll never prompts — a newer version downloads + stages in the
-    // background and surfaces only via the "Restart to update" pill. The returned
-    // stop fn (a no-op outside Tauri) is cleared on teardown below.
+    // Then keep re-checking once an hour for the lifetime of the session — same
+    // background-staging path as launch, surfaced only via the title-bar pill. The
+    // returned stop fn (a no-op outside Tauri) is cleared on teardown below.
     const stopUpdatePolling = startUpdatePolling();
     // Load the user's open-with preferences (seeds defaults on first run).
     void openWith.load();
