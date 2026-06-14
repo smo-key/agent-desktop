@@ -803,10 +803,11 @@ describe('roster — coordinator needs-input suppression', () => {
     expect(coordinatorNeedsInput({ question: null, questions: null }, true)).toBe(true);
   });
 
-  it('Engaged but quiet coordinator stays Working', () => {
-    // PTY says "waiting" (long silence) and the event status is the stable idle
-    // `waiting` — but a coordinator that HAS started a turn (`everPrompted`), with no
-    // question and no flag, stays `working` (out of attention) between turns.
+  it('Engaged but quiet coordinator reads Idle, out of attention', () => {
+    // PTY says "waiting" (long silence), no active-work affordance — a coordinator
+    // that HAS started a turn (`everPrompted`), with no question and no flag, is now
+    // genuinely idle at its prompt: NOT `working` (so no flashing in-flight dot) and
+    // NOT `waiting` (so it never nags from the Needs-you lane).
     const runtime = runtimeOf(rt('coord', { lastOutputAt: now - 999_999 }));
     const [row] = buildRoster(
       {},
@@ -817,7 +818,60 @@ describe('roster — coordinator needs-input suppression', () => {
       WORKING_WINDOW_MS,
       evAct({ status: 'waiting', everPrompted: true })
     );
+    expect(row.status).toBe('idle');
+    expect(needsAttention(row)).toBe(false);
+  });
+
+  it('Actively running coordinator reads Working', () => {
+    // Recent PTY output (within the working window) → the coordinator is actively
+    // running → `working` (the flashing in-flight dot).
+    const runtime = runtimeOf(rt('coord', { lastOutputAt: now }));
+    const [row] = buildRoster(
+      {},
+      [coordWs],
+      runtime,
+      now,
+      {},
+      WORKING_WINDOW_MS,
+      evAct({ status: 'waiting', everPrompted: true })
+    );
     expect(row.status).toBe('working');
+    expect(needsAttention(row)).toBe(false);
+  });
+
+  it('Engaged coordinator with a fresh busy affordance reads Working', () => {
+    // Quiet PTY but a fresh terminal active-work affordance (within BUSY_GRACE_MS) —
+    // e.g. "esc to interrupt" / "Waiting for N dynamic workflow(s)" — keeps it In
+    // flight even between output chunks.
+    const runtime = runtimeOf(rt('coord', { lastOutputAt: now - 999_999, terminalBusyAt: now }));
+    const [row] = buildRoster(
+      {},
+      [coordWs],
+      runtime,
+      now,
+      {},
+      WORKING_WINDOW_MS,
+      evAct({ status: 'waiting', everPrompted: true })
+    );
+    expect(row.status).toBe('working');
+  });
+
+  it('Engaged coordinator with a stale busy affordance reads Idle', () => {
+    // The busy affordance was last seen longer ago than BUSY_GRACE_MS and the PTY is
+    // quiet → the work has ended → Idle (no in-flight dot), out of attention.
+    const runtime = runtimeOf(
+      rt('coord', { lastOutputAt: now - 999_999, terminalBusyAt: now - (BUSY_GRACE_MS + 1) })
+    );
+    const [row] = buildRoster(
+      {},
+      [coordWs],
+      runtime,
+      now,
+      {},
+      WORKING_WINDOW_MS,
+      evAct({ status: 'waiting', everPrompted: true })
+    );
+    expect(row.status).toBe('idle');
     expect(needsAttention(row)).toBe(false);
   });
 
@@ -999,22 +1053,30 @@ describe('roster — terminal-busy In-flight override', () => {
     expect(row.status).toBe('finished');
   });
 
-  // The override must NOT change coordinator status derivation: a coordinator path
-  // is decided solely by the coordinator rules, independent of terminalBusy. Use an
-  // ENGAGED coordinator (everPrompted) so the quiet-stays-working suppression — not
-  // the freshly-launched waiting case — is what's exercised here.
-  it('coordinator is unaffected by terminalBusy (still working with no question)', () => {
+  // The GENERAL terminal-busy override does NOT reach the coordinator path: the
+  // coordinator decides its own status (its needs-you suppression + its own activity
+  // sensing). With a fresh busy affordance and no question/flag it reads Working via
+  // the coordinator's own activity check; a pending question stays Waiting (Needs
+  // you) regardless of any busy affordance.
+  it('coordinator: a fresh busy affordance reads Working, but a pending question stays Waiting', () => {
     const coordWs: RosterWorkspace = {
       id: 'wc',
       name: 'C',
       panes: [{ paneId: 'p', cwd: '/x', isApp: true, role: 'coordinator', projectId: 'A' }]
     };
     const runtime = runtimeOf(busyNow());
-    const [row] = buildRoster({}, [coordWs], runtime, now, {}, WORKING_WINDOW_MS, {
+    const [working] = buildRoster({}, [coordWs], runtime, now, {}, WORKING_WINDOW_MS, {
       p: { status: 'waiting', currentAction: null, question: null, questions: null, everPrompted: true }
     });
-    expect(row.status).toBe('working');
-    expect(needsAttention(row)).toBe(false);
+    expect(working.status).toBe('working');
+    expect(needsAttention(working)).toBe(false);
+
+    // A pending AskUserQuestion → Needs you, even though the busy affordance is fresh.
+    const [asking] = buildRoster({}, [coordWs], runtime, now, {}, WORKING_WINDOW_MS, {
+      p: { status: 'waiting', currentAction: null, question: 'pick one?', questions: null, everPrompted: true }
+    });
+    expect(asking.status).toBe('waiting');
+    expect(needsAttention(asking)).toBe(true);
   });
 });
 

@@ -617,22 +617,34 @@ function rowFor(
     : runtime?.exited
       ? ptyStatus
       : liveEventStatus ?? ptyStatus;
-  // COORDINATOR needs-input suppression (tasks 10.11–10.12): a LIVE coordinator must
-  // NOT inherit the default idle/waiting heuristic — it needs you ONLY when it asks
-  // an AskUserQuestion (its pending question(s)) OR it called `request_user_input`
-  // (the `coordFlag`). When it does, force `waiting` (→ the Needs-you lane); when it
-  // doesn't, force `working` so a quiet coordinator stays out of attention. A closed/
-  // exited coordinator keeps its derived (finished/error) status — it's not "live".
-  //
-  // EXCEPTION — a FRESHLY LAUNCHED coordinator: it spawns at an empty prompt
-  // (`startCoordinator` launches with `prompt:''`) and does nothing until you give it
-  // its first instruction, so before its first turn (`everPrompted === false`) it is
-  // genuinely `waiting` on YOU, not `working`. Once it has started a turn (you typed,
-  // or an escalation was injected) the quiet-stays-working suppression resumes.
+  // COORDINATOR status (tasks 10.11–10.12 + coordinator-idle-when-quiet): a LIVE
+  // coordinator does NOT inherit the default idle/waiting heuristic. It derives one of
+  // three states; a closed/exited coordinator keeps its derived (finished/error)
+  // status — it's not "live".
+  //   1. NEEDS YOU (`waiting`, → Needs-you lane) — it asked an AskUserQuestion (its
+  //      pending question(s)) OR called `request_user_input` (the `coordFlag`), OR it
+  //      has NEVER been prompted: a freshly launched coordinator spawns at an empty
+  //      prompt (`startCoordinator` launches with `prompt:''`) and is genuinely
+  //      waiting on YOU for its first instruction until its first turn starts
+  //      (`everPrompted === true`, set when you type or an escalation is injected).
+  //   2. WORKING (In flight) — engaged and ACTUALLY running: streaming output within
+  //      the working window (`ptyStatus`) OR a live terminal active-work affordance
+  //      ("esc to interrupt" / "Waiting for N dynamic workflow(s)") seen within the
+  //      busy grace window. These are the same activity signals a normal pane uses.
+  //   3. IDLE — engaged but genuinely quiet at its prompt (no recent output, no
+  //      affordance). It stays OUT of attention (it never nags) and is NOT shown In
+  //      flight, so it shows no flashing dot — fixing the "always looks like it's
+  //      running" bug while preserving the no-nag suppression.
   if (pane.role === 'coordinator' && !closed && !runtime?.exited) {
     const everPrompted = event?.everPrompted === true;
     const needsYou = coordinatorNeedsInput({ question, questions }, coordFlag) || !everPrompted;
-    status = needsYou ? 'waiting' : 'working';
+    if (needsYou) {
+      status = 'waiting';
+    } else {
+      const busy =
+        runtime?.terminalBusyAt != null && nowMs - runtime.terminalBusyAt <= BUSY_GRACE_MS;
+      status = ptyStatus === 'working' || busy ? 'working' : 'idle';
+    }
   }
   // TERMINAL-BUSY In-flight override (agent-status-derivation): Claude Code may be
   // actively working while its event hooks report idle — a foreground command

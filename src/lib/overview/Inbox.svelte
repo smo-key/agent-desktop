@@ -1223,7 +1223,10 @@
         </span>
       {/if}
     </span>
-    {#if needsAttention(r) || lane === 'flight'}
+    <!-- Status dot: orange when it needs you, flashing blue while actively In flight.
+         An `idle` row (a quiet engaged coordinator, or a not-yet-wired pane) is in the
+         flight lane but NOT running, so it shows no dot rather than a misleading flash. -->
+    {#if needsAttention(r) || (lane === 'flight' && r.status !== 'idle')}
       <span class="badge {badgeClass(r)} dotonly"><span class="dot"></span></span>
     {/if}
   </button>
