@@ -1128,14 +1128,16 @@
   }
 
   /** The status dot class for a row. Paused/archived rows are muted (they don't
-   *  need you), so a paused waiting agent shows a standby dot, not an orange one. */
+   *  need you), so a paused waiting agent shows a standby dot, not an orange one.
+   *  Live working/idle rows (the In-flight lane) get the slowly flashing blue
+   *  `b-flight` dot — the "this agent is in flight" signal, the blue counterpart
+   *  to the needs-you dot. */
   function badgeClass(r: AgentRow): string {
     if (r.closed || r.paused) return 'b-standby';
-    if (r.status === 'working') return 'b-active';
     if (r.status === 'error') return 'b-abort';
     if (isAttention(r.status)) return 'b-review';
     if (r.status === 'finished') return 'b-nominal';
-    return 'b-standby';
+    return 'b-flight';
   }
 
   /** The secondary line for a roster row: the agent's last message or pending question,
@@ -1221,7 +1223,7 @@
         </span>
       {/if}
     </span>
-    {#if needsAttention(r)}
+    {#if needsAttention(r) || lane === 'flight'}
       <span class="badge {badgeClass(r)} dotonly"><span class="dot"></span></span>
     {/if}
   </button>
@@ -1664,14 +1666,15 @@
   .badge { display: inline-flex; align-items: center; gap: 6px; }
   .badge.dotonly { padding: 0; }
   .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
-  .b-active { color: var(--blue-300); }
-  .b-active .dot { animation: workpulse 1.4s var(--ease-out) infinite; }
-  @keyframes workpulse {
-    0% { box-shadow: 0 0 0 0 rgba(86,156,255,0.5); opacity: 1; }
-    70% { box-shadow: 0 0 0 5px rgba(86,156,255,0); opacity: 0.6; }
-    100% { box-shadow: 0 0 0 0 rgba(86,156,255,0); opacity: 1; }
+  /* In-flight agents: a blue dot that flashes slowly (the blue counterpart to the
+     needs-you dot) so a working/idle agent reads as "in flight" at a glance. */
+  .b-flight { color: var(--blue-300); }
+  .b-flight .dot { animation: flightflash 2.4s ease-in-out infinite; }
+  @keyframes flightflash {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 1px rgba(86,156,255,0.35); }
+    50% { opacity: 0.3; box-shadow: 0 0 0 0 rgba(86,156,255,0); }
   }
-  @media (prefers-reduced-motion: reduce) { .b-active .dot { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .b-flight .dot { animation: none; } }
   .b-review { color: var(--orange-300); }
   .b-nominal { color: #6fe0a6; }
   .b-abort { color: #ff8077; }
