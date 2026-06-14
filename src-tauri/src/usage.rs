@@ -53,7 +53,8 @@ pub struct GitStatus {
     /// Commits ahead of the upstream branch (not yet pushed), or `null`.
     #[serde(default)]
     pub ahead: Option<i64>,
-    /// Commits behind `origin/main`, or `null`.
+    /// Commits behind the branch's own upstream (what a pull would bring in), or
+    /// `null` when there is no upstream.
     #[serde(default)]
     pub behind: Option<i64>,
 }

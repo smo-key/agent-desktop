@@ -5,7 +5,7 @@
 //! even when no agent is running in it — so this module shells out to `git`
 //! directly against each project FOLDER. It mirrors the statusline wrapper's git
 //! logic (`resources/statusline-wrapper.cjs`): branch via `rev-parse`, dirty via
-//! `status --porcelain`, `behind` vs `origin/main`, `ahead` vs the upstream branch.
+//! `status --porcelain`, `ahead`/`behind` vs the branch's own upstream.
 //! Every field is null when git can't answer (off-repo / no remote / no upstream),
 //! so the shape is always stable and the call never fails the UI.
 //!
@@ -37,6 +37,9 @@ pub struct GitStatus {
     /// when git couldn't answer. `dirty` is just `modified > 0`.
     pub modified: Option<i64>,
     pub ahead: Option<i64>,
+    /// Commits a pull would bring INTO the current branch, measured against its
+    /// OWN upstream (`HEAD..@{upstream}`) — NOT the distance to origin/main. `null`
+    /// when the branch has no upstream (nothing to pull) or off-repo / detached.
     pub behind: Option<i64>,
     /// Whether the current branch tracks an UPSTREAM (i.e. has been published to a
     /// remote). `Some(true)` when a tracking branch exists, `Some(false)` for a
@@ -149,33 +152,33 @@ pub fn status_for_dir(dir: &str) -> GitStatus {
         // Also collect the changed file PATHS (capped) for the hover list.
         out.files = parse_porcelain_paths(&porcelain);
     }
-    // Commits BEHIND origin/main (matches the footer / user's Claude statusline).
-    if let Some(behind) = run_git(dir, &["rev-list", "HEAD..origin/main", "--count", "--no-merges"])
-    {
-        if let Ok(n) = behind.parse::<i64>() {
-            out.behind = Some(n);
-        }
-    }
-    // Upstream + ahead. `upstream` records whether the branch is published (tracks a
-    // remote); it is left null off-repo, on an unborn branch, or on a DETACHED HEAD
-    // (none of which is a publishable branch — and `rev-parse --abbrev-ref HEAD`
-    // reports the literal "HEAD" when detached, so we gate on `on_branch`, not just
-    // `branch.is_some()`). `ahead` is the number of commits the next push would send:
-    // against the upstream when one exists, else (an unpublished branch) the commits
-    // not yet on ANY remote — i.e. what publishing the branch would upload. With no
-    // remote at all there is nowhere to push, so `ahead` stays null.
+    // Upstream, ahead, and behind. `upstream` records whether the branch is
+    // published (tracks a remote); it is left null off-repo, on an unborn branch,
+    // or on a DETACHED HEAD (none of which is a publishable branch — and `rev-parse
+    // --abbrev-ref HEAD` reports the literal "HEAD" when detached, so we gate on
+    // `on_branch`, not just `branch.is_some()`).
+    //
+    // `ahead` is the number of commits the next push would send: against the
+    // upstream when one exists, else (an unpublished branch) the commits not yet on
+    // ANY remote — i.e. what publishing the branch would upload. With no remote at
+    // all there is nowhere to push, so `ahead` stays null.
+    //
+    // `behind` is the number of commits a pull would bring INTO this branch —
+    // measured against the branch's OWN upstream (`HEAD..@{upstream}`), NOT the
+    // distance to origin/main. A branch with no upstream has nothing to pull, so
+    // `behind` stays null (the ↓ pill reads as the neutral zero state).
     if out.branch.is_some() && on_branch(dir) {
         let has_upstream = run_git(dir, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_some();
         out.upstream = Some(has_upstream);
-        out.ahead = if has_upstream {
-            run_git(dir, &["rev-list", "@{upstream}..HEAD", "--count"])
-                .and_then(|s| s.parse::<i64>().ok())
+        if has_upstream {
+            out.ahead = run_git(dir, &["rev-list", "@{upstream}..HEAD", "--count"])
+                .and_then(|s| s.parse::<i64>().ok());
+            out.behind = run_git(dir, &["rev-list", "HEAD..@{upstream}", "--count"])
+                .and_then(|s| s.parse::<i64>().ok());
         } else if has_remote(dir) {
-            run_git(dir, &["rev-list", "--count", "HEAD", "--not", "--remotes"])
-                .and_then(|s| s.parse::<i64>().ok())
-        } else {
-            None
-        };
+            out.ahead = run_git(dir, &["rev-list", "--count", "HEAD", "--not", "--remotes"])
+                .and_then(|s| s.parse::<i64>().ok());
+        }
     }
     out
 }
@@ -1086,6 +1089,100 @@ mod tests {
         let s = status_for_dir(repo.str());
         assert_eq!(s.upstream, Some(false), "a branch with no upstream reports upstream=false");
         assert_eq!(s.ahead, None, "no remote means nowhere to push, so ahead stays null");
+    }
+
+    /// Clone `remote`, add `n` commits on `branch`, and push them — advancing
+    /// that branch on the remote so a fetching repo sees its upstream move ahead.
+    /// Sets up "behind" scenarios: commits land on the remote that a local branch
+    /// has not pulled yet.
+    fn advance_remote_branch(remote: &str, branch: &str, tag: &str, n: usize) {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("agentdesk-adv-{tag}-{nanos}"));
+        fs::create_dir_all(&dir).unwrap();
+        let p = dir.to_str().unwrap();
+        run(p, &["clone", "-q", remote, "."]);
+        run(p, &["config", "user.email", "t@example.com"]);
+        run(p, &["config", "user.name", "Test"]);
+        run(p, &["checkout", "-q", branch]);
+        for i in 0..n {
+            fs::write(dir.join(format!("adv-{branch}-{i}.md")), "x\n").unwrap();
+            run(p, &["add", "."]);
+            run(p, &["commit", "-q", "-m", &format!("adv {branch} {i}")]);
+        }
+        run(p, &["push", "-q", "origin", branch]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn status_counts_behind_against_the_branch_upstream() {
+        let repo = TempRepo::new("behind-upstream");
+        let remote = bare_remote("behind-upstream");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+        // The remote's main moves two commits ahead; the local branch fetches but
+        // does not pull, so those two commits are waiting to be pulled.
+        advance_remote_branch(remote.str(), "main", "behind-upstream", 2);
+        run(repo.str(), &["fetch", "-q", "origin"]);
+
+        let s = status_for_dir(repo.str());
+        assert_eq!(s.behind, Some(2), "two upstream commits are waiting to be pulled");
+    }
+
+    #[test]
+    fn status_behind_uses_the_branchs_own_upstream_not_main() {
+        // The crux: a feature branch's pull count must reflect commits to pull on
+        // THAT branch (vs origin/feature), never the distance to origin/main.
+        let repo = TempRepo::new("behind-not-main");
+        let remote = bare_remote("behind-not-main");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+        // Publish a feature branch so it tracks origin/feature.
+        run(repo.str(), &["checkout", "-q", "-b", "feature"]);
+        run(repo.str(), &["push", "-u", "origin", "feature"]);
+        // origin/main races three commits ahead; origin/feature gains just one.
+        advance_remote_branch(remote.str(), "main", "behind-not-main-m", 3);
+        advance_remote_branch(remote.str(), "feature", "behind-not-main-f", 1);
+        run(repo.str(), &["fetch", "-q", "origin"]);
+
+        let s = status_for_dir(repo.str());
+        assert_eq!(
+            s.behind,
+            Some(1),
+            "behind counts commits to pull on the branch's own upstream, not the 3 on main"
+        );
+    }
+
+    #[test]
+    fn status_leaves_behind_null_for_a_branch_with_no_upstream() {
+        // An unpublished branch has nowhere to pull from — even sitting behind
+        // origin/main, there is nothing to pull INTO this branch.
+        let repo = TempRepo::new("behind-no-upstream");
+        let remote = bare_remote("behind-no-upstream");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+        // Remote main advances; the local cuts a fresh feature branch that is never
+        // published (no upstream) and so trails origin/main.
+        advance_remote_branch(remote.str(), "main", "behind-no-upstream", 2);
+        run(repo.str(), &["fetch", "-q", "origin"]);
+        run(repo.str(), &["checkout", "-q", "-b", "feature"]);
+
+        let s = status_for_dir(repo.str());
+        assert_eq!(s.upstream, Some(false), "the feature branch is unpublished");
+        assert_eq!(s.behind, None, "no upstream means nothing to pull, so behind stays null");
+    }
+
+    #[test]
+    fn status_reports_zero_behind_when_in_sync_with_upstream() {
+        let repo = TempRepo::new("behind-zero");
+        let remote = bare_remote("behind-zero");
+        run(repo.str(), &["remote", "add", "origin", remote.str()]);
+        run(repo.str(), &["push", "-u", "origin", "main"]);
+
+        let s = status_for_dir(repo.str());
+        assert_eq!(s.behind, Some(0), "in sync with the upstream — nothing to pull");
     }
 
     #[test]

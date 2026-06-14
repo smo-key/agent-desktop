@@ -189,6 +189,14 @@
     return n > 0 ? `${commits} to push — click to review` : 'Up to date with the remote';
   });
 
+  // The ↓ pill's hover tooltip. `behind` is measured against the branch's OWN
+  // upstream (not origin/main), so the wording reflects what a pull would bring in.
+  const behindTooltip = $derived.by(() => {
+    const n = git?.behind ?? 0;
+    const commits = `${n} commit${n === 1 ? '' : 's'}`;
+    return n > 0 ? `${commits} behind the upstream — pull to catch up` : 'Up to date with the upstream';
+  });
+
   let pushPopoverOpenState = $state(false);
   let pushPillEl = $state<HTMLButtonElement | null>(null);
   let pushCommits = $state<PushCommit[]>([]);
@@ -333,7 +341,7 @@
           <span
             class="pill behind"
             class:zero={(git.behind ?? 0) === 0}
-            use:tooltip={`${git.behind ?? 0} commit${(git.behind ?? 0) === 1 ? '' : 's'} behind origin/main — pull to catch up`}
+            use:tooltip={behindTooltip}
           >
             <Icon name="arrow-down" size={12} />
             <span class="txt">{git.behind ?? 0}</span>

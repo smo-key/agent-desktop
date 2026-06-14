@@ -198,7 +198,7 @@ function detectTask(sessionId) {
  * shelling out to git with short timeouts. Returns
  * { branch, dirty, ahead, behind } — always an object (never null) so the
  * snapshot has a stable shape; individual fields are null when git can't answer.
- * `behind` is vs origin/main; `ahead` is vs the upstream branch. Fully guarded.
+ * `ahead`/`behind` are both vs the branch's own upstream branch. Fully guarded.
  */
 function gitStatus(workspaceDir) {
   const out = { branch: null, dirty: null, modified: null, ahead: null, behind: null };
@@ -224,9 +224,9 @@ function gitStatus(workspaceDir) {
       out.dirty = count > 0;
       out.modified = count;
     }
-    // Commits BEHIND origin/main (matches the user's Claude statusline). Null
-    // when origin/main is unavailable (no remote / not fetched).
-    const behind = runGit(['rev-list', 'HEAD..origin/main', '--count', '--no-merges']);
+    // Commits BEHIND the branch's own upstream — i.e. what a pull would bring in.
+    // Null when there is no upstream set (nothing to pull), matching `ahead`.
+    const behind = runGit(['rev-list', 'HEAD..@{upstream}', '--count']);
     if (behind !== null) {
       const n = parseInt(behind, 10);
       if (Number.isFinite(n)) out.behind = n;

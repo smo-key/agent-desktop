@@ -13,8 +13,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { confirmModal } from '../ui/confirmStore.svelte';
 
-/** The base branch every PR targets. The whole app treats `main` as the base
- *  (ahead/behind are computed vs `origin/main`), so the PR button matches. */
+/** The base branch every PR targets. The whole app treats `main` as the base, so
+ *  the PR button matches. (The footer's ahead/behind pills are a separate signal —
+ *  they count against the branch's own upstream, not this PR base.) */
 export const DEFAULT_BASE = 'main';
 
 /** The PR-status result, mirroring the Rust `PrStatus` enum's serde shape
