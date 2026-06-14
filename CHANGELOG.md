@@ -3,6 +3,16 @@
 All notable changes to this project are documented here.
 This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
 
+## [0.2.0] - 2026-06-14
+
+### Documentation
+
+- **openspec**: Propose add-coordinator-notifications
+
+### CI/Build
+
+- **release**: Publish once macOS+Linux build; Windows best-effort
+
 ## [0.1.10] - 2026-06-14
 
 ### Bug Fixes
