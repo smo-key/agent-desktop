@@ -3,14 +3,44 @@
 All notable changes to this project are documented here.
 This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
 
-## [0.2.2] - 2026-06-14
+## [0.2.3] - 2026-06-14
+
+### Bug Fixes
+
+- **projects**: Keep footer ahead/behind fresh via background git fetch
+- **coordinator**: Idle coordinator stops the perpetual flashing dot
 
 ### Documentation
 
+- **openspec**: Projects-panel-working-indicator change
+
+### Miscellaneous
+
+- Bump version to 0.2.3
+- **openspec**: Sync + archive projects-panel-working-indicator
+
+## [0.2.2] - 2026-06-14
+
+### Features
+
+- **projects**: Blue flashing dot when a project is working
+- **terminal**: ⌘←/⌘→ jump to start/end of line in terminal panes
+
+### Bug Fixes
+
+- **settings**: Render brand icons as <path>, not bare {@html} data
+
+### Documentation
+
+- **updates**: Fix stale onMount comment — launch stages silently, no prompt
+- **specs**: Sync terminal-core — Line-Edit Keys From The Host Keyboard
+- **openspec**: Propose header-update-progress (in-header update UX + fix dead 0.2.1 updater)
 - **hide-pre-launch-subagents**: Note concurrent Surface Subagents delta
 
 ### Miscellaneous
 
+- **openspec**: Archive terminal-cmd-arrow-line-edit
+- **tasks**: Clarify Release task to bump patch version explicitly
 - Bump version to 0.2.2
 
 ## [0.2.1] - 2026-06-14
