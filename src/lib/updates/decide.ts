@@ -14,10 +14,11 @@ export interface UpdateInfo {
 /**
  * The lifecycle of a background-staged update, as tracked by `updateStore`:
  * `idle` (nothing known) → `downloading` (fetching the bundle) → `ready` (staged,
- * the "Restart to update" pill shows). Defined here, in the pure seam, so the
- * download decision below can reason about it without importing the rune store.
+ * the "Restart to update" pill shows) → `installing` (the user clicked restart;
+ * applying + relaunching). Defined here, in the pure seam, so the download
+ * decision below can reason about it without importing the rune store.
  */
-export type UpdateStatus = 'idle' | 'downloading' | 'ready';
+export type UpdateStatus = 'idle' | 'downloading' | 'ready' | 'installing';
 
 /** What a (recurring or post-decline) check result should trigger, decided purely.
  *  Generic over the update shape so callers passing the live `Update` handle get

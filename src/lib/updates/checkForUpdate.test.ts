@@ -9,10 +9,12 @@ vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: vi.fn(async () => {}) }
 vi.mock('@tauri-apps/plugin-dialog', () => ({ ask: vi.fn(async () => false) }));
 
 const beginDownloadMock = vi.fn(async (..._a: unknown[]) => {});
+// Mutable snapshot so a test can simulate "this version is already staged".
+let snapshot: { status: string; version: string | null } = { status: 'idle', version: null };
 vi.mock('./updateStore.svelte', () => ({
   updateStore: {
     get snapshot() {
-      return { status: 'idle', version: null };
+      return snapshot;
     },
     beginDownload: (...a: unknown[]) => beginDownloadMock(...a)
   }
@@ -24,6 +26,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   checkMock.mockReset();
   beginDownloadMock.mockClear();
+  snapshot = { status: 'idle', version: null };
   vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
 });
 
@@ -69,6 +72,20 @@ describe('startUpdatePolling', () => {
     const stop = startUpdatePolling(1000);
     await vi.advanceTimersByTimeAsync(1000);
     expect(beginDownloadMock).not.toHaveBeenCalled();
+    stop();
+  });
+
+  // CRITICAL 2 regression: an hourly re-check of an already-staged version must
+  // CLOSE the freshly-obtained handle (no per-hour resource leak) and not
+  // re-download.
+  it('closes the handle (no download) when the found version is already staged', async () => {
+    snapshot = { status: 'ready', version: '2.0.0' };
+    const close = vi.fn(async () => {});
+    checkMock.mockResolvedValue({ version: '2.0.0', close });
+    const stop = startUpdatePolling(1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(beginDownloadMock).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
     stop();
   });
 

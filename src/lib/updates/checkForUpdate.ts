@@ -13,6 +13,7 @@ import { relaunch } from '@tauri-apps/plugin-process';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { decideCheckAction, decideUpdateAction } from './decide';
 import { updateStore } from './updateStore.svelte';
+import { closeUpdate } from './resource';
 
 /** Recurring background-check cadence: once per hour (spec: hourly re-check). */
 const POLL_INTERVAL_MS = 60 * 60 * 1000;
@@ -50,8 +51,12 @@ export async function checkForUpdateOnLaunch(): Promise<void> {
     if (!update) return;
 
     // Already downloading/staged this version (e.g. a re-entrant launch): the
-    // "Restart to update" pill is the surface — don't also prompt.
-    if (decideCheckAction(update, updateStore.snapshot).kind === 'ignore') return;
+    // "Restart to update" pill is the surface — don't also prompt. Close the
+    // freshly-obtained handle so its backend resource isn't leaked.
+    if (decideCheckAction(update, updateStore.snapshot).kind === 'ignore') {
+      await closeUpdate(update);
+      return;
+    }
 
     const confirmed = await ask(
       `Agent Desktop ${update.version} is available. Install it now? The app will restart.`,
@@ -95,7 +100,13 @@ export function startUpdatePolling(intervalMs: number = POLL_INTERVAL_MS): () =>
       const update = await check();
       const action = decideCheckAction(update, updateStore.snapshot);
       if (action.kind === 'download') {
+        // beginDownload owns the handle from here (stages it, or closes it if a
+        // concurrent download supersedes/duplicates it).
         await updateStore.beginDownload(action.update);
+      } else if (update) {
+        // No-op for this version (already staged/downloading): release the
+        // freshly-obtained handle so the hourly re-check doesn't leak a resource.
+        await closeUpdate(update);
       }
     } catch (err) {
       console.warn('update poll skipped:', err);

@@ -63,3 +63,19 @@
       clicking it installs + relaunches into the new version; confirm no pill when
       up to date / offline. — PENDING: requires a packaged build vs a published
       release; release-time manual check (cannot be exercised headlessly).
+
+## 6. Adversarial-review hardening
+
+- [x] 6.1 CRITICAL: concurrency-safe `beginDownload` (monotonic `seq` token) so a
+      superseding newer version keeps `version` consistent with the `staged` handle
+      `install()` applies, and an in-flight/staged duplicate is dropped — covers
+      the launch-vs-poll race. `updateStore.svelte.test.ts` supersede + dedupe cases.
+- [x] 6.2 CRITICAL: close every un-installed `Update` handle (Rust `Resource`) —
+      superseded, failed, duplicate, and the hourly already-staged re-check — via
+      `resource.ts` `closeUpdate`, preventing a ~1/hour backend resource leak.
+      Tested in both updates test files.
+- [x] 6.3 CRITICAL: `restartToUpdate` flips `status` → `installing` synchronously
+      before awaiting `install()`, so a double-click can't double-install/relaunch
+      (and the pill hides during install). Regression test added.
+- [x] 6.4 Re-run `npm run check` (0 errors) + `npm run test` (1166 passed) and
+      `openspec validate` after the fixes.

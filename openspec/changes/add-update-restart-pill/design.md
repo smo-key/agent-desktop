@@ -66,12 +66,28 @@ and `install()` calls (not only `downloadAndInstall()`), which is exactly what t
 - **Auto-download uses bandwidth without an explicit click.** Accepted: it is the
   premise of "download in background, restart to install," matches Chrome/VS Code,
   and only runs after an update is genuinely available.
-- **Staged-update reuse across a session.** A check that returns the same version
-  we already staged must be a no-op (no re-download, no duplicate pill) — handled
-  by `decideCheckAction` keying on the in-flight/ready version.
-- **`install()`/`relaunch()` are not headless-testable.** Isolated behind the
-  store + `inTauri()` guard; only the pure decision + store transitions that don't
-  touch IPC are unit-tested. The live install+relaunch and the rendered pill are
-  MANUAL-verify (this capability is not in the scenario-coverage enforced set).
+- **Concurrent downloads must not corrupt state or leak handles.** `beginDownload`
+  is the single mutation point and is concurrency-safe: a monotonic `seq` token
+  means only the latest download commits `staged`/`status`, so `version` (shown in
+  the pill) and `staged` (what `install()` applies) never disagree under a
+  supersede; and an in-`beginDownload` version dedupe drops a duplicate handle (a
+  launch-vs-poll race). Tauri's `Update` is a Rust-backed `Resource` (`rid` freed
+  only by `close()` or app exit), so EVERY handle we don't install — superseded,
+  failed, duplicate, or an hourly re-check of an already-staged version — is
+  `close()`d (`resource.ts`), avoiding a ~1/hour resource leak while an update sits
+  staged.
+- **Restart is re-entrancy-guarded.** `restartToUpdate` flips `status` to
+  `installing` synchronously before the first `await`, so a double-click can't
+  double-`install()`/`relaunch()`; the pill (shown only on `ready`) also
+  disappears during install.
+- **A hung `download()` that never settles wedges `downloading`.** Accepted
+  limitation (no timeout passed): best-effort, and a genuinely newer release
+  supersedes it; a same-version retry after a network black-hole is an edge case
+  we don't actively recover within a session.
+- **`install()`/`relaunch()`/`close()` are not headless-testable as live IPC.**
+  Isolated behind the store + `inTauri()` guard; the pure decision and the store
+  transitions (using fake `Update` handles) ARE unit-tested. The live
+  install+relaunch and the rendered pill are MANUAL-verify (this capability is not
+  in the scenario-coverage enforced set).
 - **A failed background download leaves no pill.** Intentional — silent best-effort,
   retried on the next hourly tick.
