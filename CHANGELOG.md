@@ -3,15 +3,51 @@
 All notable changes to this project are documented here.
 This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
 
+## [0.2.1] - 2026-06-14
+
+### Miscellaneous
+
+- Bump version to 0.2.1
+
 ## [0.2.0] - 2026-06-14
+
+### Features
+
+- **overview**: Hide pre-launch subagents on relaunch
+- **settings**: Detect installed apps + icons in Open files with
+- **updates**: Add 'Restart to update' pill + hourly background check
+- **install**: Host install.sh on GitHub Pages + document the one-liner
+- **install**: Implement download, verify, and per-OS install flows
+- **install**: Add installer pure logic with TDD harness
+- **settings**: Show app version (or "dev") at the bottom of Settings
+
+### Bug Fixes
+
+- **install**: Detect a real TTY by opening it, not by node permissions
+- **install**: Brace vars before multibyte (bash 3.2 set -u) + bound asset slice
+- **updates**: Harden update store after adversarial review
+- **install**: Harden JSON parsing and macOS mount cleanup (adversarial review)
+- **git**: Pull pill counts commits behind the branch's own upstream
+- **status**: Heal event-status divergence (SubagentStop flip + stuck needs-you)
 
 ### Documentation
 
+- **settings**: Refresh stale <select> comment after Dropdown migration
+- **openspec**: Reconcile digest-rejection drift + close out quick-install tasks
+- **openspec**: Propose detect-installed-open-with-apps change
+- **openspec**: Propose add-session-auto-categorization change
+- **openspec**: Propose add-update-restart-pill change
+- **openspec**: Sync + archive fix-event-status-divergence
+- **openspec**: Propose add-quick-install change
 - **openspec**: Propose add-coordinator-notifications
 
 ### CI/Build
 
 - **release**: Publish once macOS+Linux build; Windows best-effort
+
+### Miscellaneous
+
+- **tasks**: Reorder tasks and add Openspec Status watcher
 
 ## [0.1.10] - 2026-06-14
 
