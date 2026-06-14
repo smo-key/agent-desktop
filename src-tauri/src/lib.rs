@@ -232,6 +232,65 @@ fn path_within(root: &str, path: &str) -> bool {
     }
 }
 
+/// The standard macOS directories that hold application bundles, in probe order.
+/// `~/Applications` is HOME-relative (expanded per-caller for testability); the
+/// CoreServices root covers system apps like Finder that live outside
+/// `/System/Applications`.
+const APP_ROOTS: &[&str] = &[
+    "/Applications",
+    "~/Applications",
+    "/System/Applications",
+    "/System/Applications/Utilities",
+    "/System/Library/CoreServices",
+];
+
+/// PURE: the candidate `<name>.app` bundle paths for an application display name,
+/// one per root. A leading `~/` (or bare `~`) root is expanded against `home` so
+/// the detection logic is unit-testable against a temp dir without touching the
+/// real filesystem. Used by [`detect_installed`].
+fn app_bundle_paths(name: &str, home: &str, roots: &[&str]) -> Vec<PathBuf> {
+    roots
+        .iter()
+        .map(|root| {
+            let base = if let Some(rest) = root.strip_prefix("~/") {
+                PathBuf::from(home).join(rest)
+            } else if *root == "~" {
+                PathBuf::from(home)
+            } else {
+                PathBuf::from(root)
+            };
+            base.join(format!("{name}.app"))
+        })
+        .collect()
+}
+
+/// PURE w.r.t. its inputs (reads only the filesystem): the subset of `names` whose
+/// `<name>.app` bundle exists in any of `roots` (with `~/` expanded against `home`),
+/// preserving input order. Backs the [`installed_apps`] command; split out so the
+/// existence-filtering is unit-tested against temp dirs.
+fn detect_installed(names: &[String], home: &str, roots: &[&str]) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| {
+            app_bundle_paths(name, home, roots)
+                .iter()
+                .any(|p| p.exists())
+        })
+        .cloned()
+        .collect()
+}
+
+/// Return which of the given application display names are installed, by probing
+/// the standard macOS application directories ([`APP_ROOTS`]) for each
+/// `<name>.app` bundle. macOS-only by nature; on a system without those
+/// directories every name is simply absent (an empty result). The frontend uses
+/// this to offer only installed apps in the "Open files with" settings.
+#[tauri::command]
+fn installed_apps(names: Vec<String>) -> Vec<String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    detect_installed(&names, &home, APP_ROOTS)
+}
+
 /// Build the argument vector passed to `open` (after the program name) for
 /// [`open_path`]. PURE so the launch wiring is unit-tested without spawning:
 /// - no app                  → `[path]`                    (OS default handler)
@@ -1047,6 +1106,14 @@ fn start_usage_watcher(app: &AppHandle) -> Result<SnapshotWatcher, String> {
 #[derive(Default)]
 struct WatchedSessionsState(subagents::WatchedSessions);
 
+/// The app's launch time (Unix epoch MILLISECONDS), captured once at startup and
+/// held in managed state. The subagents seed (`subagents_for`) and the watcher use
+/// it to drop subagents that predate this run (see [`subagents::filter_pre_launch`]):
+/// the app kills all its PTYs on close, so any subagent from a prior run is dead
+/// and must not be restored when a session is resumed with `claude --resume`.
+#[derive(Clone, Copy)]
+struct AppLaunchTime(i64);
+
 /// Return the `session_id -> [Subagent]` map for the caller's app-launched
 /// sessions, after updating the shared watched-set to `sessions`. Each session
 /// supplies its `{sessionId, cwd}`; the cwd locates the Claude project dir
@@ -1059,6 +1126,7 @@ struct WatchedSessionsState(subagents::WatchedSessions);
 #[tauri::command]
 fn subagents_for(
     state: State<'_, WatchedSessionsState>,
+    launch: State<'_, AppLaunchTime>,
     sessions: Vec<SessionRef>,
 ) -> Result<HashMap<String, Vec<Subagent>>, String> {
     // Update the shared watched-set so the watcher's next recompute uses it too.
@@ -1071,7 +1139,11 @@ fn subagents_for(
     }
     let projects_base =
         subagents::default_projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
-    Ok(subagents::subagents_for_sessions(&projects_base, &sessions))
+    Ok(subagents::subagents_for_sessions(
+        &projects_base,
+        &sessions,
+        launch.0,
+    ))
 }
 
 /// Start the subagents watcher over `~/.claude/projects/`, emitting the
@@ -1083,11 +1155,12 @@ fn subagents_for(
 fn start_subagents_watcher(
     app: &AppHandle,
     sessions: subagents::WatchedSessions,
+    launch_time_ms: i64,
 ) -> Result<SubagentsWatcher, String> {
     let projects_base =
         subagents::default_projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
     let handle = app.clone();
-    subagents::start_subagents_watcher(&projects_base, sessions, move |map| {
+    subagents::start_subagents_watcher(&projects_base, sessions, launch_time_ms, move |map| {
         if let Err(e) = handle.emit(SUBAGENTS_EVENT, &map) {
             log::warn!("emit {SUBAGENTS_EVENT} failed: {e}");
         }
@@ -1284,6 +1357,14 @@ fn orchestration_reply(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Capture the app launch time (Unix epoch millis) ONCE for this run. The
+    // subagents seed/watcher use it to drop subagents that predate this launch
+    // (see AppLaunchTime / subagents::filter_pre_launch), so a resumed session
+    // does not restore a prior run's now-dead subagents.
+    let launch_time_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
     tauri::Builder::default()
         // Native dialogs (the session launcher's folder picker uses
         // `open({ directory: true })`). Granted `dialog:allow-open` in
@@ -1308,7 +1389,7 @@ pub fn run() {
         // + `process:default` in capabilities/default.json.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .setup(|app| {
+        .setup(move |app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -1342,7 +1423,7 @@ pub fn run() {
             // non-fatal — the frontend still seeds via `subagents_for` and simply
             // won't receive live `overview://subagents` pushes.
             let watched = app.state::<WatchedSessionsState>().0.clone();
-            match start_subagents_watcher(app.handle(), watched) {
+            match start_subagents_watcher(app.handle(), watched, launch_time_ms) {
                 Ok(watcher) => {
                     app.manage(watcher);
                 }
@@ -1407,6 +1488,7 @@ pub fn run() {
         })
         .manage(Arc::new(PtyManager::new()))
         .manage(WatchedSessionsState::default())
+        .manage(AppLaunchTime(launch_time_ms))
         // The single transcript-polish llama-server manager (lazy-started by
         // `voice_polish`). Held in managed state so it lives for the app's
         // lifetime and the spawned sidecar is reaped on exit.
@@ -1423,6 +1505,7 @@ pub fn run() {
             open_in_editor,
             resolve_path,
             open_path,
+            installed_apps,
             session_focus,
             layout_load,
             layout_save,
@@ -1567,6 +1650,41 @@ mod tests {
             root.to_str().unwrap(),
             sub.join("missing.ts").to_str().unwrap()
         ));
+    }
+
+    #[test]
+    fn an_app_in_a_standard_directory_is_detected() {
+        let tmp = TempDir::new("apps");
+        let apps = tmp.path().join("Applications");
+        fs::create_dir_all(apps.join("Cursor.app")).unwrap();
+        let roots: Vec<&str> = vec![apps.to_str().unwrap()];
+        let names = vec!["Cursor".to_string(), "Zed".to_string()];
+        // Only the app whose bundle exists is reported, order preserved.
+        assert_eq!(detect_installed(&names, "", &roots), vec!["Cursor".to_string()]);
+    }
+
+    #[test]
+    fn an_absent_app_is_not_detected() {
+        let tmp = TempDir::new("apps-empty");
+        let apps = tmp.path().join("Applications");
+        fs::create_dir_all(&apps).unwrap();
+        let roots: Vec<&str> = vec![apps.to_str().unwrap()];
+        let names = vec!["Cursor".to_string()];
+        assert!(detect_installed(&names, "", &roots).is_empty());
+    }
+
+    #[test]
+    fn finder_is_detected_under_core_services() {
+        // Finder lives under /System/Library/CoreServices, so the candidate paths
+        // must include that root for it to be found.
+        let paths = app_bundle_paths("Finder", "/Users/x", APP_ROOTS);
+        assert!(paths
+            .iter()
+            .any(|p| p.ends_with("System/Library/CoreServices/Finder.app")));
+        // The HOME-relative `~/Applications` root is expanded against `home`.
+        assert!(paths
+            .iter()
+            .any(|p| *p == PathBuf::from("/Users/x/Applications/Finder.app")));
     }
 
     #[test]

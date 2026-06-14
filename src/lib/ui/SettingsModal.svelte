@@ -6,11 +6,15 @@
   // HelpModal backdrop/dialog pattern. Dismiss with Esc / backdrop / close button.
 
   import { settingsModal } from './settingsStore.svelte';
-  import { autofocus } from './autofocus';
+  import Dropdown, { type DropdownOption } from './Dropdown.svelte';
   import {
     openWith,
+    installedApps,
+    visibleChoices,
+    appIcon,
     APP_CHOICES,
     SYSTEM,
+    CUSTOM,
     type FileBucket
   } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
@@ -69,8 +73,11 @@
     }
   }
 
-  // Sentinel for the "Custom…" select option (reveals a free-text app-name field).
-  const CUSTOM = '__custom__';
+  // Detect which curated apps are installed whenever the modal opens, so the
+  // open-with dropdowns offer only apps present on the system (strict filter).
+  $effect(() => {
+    if (settingsModal.open) void installedApps.load();
+  });
 
   // The buckets, in display order, with human labels.
   const ROWS: { bucket: FileBucket; label: string }[] = [
@@ -78,6 +85,42 @@
     { bucket: 'html', label: 'HTML files and URLs' },
     { bucket: 'markdown', label: 'Markdown files' },
     { bucket: 'other', label: 'Other files' }
+  ];
+
+  // The dropdown options for a bucket: "System Default", the installed curated apps
+  // (filtered + icon-tagged), then "Custom…". Reads `installedApps`/`openWith` so it
+  // re-derives when detection resolves or the saved value changes.
+  function openWithOptions(bucket: FileBucket): DropdownOption[] {
+    const apps = visibleChoices(
+      APP_CHOICES[bucket],
+      installedApps.installed,
+      openWith.prefs[bucket]
+    );
+    return [
+      { value: SYSTEM, label: 'System Default', icon: appIcon(SYSTEM) },
+      ...apps.map((app) => ({ value: app, label: app, icon: appIcon(app) })),
+      { value: CUSTOM, label: 'Custom…', icon: appIcon(CUSTOM) }
+    ];
+  }
+
+  // Static option lists for the non-app dropdowns (no icons).
+  const DENSITY_OPTIONS: DropdownOption[] = [
+    { value: 'default', label: 'Default' },
+    { value: 'compact', label: 'Compact' }
+  ];
+  const QUALITY_OPTIONS: DropdownOption[] = [
+    { value: 'accurate', label: 'Accurate (large-v3-turbo)' },
+    { value: 'fast', label: 'Fast (small)' }
+  ];
+  const SOUND_OPTIONS: DropdownOption[] = [
+    { value: 'off', label: 'Never' },
+    { value: 'app-unfocused', label: 'When app is in the background' },
+    { value: 'agent-unfocused', label: 'When not viewing that agent' },
+    { value: 'always', label: 'Always' }
+  ];
+  const DESKTOP_OPTIONS: DropdownOption[] = [
+    { value: 'off', label: 'Never' },
+    { value: 'app-unfocused', label: 'When app is in the background' }
   ];
 
   // Per-row: is the value a curated choice, or a custom name needing the text field?
@@ -150,14 +193,13 @@
             <span class="desc">Density</span>
             <div class="control">
               <!-- Focus the first setting control on open (skips the header ×). -->
-              <select
+              <Dropdown
                 value={compactMode.prefs.enabled ? 'compact' : 'default'}
-                onchange={(e) => compactMode.setEnabled(e.currentTarget.value === 'compact')}
-                use:autofocus
-              >
-                <option value="default">Default</option>
-                <option value="compact">Compact</option>
-              </select>
+                options={DENSITY_OPTIONS}
+                onChange={(v) => compactMode.setEnabled(v === 'compact')}
+                ariaLabel="Density"
+                autofocusTrigger
+              />
             </div>
           </li>
           <li class="row">
@@ -180,16 +222,12 @@
             <li class="row">
               <span class="desc">{row.label}</span>
               <div class="control">
-                <select
+                <Dropdown
                   value={selectValue(row.bucket)}
-                  onchange={(e) => onSelect(row.bucket, e.currentTarget.value)}
-                >
-                  <option value={SYSTEM}>System Default</option>
-                  {#each APP_CHOICES[row.bucket] as app (app)}
-                    <option value={app}>{app}</option>
-                  {/each}
-                  <option value={CUSTOM}>Custom…</option>
-                </select>
+                  options={openWithOptions(row.bucket)}
+                  onChange={(v) => onSelect(row.bucket, v)}
+                  ariaLabel={row.label}
+                />
                 {#if isCustom(row.bucket)}
                   <input
                     class="custom"
@@ -232,15 +270,13 @@
           <li class="row">
             <span class="desc">Transcription quality</span>
             <div class="control">
-              <select
+              <Dropdown
                 value={voice.prefs.modelTier}
+                options={QUALITY_OPTIONS}
                 disabled={!voice.prefs.enabled}
-                onchange={(e) =>
-                  voice.setModelTier(e.currentTarget.value as 'fast' | 'accurate')}
-              >
-                <option value="accurate">Accurate (large-v3-turbo)</option>
-                <option value="fast">Fast (small)</option>
-              </select>
+                onChange={(v) => voice.setModelTier(v as 'fast' | 'accurate')}
+                ariaLabel="Transcription quality"
+              />
             </div>
           </li>
           <li class="row">
@@ -306,33 +342,30 @@
           <li class="row">
             <span class="desc">Sound when an agent needs input</span>
             <div class="control">
-              <select
+              <Dropdown
                 value={notifications.prefs.sound.mode}
-                onchange={(e) =>
-                  notifications.setSoundMode(e.currentTarget.value as AlertMode)}
-              >
-                <option value="off">Never</option>
-                <option value="app-unfocused">When app is in the background</option>
-                <option value="agent-unfocused">When not viewing that agent</option>
-                <option value="always">Always</option>
-              </select>
+                options={SOUND_OPTIONS}
+                onChange={(v) => notifications.setSoundMode(v as AlertMode)}
+                width={220}
+                ariaLabel="Sound when an agent needs input"
+              />
             </div>
           </li>
           <li class="row">
             <span class="desc">Desktop notification when an agent needs input</span>
             <div class="control">
-              <select
+              <Dropdown
                 value={notifications.prefs.desktop.mode}
-                onchange={(e) => {
-                  const mode = e.currentTarget.value as AlertMode;
+                options={DESKTOP_OPTIONS}
+                width={220}
+                ariaLabel="Desktop notification when an agent needs input"
+                onChange={(v) => {
+                  const mode = v as AlertMode;
                   notifications.setDesktopMode(mode);
                   // Request OS notification permission as soon as the channel is enabled.
                   if (mode !== 'off') void ensureDesktopPermission();
                 }}
-              >
-                <option value="off">Never</option>
-                <option value="app-unfocused">When app is in the background</option>
-              </select>
+              />
             </div>
           </li>
         </ul>
@@ -461,7 +494,8 @@
     gap: 8px;
     flex-shrink: 0;
   }
-  select,
+  /* Custom app-name field (shown when a bucket is set to "Custom…"). The dropdowns
+     are styled inside Dropdown.svelte; this text input matches their trigger. */
   .custom {
     height: 30px;
     padding: 0 8px;
@@ -471,25 +505,15 @@
     color: var(--fg-1);
     font-family: var(--font-sans);
     font-size: 12.5px;
-    cursor: pointer;
+    width: 160px;
+    cursor: text;
   }
-  /* Fixed width so all three rows' selects align (otherwise each auto-sizes to its
-     widest option and the shorter browser names make the HTML row narrower). */
-  select {
-    width: 170px;
-  }
-  select:hover,
   .custom:hover {
     border-color: var(--line-strong);
   }
-  select:focus,
   .custom:focus {
     outline: none;
     border-color: var(--accent);
-  }
-  .custom {
-    width: 160px;
-    cursor: text;
   }
 
   /* Voice toggles: native checkbox accented to the app color. */
@@ -499,7 +523,6 @@
     accent-color: var(--accent);
     cursor: pointer;
   }
-  select:disabled,
   input[type='checkbox']:disabled,
   .model-download:disabled,
   .model-delete:disabled {

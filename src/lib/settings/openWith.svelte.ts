@@ -17,6 +17,10 @@ export type FileBucket = 'code' | 'html' | 'markdown' | 'other';
 /** The sentinel value meaning "use the OS default handler" (plain `open`). */
 export const SYSTEM = 'system';
 
+/** The sentinel select value meaning "let me type a custom app name". Lives here
+ *  (next to `SYSTEM`) so both the Settings UI and `appIcon` agree on it. */
+export const CUSTOM = '__custom__';
+
 /** Per-bucket app preference: `SYSTEM` or a macOS app name (e.g. "Cursor"). */
 export type OpenWithPrefs = Record<FileBucket, string>;
 
@@ -45,6 +49,45 @@ export const APP_CHOICES: Record<FileBucket, string[]> = {
   markdown: [...EDITORS, ...BROWSERS],
   other: [...EDITORS, 'Finder']
 };
+
+/** PURE: filter a curated app list to the detected-installed subset, preserving the
+ *  curated order and always retaining `current` if it appears in `all` (so a saved
+ *  preference is never dropped from its own list). "System Default" / "Custom…" are
+ *  added by the UI, not here. An empty `installed` set yields only `current` (if any). */
+export function visibleChoices(
+  all: string[],
+  installed: ReadonlySet<string>,
+  current: string
+): string[] {
+  return all.filter((app) => installed.has(app) || app === current);
+}
+
+/** App name → brand-icon key (see `brandIcons.ts`). Apps without a public brand mark
+ *  fall back by category here (Finder → a folder glyph, TextEdit → a document glyph);
+ *  any other unrecognized name resolves to the generic `app` glyph in `appIcon`. */
+const APP_ICONS: Record<string, string> = {
+  Cursor: 'cursor',
+  'Visual Studio Code': 'vscode',
+  Zed: 'zed',
+  'Sublime Text': 'sublime',
+  TextEdit: 'document',
+  'Brave Browser': 'brave',
+  'Google Chrome': 'chrome',
+  Safari: 'safari',
+  Firefox: 'firefox',
+  Arc: 'arc',
+  'Microsoft Edge': 'edge',
+  Finder: 'folder'
+};
+
+/** PURE: map an application name — or the `SYSTEM`/`CUSTOM` sentinels — to a brand-icon
+ *  key for the Settings dropdown. Known app → its brand/category glyph; `SYSTEM` →
+ *  `system`; `CUSTOM` → `custom`; anything else → the generic `app` glyph. */
+export function appIcon(app: string): string {
+  if (app === SYSTEM) return 'system';
+  if (app === CUSTOM) return 'custom';
+  return APP_ICONS[app] ?? 'app';
+}
 
 /** Extensions treated as HTML (open in the HTML/browser bucket). */
 const HTML_EXTS = new Set(['html', 'htm', 'xhtml']);
@@ -200,3 +243,45 @@ export function parsePrefs(raw: unknown): OpenWithPrefs {
 
 /** The singleton open-with store. */
 export const openWith = new OpenWithStore();
+
+/** The union of all curated app names across every bucket — the candidate set the
+ *  backend probes for installation. Order/dedup is irrelevant (it's a probe list). */
+function allCandidateApps(): string[] {
+  const seen = new Set<string>();
+  for (const bucket of Object.values(APP_CHOICES)) {
+    for (const app of bucket) seen.add(app);
+  }
+  return [...seen];
+}
+
+/**
+ * Reactive set of detected-installed application names. `load()` asks the Rust
+ * `installed_apps` command which of the curated candidates are installed; on
+ * failure or outside Tauri it yields an empty set (strict — no curated apps are
+ * offered). The settings modal loads this on open and passes the set to
+ * `visibleChoices` to filter each bucket's dropdown.
+ */
+export class InstalledAppsStore {
+  /** The detected-installed app names (empty until `load()` resolves). */
+  installed = $state<ReadonlySet<string>>(new Set());
+
+  /** True once `load()` has resolved at least once. */
+  loaded = $state(false);
+
+  /** Query the backend for which curated apps are installed (best-effort). */
+  async load(): Promise<void> {
+    try {
+      const found = (await invoke<string[]>('installed_apps', {
+        names: allCandidateApps()
+      })) ?? [];
+      this.installed = new Set(found);
+    } catch (err) {
+      console.warn('installed_apps failed', err);
+      this.installed = new Set();
+    }
+    this.loaded = true;
+  }
+}
+
+/** The singleton installed-apps store. */
+export const installedApps = new InstalledAppsStore();

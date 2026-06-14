@@ -10,10 +10,13 @@ import {
   classify,
   resolveApp,
   isProjectAwareEditor,
+  visibleChoices,
+  appIcon,
   OpenWithStore,
   parsePrefs,
   DEFAULT_PREFS,
   SYSTEM,
+  CUSTOM,
   type OpenWithPrefs
 } from './openWith.svelte';
 
@@ -109,6 +112,64 @@ describe('isProjectAwareEditor', () => {
     }
     expect(isProjectAwareEditor(undefined)).toBe(false);
     expect(isProjectAwareEditor(null)).toBe(false);
+  });
+});
+
+describe('visibleChoices', () => {
+  const all = ['Cursor', 'Visual Studio Code', 'Zed', 'Sublime Text', 'TextEdit'];
+
+  it('installed application is offered', () => {
+    const got = visibleChoices(all, new Set(['Cursor', 'Zed']), SYSTEM);
+    expect(got).toEqual(['Cursor', 'Zed']);
+  });
+
+  it('uninstalled application is hidden', () => {
+    const got = visibleChoices(all, new Set(['Cursor']), SYSTEM);
+    expect(got).toEqual(['Cursor']);
+    expect(got).not.toContain('Visual Studio Code');
+  });
+
+  it('the saved application is kept even when not installed', () => {
+    // 'Sublime Text' is not installed but is the saved preference → still listed.
+    const got = visibleChoices(all, new Set(['Cursor']), 'Sublime Text');
+    expect(got).toEqual(['Cursor', 'Sublime Text']);
+  });
+
+  it('choices preserve their curated order', () => {
+    // Set iteration order differs from the curated order; the result follows `all`.
+    const got = visibleChoices(all, new Set(['Zed', 'TextEdit', 'Cursor']), SYSTEM);
+    expect(got).toEqual(['Cursor', 'Zed', 'TextEdit']);
+  });
+
+  it('no detection yields only the always present entries', () => {
+    // Empty installed set + System Default → no curated apps at all.
+    expect(visibleChoices(all, new Set(), SYSTEM)).toEqual([]);
+    // …but a saved app is still retained.
+    expect(visibleChoices(all, new Set(), 'Cursor')).toEqual(['Cursor']);
+  });
+});
+
+describe('appIcon', () => {
+  it('a known application shows its brand icon', () => {
+    expect(appIcon('Cursor')).toBe('cursor');
+    expect(appIcon('Visual Studio Code')).toBe('vscode');
+    expect(appIcon('Google Chrome')).toBe('chrome');
+    expect(appIcon('Firefox')).toBe('firefox');
+  });
+
+  it('an unknown or custom application shows a generic icon', () => {
+    expect(appIcon('Some Random App')).toBe('app');
+    expect(appIcon('')).toBe('app');
+  });
+
+  it('apps without a brand mark fall back by category', () => {
+    expect(appIcon('Finder')).toBe('folder');
+    expect(appIcon('TextEdit')).toBe('document');
+  });
+
+  it('system default and custom show their own icons', () => {
+    expect(appIcon(SYSTEM)).toBe('system');
+    expect(appIcon(CUSTOM)).toBe('custom');
   });
 });
 
