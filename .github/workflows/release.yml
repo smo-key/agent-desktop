@@ -289,13 +289,44 @@ jobs:
       - name: Quality gate
         run: yarn check:gate
 
-      # Warn (do not fail) when macOS signing secrets are absent, e.g. on a fork
-      # or untrusted PR. tauri-action skips signing when the cert env is empty,
-      # producing an unsigned-but-successful build.
-      - name: Warn on unsigned macOS build
-        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE == ''
+      # Decide whether the macOS leg can sign. tauri-action imports
+      # APPLE_CERTIFICATE into a temp keychain via `security import`; if the
+      # secret is absent it skips signing (unsigned-but-successful, the fork/PR
+      # case), but if the secret is PRESENT-BUT-UNIMPORTABLE (corrupt base64/p12
+      # or wrong password) `security import` errors and the whole release leg
+      # fails. We pre-flight that exact import here into a throwaway keychain: on
+      # success the build signs as normal; on any failure we warn and fall back
+      # to an UNSIGNED build (blank the cert for the build step) rather than fail
+      # the release. Fixing the APPLE_CERTIFICATE/PASSWORD secrets flips this
+      # back to signed automatically — no workflow change needed.
+      - name: Preflight macOS signing
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
-          echo "::warning::APPLE_CERTIFICATE secret is empty; macOS artifact will be UNSIGNED (fork/PR fallback)."
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning::APPLE_CERTIFICATE secret is empty; macOS artifact will be UNSIGNED (fork/PR fallback)."
+            echo "MAC_SIGN=off" >>"$GITHUB_ENV"
+            exit 0
+          fi
+          work="$(mktemp -d)"
+          cert="$work/cert.p12"
+          kc="$work/preflight.keychain-db"
+          # Accept raw base64 or a `data:...,<b64>` URI (strip an optional prefix).
+          printf '%s' "$APPLE_CERTIFICATE" | sed 's/^data:[^,]*,//' | base64 --decode >"$cert" 2>/dev/null || true
+          security create-keychain -p preflight "$kc" 2>/dev/null || true
+          security unlock-keychain -p preflight "$kc" 2>/dev/null || true
+          if security import "$cert" -k "$kc" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign >/dev/null 2>&1; then
+            echo "macOS signing certificate imported OK; build will be SIGNED."
+            echo "MAC_SIGN=on" >>"$GITHUB_ENV"
+          else
+            echo "::warning::APPLE_CERTIFICATE is present but could not be imported (corrupt p12/base64 or wrong APPLE_CERTIFICATE_PASSWORD); macOS artifact will be UNSIGNED. Fix the secret to restore signing."
+            echo "MAC_SIGN=off" >>"$GITHUB_ENV"
+          fi
+          security delete-keychain "$kc" 2>/dev/null || true
+          rm -rf "$work"
 
       - name: Build + publish to GitHub Release
         uses: tauri-apps/tauri-action@v0
@@ -303,9 +334,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # macOS signing: tauri-action imports the cert into a temporary keychain
           # itself. When APPLE_CERTIFICATE is empty it skips signing (unsigned).
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # The Preflight step above blanks these (MAC_SIGN=off) when the cert is
+          # absent or unimportable, so the leg builds UNSIGNED instead of failing.
+          # NB: written as `keep-cond && value || ''` (not `off-cond && '' || value`).
+          # GitHub `&&/||` return the operand, and '' is falsy, so the latter form
+          # would never blank the value. `MAC_SIGN != 'off'` is true when signing
+          # is on AND on non-macOS legs (where MAC_SIGN is unset → cert irrelevant).
+          APPLE_CERTIFICATE: ${{ env.MAC_SIGN != 'off' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ env.MAC_SIGN != 'off' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ env.MAC_SIGN != 'off' && secrets.APPLE_SIGNING_IDENTITY || '' }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           # Notary credentials — App Store Connect API key set ...
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}

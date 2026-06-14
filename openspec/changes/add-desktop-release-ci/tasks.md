@@ -36,6 +36,8 @@
 - [x] 5.7 Pass `TAURI_SIGNING_PRIVATE_KEY` (+ password) so update bundles are signed. (Env passed to tauri-action; effective once the updater plugin from task 3.x lands.)
 - [x] 5.8 Publish a single GitHub Release `v<version>` with git-cliff release notes as the body and all targets' installers attached. (`latest.json`/updater artifacts attach once the updater plugin from task 3.x is configured.)
 - [x] 5.9 Install JS deps with Yarn (Classic): build job runs `yarn install --frozen-lockfile` (not `npm ci`) against a committed `yarn.lock`, with `actions/setup-node` `cache: yarn`. Repo standardizes on Yarn (`package.json` scripts, `.githooks/pre-commit`, README); `package-lock.json` removed.
+- [x] 5.10 Fix the Windows `Provision sidecars + model` leg: `llama.cpp@b4000`'s `common/{log,common}.cpp` use `std::chrono::system_clock` without `#include <chrono>`, which VS 2022's newer MSVC STL no longer provides transitively (C2039). `scripts/fetch-llama.sh` force-includes `<chrono>` (`-DCMAKE_CXX_FLAGS=/FIchrono`) on the MSVC leg only, fixing the build without forking the pinned source.
+- [x] 5.11 Harden macOS signing into a graceful fallback for a present-but-UNIMPORTABLE cert (corrupt `.p12`/base64 or wrong password), not just an empty one: a `Preflight macOS signing` step runs the same `security import` `tauri-action` uses and sets `MAC_SIGN=on/off`; when off the build blanks the cert env and builds unsigned-with-warning instead of hard-failing the release leg. Self-heals to signed once the secret is fixed.
 
 ## 6. Secrets, docs, and verification
 

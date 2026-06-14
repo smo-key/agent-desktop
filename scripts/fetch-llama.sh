@@ -114,7 +114,15 @@ case "$TARGET_OS" in
     # NATIVE Windows: drive cmake with the Visual Studio / MSVC generator so it
     # emits a PE .exe (NOT a WSL/Linux ELF). The bundled VS generator targets
     # the host (x64) by default.
-    CMAKE_CONFIGURE_ARGS+=("-G" "Visual Studio 17 2022" "-A" "x64") ;;
+    CMAKE_CONFIGURE_ARGS+=("-G" "Visual Studio 17 2022" "-A" "x64")
+    # llama.cpp@b4000's common/{log,common}.cpp reference std::chrono::system_clock
+    # (plus duration_cast/now) but never `#include <chrono>` — they relied on a
+    # transitive include that VS 2022's newer MSVC STL (14.4x) no longer provides,
+    # so the build fails with C2039 'system_clock'. Force-include <chrono> across
+    # all translation units on the MSVC leg to restore the build WITHOUT forking
+    # the pinned upstream source. Harmless (a standard header). `/FI` is MSVC's
+    # forced-include flag; the bare `/FIchrono` form avoids a space in the `-D`.
+    CMAKE_CONFIGURE_ARGS+=("-DCMAKE_CXX_FLAGS=/FIchrono") ;;
 esac
 
 # --- Build -------------------------------------------------------------------
