@@ -6,6 +6,7 @@ import {
   laneOf,
   laneForRow,
   needsAttention,
+  isWorking,
   isArchivedCoordinator,
   showContext,
   groupByLane,
@@ -534,6 +535,19 @@ describe('roster — control-room lanes', () => {
     expect(needsAttention(laneRow('c', { status: 'working' }))).toBe(false);
     expect(needsAttention(laneRow('d', { status: 'waiting', paused: true }))).toBe(false);
     expect(needsAttention(laneRow('e', { status: 'waiting', closed: true }))).toBe(false);
+  });
+
+  it('isWorking: only status working, and not when paused/archived/previewed', () => {
+    expect(isWorking(laneRow('a', { status: 'working' }))).toBe(true);
+    // Non-working statuses never count as working.
+    expect(isWorking(laneRow('b', { status: 'waiting' }))).toBe(false);
+    expect(isWorking(laneRow('c', { status: 'finished' }))).toBe(false);
+    expect(isWorking(laneRow('d', { status: 'error' }))).toBe(false);
+    expect(isWorking(laneRow('e', { status: 'idle' }))).toBe(false);
+    // Deferred / archived / previewed agents don't advertise as working.
+    expect(isWorking(laneRow('f', { status: 'working', paused: true }))).toBe(false);
+    expect(isWorking(laneRow('g', { status: 'working', closed: true }))).toBe(false);
+    expect(isWorking(laneRow('h', { status: 'working', preview: true }))).toBe(false);
   });
 
   it('Context shown once known', () => {

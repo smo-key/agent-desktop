@@ -230,7 +230,8 @@
         use:tooltip={{ text: c.project.name, placement: 'right' }}
       >
         <ProjectIcon icon={c.project.icon} color={c.project.color} logo={c.project.logo} size={18} />
-        {#if c.attn}<span class="pp-rail-attn" aria-hidden="true"></span>{/if}
+        {#if c.attn}<span class="pp-rail-attn" aria-hidden="true"></span>
+        {:else if c.working}<span class="pp-rail-work" aria-hidden="true"></span>{/if}
       </button>
     {/each}
     {#if unassigned > 0}
@@ -302,7 +303,8 @@
         <Icon name={c.project.icon} size={16} color={c.project.color} />
       {/if}
       <span class="pp-name" use:tooltip={c.project.path}>{c.project.name}</span>
-      {#if c.attn}<span class="pp-attn" use:tooltip={'Needs attention'}></span>{/if}
+      {#if c.attn}<span class="pp-attn" use:tooltip={'Needs attention'}></span>
+      {:else if c.working}<span class="pp-work" use:tooltip={'Working'}></span>{/if}
       <span class="pp-ct">{c.count}</span>
     </div>
   {/each}
@@ -465,6 +467,20 @@
     background: var(--orange-500);
     border: 1.5px solid var(--space-900);
   }
+  /* The blue counterpart to the attention dot: shown when a project has a
+     working agent but none that need you, flashing slowly so it reads as
+     "in flight" at a glance (mirrors the inbox's in-flight dot). */
+  .pp-rail-work {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--blue-300);
+    border: 1.5px solid var(--space-900);
+    animation: pp-flash 2.4s ease-in-out infinite;
+  }
   .pp-item {
     display: flex;
     align-items: center;
@@ -524,6 +540,31 @@
     border-radius: 50%;
     background: var(--orange-500);
     flex: none;
+  }
+  /* Working (in-flight) dot: the blue, flashing counterpart to .pp-attn, shown
+     when a project is working but nothing needs you (attention takes precedence). */
+  .pp-work {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--blue-300);
+    flex: none;
+    animation: pp-flash 2.4s ease-in-out infinite;
+  }
+  @keyframes pp-flash {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.3;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pp-work,
+    .pp-rail-work {
+      animation: none;
+    }
   }
   .pp-ct {
     font-family: var(--font-mono);

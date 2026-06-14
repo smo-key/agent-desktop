@@ -118,6 +118,17 @@ export function needsAttention(row: AgentRow): boolean {
 }
 
 /**
+ * PURE: whether a row is actively WORKING — status `working` AND neither paused
+ * (deferred) nor archived (closed) nor previewing. The project panel shows a
+ * blue "in flight" dot for a project that has a working agent but none that
+ * need you (needsAttention takes precedence), so this is the blue counterpart
+ * to that predicate.
+ */
+export function isWorking(row: AgentRow): boolean {
+  return row.status === 'working' && !row.paused && !row.closed && !row.preview;
+}
+
+/**
  * PURE: whether a roster row should show the CONTEXT-window measure (mini-bar +
  * percent) in its meta line. Only a LIVE agent — not archived/previewed (closed)
  * or paused — AND only once a context size is actually known: a row with no

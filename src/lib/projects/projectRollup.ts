@@ -1,10 +1,11 @@
 // PURE view-model for the project panel (projects capability): given the agent
-// roster rows + the project list, compute each project's live agent COUNT and
-// whether it NEEDS ATTENTION (any of its agents is waiting/errored), plus the
-// filter that the panel's selection applies to the roster. Framework-free and
-// unit-tested; the ProjectPanel component is the thin reactive shell.
+// roster rows + the project list, compute each project's live agent COUNT,
+// whether it NEEDS ATTENTION (any of its agents is waiting/errored), and whether
+// it is WORKING (any of its agents is actively running), plus the filter that
+// the panel's selection applies to the roster. Framework-free and unit-tested;
+// the ProjectPanel component is the thin reactive shell.
 
-import { needsAttention, type AgentRow } from '../overview/roster';
+import { needsAttention, isWorking, type AgentRow } from '../overview/roster';
 import type { Project } from './projects';
 
 /** The special filter value meaning "every agent, regardless of project". */
@@ -32,6 +33,12 @@ export interface ProjectCount {
   count: number;
   /** Whether any of this project's agents is waiting on you / errored. */
   attn: boolean;
+  /**
+   * Whether any of this project's agents is actively working (status `working`).
+   * Raised independently of `attn`; the panel renders the attention (red) dot
+   * when `attn` is set and only falls back to the working (blue) dot otherwise.
+   */
+  working: boolean;
 }
 
 /**
@@ -48,7 +55,8 @@ export function projectCounts(
     return {
       project,
       count: mine.length,
-      attn: mine.some(needsAttention)
+      attn: mine.some(needsAttention),
+      working: mine.some(isWorking)
     };
   });
 }
