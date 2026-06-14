@@ -1,10 +1,10 @@
 <script lang="ts">
   // A tiny inline-SVG brand icon, drawn from the vendored `BRAND_ICONS` set (offline,
-  // no dependency). Unlike `Icon.svelte` (stroke-based), these glyphs are FILLED
-  // silhouettes, so the <svg> uses `fill` (not stroke). Sized + colored via props.
-  // The glyph markup is trusted (ships in our own module — never user input), so
-  // {@html} is safe here. Used by the Settings "Open files with" dropdowns.
-  import { brandMarkup } from './brandIcons';
+  // no dependency). Unlike `Icon.svelte` (stroke-based, multi-element glyphs via
+  // `{@html}`), each brand glyph is a SINGLE FILLED path, so we render a real
+  // `<path d=…>` element directly (the data is bare `d` path data, not markup).
+  // Sized + colored via props. Used by the Settings "Open files with" dropdowns.
+  import { brandPath } from './brandIcons';
 
   let {
     name,
@@ -21,7 +21,7 @@
   fill={color}
   aria-hidden="true"
 >
-  {@html brandMarkup(name)}
+  <path d={brandPath(name)} />
 </svg>
 
 <style>

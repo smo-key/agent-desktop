@@ -1,9 +1,9 @@
-// Vendored inline SVG icon set for application brand marks (offline — no CDN at
-// runtime, mirroring `projectIcons.ts`). Unlike the stroke-based `PROJECT_ICONS`,
-// these are FILLED single-path silhouettes (`fill: currentColor`, no stroke), so
-// `BrandIcon.svelte` renders them filled. Used by the Settings "Open files with"
-// dropdowns to show an icon beside each application choice (`appIcon` maps an app
-// name → one of these keys).
+// Vendored application brand marks (offline — no CDN at runtime). Unlike the
+// stroke-based `PROJECT_ICONS` (which store full element markup rendered via
+// `{@html}`), each value here is the bare `d` PATH DATA of a single FILLED glyph;
+// `BrandIcon.svelte` renders it as `<path d=…>`. Used by the Settings "Open files
+// with" dropdowns to show an icon beside each choice (`appIcon` maps an app name →
+// one of these keys).
 //
 // Brand marks (cursor, vscode, zed, sublime, chrome, safari, firefox, brave, arc,
 // edge) are vendored from Simple Icons (https://simpleicons.org, CC0), 24x24 viewBox.
@@ -12,7 +12,8 @@
 // TextEdit → document), the "System Default" / "Custom…" entries, and the generic
 // fallback.
 
-/** name -> inner SVG markup (a filled path), 24x24 viewBox, fill = currentColor. */
+/** name -> the `d` path data of a single filled glyph (24x24 viewBox; multiple
+ *  sub-paths allowed in one `d`). NOT element markup — render as `<path d=…>`. */
 export const BRAND_ICONS: Record<string, string> = {
   // --- Utility / category glyphs (hand-authored, filled) ---------------------
   // Generic application: a four-tile launchpad grid (the fallback for unknown apps).
@@ -56,7 +57,7 @@ export const BRAND_ICONS: Record<string, string> = {
 /** The fallback glyph for an unknown brand-icon name (a generic application). */
 export const BRAND_FALLBACK = 'app';
 
-/** The inner SVG markup for `name`, falling back to the generic app glyph. */
-export function brandMarkup(name: string): string {
+/** The `d` path data for `name`, falling back to the generic app glyph. */
+export function brandPath(name: string): string {
   return BRAND_ICONS[name] ?? BRAND_ICONS[BRAND_FALLBACK];
 }
