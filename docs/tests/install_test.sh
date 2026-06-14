@@ -99,3 +99,104 @@ if AGENT_DESKTOP_OS=MINGW64_NT AGENT_DESKTOP_ARCH=x86_64 main >/dev/null 2>&1; t
 else
   printf '  ok   main exits non-zero on unsupported platform\n'
 fi
+
+# --- parser robustness (adversarial-review regressions) ---
+
+mkjson() { _f=$(mktemp); cat > "$_f"; printf '%s' "$_f"; }
+
+# A `"digest": null` must NOT be accepted as a (whitespace) digest.
+NULLJSON=$(mkjson <<'JSON'
+{
+  "assets": [
+    {
+      "url": "https://api.github.com/x/1",
+      "name": "Agent.Desktop_0.2.0_amd64.AppImage",
+      "digest": null,
+      "browser_download_url": "https://dl/Agent.Desktop_0.2.0_amd64.AppImage"
+    }
+  ]
+}
+JSON
+)
+assert_fail "null digest is rejected"             -- asset_digest "$NULLJSON" _amd64.AppImage
+assert_eq   "$(asset_url "$NULLJSON" _amd64.AppImage)" \
+            "https://dl/Agent.Desktop_0.2.0_amd64.AppImage" "url still resolves with null digest"
+
+# A matching asset that lacks a digest must NOT inherit the previous asset's.
+BLEEDJSON=$(mkjson <<'JSON'
+{
+  "assets": [
+    {
+      "name": "Agent.Desktop_0.2.0_amd64.deb",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "browser_download_url": "https://dl/Agent.Desktop_0.2.0_amd64.deb"
+    },
+    {
+      "name": "Agent.Desktop_0.2.0_amd64.AppImage",
+      "browser_download_url": "https://dl/Agent.Desktop_0.2.0_amd64.AppImage"
+    }
+  ]
+}
+JSON
+)
+assert_fail "missing digest does not bind a neighbour's" -- asset_digest "$BLEEDJSON" _amd64.AppImage
+
+# The matching asset's OWN digest is bound even when another asset precedes it.
+TWOJSON=$(mkjson <<'JSON'
+{
+  "assets": [
+    {
+      "name": "Agent.Desktop_0.2.0_amd64.deb",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "browser_download_url": "https://dl/Agent.Desktop_0.2.0_amd64.deb"
+    },
+    {
+      "name": "Agent.Desktop_0.2.0_amd64.AppImage",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "browser_download_url": "https://dl/Agent.Desktop_0.2.0_amd64.AppImage"
+    }
+  ]
+}
+JSON
+)
+assert_eq "$(asset_digest "$TWOJSON" _amd64.AppImage)" \
+  "sha256:2222222222222222222222222222222222222222222222222222222222222222" \
+  "binds the matching asset's own digest"
+
+# Digest is found regardless of field order within the asset object.
+FLIPJSON=$(mkjson <<'JSON'
+{
+  "assets": [
+    {
+      "name": "Agent.Desktop_0.2.0_amd64.AppImage",
+      "browser_download_url": "https://dl/Agent.Desktop_0.2.0_amd64.AppImage",
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  ]
+}
+JSON
+)
+assert_eq "$(asset_digest "$FLIPJSON" _amd64.AppImage)" \
+  "sha256:3333333333333333333333333333333333333333333333333333333333333333" \
+  "digest found regardless of field order"
+
+# A malformed (non sha256:hex) digest is rejected.
+BADJSON=$(mkjson <<'JSON'
+{
+  "assets": [
+    {
+      "name": "Agent.Desktop_0.2.0_amd64.AppImage",
+      "digest": "sha256:nothex",
+      "browser_download_url": "https://dl/Agent.Desktop_0.2.0_amd64.AppImage"
+    }
+  ]
+}
+JSON
+)
+assert_fail "malformed digest is rejected" -- asset_digest "$BADJSON" _amd64.AppImage
+
+# verify_sha256 tolerates an uppercase SHA256: algorithm label.
+SHA_TMP2=$(mktemp); printf 'hello' > "$SHA_TMP2"
+assert_ok "verify accepts uppercase SHA256: label" -- \
+  verify_sha256 "$SHA_TMP2" "SHA256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+rm -f "$SHA_TMP2"

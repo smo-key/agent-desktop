@@ -42,42 +42,59 @@ asset_suffix() {
   esac
 }
 
-# _re_escape STR -> STR with basic-regex metacharacters backslash-escaped.
-_re_escape() {
-  printf '%s' "$1" | sed 's/[][\.*^$]/\\&/g'
+# _asset_slice JSON_FILE SUFFIX -> the lines of the asset object whose "name"
+# value ends with SUFFIX, from its name line up to (excluding) the next asset's
+# name line. This scopes url/digest extraction to a single asset rather than
+# trusting line position. Assumes the pretty-printed, one-field-per-line JSON
+# that the GitHub REST API returns; on other shapes it fails closed.
+_asset_slice() {
+  awk -v suf="$2" '
+    function nameval(s) {
+      sub(/.*"name"[[:space:]]*:[[:space:]]*"/, "", s); sub(/".*/, "", s); return s
+    }
+    /"name"[[:space:]]*:/ {
+      nm = nameval($0)
+      if (length(nm) >= length(suf) && substr(nm, length(nm) - length(suf) + 1) == suf) {
+        capturing = 1; print; next
+      } else if (capturing) {
+        exit
+      }
+    }
+    capturing { print }
+  ' "$1"
 }
 
-# asset_url JSON_FILE SUFFIX -> browser_download_url whose name ends with SUFFIX.
-# Anchoring on the URL tail (suffix at end of line) skips the ".sig" siblings.
+# asset_url JSON_FILE SUFFIX -> the matching asset's browser_download_url.
 asset_url() {
   url=$(
-    grep '"browser_download_url"' "$1" \
-      | sed 's/.*"browser_download_url": *"//; s/".*//' \
-      | grep -- "$(_re_escape "$2")\$" \
+    _asset_slice "$1" "$2" \
+      | grep '"browser_download_url"' \
+      | sed 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"//; s/".*//' \
       | head -n1
   )
   [ -n "$url" ] || return 1
   printf '%s\n' "$url"
 }
 
-# asset_digest JSON_FILE SUFFIX -> the "sha256:..." digest for that asset.
-# In the GitHub payload each asset lists "digest" before "browser_download_url",
-# so the last digest seen before the matching URL belongs to that asset.
+# asset_digest JSON_FILE SUFFIX -> the matching asset's "sha256:<hex>" digest.
+# Rejects a null / missing / malformed digest rather than fabricating one.
 asset_digest() {
-  out=$(
-    awk -v suf="$2" '
-      /"digest":/ {
-        d = $0; sub(/.*"digest": *"/, "", d); sub(/".*/, "", d)
-      }
-      /"browser_download_url":/ {
-        u = $0; sub(/.*"browser_download_url": *"/, "", u); sub(/".*/, "", u)
-        if (length(u) >= length(suf) &&
-            substr(u, length(u) - length(suf) + 1) == suf) { print d; exit }
-      }
-    ' "$1"
+  dig=$(
+    _asset_slice "$1" "$2" \
+      | grep '"digest"' \
+      | sed 's/.*"digest"[[:space:]]*:[[:space:]]*//; s/^"//; s/".*//' \
+      | head -n1
   )
-  [ -n "$out" ] || return 1
-  printf '%s\n' "$out"
+  case "$dig" in
+    sha256:*) ;;
+    *) return 1 ;;
+  esac
+  hex=${dig#sha256:}
+  case "$hex" in
+    "" | *[!0-9A-Fa-f]*) return 1 ;;
+  esac
+  [ ${#hex} -eq 64 ] || return 1
+  printf '%s\n' "$dig"
 }
 
 # _sha256_of FILE -> lowercase hex sha256, or returns 2 if no tool is available.
@@ -94,7 +111,7 @@ _sha256_of() {
 # verify_sha256 FILE EXPECTED -> 0 if the file's sha256 matches EXPECTED.
 # EXPECTED may be bare hex or "sha256:<hex>"; comparison is case-insensitive.
 verify_sha256() {
-  expected=$(printf '%s' "$2" | sed 's/^sha256://' | tr 'A-Z' 'a-z')
+  expected=$(printf '%s' "$2" | tr 'A-Z' 'a-z' | sed 's/^sha256://')
   actual=$(_sha256_of "$1" | tr 'A-Z' 'a-z')
   [ -n "$actual" ] || return 2
   [ "$actual" = "$expected" ]
@@ -180,17 +197,29 @@ install_macos() {
   mnt=$(mktemp -d)
   log "→ mounting disk image…"
   hdiutil attach -nobrowse -quiet -mountpoint "$mnt" "$1"
+
   src="$mnt/$APP_NAME.app"
   [ -d "$src" ] || src=$(find "$mnt" -maxdepth 1 -name '*.app' -type d | head -n1)
 
   dest_dir="/Applications"
   [ -w "$dest_dir" ] || dest_dir="$HOME/Applications"
-  mkdir -p "$dest_dir"
 
-  log "→ installing to $dest_dir…"
-  rm -rf "$dest_dir/$APP_NAME.app"
-  cp -R "$src" "$dest_dir/$APP_NAME.app"
+  # Every step here is guarded so the image is ALWAYS detached below, even when
+  # a step fails under `set -e` (e.g. neither Applications dir is writable).
+  rc=0
+  if [ -n "$src" ] && [ -d "$src" ] && mkdir -p "$dest_dir"; then
+    log "→ installing to $dest_dir…"
+    rm -rf "$dest_dir/$APP_NAME.app" 2>/dev/null || true
+    cp -R "$src" "$dest_dir/$APP_NAME.app" || rc=$?
+  else
+    rc=1
+  fi
   hdiutil detach -quiet "$mnt" >/dev/null 2>&1 || true
+  rmdir "$mnt" 2>/dev/null || true
+  [ "$rc" -eq 0 ] || {
+    err "Could not install from the disk image — is /Applications or ~/Applications writable?"
+    return 1
+  }
 
   # Best-effort: clear the download quarantine so the first launch isn't blocked.
   xattr -dr com.apple.quarantine "$dest_dir/$APP_NAME.app" 2>/dev/null || true
@@ -243,7 +272,8 @@ main() {
   fetch_latest_json "$json" || { err "Could not reach GitHub — check your connection."; return 1; }
 
   resolved=$(resolve_asset "$key" "$json") || {
-    err "No installer for $os/$arch in the latest release. See $RELEASES_PAGE"
+    err "Couldn't find a verifiable installer for $os/$arch in the latest release."
+    err "Download one manually instead: $RELEASES_PAGE"
     return 1
   }
   url=$(printf '%s' "$resolved" | cut -f1)
