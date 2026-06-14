@@ -379,6 +379,21 @@
     void events.seed(currentPaneRefs());
   });
 
+  // SAFETY RE-SEED: the live `overview://event` listener can miss a push, and a
+  // frontend-only synthetic interrupt Stop can outlive an interrupt that did not
+  // actually stop the agent — either way the event timeline diverges from the
+  // authoritative durable sink with no other reconciliation, pinning the row in the
+  // wrong lane indefinitely (event-status overrides the live PTY heuristic). Re-seed
+  // on a slow interval (mirrors the transcript safety poll) so a diverged status
+  // self-heals within EVENT_RESEED_MS. `seed()` MERGES (keeps strictly-newer live
+  // events and a still-newest synthetic Stop, drops a superseded one) and swallows
+  // errors, so this is cheap, idempotent, and best-effort.
+  const EVENT_RESEED_MS = 5000;
+  $effect(() => {
+    const id = setInterval(() => void events.seed(currentPaneRefs()), EVENT_RESEED_MS);
+    return () => clearInterval(id);
+  });
+
   // Prune GHOST snapshots: whenever the set of open panes changes (a pane closes,
   // a workspace closes, or one is added/restored), drop any usage snapshot whose
   // pane_id no longer maps to a live pane. Otherwise a closed pane leaves a stale

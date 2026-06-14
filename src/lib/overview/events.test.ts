@@ -197,21 +197,53 @@ describe('deriveEventActivity', () => {
     expect(a.status).toBe('working');
   });
 
-  it('Subagent stop after the parent Task already returned defers to the PTY', () => {
-    // If `PostToolUse[Task]` arrives BEFORE the trailing `SubagentStop`, the Task is
-    // already cleared, so `SubagentStop` (now non-terminal) leaves no tool in flight
-    // and is not a `waiting` trigger → status is `null` (the roster falls back to the
-    // PTY heuristic). At that instant the parent has the subagent result and is
-    // generating its next step, so the live PTY is the right arbiter — NOT a forced
-    // `waiting`. This pins that accepted trade-off (vs. the old unconditional waiting).
+  it('Trailing SubagentStop preserves a working turn', () => {
+    // `PostToolUse[Task]` returned (Task cleared), THEN a trailing `SubagentStop`. The
+    // SubagentStop is not a turn boundary for the parent, so the status is read from the
+    // last NON-SubagentStop event — the `PostToolUse` → `working` (the parent has the
+    // result and is generating its next step). It must NOT drop to `null`/PTY fallback,
+    // which would flicker the row (fix-event-status-divergence: the bounce root cause).
     const a = deriveEventActivity([
       ev('UserPromptSubmit'),
       ev('PreToolUse', { toolName: 'Task', summary: 'Task:a' }),
       ev('PostToolUse', { toolName: 'Task' }),
       ev('SubagentStop')
     ]);
-    expect(a.status).toBeNull();
+    expect(a.status).toBe('working');
     expect(a.currentAction).toBeNull();
+  });
+
+  it('Trailing SubagentStop preserves a completed turn as waiting', () => {
+    // The actual flip case: the turn ended (`Stop` → waiting) and ~minutes later a
+    // background `SubagentStop` arrives. It preserves the settled `waiting` instead of
+    // dropping to `null` (which exposed the row to the flickery PTY/terminalBusy/resize
+    // heuristic and bounced it In-flight↔Needs-you).
+    const a = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('PreToolUse', { toolName: 'Task', summary: 'Task:a' }),
+      ev('PostToolUse', { toolName: 'Task' }),
+      ev('Stop'),
+      ev('SubagentStop')
+    ]);
+    expect(a.status).toBe('waiting');
+    expect(a.currentAction).toBeNull();
+  });
+
+  it('Multiple trailing SubagentStops skip back to the last turn boundary', () => {
+    const a = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('Stop'),
+      ev('SubagentStop'),
+      ev('SubagentStop'),
+      ev('SubagentStop')
+    ]);
+    expect(a.status).toBe('waiting');
+  });
+
+  it('A SubagentStop with no prior turn boundary falls back to the PTY', () => {
+    // Only SubagentStop(s) and nothing else → no turn boundary to read → null (PTY).
+    expect(deriveEventActivity([ev('SubagentStop')]).status).toBeNull();
+    expect(deriveEventActivity([ev('SubagentStop'), ev('SubagentStop')]).status).toBeNull();
   });
 
   it('The parent\'s own turn end still reads Needs input', () => {

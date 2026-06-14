@@ -110,7 +110,12 @@ export class EventStore {
   markInterrupt(paneId: string): void {
     if (this.activityFor(paneId).status !== 'working') return;
     const prior = this.timeline(paneId);
-    const ts = prior.length > 0 ? prior[prior.length - 1].ts : 0;
+    // Stamp the synthetic Stop STRICTLY AFTER the last real event so the seed merge
+    // can tell a still-valid interrupt (synthetic newest → preserved) from one the
+    // agent superseded by working on (a later real event in the durable sink → the
+    // synthetic is older → dropped). Equal timestamps would make a genuine interrupt
+    // look superseded and get dropped on re-seed.
+    const ts = (prior.length > 0 ? prior[prior.length - 1].ts : 0) + 1;
     // `synthetic: true` marks this as a frontend-only interrupt turn-end (not a real
     // hook event): it clears the in-flight tool so the row shows Needs-input, but
     // consumers like task auto-archive must NOT read it as a genuine "returned to user".
@@ -135,17 +140,19 @@ export class EventStore {
         // seeded slice no longer contains the original prompt (only later turn activity).
         if (clean.some(impliesEverPrompted)) this.everPromptedPanes.add(paneId);
         // MERGE rather than overwrite. `clean` is authoritative for real events up to its
-        // last `ts`, but the live map may already hold things the snapshot can't reproduce:
-        // a frontend-only synthetic interrupt Stop, and live events that landed AFTER the
-        // snapshot was taken (newer `ts`). A wholesale overwrite would clobber the synthetic
-        // Stop (re-pinning an interrupted pane to `working`) or drop an in-flight live event.
-        // Preserve exactly those, appended after the snapshot in their existing order —
-        // events already in `clean` have `ts <= snapshotLastTs`, so they are never
-        // duplicated, and this keeps a (sink-empty + transcript) backfill from being lost
-        // when a live event raced ahead of this seed.
+        // last `ts`; preserve only what the snapshot can't reproduce and that is still
+        // NEWER than it: live events that landed AFTER the snapshot was taken, and a
+        // frontend-only synthetic interrupt Stop that is still the newest event. A
+        // synthetic Stop OLDER than the snapshot's last real event has been SUPERSEDED —
+        // the agent produced turn activity after the interrupt, so the interrupt did not
+        // actually stop it — and is DROPPED so a re-seed heals a pane spuriously pinned at
+        // `waiting` (the divergence the periodic safety re-seed reconciles). A genuine
+        // interrupt (synthetic Stop newest, no real activity after) stays newest and is
+        // kept. Events already in `clean` have `ts <= snapshotLastTs`, so the preserved
+        // (strictly-newer) tail is never duplicated.
         const existing = this.byPane[paneId] ?? [];
         const snapshotLastTs = clean[clean.length - 1].ts;
-        const preserved = existing.filter((e) => e.synthetic === true || e.ts > snapshotLastTs);
+        const preserved = existing.filter((e) => e.ts > snapshotLastTs);
         this.byPane[paneId] = preserved.length > 0 ? [...clean, ...preserved] : clean;
         total += clean.length;
       }

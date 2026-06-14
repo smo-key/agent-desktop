@@ -130,6 +130,31 @@ describe('EventStore', () => {
     expect(store.timeline('p1').at(-1)?.synthetic).toBe(true); // and is still the last event
   });
 
+  it('Seed merge drops a superseded synthetic interrupt Stop', async () => {
+    // fix-event-status-divergence: an Esc that did NOT actually stop the agent leaves a
+    // frontend-only synthetic Stop, but the agent kept working — so the durable sink
+    // holds a REAL event newer than the synthetic Stop. A re-seed must DROP the stale
+    // synthetic Stop so the pane reflects the real working tail (heals the stuck row),
+    // not stay pinned at `waiting`.
+    const store = new EventStore();
+    store.ingest(ev('UserPromptSubmit', { ts: 0 }));
+    store.ingest(ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:x', ts: 0 }));
+    store.markInterrupt('p1'); // synthetic Stop at ts 1 → waiting
+    expect(store.activityFor('p1').status).toBe('waiting');
+
+    // The durable snapshot has real activity AFTER the interrupt (the agent kept going).
+    invokeMock.mockResolvedValueOnce({
+      p1: [
+        ev('UserPromptSubmit', { ts: 0 }),
+        ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:x', ts: 0 }),
+        ev('PostToolUse', { toolName: 'Bash', ts: 5 })
+      ]
+    });
+    await store.seed([{ paneId: 'p1', sessionId: 's1', cwd: null }]);
+    expect(store.activityFor('p1').status).toBe('working'); // superseded synthetic dropped
+    expect(store.timeline('p1').some((e) => e.synthetic === true)).toBe(false);
+  });
+
   it('Seed merge preserves a live event newer than the snapshot', async () => {
     // A live turn-ending Stop lands at ts 100 (during the `events_for` round-trip) while
     // the snapshot was taken earlier (only the UserPromptSubmit at ts 50). The merge must
@@ -140,6 +165,48 @@ describe('EventStore', () => {
     invokeMock.mockResolvedValueOnce({ p1: [ev('UserPromptSubmit', { ts: 50 })] });
     await store.seed([{ paneId: 'p1', sessionId: 's1', cwd: null }]);
     expect(store.timeline('p1').map((e) => e.hookEventName)).toEqual(['UserPromptSubmit', 'Stop']);
+  });
+
+  it('A missed live event reconciles on the next safety re-seed', async () => {
+    // The frontend missed a live `overview://event` push, so its timeline is stale
+    // (last event a `Stop` → waiting) while the durable sink kept recording a new turn.
+    // A safety re-seed from `events_for` merges the missed events and the derived status
+    // catches up (→ working) — the self-heal for a diverged, stuck row.
+    const store = new EventStore();
+    store.ingest(ev('UserPromptSubmit', { ts: 0 }));
+    store.ingest(ev('Stop', { ts: 10 }));
+    expect(store.activityFor('p1').status).toBe('waiting');
+    invokeMock.mockResolvedValueOnce({
+      p1: [
+        ev('UserPromptSubmit', { ts: 0 }),
+        ev('Stop', { ts: 10 }),
+        ev('UserPromptSubmit', { ts: 20 }),
+        ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:y', ts: 21 })
+      ]
+    });
+    await store.seed([{ paneId: 'p1', sessionId: 's1', cwd: null }]);
+    expect(store.activityFor('p1').status).toBe('working'); // reconciled
+    expect(store.timeline('p1')).toHaveLength(4);
+  });
+
+  it('Periodic re-seed does not disturb a current timeline', async () => {
+    // A re-seed when already in sync is idempotent: no duplicated events, and a
+    // still-newest synthetic interrupt Stop is retained.
+    const store = new EventStore();
+    store.ingest(ev('UserPromptSubmit', { ts: 0 }));
+    store.ingest(ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:x', ts: 1 }));
+    store.markInterrupt('p1'); // synthetic Stop at ts 2
+    const before = store.timeline('p1').length;
+    invokeMock.mockResolvedValueOnce({
+      p1: [
+        ev('UserPromptSubmit', { ts: 0 }),
+        ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:x', ts: 1 })
+      ]
+    });
+    await store.seed([{ paneId: 'p1', sessionId: 's1', cwd: null }]);
+    expect(store.timeline('p1').length).toBe(before); // no duplication
+    expect(store.timeline('p1').at(-1)?.synthetic).toBe(true); // synthetic retained
+    expect(store.activityFor('p1').status).toBe('waiting');
   });
 
   it('Interrupt is a no-op when the pane is not working', () => {

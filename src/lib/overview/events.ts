@@ -199,8 +199,25 @@ export function deriveEventActivity(
     return { status: 'working', currentAction, question: null, questions: null, everPrompted };
   }
 
-  // No tool in flight: classify from the most recent event.
-  const last = events[events.length - 1];
+  // No tool in flight: classify from the most recent TURN-BOUNDARY event. A
+  // `SubagentStop` is NOT a turn boundary for the host pane — an in-process subagent
+  // finished while the parent's own turn state is unchanged — so a trailing
+  // `SubagentStop` must NOT be the classifier: it would hit `default → null` and drop
+  // the parent's settled status to the PTY fallback, which then flickers
+  // working↔waiting (and bounces on a click's resize redraw). Instead, skip back over
+  // any trailing `SubagentStop`s and classify from the parent's last real event, so a
+  // finished background subagent preserves the parent's settled `waiting`/`working`.
+  let last: AgentEvent | undefined;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].hookEventName !== 'SubagentStop') {
+      last = events[i];
+      break;
+    }
+  }
+  // Only `SubagentStop`s and nothing else → no turn boundary to read → PTY fallback.
+  if (!last) {
+    return { status: null, currentAction: null, question: null, questions: null, everPrompted };
+  }
   let status: AgentStatus | null;
   switch (last.hookEventName) {
     case 'UserPromptSubmit':
@@ -216,10 +233,6 @@ export function deriveEventActivity(
       // keeps redrawing (cursor blink, status line), so the PTY signal bounces
       // working↔waiting. An event-sourced status holds steady until you actually
       // submit a prompt (→ `UserPromptSubmit` → working).
-      //
-      // `SubagentStop` is intentionally ABSENT: it is not a turn end for the host
-      // pane (a Task subagent finished, the parent is still working). With no tool in
-      // flight it falls through to `null` (PTY fallback) rather than forcing `waiting`.
       status = 'waiting';
       break;
     case 'SessionEnd':
