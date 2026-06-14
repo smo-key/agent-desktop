@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
 
+## [0.1.5] - 2026-06-14
+
+### Bug Fixes
+
+- **ci**: Unblock Windows llama build and macOS signing fallback
+- **test**: Use a fast-failing unwritable snapshot dir, not /proc
+
 ## [0.1.4] - 2026-06-13
 
 ### Bug Fixes
