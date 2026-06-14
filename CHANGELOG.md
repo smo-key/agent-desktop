@@ -3,6 +3,15 @@
 All notable changes to this project are documented here.
 This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
 
+## [0.2.4] - 2026-06-14
+
+### Miscellaneous
+
+- Bump version to 0.2.4
+- Simplify Windows or Intel Mac installer note
+
+Updated Windows or Intel Mac installation instructions.
+
 ## [0.2.3] - 2026-06-14
 
 ### Bug Fixes
@@ -16,6 +25,8 @@ This file is generated from the conventional-commit history by [git-cliff](https
 
 ### Miscellaneous
 
+- **openspec**: Archive desktop-auto-update change chain
+- **openspec**: Archive add-background-remote-fetch
 - Bump version to 0.2.3
 - **openspec**: Sync + archive projects-panel-working-indicator
 
