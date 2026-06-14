@@ -225,3 +225,9 @@ BLEED2JSON=$(mkjson <<'JSON'
 JSON
 )
 assert_fail "last asset does not bind a digest from outside the array" -- asset_digest "$BLEED2JSON" _aarch64.dmg
+
+# is_interactive must check that the tty can actually be OPENED, not just that the
+# device node passes a permission test — `/dev/tty` exists but errors with "Device
+# not configured" when there is no controlling terminal (CI, piped runs).
+assert_ok   "tty_usable on an openable file"   -- _tty_usable /dev/null
+assert_fail "tty_usable on a missing device"   -- _tty_usable /no/such/tty-device

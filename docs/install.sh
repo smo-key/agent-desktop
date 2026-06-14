@@ -133,9 +133,17 @@ _yesno_default() {
   esac
 }
 
-# is_interactive -> 0 when a controlling terminal is available.
+# _tty_usable PATH -> 0 if PATH can actually be opened for reading. A plain
+# `[ -r /dev/tty ]` only checks node permissions; /dev/tty still exists but fails
+# to open ("Device not configured") when there is no controlling terminal, so we
+# must attempt the open.
+_tty_usable() {
+  ( exec < "$1" ) 2>/dev/null
+}
+
+# is_interactive -> 0 when a controlling terminal is actually available.
 is_interactive() {
-  [ -r /dev/tty ] && [ -w /dev/tty ]
+  _tty_usable /dev/tty
 }
 
 # confirm PROMPT DEFAULT -> ask on the terminal (not piped stdin) and return the
