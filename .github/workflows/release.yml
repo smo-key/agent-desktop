@@ -200,10 +200,6 @@ jobs:
           - runner: ubuntu-22.04-arm
             triple: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
-    # Job-level so the unsigned-build warning's `if:` can read it (step-level env
-    # is NOT in scope during that step's own `if:` evaluation).
-    env:
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v6
@@ -289,26 +285,43 @@ jobs:
       - name: Quality gate
         run: yarn check:gate
 
-      # Decide whether the macOS leg can sign. tauri-action imports
-      # APPLE_CERTIFICATE into a temp keychain via `security import`; if the
-      # secret is absent it skips signing (unsigned-but-successful, the fork/PR
-      # case), but if the secret is PRESENT-BUT-UNIMPORTABLE (corrupt base64/p12
-      # or wrong password) `security import` errors and the whole release leg
-      # fails. We pre-flight that exact import here into a throwaway keychain: on
-      # success the build signs as normal; on any failure we warn and fall back
-      # to an UNSIGNED build (blank the cert for the build step) rather than fail
-      # the release. Fixing the APPLE_CERTIFICATE/PASSWORD secrets flips this
-      # back to signed automatically — no workflow change needed.
+      # Decide whether the macOS leg can sign, and export the Apple signing/notary
+      # env ONLY when it can. This is load-bearing: tauri-bundler keys off the mere
+      # PRESENCE of `APPLE_CERTIFICATE` (Rust `var_os` returns `Some("")` for an
+      # env var set to the empty string), so passing the secrets as `${{ secrets.X
+      # }}` — which yields an empty string when a secret is unset — makes the
+      # bundler run `security import` on an empty cert and fail the whole release
+      # leg (the symptom: "failed to import keychain certificate"). We therefore
+      # do NOT put these vars in the build step's static `env:` map; instead we
+      # pre-flight the real `security import` into a throwaway keychain here and,
+      # only on success, EXPORT the (non-empty) signing+notary vars to
+      # $GITHUB_ENV. When the cert is absent or unimportable we export nothing —
+      # the vars stay truly unset and `tauri build` produces a clean UNSIGNED
+      # bundle instead of failing. Fixing the secrets flips this to signed with no
+      # workflow change.
       - name: Preflight macOS signing
         if: runner.os == 'macOS'
         shell: bash
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          # Export VALUE under NAME to the build step only when non-empty, using
+          # the heredoc form so a multiline base64 cert survives intact.
+          export_env() {
+            [ -n "$2" ] || return 0
+            { printf '%s<<__AD_EOF__\n%s\n__AD_EOF__\n' "$1" "$2"; } >>"$GITHUB_ENV"
+          }
           if [ -z "$APPLE_CERTIFICATE" ]; then
             echo "::warning::APPLE_CERTIFICATE secret is empty; macOS artifact will be UNSIGNED (fork/PR fallback)."
-            echo "MAC_SIGN=off" >>"$GITHUB_ENV"
             exit 0
           fi
           work="$(mktemp -d)"
@@ -319,11 +332,19 @@ jobs:
           security create-keychain -p preflight "$kc" 2>/dev/null || true
           security unlock-keychain -p preflight "$kc" 2>/dev/null || true
           if security import "$cert" -k "$kc" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign >/dev/null 2>&1; then
-            echo "macOS signing certificate imported OK; build will be SIGNED."
-            echo "MAC_SIGN=on" >>"$GITHUB_ENV"
+            echo "macOS signing certificate imported OK; build will be SIGNED + notarized where creds allow."
+            export_env APPLE_CERTIFICATE "$APPLE_CERTIFICATE"
+            export_env APPLE_CERTIFICATE_PASSWORD "$APPLE_CERTIFICATE_PASSWORD"
+            export_env APPLE_SIGNING_IDENTITY "$APPLE_SIGNING_IDENTITY"
+            export_env KEYCHAIN_PASSWORD "$KEYCHAIN_PASSWORD"
+            export_env APPLE_API_ISSUER "$APPLE_API_ISSUER"
+            export_env APPLE_API_KEY "$APPLE_API_KEY"
+            export_env APPLE_API_KEY_PATH "$APPLE_API_KEY_PATH"
+            export_env APPLE_ID "$APPLE_ID"
+            export_env APPLE_PASSWORD "$APPLE_PASSWORD"
+            export_env APPLE_TEAM_ID "$APPLE_TEAM_ID"
           else
             echo "::warning::APPLE_CERTIFICATE is present but could not be imported (corrupt p12/base64 or wrong APPLE_CERTIFICATE_PASSWORD); macOS artifact will be UNSIGNED. Fix the secret to restore signing."
-            echo "MAC_SIGN=off" >>"$GITHUB_ENV"
           fi
           security delete-keychain "$kc" 2>/dev/null || true
           rm -rf "$work"
@@ -332,28 +353,17 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS signing: tauri-action imports the cert into a temporary keychain
-          # itself. When APPLE_CERTIFICATE is empty it skips signing (unsigned).
-          # The Preflight step above blanks these (MAC_SIGN=off) when the cert is
-          # absent or unimportable, so the leg builds UNSIGNED instead of failing.
-          # NB: written as `keep-cond && value || ''` (not `off-cond && '' || value`).
-          # GitHub `&&/||` return the operand, and '' is falsy, so the latter form
-          # would never blank the value. `MAC_SIGN != 'off'` is true when signing
-          # is on AND on non-macOS legs (where MAC_SIGN is unset → cert irrelevant).
-          APPLE_CERTIFICATE: ${{ env.MAC_SIGN != 'off' && secrets.APPLE_CERTIFICATE || '' }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ env.MAC_SIGN != 'off' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
-          APPLE_SIGNING_IDENTITY: ${{ env.MAC_SIGN != 'off' && secrets.APPLE_SIGNING_IDENTITY || '' }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-          # Notary credentials — App Store Connect API key set ...
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
-          # ... or the Apple ID set (either is accepted by tauri/notarytool).
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # macOS signing/notary env is intentionally NOT listed here: the
+          # Preflight step above exports those vars to $GITHUB_ENV only when the
+          # cert actually imports (see its comment). Listing them as `${{ secrets.X
+          # }}` would set them to empty strings when unset, which tauri-bundler
+          # treats as "present" and then fails on `security import`. Absent =
+          # unsigned-but-successful; present = signed.
+          #
           # Updater bundle signing (forward-compatible: used once the updater
-          # plugin is configured in a later task).
+          # plugin is configured in a later task). These are safe to pass directly
+          # — the updater key is required and present, and an empty password just
+          # means "key has no password".
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:

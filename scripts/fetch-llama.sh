@@ -120,9 +120,14 @@ case "$TARGET_OS" in
     # transitive include that VS 2022's newer MSVC STL (14.4x) no longer provides,
     # so the build fails with C2039 'system_clock'. Force-include <chrono> across
     # all translation units on the MSVC leg to restore the build WITHOUT forking
-    # the pinned upstream source. Harmless (a standard header). `/FI` is MSVC's
-    # forced-include flag; the bare `/FIchrono` form avoids a space in the `-D`.
-    CMAKE_CONFIGURE_ARGS+=("-DCMAKE_CXX_FLAGS=/FIchrono") ;;
+    # the pinned upstream source. Harmless (a standard header).
+    #
+    # Use the DASH form `-FIchrono`, not `/FIchrono`: MSVC accepts `-` or `/` for
+    # any option, but this step runs under Git Bash and MSYS2 path-conversion
+    # rewrites a leading-slash argument (`/FIchrono`) into a bogus Windows path
+    # (`C:/Program Files/Git/FIchrono`), making cl treat it as a source file. A
+    # dash-prefixed value has no slash to convert, so it reaches cl intact.
+    CMAKE_CONFIGURE_ARGS+=("-DCMAKE_CXX_FLAGS=-FIchrono") ;;
 esac
 
 # --- Build -------------------------------------------------------------------

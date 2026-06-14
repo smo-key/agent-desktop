@@ -122,18 +122,23 @@ reproducible.
 A pre-build step imports the base64-decoded `.p12` into a temporary keychain
 (`APPLE_CERTIFICATE` + `APPLE_CERTIFICATE_PASSWORD`), unlocks it, and exports the
 notary credentials Tauri reads (`APPLE_SIGNING_IDENTITY` + an API-key set or
-Apple-ID set, documented in the `README.md` Releases section). A pre-build
-`Preflight macOS signing` step performs that import into a throwaway keychain
-(the same `security import` `tauri-action` runs) to DECIDE whether signing can
-proceed: it sets `MAC_SIGN=on` only when the cert imports cleanly. The macOS
-build skips signing (blanks `APPLE_CERTIFICATE`/identity for `tauri-action`) and
-builds unsigned with a warning when `MAC_SIGN=off`, which covers BOTH an empty
-cert (forks, untrusted PRs) AND a cert that is present-but-unimportable (corrupt
-base64/`.p12` or wrong `APPLE_CERTIFICATE_PASSWORD`). The latter previously
-hard-failed the whole release leg on `security import`; preflighting it keeps the
-matrix entry green and self-heals to signed once the secret is fixed.
-Signing/notarization is CI-only and driven through `tauri-action` env; there is
-no local signed-build script.
+Apple-ID set, documented in the `README.md` Releases section).
+
+The signing env is **conditionally exported, never statically listed**, because
+`tauri-bundler` keys off the mere *presence* of `APPLE_CERTIFICATE`: Rust's
+`var_os` returns `Some("")` for an env var set to the empty string, so passing
+`APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}` (which is an empty string
+when the secret is unset) makes the bundler run `security import` on an empty
+cert and fail the whole leg with "failed to import keychain certificate". So a
+pre-build `Preflight macOS signing` step performs the real `security import`
+into a throwaway keychain and, ONLY on success, exports the non-empty
+signing+notary vars to `$GITHUB_ENV`; the build step lists none of them. When
+the cert is absent (forks/untrusted PRs) or present-but-unimportable (corrupt
+base64/`.p12` or wrong `APPLE_CERTIFICATE_PASSWORD`), nothing is exported, the
+vars stay truly unset, and `tauri build` produces a clean UNSIGNED bundle with a
+warning instead of failing. Self-heals to signed once the secrets are fixed —
+no workflow change. Signing/notarization is CI-only and driven through
+`tauri-action` env; there is no local signed-build script.
 
 ### 6. Changelog via git-cliff
 A pinned `git-cliff` with a committed `cliff.toml` (conventional-commits preset,
