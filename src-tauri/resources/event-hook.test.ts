@@ -28,6 +28,22 @@ const hook = require('./event-hook.cjs') as typeof import('./event-hook.cjs');
 
 const PANE_ID = 'pane-evt-uuid-0001';
 
+// A platform-appropriate IPC endpoint for the event socket. The hook transport
+// is path-opaque (`net.createConnection({ path })`), but the SERVER side differs
+// by OS: Windows cannot bind a Unix-domain socket to a filesystem path (Node
+// errors with EACCES), so it requires a named pipe `\\.\pipe\<name>`. Use a pipe
+// on Windows and a Unix-socket file under `tmp` elsewhere; both `server.listen`
+// and the hook's `createConnection` accept either form, so the SAME delivery
+// path is exercised on every OS. Pipe names are made unique per call (pid + seq)
+// to avoid collisions across tests in the same process.
+let pipeSeq = 0;
+function ipcEndpoint(name: string): string {
+  if (process.platform === 'win32') {
+    return `\\\\.\\pipe\\agentdesk-evt-${process.pid}-${pipeSeq++}-${name}`;
+  }
+  return join(tmp, name);
+}
+
 let tmp: string;
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'agentdesk-evt-'));
@@ -109,7 +125,7 @@ describe('event-hook pure core', () => {
 
 describe('event-hook delivery', () => {
   it('Event delivered as one line', async () => {
-    const socketPath = join(tmp, 'events.sock');
+    const socketPath = ipcEndpoint('events.sock');
     const received: string[] = [];
     const server = createServer((conn) => {
       let buf = '';
@@ -153,7 +169,7 @@ describe('event-hook delivery', () => {
 
   it('Socket absent does not block the turn', () => {
     // No server listening at this path — the hook must still exit 0 quickly.
-    const socketPath = join(tmp, 'nobody-home.sock');
+    const socketPath = ipcEndpoint('nobody-home.sock');
     const res = spawnSync(process.execPath, [HOOK], {
       input: JSON.stringify({ session_id: 's', hook_event_name: 'Stop' }),
       encoding: 'utf8',
