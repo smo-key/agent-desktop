@@ -590,14 +590,33 @@ fn safe_component(id: &str) -> Option<&str> {
     }
 }
 
+/// Drop SUBAGENTS that started before the current app launch. A subagent whose
+/// `started_at` is known and earlier than `launch_time_ms` cannot still be alive
+/// — the app kills all its PTYs (and thus their subagents) on close — so after a
+/// relaunch (where a pane is resumed with `claude --resume <same id>`) such a
+/// record is a stale zombie from a prior run and must not be surfaced (a running
+/// one would otherwise tick `now - started_at` forever). A subagent with an
+/// UNKNOWN `started_at` is RETAINED: a freshly spawned subagent can briefly lack
+/// a timestamp, and hiding a possibly-live agent is worse than briefly showing
+/// one. `launch_time_ms` is a Unix epoch in MILLISECONDS (the same clock as
+/// [`Subagent::started_at`]); pass `0` to disable the cutoff.
+pub fn filter_pre_launch(subs: Vec<Subagent>, launch_time_ms: i64) -> Vec<Subagent> {
+    subs.into_iter()
+        .filter(|s| !s.started_at.is_some_and(|t| t < launch_time_ms))
+        .collect()
+}
+
 /// Build the `session_id -> Vec<Subagent>` map for a set of sessions rooted at
 /// `projects_base`. Sessions whose project dir can't be located (no cwd, unsafe
 /// id) are simply absent from the map. A session with no subagents maps to an
 /// empty vec (so the frontend can distinguish "looked, found none" from "didn't
-/// ask"). Never panics.
+/// ask"). Subagents that predate `launch_time_ms` are filtered out per session via
+/// [`filter_pre_launch`], so a resumed session does not restore a prior run's
+/// (now-dead) subagents. Never panics.
 pub fn subagents_for_sessions(
     projects_base: &Path,
     sessions: &[SessionRef],
+    launch_time_ms: i64,
 ) -> HashMap<String, Vec<Subagent>> {
     let mut map = HashMap::new();
     for ref_ in sessions {
@@ -605,7 +624,10 @@ pub fn subagents_for_sessions(
             continue;
         };
         let subs = parse_session_subagents(&dir, &ref_.session_id);
-        map.insert(ref_.session_id.clone(), subs);
+        map.insert(
+            ref_.session_id.clone(),
+            filter_pre_launch(subs, launch_time_ms),
+        );
     }
     map
 }
@@ -659,10 +681,14 @@ struct EmitState {
 ///
 /// `on_change` runs on the watcher's event thread; it must be `Send`. In
 /// production it emits the Tauri `overview://subagents` event; in tests it pushes
-/// to a channel. Trivial duplicate recomputations are suppressed.
+/// to a channel. Trivial duplicate recomputations are suppressed. `launch_time_ms`
+/// is the app launch threshold passed to [`subagents_for_sessions`] on every
+/// recompute, so the watcher filters pre-launch subagents identically to the
+/// `subagents_for` seed.
 pub fn start_subagents_watcher<F>(
     projects_base: &Path,
     sessions: WatchedSessions,
+    launch_time_ms: i64,
     on_change: F,
 ) -> Result<SubagentsWatcher, String>
 where
@@ -688,7 +714,7 @@ where
         }
         // Snapshot the shared session set, then recompute against the filesystem.
         let sess = lock_sessions(&sessions);
-        let map = subagents_for_sessions(&base_owned, &sess);
+        let map = subagents_for_sessions(&base_owned, &sess, launch_time_ms);
         drop(sess);
         // Coalesce: suppress an identical map re-emitted within the window.
         let mut guard = match emit.lock() {
@@ -1192,7 +1218,9 @@ mod tests {
                 cwd: None,
             },
         ];
-        let map = subagents_for_sessions(base, &sessions);
+        // launch_time 0: these fixtures carry no `startedAt`, so nothing is
+        // pre-launch and the filter is a no-op (this test is about mapping).
+        let map = subagents_for_sessions(base, &sessions, 0);
 
         assert_eq!(
             map.get("sess-A").map(|v| v.len()),
@@ -1209,6 +1237,97 @@ mod tests {
         assert!(!map.contains_key("sess-C"), "no-cwd session is skipped");
     }
 
+    /// Minimal `Subagent` for the pure pre-launch filter tests: only `id`,
+    /// `status`, and `started_at` matter to `filter_pre_launch`; the rest default.
+    fn test_sub(id: &str, status: &str, started_at: Option<i64>) -> Subagent {
+        Subagent {
+            id: id.into(),
+            label: None,
+            status: Some(status.into()),
+            model: None,
+            usage: None,
+            parent_session: "sess".into(),
+            workflow_id: None,
+            phase_title: None,
+            phase_index: None,
+            started_at,
+            duration_ms: None,
+        }
+    }
+
+    /// Scenario: A running subagent from before this launch is not restored. A
+    /// subagent that started before the app launched cannot still be alive (the
+    /// app kills all its PTYs on close), so a still-`running` pre-launch record is
+    /// a zombie and must be dropped rather than ticking forever on relaunch.
+    #[test]
+    fn a_running_subagent_from_before_this_launch_is_not_restored() {
+        let out = filter_pre_launch(vec![test_sub("z", "running", Some(100))], 1_000);
+        assert!(out.is_empty(), "pre-launch running subagent is dropped");
+    }
+
+    /// Scenario: A completed subagent from before this launch is not restored — the
+    /// scope is the whole pre-launch list, not just the running ones.
+    #[test]
+    fn a_completed_subagent_from_before_this_launch_is_not_restored() {
+        let out = filter_pre_launch(vec![test_sub("c", "done", Some(100))], 1_000);
+        assert!(out.is_empty(), "pre-launch completed subagent is dropped");
+    }
+
+    /// Scenario: A subagent started in the current run is surfaced. A subagent that
+    /// started AT or AFTER launch belongs to the current run and is kept (boundary:
+    /// `started_at == launch_time` is kept).
+    #[test]
+    fn a_subagent_started_in_the_current_run_is_surfaced() {
+        let out = filter_pre_launch(
+            vec![
+                test_sub("at", "running", Some(1_000)),
+                test_sub("after", "running", Some(2_000)),
+            ],
+            1_000,
+        );
+        let ids: Vec<&str> = out.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, vec!["at", "after"], "at/after launch are kept");
+    }
+
+    /// Scenario: A subagent with an unknown start time is retained — a freshly
+    /// spawned subagent can briefly lack a timestamp and must never be hidden.
+    #[test]
+    fn a_subagent_with_an_unknown_start_time_is_retained() {
+        let out = filter_pre_launch(vec![test_sub("u", "running", None)], 1_000);
+        assert_eq!(out.len(), 1, "unknown started_at is retained");
+        assert_eq!(out[0].id, "u");
+    }
+
+    /// Empty in -> empty out (no panic, no surprises).
+    #[test]
+    fn filter_pre_launch_empty_in_empty_out() {
+        assert!(filter_pre_launch(Vec::new(), 1_000).is_empty());
+    }
+
+    /// `subagents_for_sessions` applies the pre-launch filter per session: a
+    /// workflow agent whose `startedAt` predates the launch threshold is omitted,
+    /// while one at/after the threshold is surfaced.
+    #[test]
+    fn subagents_for_sessions_drops_pre_launch() {
+        let tmp = TempDir::new("prelaunch");
+        let base = tmp.path();
+        let cwd = "/work/p";
+        let dir = make_session(base, &project_dir_for_cwd(cwd), "sess-P");
+        write_workflow(
+            &dir,
+            "wf_p",
+            r#"[{"type":"workflow_agent","label":"old","agentId":"old","state":"running","startedAt":100},
+                {"type":"workflow_agent","label":"new","agentId":"new","state":"running","startedAt":2000}]"#,
+        );
+        let sessions = vec![SessionRef {
+            session_id: "sess-P".into(),
+            cwd: Some(cwd.into()),
+        }];
+        let map = subagents_for_sessions(base, &sessions, 1_000);
+        let ids: Vec<&str> = map["sess-P"].iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, vec!["new"], "pre-launch agent dropped, current-run agent kept");
+    }
+
     /// A session id that could escape its parent dir (path separator) is rejected,
     /// so the session is skipped rather than reading an arbitrary path.
     #[test]
@@ -1218,7 +1337,7 @@ mod tests {
             session_id: "../../etc".into(),
             cwd: Some("/work/a".into()),
         }];
-        let map = subagents_for_sessions(tmp.path(), &sessions);
+        let map = subagents_for_sessions(tmp.path(), &sessions, 0);
         assert!(map.is_empty(), "unsafe id resolves to no dir -> skipped");
     }
 
@@ -1240,7 +1359,9 @@ mod tests {
         }]));
 
         let (tx, rx) = mpsc::channel::<HashMap<String, Vec<Subagent>>>();
-        let watcher = start_subagents_watcher(base, watched, move |map| {
+        // launch_time 0: the fixture agent carries no `startedAt`, so the
+        // pre-launch filter is a no-op here (this test is about the watch).
+        let watcher = start_subagents_watcher(base, watched, 0, move |map| {
             let _ = tx.send(map);
         })
         .expect("watcher starts");
