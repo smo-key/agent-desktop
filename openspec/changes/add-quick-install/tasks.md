@@ -35,16 +35,18 @@
 
 ## 4. Hosting & docs
 
-- [ ] 4.1 Place the finished script at `docs/install.sh` and add a minimal
+- [x] 4.1 Place the finished script at `docs/install.sh` and add a minimal
   `docs/index.html` placeholder page.
-- [ ] 4.2 Enable GitHub Pages (source: `main` `/docs`) and confirm the script is
-  served at `https://smo-key.github.io/agent-desktop/install.sh`.
-- [ ] 4.3 Add an `## Install` section to `README.md` with the one-liner and a
+- [x] 4.2 Enable GitHub Pages (source: `main` `/docs`) and confirm the script is
+  served at `https://smo-key.github.io/agent-desktop/install.sh`. (Pages enabled +
+  built; that URL 301-redirects over https to the custom domain
+  `arthurpachachura.com/agent-desktop/`. Goes live once `main` is pushed to origin.)
+- [x] 4.3 Add an `## Install` section to `README.md` with the one-liner and a
   manual-download fallback link, noting Windows/Intel-Mac are coming soon.
 
 ## 5. Verification
 
-- [ ] 5.1 Run the shell test suite green.
+- [x] 5.1 Run the shell test suite green.
 - [ ] 5.2 Manually run the one-liner end-to-end on macOS arm64 (or document the
   manual smoke check performed) — installs, clears quarantine, launches.
 - [ ] 5.3 File the follow-up item: Windows build fix + `install.ps1`, Intel-Mac

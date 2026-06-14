@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Desktop — Install</title>
+    <meta
+      name="description"
+      content="Install Agent Desktop with a single command on macOS and Linux."
+    />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0d0f12;
+        --fg: #e8eaed;
+        --muted: #9aa0a6;
+        --card: #16191e;
+        --accent: #7aa2f7;
+        --border: #262b33;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 2rem;
+        font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      main { width: 100%; max-width: 640px; }
+      h1 { font-size: 2rem; margin: 0 0 0.25rem; letter-spacing: -0.02em; }
+      p.tagline { color: var(--muted); margin: 0 0 2rem; }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1rem;
+      }
+      .card h2 {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin: 0 0 0.75rem;
+      }
+      pre {
+        margin: 0;
+        overflow-x: auto;
+        padding: 0.9rem 1rem;
+        background: #0b0d10;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font: 0.9rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: var(--fg);
+      }
+      a { color: var(--accent); }
+      footer { color: var(--muted); font-size: 0.85rem; margin-top: 1.5rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Agent Desktop</h1>
+      <p class="tagline">
+        Manage AI coding agents — for people who run lots of agents but only want
+        to think about one thing at a time.
+      </p>
+
+      <div class="card">
+        <h2>Install on macOS or Linux</h2>
+        <pre>curl -fsSL https://smo-key.github.io/agent-desktop/install.sh | sh</pre>
+      </div>
+
+      <p>
+        Prefer to download by hand, or on Windows / Intel Mac?
+        <a href="https://github.com/smo-key/agent-desktop/releases/latest"
+          >Grab an installer from the latest release</a
+        >. The script auto-detects macOS (Apple Silicon) and Linux (x86_64 /
+        arm64); Windows and Intel-Mac builds are coming soon.
+      </p>
+
+      <footer>
+        <a href="https://github.com/smo-key/agent-desktop">Source on GitHub</a>
+        ·
+        <a href="https://smo-key.github.io/agent-desktop/install.sh"
+          >Read the install script</a
+        >
+      </footer>
+    </main>
+  </body>
+</html>
