@@ -3,6 +3,16 @@
 All notable changes to this project are documented here.
 This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
 
+## [0.2.2] - 2026-06-14
+
+### Documentation
+
+- **hide-pre-launch-subagents**: Note concurrent Surface Subagents delta
+
+### Miscellaneous
+
+- Bump version to 0.2.2
+
 ## [0.2.1] - 2026-06-14
 
 ### Miscellaneous
