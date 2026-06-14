@@ -43,3 +43,23 @@ The existing parsers (`parse_session_subagents`, `parse_standalone_subagents`) s
 - **An unknown-`started_at` zombie could leak through** → Very unlikely (zombies carry timestamps); accepted as the cost of never hiding a live agent. If it ever surfaces, the record resolves on the next watcher pass.
 - **Clock skew between record `started_at` and captured launch time** → Both are wall-clock Unix millis from the same machine/process clock; the realistic gap between "prior run" and "this launch" is large, so a strict `<` comparison is safe.
 - **A subagent that legitimately started before launch and is still alive is dropped** → Cannot happen for watched sessions: the app kills all its PTYs on close, and only app-owned sessions are watched.
+
+## Coordination: concurrent edit of the same requirement
+
+The active change `add-inbox-workflow-subagent-rows` ALSO carries a
+`## MODIFIED Requirements` delta on the **same** `Surface Subagents` requirement
+(a larger rework: nested rows on every lane, standalone-Task rows, workflow/phase
+grouping, duration-alive, a hide-by-setting toggle, and an "only LIVE subagents
+shown — exited ones drop off" rule). Because `MODIFIED` REPLACES the whole
+requirement at archive time, the two deltas conflict: whichever archives **second**
+clobbers the first's version.
+
+Decision (2026-06-13): **leave both changes active; do not archive this one yet.**
+Whichever change archives last MUST first rebase its `Surface Subagents` delta onto
+the then-current main spec so both reworks survive.
+
+The runtime behaviors are **complementary, not redundant** — their "exited drop off"
+rule hides `done`/`error` subagents, but a killed-on-close zombie keeps status
+`running`, so only THIS change's pre-launch filter removes it. The two filters
+compose cleanly at the code level (no code conflict); the conflict is purely in the
+spec delta file.
