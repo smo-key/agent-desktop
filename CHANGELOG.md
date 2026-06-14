@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
 
+## [0.1.9] - 2026-06-14
+
+### Bug Fixes
+
+- **test**: Make event-hook delivery test work on Windows (named pipe)
+
 ## [0.1.8] - 2026-06-14
 
 ### Bug Fixes
