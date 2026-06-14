@@ -69,6 +69,13 @@ Intel target `x86_64-apple-darwin` is intentionally excluded: it requires the
 `macos-13` Intel runner, which GitHub is retiring, and Apple-Silicon `.dmg`s
 plus Rosetta cover Intel Macs.)
 
+The Windows target is **best-effort**: its leg SHALL be `continue-on-error` so a
+Windows build failure does NOT fail the build matrix or block the release. (The
+Windows native build does not yet compile because `src-tauri` uses Unix-domain
+sockets for its event + orchestration IPC; the Windows installer is restored once
+that IPC is ported to named pipes.) macOS and Linux remain **required** — a
+failure on either hard-fails the matrix and blocks publishing.
+
 #### Scenario: All targets build their native installers
 
 - **WHEN** a release builds
@@ -80,6 +87,19 @@ plus Rosetta cover Intel Macs.)
 
 - **WHEN** one matrix target fails to build
 - **THEN** the remaining targets continue and still produce their artifacts
+
+#### Scenario: Windows is best-effort
+
+- **WHEN** the Windows leg fails but macOS and Linux succeed
+- **THEN** the build matrix still succeeds (Windows is `continue-on-error`) and
+  the release is published with the macOS + Linux installers, without the Windows
+  artifacts
+
+#### Scenario: A required target fails
+
+- **WHEN** the macOS or a Linux leg fails to build
+- **THEN** the build matrix fails, the release is NOT published, and it stays a
+  draft
 
 ### Requirement: Quality gate before packaging
 
@@ -93,14 +113,23 @@ coverage) and SHALL NOT package or publish an artifact if the gate fails.
 
 ### Requirement: Single GitHub Release with all platform artifacts
 
-The pipeline SHALL publish exactly one GitHub Release per version, tagged
-`v<version>`, with every successful target's installers attached to it.
+The pipeline SHALL create exactly one GitHub Release per version, tagged
+`v<version>`, as a **draft** up front, attach every successful target's
+installers to it, and then **publish (undraft)** it once the build matrix
+completes successfully (macOS + Linux required; Windows best-effort). If a
+required target fails the release SHALL remain a draft.
 
 #### Scenario: Release published with attachments
 
-- **WHEN** the matrix builds complete for version `X`
-- **THEN** a single GitHub Release `vX` exists with each built platform's
-  installer(s) attached
+- **WHEN** the build matrix completes for version `X` with macOS and Linux
+  succeeding
+- **THEN** the single GitHub Release `vX` is flipped from draft to published with
+  each successful platform's installer(s) attached
+
+#### Scenario: Draft retained when a required target fails
+
+- **WHEN** a required (macOS or Linux) target fails for version `X`
+- **THEN** the `publish-release` job is skipped and Release `vX` remains a draft
 
 ### Requirement: Build caching
 

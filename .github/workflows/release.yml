@@ -200,6 +200,14 @@ jobs:
           - runner: ubuntu-22.04-arm
             triple: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
+    # Windows is BEST-EFFORT for now: its native build does not yet compile
+    # (src-tauri's events.rs/orchestration.rs use Unix-domain sockets, which do
+    # not exist on Windows). Mark ONLY the Windows leg continue-on-error so a
+    # Windows failure does not fail the build matrix or block `publish-release` —
+    # macOS + Linux are released now and the Windows installer is added once the
+    # IPC is ported to named pipes. macOS/Linux failures still hard-fail the
+    # matrix and correctly block publishing an incomplete release.
+    continue-on-error: ${{ contains(matrix.triple, 'windows') }}
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v6
@@ -374,7 +382,11 @@ jobs:
           args: --target ${{ matrix.triple }}
 
   # ---------------------------------------------------------------------------
-  # publish-release: flip the draft to published once every matrix leg uploaded.
+  # publish-release: flip the draft to published once the build matrix finishes.
+  # The Windows leg is continue-on-error (best-effort), so `build` succeeds — and
+  # this job runs — as long as macOS + Linux built and uploaded; a Windows
+  # failure no longer leaves the release stuck as a draft. If macOS or Linux
+  # fails, `build` fails, this job is skipped, and the release stays a draft.
   # ---------------------------------------------------------------------------
   publish-release:
     needs: [gate, create-release, build]
