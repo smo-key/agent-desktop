@@ -58,7 +58,10 @@ depending on `jq` so that it runs on a stock macOS.
 
 ### Requirement: Download integrity verification
 The installer SHALL verify the downloaded asset against the sha256 `digest`
-reported by the GitHub API before installing, and SHALL abort on mismatch.
+reported by the GitHub API before installing, and SHALL abort on mismatch. It
+SHALL accept only a well-formed `sha256:<64 hex>` digest belonging to the matched
+asset, and SHALL refuse to install (rather than install unverified) when no such
+digest is available.
 
 #### Scenario: Digest matches
 
@@ -69,6 +72,11 @@ reported by the GitHub API before installing, and SHALL abort on mismatch.
 
 - **WHEN** the sha256 of the downloaded file does not equal the API-provided digest
 - **THEN** the script prints an integrity-failure error, removes the downloaded file, and exits non-zero without installing
+
+#### Scenario: Asset has no usable digest
+
+- **WHEN** the matched asset's digest is missing, `null`, or not a `sha256:<64 hex>` value, or would be drawn from a different asset
+- **THEN** the script refuses to install, reports that no verifiable installer was found, and points the user to the releases page for a manual download
 
 ### Requirement: macOS installation
 On macOS the installer SHALL install the application from the downloaded `.dmg`

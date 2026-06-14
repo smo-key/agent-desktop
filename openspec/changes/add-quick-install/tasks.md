@@ -47,7 +47,8 @@
 ## 5. Verification
 
 - [x] 5.1 Run the shell test suite green.
-- [ ] 5.2 Manually run the one-liner end-to-end on macOS arm64 (or document the
-  manual smoke check performed) — installs, clears quarantine, launches.
-- [ ] 5.3 File the follow-up item: Windows build fix + `install.ps1`, Intel-Mac
-  build leg, and the `publish-release`-skipped investigation.
+- [x] 5.2 Manually run the one-liner end-to-end on macOS arm64 — real install
+  to /Applications succeeded, quarantine cleared, exit 0 (launch path verified via
+  is_interactive). Released bundle's codesign --strict quirk logged in issue #2.
+- [x] 5.3 Filed follow-up GitHub issue #2 (Windows build + install.ps1, Intel-Mac
+  leg, publish-release skip, and the codesign --strict finding).
