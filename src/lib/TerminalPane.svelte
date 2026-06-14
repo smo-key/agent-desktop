@@ -6,6 +6,7 @@
   import { Channel, invoke } from '@tauri-apps/api/core';
   import { registerTerminal, unregisterTerminal } from './layout/terminals';
   import { fileLinkAt, urlAt } from './terminalLinks';
+  import { lineEditSeq } from './terminalKeys';
   import { openWith } from './settings/openWith.svelte';
   import { getUsagePaths } from './usage/paths';
   import { buildSpawnOverride } from './usage/spawn';
@@ -723,6 +724,24 @@
             }).catch(() => {});
           }
           return false;
+        }
+        // ⌘← / ⌘→: jump to the beginning / end of the current line (the macOS
+        // convention). xterm captures keys via a hidden <textarea> and forwards
+        // nothing for ⌘-modified arrows, so we translate them to the readline
+        // line-edge bytes (Ctrl-A / Ctrl-E) and write them ourselves. preventDefault
+        // + return false consumes the keystroke (no PTY echo, no webview accelerator).
+        if (e.type === 'keydown') {
+          const seq = lineEditSeq(e);
+          if (seq) {
+            e.preventDefault();
+            if (ptyId !== undefined) {
+              void invoke('pty_write', {
+                id: ptyId,
+                data: Array.from(enc.encode(seq))
+              }).catch(() => {});
+            }
+            return false;
+          }
         }
         // Esc INTERRUPT (claude panes): claude aborts the in-flight tool but fires no
         // PostToolUse/Stop for it, so the event-sourced status would stay pinned at

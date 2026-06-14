@@ -164,6 +164,11 @@ const MANUAL_SCENARIOS = {
     'webgl_restricted_to_stay_under_the_context_ceiling',
     'reparenting_does_not_remount_the_terminal',
     'ordered_teardown_leaves_no_leaks',
+    // ⌘←/⌘→ line-edit: the pure byte mapping (lineEditSeq) is enforced via
+    // terminalKeys.test.ts; the in-terminal wiring (the custom key handler's
+    // preventDefault + pty_write of the mapped byte) needs a live xterm+PTY and
+    // is confirmed in the app.
+    'cmd_left_or_cmd_right_in_a_focused_terminal_moves_to_the_line_edge',
   ]),
   // tiling-layout: every split/close/resize-math/focus/paneId-stability scenario
   // is a pure-tree unit test (enforced). What remains is genuinely live-DOM bound:
