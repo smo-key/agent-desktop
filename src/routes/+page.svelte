@@ -831,6 +831,11 @@
       <span class="title">Agent Mission Control</span>
     </div>
     <div class="tb-right" data-tauri-drag-region>
+      <!-- During the first-launch onboarding gate keep the titlebar (logo + drag
+           region) but hide these controls — they act on a workspace that isn't set
+           up yet. The empty cell still balances the centered title and stays a drag
+           region, so the window remains movable while the gate is up. -->
+      {#if !onboarding.visible}
       <!-- Opt back into pointer events (the bar is a drag region) so the buttons are
            clickable. Gear opens Settings; "?" opens the shortcuts modal (⌘/ and ?). -->
       <!-- Update pill (desktop-auto-update spec): leftmost of the right-side
@@ -908,6 +913,7 @@
         <Icon name="settings" size={14} />
       </button>
       <button class="help-btn" aria-label="Keyboard shortcuts" use:tooltip={{ text: 'Keyboard shortcuts (⌘/)', placement: 'bottom' }} onclick={() => help.show()}>?</button>
+      {/if}
     </div>
   </header>
 
@@ -1004,7 +1010,12 @@
 <HelpModal />
 <SettingsModal />
 <ConfirmModal />
-<VoicePanel />
+<!-- Voice input (the bottom-center mic FAB + the dictation panel) sits above the
+     onboarding gate's z-index, so hide it entirely while the first-launch gate is
+     up: the models it needs aren't downloaded yet and the takeover owns the screen. -->
+{#if !onboarding.visible}
+  <VoicePanel />
+{/if}
 <!-- First-launch model download gate: a full-screen takeover shown only while the
      on-device models the current voice selection needs are missing (and not skipped
      this session). Rendered last so it overlays the workspace. -->
@@ -1031,8 +1042,8 @@
     display: flex;
     align-items: center;
     gap: 9px;
-    height: 40px;
-    flex: 0 0 40px;
+    height: var(--titlebar-h);
+    flex: 0 0 var(--titlebar-h);
     padding: 0 14px 0 80px;
     background: var(--space-900);
     border-bottom: 1px solid var(--line-subtle);
