@@ -27,6 +27,7 @@
   import { startNewSession } from '$lib/launcher/newSession';
   import { workspace } from '$lib/layout/workspace.svelte';
   import { insertFilenameInto, focusedTerminalHandle } from '$lib/layout/insertFilename';
+  import { initFileDrop } from '$lib/layout/fileDrop';
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
   import { restorePersistedLayout, watchAndPersist } from '$lib/layout/store-backend.svelte';
   import { snapshots } from '$lib/usage/snapshots.svelte';
@@ -300,6 +301,14 @@
       unlistenNotifyClick = un;
     });
 
+    // Drag-drop OS files onto a session (terminal-file-drop): native drag-drop
+    // hands us real paths + the cursor position; images paste as inline images,
+    // other files insert as quoted paths, drops elsewhere are inert.
+    let unlistenFileDrop: (() => void) | undefined;
+    void initFileDrop().then((un) => {
+      unlistenFileDrop = un;
+    });
+
     return () => {
       stopUpdatePolling();
       stopWatching?.();
@@ -310,6 +319,7 @@
       unlistenTermClose?.();
       unlistenVoice?.();
       unlistenNotifyClick?.();
+      unlistenFileDrop?.();
       events.onEvent = undefined;
     };
   });

@@ -1369,6 +1369,26 @@ fn orchestration_reply(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Decode the image file at `path` and place it on the OS clipboard as an image,
+/// so a subsequent Ctrl+V (`0x16`) written into an agent's PTY is ingested as an
+/// inline image attachment — the drag-drop-onto-session flow (terminal-file-drop).
+/// Decoding to RGBA happens here (the clipboard image is raw pixels, not an
+/// encoded blob), which transparently handles non-PNG inputs. Every failure
+/// (unreadable file, undecodable/unsupported image, clipboard error) is returned
+/// as a string so the frontend can skip that file without crashing the drop.
+#[tauri::command]
+fn copy_image_to_clipboard(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let rgba = image::open(&path)
+        .map_err(|e| format!("decode {path}: {e}"))?
+        .to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    let img = tauri::image::Image::new_owned(rgba.into_raw(), w, h);
+    app.clipboard()
+        .write_image(&img)
+        .map_err(|e| format!("clipboard write_image: {e}"))
+}
+
 pub fn run() {
     // Capture the app launch time (Unix epoch millis) ONCE for this run. The
     // subagents seed/watcher use it to drop subagents that predate this launch
@@ -1402,6 +1422,11 @@ pub fn run() {
         // + `process:default` in capabilities/default.json.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Clipboard image write for drag-drop-onto-session (terminal-file-drop):
+        // `copy_image_to_clipboard` calls this plugin's Rust API directly, so the
+        // frontend never invokes a clipboard IPC command and no clipboard
+        // capability is granted.
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(move |app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -1573,7 +1598,8 @@ pub fn run() {
             polish::voice_polish,
             whisper_server::voice_transcribe_partial,
             voice_bundled_model_path,
-            voice_model_path
+            voice_model_path,
+            copy_image_to_clipboard
         ])
         .on_window_event(|window, event| {
             // Kill + reap every pane on app quit so no zombie/orphan processes

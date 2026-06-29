@@ -68,6 +68,16 @@ tokio = { version = "1", features = ["sync", "time", "process", "io-util"] }
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
 
+# Place a dropped image on the OS clipboard so a Ctrl+V (0x16) into an agent PTY
+# is ingested as an inline image attachment (terminal-file-drop). The clipboard
+# plugin's Rust `ClipboardExt::write_image` is called directly from our own
+# `copy_image_to_clipboard` command — no frontend IPC, so no extra capability is
+# needed. `image` decodes any common format (png/jpeg/gif/webp/bmp) to the RGBA
+# the clipboard image expects; default-features off drops the formats we don't
+# accept (and their heavier codecs).
+tauri-plugin-clipboard-manager = "2"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+
 # Native macOS NSEvent monitor for the voice-panel double-tap-right-Command
 # gesture (see src/voice_activation.rs). objc2 0.6 / objc2-app-kit 0.3 are the
 # tauri-2-compatible bindings (objc2 itself is already in the tree via the

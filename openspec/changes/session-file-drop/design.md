@@ -67,9 +67,13 @@ PTY via `handle.sendKeys('\x16')`, so the agent ingests them as `[Image #N]`.
 - **Alternative — insert image paths as text too:** uniform and simple, but the
   CLI would not render them as inline images, defeating the user's explicit
   "insert the image, like Cmd+V" request. Rejected.
-- **Image encoding:** clipboard image write takes PNG bytes. Non-PNG images
-  (jpg/gif/webp) are re-encoded to PNG by drawing to a canvas and reading
-  `toDataURL('image/png')` — the same technique already used in `logo.ts`.
+- **Image decode happens in Rust:** the clipboard image is raw RGBA, not an
+  encoded blob. A custom `copy_image_to_clipboard(path)` command reads the file,
+  decodes it (`image` crate — png/jpeg/gif/webp/bmp) to RGBA, and writes it via
+  the clipboard plugin's Rust API. This transparently handles non-PNG formats and
+  keeps the frontend trivial (`invoke` then `sendKeys('\x16')`), avoiding a JS
+  canvas re-encode, a JS clipboard package, and the asset-protocol scope a
+  webview file read would need.
 
 ### D3: Resolve the target pane by cursor position
 On `drop`/`over`, convert the native event `position` (physical px) to CSS px
@@ -90,11 +94,14 @@ re-implemented with pointer events (pointerdown/move/up + the existing
 `reorder()` calls), preserving identical behavior. Pointer-based DnD is immune
 to the native-drag-drop interception.
 
-### D5: New dependency `tauri-plugin-clipboard-manager`
-Used only for the image clipboard write (`writeImage`). Add the Rust plugin,
-register it, add the JS package, and grant `clipboard-manager:allow-write-image`
-in the window capability. `0x16` reuses the existing `pty_write` path — no new
-backend command for the keystroke.
+### D5: New dependencies `tauri-plugin-clipboard-manager` + `image`
+The clipboard write uses the plugin's Rust `ClipboardExt::write_image`, called
+from our own `copy_image_to_clipboard` command — so the frontend never invokes a
+clipboard IPC command and **no clipboard capability is granted** (capabilities
+gate frontend IPC, not Rust API calls). The `image` crate decodes the dropped
+file to RGBA. `0x16` reuses the existing `pty_write` path via the terminal
+handle's `sendKeys` — no new backend command for the keystroke. No JS clipboard
+package is added.
 
 ### D6: Multiple / mixed files
 A drop may carry several paths. Non-image paths are inserted (space-separated).

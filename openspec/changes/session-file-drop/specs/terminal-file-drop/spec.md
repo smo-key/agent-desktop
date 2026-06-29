@@ -43,9 +43,10 @@ the cursor, the drop SHALL be a no-op.
 When the dropped paths include image files, for each image the system SHALL place
 the image on the OS clipboard and send the `Ctrl+V` byte (`0x16`) to the target
 session's PTY, so the agent ingests it as an inline image attachment rather than
-as path text. Non-PNG images SHALL be re-encoded to PNG before being placed on
-the clipboard. When multiple images are dropped together, they SHALL be pasted
-sequentially (one clipboard image consumed per `Ctrl+V`).
+as path text. Images in any common format (PNG/JPEG/GIF/WebP/BMP) SHALL be
+decoded so they can be placed on the clipboard as an image. When multiple images
+are dropped together, they SHALL be pasted sequentially (one clipboard image
+consumed per `Ctrl+V`), and the number pasted from a single drop MAY be capped.
 
 #### Scenario: Dropping a PNG pastes it as an image
 
@@ -53,10 +54,10 @@ sequentially (one clipboard image consumed per `Ctrl+V`).
 - **THEN** the image is placed on the clipboard and `0x16` is written to that
   session's PTY, so the agent shows it as an inline image attachment (not a path)
 
-#### Scenario: A non-PNG image is re-encoded before paste
+#### Scenario: A non-PNG image is decoded before paste
 
 - **WHEN** the user drops a `.jpg`/`.gif`/`.webp` image onto a live session
-- **THEN** the image is re-encoded to PNG and placed on the clipboard before
+- **THEN** the image is decoded and placed on the clipboard as an image before
   `0x16` is sent
 
 #### Scenario: Multiple images are pasted one at a time
