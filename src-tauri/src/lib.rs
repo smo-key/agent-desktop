@@ -911,20 +911,6 @@ fn project_tasks_save(project_path: String, json: String) -> Result<(), String> 
     project_store::save_tasks(Path::new(&project_path), &json)
 }
 
-/// Load a project's `.agent-desktop/config.json`, or `None` when it does not exist
-/// yet. See [`project_store::load_config`].
-#[tauri::command]
-fn project_config_load(project_path: String) -> Result<Option<String>, String> {
-    project_store::load_config(Path::new(&project_path))
-}
-
-/// Atomically persist a project's `.agent-desktop/config.json` (atomic temp+rename,
-/// creating the dir if needed). See [`project_store::save_config`].
-#[tauri::command]
-fn project_config_save(project_path: String, json: String) -> Result<(), String> {
-    project_store::save_config(Path::new(&project_path), &json)
-}
-
 /// Resolve `<app_data_dir>`, creating it if needed.
 fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
@@ -1280,23 +1266,13 @@ async fn repo_web_url(repo_path: String) -> Result<Option<String>, String> {
     Ok(pr::repo_url_for(&repo_path).await)
 }
 
-/// Create a fresh session worktree off `repo_path`'s HEAD (auto-worktree
-/// projects). Returns `{ path, branch, base }`; ensures `.worktrees` is gitignored
-/// and the branch is unique. `Err` when `repo_path` isn't a git repo or git fails.
+/// Create a fresh session worktree off `repo_path`'s HEAD (manual worktree
+/// management UI). Returns `{ path, branch, base }`; ensures `.worktrees` is
+/// gitignored and the branch is unique. `Err` when `repo_path` isn't a git repo
+/// or git fails.
 #[tauri::command(async)]
 fn worktree_create(repo_path: String) -> Result<git::WorktreeCreated, String> {
     git::worktree_create(&repo_path)
-}
-
-/// Remove a session worktree (and its branch) only if it's clean — empty
-/// `status --porcelain` and zero commits past `base`. Returns `{ removed, reason }`;
-/// a kept (dirty / has-commits) worktree is NOT an error. `Err` only on git failure.
-#[tauri::command(async)]
-fn worktree_remove_if_clean(
-    worktree_path: String,
-    base: String,
-) -> Result<git::WorktreeRemoval, String> {
-    git::worktree_remove_if_clean(&worktree_path, &base)
 }
 
 /// List the session worktrees under `<repo>/.worktrees/`, each as
@@ -1540,8 +1516,6 @@ pub fn run() {
             specialists_delete,
             project_tasks_load,
             project_tasks_save,
-            project_config_load,
-            project_config_save,
             usage_paths,
             usage_snapshots,
             subagents_for,
@@ -1558,7 +1532,6 @@ pub fn run() {
             open_prs_for,
             repo_web_url,
             worktree_create,
-            worktree_remove_if_clean,
             worktree_list,
             worktree_remove,
             events_for,

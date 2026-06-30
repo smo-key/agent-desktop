@@ -48,9 +48,8 @@ export class WorktreePanel {
 
   /**
    * Open a new session whose working directory IS the worktree's path. Uses the
-   * shared launch path (`buildLaunchPlan` + `workspace.launch`) with NO
-   * `worktreeBase` — opening an EXISTING worktree must not mark it for auto-removal
-   * on close (auto-cleanup only applies to sessions that auto-created the worktree).
+   * shared launch path (`buildLaunchPlan` + `workspace.launch`) — the worktree's
+   * path simply becomes the session's `cwd` like any other folder.
    */
   open(wt: Worktree): void {
     workspace.launch(

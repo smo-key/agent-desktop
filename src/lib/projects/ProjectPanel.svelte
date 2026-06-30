@@ -14,7 +14,6 @@
   import type { AgentRow } from '../overview/roster';
   import type { Project, ProjectDraft } from './projects';
   import { projects } from './projects.svelte';
-  import { saveAutoWorktree } from './projectFolderConfig';
   import { projectFilter } from './projectFilter.svelte';
   import {
     projectCounts,
@@ -170,27 +169,13 @@
   );
 
   async function saveCreate(draft: ProjectDraft) {
-    // `autoWorktree` lives in the project folder's config, not the record — split it
-    // out before persisting the project. On CREATE we only WRITE the config when the
-    // user explicitly enabled it (`=== true`): the create form is not seeded from any
-    // existing folder config, so writing the default `false` would both materialize a
-    // redundant committed `config.json` and clobber a teammate-committed `true` when a
-    // folder is re-added. Absent config already means `false`.
-    const { autoWorktree, ...record } = draft;
-    const stored = await projects.add({ id: crypto.randomUUID(), ...record });
-    if (autoWorktree === true) {
-      await saveAutoWorktree(stored.path, autoWorktree);
-    }
+    const stored = await projects.add({ id: crypto.randomUUID(), ...draft });
     projectFilter.select(stored.id);
     creating = false;
   }
 
   async function saveEdit(id: string, draft: ProjectDraft) {
-    const { autoWorktree, ...record } = draft;
-    await projects.update(id, record);
-    if (typeof autoWorktree === 'boolean') {
-      await saveAutoWorktree(record.path, autoWorktree);
-    }
+    await projects.update(id, draft);
     editingId = null;
   }
 </script>

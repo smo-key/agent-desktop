@@ -27,14 +27,6 @@ export interface LaunchRequest {
   placement: Placement;
   /** OPTIONAL id of the project this session is launched under. */
   projectId?: string | null;
-  /**
-   * OPTIONAL absolute path of the git worktree this session runs in (resolved by
-   * the caller BEFORE building the plan, so the builder stays pure). Present only
-   * when the project had `autoWorktree` and worktree creation succeeded.
-   */
-  worktreePath?: string | null;
-  /** OPTIONAL base commit SHA the worktree's branch forked from (HEAD at creation). */
-  worktreeBase?: string | null;
 }
 
 /**
@@ -62,16 +54,6 @@ export interface LaunchPlan {
    * the pane's registry entry; never inferred.
    */
   projectId: string | undefined;
-  /**
-   * OPTIONAL absolute path of the git worktree this session runs in (already the
-   * `cwd` when present). Recorded verbatim on the pane's registry entry so a later
-   * cleanup task can find + remove it. `undefined` when the session launched in the
-   * project folder (no `autoWorktree`, or creation failed). Resolved by the caller;
-   * the builder only passes it through.
-   */
-  worktreePath: string | undefined;
-  /** OPTIONAL base SHA the worktree's branch forked from. `undefined` without a worktree. */
-  worktreeBase: string | undefined;
 }
 
 /** Whether a placement splits the focused pane (vs. opening a fresh tab). */
@@ -123,24 +105,11 @@ export function buildLaunchPlan(
       ? req.projectId
       : undefined;
 
-  // Carry the resolved worktree path + base verbatim (blank/missing -> undefined),
-  // same passthrough rule as projectId. Resolution happens BEFORE this builder.
-  const worktreePath =
-    typeof req.worktreePath === 'string' && req.worktreePath.trim() !== ''
-      ? req.worktreePath
-      : undefined;
-  const worktreeBase =
-    typeof req.worktreeBase === 'string' && req.worktreeBase.trim() !== ''
-      ? req.worktreeBase
-      : undefined;
-
   return {
     program: 'claude',
     cwd,
     placement,
     initialInput,
-    projectId,
-    worktreePath,
-    worktreeBase
+    projectId
   };
 }

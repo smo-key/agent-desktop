@@ -701,8 +701,7 @@
     // the launcher when no single project is in focus. Same path as the inbox "+".
     if (meta && (key === 'n' || key === 'N')) {
       e.preventDefault();
-      // Fire-and-forget: startNewSession is async (it may create a worktree first).
-      void startNewSession();
+      startNewSession();
       return;
     }
 

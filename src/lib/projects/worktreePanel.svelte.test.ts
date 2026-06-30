@@ -138,7 +138,5 @@ describe('WorktreePanel.open', () => {
     expect(plan.cwd).toBe('/repo/.worktrees/a');
     expect(plan.projectId).toBe('proj-7');
     expect(plan.placement).toBe('tab');
-    // CRITICAL: opening an existing worktree must NOT mark it for auto-removal.
-    expect(plan.worktreeBase).toBeUndefined();
   });
 });

@@ -159,8 +159,8 @@ describe('logo field — persistence', () => {
 
 describe('autoWorktree no longer lives on the record', () => {
   it('Not stored in the registry', () => {
-    // autoWorktree moved to <project>/.agent-desktop/config.json; a legacy record
-    // that still carries the flag loses it on parse (a migration lifts the value).
+    // The auto-worktree feature was removed; a legacy record that still carries
+    // the flag loses it on parse (normalize strips it as a one-time cleanup).
     const raw = JSON.stringify([{ ...p({ id: 'a' }), autoWorktree: true }]);
     const back = parseProjects(raw);
     expect(back).toHaveLength(1);

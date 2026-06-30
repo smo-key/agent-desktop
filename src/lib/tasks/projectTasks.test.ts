@@ -14,12 +14,8 @@ import {
   taskSpawnSpec,
   serializeProjectTasks,
   parseProjectTasks,
-  parseProjectConfig,
-  serializeProjectConfig,
-  PROJECT_CONFIG_VERSION,
   type TaskDef,
-  type TasksByProject,
-  type ProjectConfig
+  type TasksByProject
 } from './projectTasks';
 
 // Tests for the PURE project-terminals model (project-terminals capability). The
@@ -389,52 +385,5 @@ describe('project-terminals — Per-project sanitized tasks file', () => {
       t({ id: 'g', kind: 'agent', command: null, prompt: 'fix' })
     ];
     expect(parseProjectTasks(serializeProjectTasks(defs))).toEqual(sanitized);
-  });
-});
-
-describe('project-terminals — Per-project config file', () => {
-  it('round-trips autoWorktree true', () => {
-    const cfg: ProjectConfig = { autoWorktree: true };
-    expect(parseProjectConfig(serializeProjectConfig(cfg))).toEqual({ autoWorktree: true });
-  });
-
-  it('round-trips autoWorktree false', () => {
-    const cfg: ProjectConfig = { autoWorktree: false };
-    expect(parseProjectConfig(serializeProjectConfig(cfg))).toEqual({ autoWorktree: false });
-  });
-
-  it('round-trips autoWorktree absent (defaults off, omitted on disk)', () => {
-    const env = JSON.parse(serializeProjectConfig({}));
-    expect(env.version).toBe(PROJECT_CONFIG_VERSION);
-    expect(env).not.toHaveProperty('autoWorktree');
-    expect(parseProjectConfig(serializeProjectConfig({}))).toEqual({});
-  });
-
-  it('carries the version and only includes autoWorktree when boolean', () => {
-    const env = JSON.parse(serializeProjectConfig({ autoWorktree: true }));
-    expect(env.version).toBe(PROJECT_CONFIG_VERSION);
-    expect(env.autoWorktree).toBe(true);
-  });
-
-  it('Absent config defaults off', () => {
-    // An absent / unparseable config parses to {} (autoWorktree undefined ⇒ off).
-    expect(parseProjectConfig(null)).toEqual({});
-    expect(parseProjectConfig(undefined)).toEqual({});
-    expect(parseProjectConfig('')).toEqual({});
-    expect(parseProjectConfig('not json')).toEqual({});
-    expect(parseProjectConfig('[]')).toEqual({});
-    expect(parseProjectConfig('null')).toEqual({});
-    // autoWorktree present but not a boolean ⇒ ignored.
-    expect(parseProjectConfig('{"version":1,"autoWorktree":"yes"}')).toEqual({});
-    // A config that simply omits autoWorktree leaves it undefined (treated false).
-    expect(parseProjectConfig('{"version":1}').autoWorktree).toBeUndefined();
-  });
-
-  it('Auto-worktree read from config', () => {
-    // A config envelope carrying autoWorktree:true reads back as true; false as
-    // false; only a real boolean is honored.
-    expect(parseProjectConfig('{"version":1,"autoWorktree":true}')).toEqual({ autoWorktree: true });
-    expect(parseProjectConfig('{"version":1,"autoWorktree":false}')).toEqual({ autoWorktree: false });
-    expect(parseProjectConfig('{"version":1}')).toEqual({});
   });
 });

@@ -49,8 +49,6 @@ function seedCoordinator(projectId = 'proj-A'): string {
     projectId,
     undefined,
     undefined,
-    undefined,
-    undefined,
     'coordinator'
   );
   const entry = workspace.workspaces.find((w) => w.id === wsId)!;

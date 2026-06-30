@@ -17,7 +17,6 @@
 // parameters that are NOT part of the topology (program + cwd). Persistence
 // (task 4.x) serializes exactly `{ workspaces: [...], activeWorkspaceId }`.
 
-import { invoke } from '@tauri-apps/api/core';
 import {
   freshWorkspace,
   splitLeaf,
@@ -57,19 +56,6 @@ export interface PaneSession {
    * launched under a project (e.g. split shells, restored pre-projects sessions).
    */
   projectId?: string;
-  /**
-   * OPTIONAL absolute path of the git WORKTREE this pane was launched into (its
-   * `cwd` is this worktree). Recorded verbatim at launch (RUNTIME-ONLY — not
-   * serialized by `persistence.ts`, so the cleanup association is dropped across a
-   * restart; the management UI's prune is the escape hatch for such orphans) when
-   * the pane's project had `autoWorktree` and worktree creation succeeded, so the
-   * permanent-close paths can clean the worktree up when the agent ends. Absent for
-   * panes launched in the plain project folder (no autoWorktree, or creation fell back).
-   */
-  worktreePath?: string;
-  /** OPTIONAL base SHA the worktree's branch forked from (HEAD at creation). Absent
-   *  for panes without a worktree. Recorded alongside `worktreePath`. */
-  worktreeBase?: string;
   /**
    * The APP-OWNED Claude session id for a `claude` pane (a uuid generated when the
    * pane is created, or carried over from a persisted save). Passed to claude as
@@ -223,8 +209,6 @@ function makeEntry(
   paneId: string = nextPaneId(),
   initialInput?: string,
   projectId?: string,
-  worktreePath?: string,
-  worktreeBase?: string,
   specialist?: string,
   extraArgs?: string[],
   role?: 'coordinator',
@@ -240,8 +224,6 @@ function makeEntry(
         cwd,
         initialInput,
         projectId,
-        worktreePath,
-        worktreeBase,
         specialist,
         extraArgs,
         role,
@@ -365,8 +347,6 @@ export class WorkspaceStore {
     cwd: string | null = this.activeCwd(),
     initialInput?: string,
     projectId?: string,
-    worktreePath?: string,
-    worktreeBase?: string,
     specialist?: string,
     extraArgs?: string[],
     role?: 'coordinator',
@@ -380,8 +360,6 @@ export class WorkspaceStore {
       nextPaneId(),
       initialInput,
       projectId,
-      worktreePath,
-      worktreeBase,
       specialist,
       extraArgs,
       role,
@@ -406,15 +384,8 @@ export class WorkspaceStore {
     if (idx < 0) return;
 
     const wasActive = this.activeWorkspaceId === id;
-    const closing = this.workspaces[idx];
     const next = this.workspaces.filter((w) => w.id !== id);
     this.workspaces = next;
-
-    // PERMANENT close: a workspace can hold SEVERAL panes — best-effort remove the
-    // auto-created worktree of each closing pane (only if clean; delegated to Rust).
-    for (const session of Object.values(closing.registry)) {
-      cleanupWorktree(session);
-    }
 
     if (wasActive) {
       // Activate the entry that now occupies the closed slot, else the new last,
@@ -451,8 +422,6 @@ export class WorkspaceStore {
     cwd: string | null = null,
     initialInput?: string,
     projectId?: string,
-    worktreePath?: string,
-    worktreeBase?: string,
     specialist?: string,
     extraArgs?: string[],
     role?: 'coordinator',
@@ -467,8 +436,6 @@ export class WorkspaceStore {
         cwd,
         initialInput,
         projectId,
-        worktreePath,
-        worktreeBase,
         specialist,
         extraArgs,
         role,
@@ -525,8 +492,6 @@ export class WorkspaceStore {
     initialInput?: string,
     where: SplitWhere = 'after',
     projectId?: string,
-    worktreePath?: string,
-    worktreeBase?: string,
     specialist?: string,
     extraArgs?: string[],
     role?: 'coordinator',
@@ -540,8 +505,6 @@ export class WorkspaceStore {
       cwd,
       initialInput,
       projectId,
-      worktreePath,
-      worktreeBase,
       specialist,
       extraArgs,
       role,
@@ -587,8 +550,6 @@ export class WorkspaceStore {
     placement: 'tab' | 'split-right' | 'split-down';
     initialInput?: string;
     projectId?: string;
-    worktreePath?: string;
-    worktreeBase?: string;
     /** OPTIONAL specialist name this pane is spawned AS (orchestration spawn_agent). */
     specialist?: string;
     /** OPTIONAL extra claude CLI args (specialist persona/model/tool flags, OR the
@@ -604,8 +565,6 @@ export class WorkspaceStore {
       cwd,
       initialInput,
       projectId,
-      worktreePath,
-      worktreeBase,
       specialist,
       extraArgs,
       role,
@@ -622,8 +581,6 @@ export class WorkspaceStore {
         cwd,
         initialInput,
         projectId,
-        worktreePath,
-        worktreeBase,
         specialist,
         extraArgs,
         role,
@@ -642,8 +599,6 @@ export class WorkspaceStore {
       initialInput,
       'after',
       projectId,
-      worktreePath,
-      worktreeBase,
       specialist,
       extraArgs,
       role,
@@ -669,11 +624,8 @@ export class WorkspaceStore {
     // references its paneId (the only-leaf close is a no-op, so the pane
     // survives and we correctly skip pruning). paneIds are unique per leaf.
     if (closing && !leafByPaneId(nextWs.root, closing.paneId)) {
-      const removed = entry.registry[closing.paneId];
       const { [closing.paneId]: _removed, ...rest } = entry.registry;
       entry.registry = rest;
-      // PERMANENT close: best-effort remove the auto-created worktree if clean.
-      cleanupWorktree(removed);
     }
   }
 
@@ -948,9 +900,8 @@ export class WorkspaceStore {
   /**
    * DELETE the agent in pane `paneId` entirely (used by the Completed context
    * menu's "Delete"). If its workspace has OTHER panes, remove just that leaf (its
-   * TerminalPane unmounts, killing any PTY), prune its registry entry, and clean up
-   * its worktree (a permanent close); if it is the ONLY pane, close the whole
-   * workspace (which cleans up too). No-op when the pane is gone.
+   * TerminalPane unmounts, killing any PTY) and prune its registry entry; if it is
+   * the ONLY pane, close the whole workspace. No-op when the pane is gone.
    */
   deleteAgent(paneId: string): void {
     for (const entry of this.workspaces) {
@@ -958,14 +909,10 @@ export class WorkspaceStore {
       if (!leaf) continue;
       if (leavesInOrder(entry.ws.root).length > 1) {
         // More than one pane here: remove just this leaf + prune its registry entry.
-        const removed = entry.registry[paneId];
         entry.ws = closeLeaf(entry.ws, leaf.id);
         if (!leafByPaneId(entry.ws.root, paneId)) {
           const { [paneId]: _removed, ...rest } = entry.registry;
           entry.registry = rest;
-          // Permanent removal (pane gone, PTY killed): clean up its worktree like
-          // the other close paths. (The single-pane branch routes via closeWorkspace.)
-          cleanupWorktree(removed);
         }
       } else {
         // The only pane in its workspace: close the whole workspace.
@@ -1031,23 +978,6 @@ export class WorkspaceStore {
       ? activeWorkspaceId
       : entries[0].id;
   }
-}
-
-/**
- * Best-effort, FIRE-AND-FORGET cleanup of a permanently-closed pane's auto-created
- * git worktree: when the closing registry entry carries a `worktreePath` (and its
- * `worktreeBase`), ask Rust to remove the worktree ONLY IF it is clean (the
- * clean-vs-dirty decision lives in `worktree_remove_if_clean`). Never blocks the
- * close path and never throws — a rejected invoke is swallowed. Called from the
- * PERMANENT-close paths (`closeFocused`, `closeWorkspace`) only; archiving
- * (`closeAgent`) keeps the session resumable and must KEEP its worktree.
- */
-function cleanupWorktree(entry: PaneSession | undefined): void {
-  if (!entry?.worktreePath || !entry.worktreeBase) return;
-  void invoke('worktree_remove_if_clean', {
-    worktreePath: entry.worktreePath,
-    base: entry.worktreeBase
-  }).catch(() => {});
 }
 
 /** Find a leaf by its `paneId` (the tree helpers key on `id`, not `paneId`). */

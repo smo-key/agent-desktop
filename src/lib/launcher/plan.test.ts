@@ -139,33 +139,4 @@ describe('buildLaunchPlan — normalization', () => {
       buildLaunchPlan({ folder: '/p', placement: 'tab', projectId: '  ' }).projectId
     ).toBeUndefined();
   });
-
-  it('carries worktreePath/worktreeBase through verbatim (collapsing blank to undefined)', () => {
-    // The caller resolves the worktree BEFORE building the plan; the builder just
-    // passes the path + base through verbatim (no I/O), mirroring projectId's
-    // blank/missing-collapses-to-undefined rule.
-    const wt = buildLaunchPlan({
-      folder: '/repo/.worktrees/session-x',
-      placement: 'tab',
-      worktreePath: '/repo/.worktrees/session-x',
-      worktreeBase: 'abc123'
-    });
-    expect(wt.worktreePath).toBe('/repo/.worktrees/session-x');
-    expect(wt.worktreeBase).toBe('abc123');
-
-    // Missing -> undefined.
-    const none = buildLaunchPlan({ folder: '/p', placement: 'tab' });
-    expect(none.worktreePath).toBeUndefined();
-    expect(none.worktreeBase).toBeUndefined();
-
-    // Blank / whitespace-only -> undefined.
-    const blank = buildLaunchPlan({
-      folder: '/p',
-      placement: 'tab',
-      worktreePath: '   ',
-      worktreeBase: ''
-    });
-    expect(blank.worktreePath).toBeUndefined();
-    expect(blank.worktreeBase).toBeUndefined();
-  });
 });

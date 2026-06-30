@@ -977,8 +977,7 @@
   /** New session: when a project is already selected, launch straight into it (no
    *  dialog); otherwise open the launcher to pick/create a project. */
   function newAgent() {
-    // Fire-and-forget: startNewSession is async (it may create a worktree first).
-    void startNewSession();
+    startNewSession();
   }
 
   // Flat ⌘↑/↓ cycling order: the project's COORDINATOR (its running row, or — when

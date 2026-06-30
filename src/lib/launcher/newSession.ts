@@ -16,56 +16,27 @@ import { projectFilter } from '../projects/projectFilter.svelte';
 import { workspace } from '../layout/workspace.svelte';
 import { buildLaunchPlan } from './plan';
 import { launcher } from './launcherStore.svelte';
-import { createWorktree } from './worktree';
-import { loadAutoWorktree } from '../projects/projectFolderConfig';
-import { toast } from '../ui/toastStore.svelte';
-
-/** Warning shown when a worktree was requested but couldn't be created. */
-const WORKTREE_FALLBACK_MSG =
-  "Couldn't create a worktree — launched in the project folder instead.";
 
 /**
  * Start a new agent session. Launches directly into the currently-filtered project
  * when one is selected (no popup); otherwise opens the launcher dialog.
  *
- * Async because a project with `autoWorktree` first creates a git worktree (via
- * the Rust `worktree_create` command) and launches the session there. On failure
- * it falls back to the project's own folder with a non-blocking warning toast.
- * Most callers fire-and-forget (the returned promise resolves once the launch is
- * recorded).
+ * The session always runs in the project's own folder. (Worktrees are managed
+ * manually via the project's worktree view, not created automatically on launch.)
  */
-export async function startNewSession(): Promise<void> {
+export function startNewSession(): void {
   const proj = projectForId(projects.list, projectFilter.selected);
   if (!proj) {
     launcher.show();
     return;
   }
 
-  // Default: launch in the project's own folder, with no worktree association.
-  let folder = proj.path;
-  let worktreePath: string | undefined;
-  let worktreeBase: string | undefined;
-
-  if (await loadAutoWorktree(proj.path)) {
-    const wt = await createWorktree(proj.path);
-    if (wt) {
-      folder = wt.path;
-      worktreePath = wt.path;
-      worktreeBase = wt.base;
-    } else {
-      // Non-blocking: warn, then fall back to the project folder.
-      toast.show(WORKTREE_FALLBACK_MSG);
-    }
-  }
-
   workspace.launch(
     buildLaunchPlan({
-      folder,
+      folder: proj.path,
       prompt: '',
       placement: 'tab',
-      projectId: proj.id,
-      worktreePath,
-      worktreeBase
+      projectId: proj.id
     })
   );
 }

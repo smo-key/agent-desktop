@@ -42,13 +42,8 @@ export interface Project {
   coordinatorPaneId?: string;
 }
 
-/**
- * The CREATE/EDIT form's draft: the project record fields (no id) PLUS the
- * per-project `autoWorktree` setting. `autoWorktree` is NOT a record field — it
- * lives in `<project>/.agent-desktop/config.json` — so the panel splits it out of
- * the draft and routes it to the folder config after saving the record.
- */
-export type ProjectDraft = Omit<Project, 'id'> & { autoWorktree?: boolean };
+/** The CREATE/EDIT form's draft: the project record fields, minus the id. */
+export type ProjectDraft = Omit<Project, 'id'>;
 
 /** The top-level persisted envelope written to `projects.json`. */
 export interface PersistedProjects {
@@ -241,8 +236,8 @@ function normalize(arr: ReadonlyArray<unknown>): Project[] {
     seen.add(path);
     const clean: Project = { ...item, path };
     if (typeof clean.logo !== 'string') delete clean.logo; // drop a malformed logo
-    // `autoWorktree` moved to <project>/.agent-desktop/config.json — always strip
-    // it from the registry record (a one-time migration lifts any legacy value).
+    // Legacy cleanup: the removed auto-worktree feature once stored `autoWorktree`
+    // on the record; strip any leftover value so it never round-trips back.
     delete (clean as unknown as Record<string, unknown>).autoWorktree;
     if (typeof clean.coordinatorPaneId !== 'string' || clean.coordinatorPaneId === '')
       delete clean.coordinatorPaneId; // additive optional back-reference

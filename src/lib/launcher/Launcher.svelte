@@ -19,14 +19,7 @@
   import { workspace } from '../layout/workspace.svelte';
   import { projects } from '../projects/projects.svelte';
   import { projectForId } from '../projects/projects';
-  import { createWorktree } from './worktree';
-  import { loadAutoWorktree } from '../projects/projectFolderConfig';
-  import { toast } from '../ui/toastStore.svelte';
   import ProjectSelect from '../projects/ProjectSelect.svelte';
-
-  // Warning shown when a worktree was requested but couldn't be created.
-  const WORKTREE_FALLBACK_MSG =
-    "Couldn't create a worktree — launched in the project folder instead.";
 
   // --- Local form state (the launcher store holds only open/close) ----------
   // The chosen project id (supplies the launch folder), null until picked/created.
@@ -57,38 +50,18 @@
     launcher.close();
   }
 
-  async function confirm() {
+  function confirm() {
     if (!project) return; // no project chosen -> abort (button is also disabled)
 
-    // When the project has autoWorktree, create a git worktree FIRST and launch the
-    // session there; on failure, fall back to the project folder with a non-blocking
-    // warning. Resolved BEFORE buildLaunchPlan so the plan builder stays pure.
-    let folder = project.path;
-    let worktreePath: string | undefined;
-    let worktreeBase: string | undefined;
-    if (await loadAutoWorktree(project.path)) {
-      const wt = await createWorktree(project.path);
-      if (wt) {
-        folder = wt.path;
-        worktreePath = wt.path;
-        worktreeBase = wt.base;
-      } else {
-        toast.show(WORKTREE_FALLBACK_MSG);
-      }
-    }
-
     // Build the NORMALIZED plan (pure): program is always claude, the prompt is
-    // verbatim (never a synthesized /command), the cwd is the chosen folder (the
-    // worktree when created, else the project's folder), and the projectId binds the
-    // agent to its project. A session always opens as a new session (tab) — there is
-    // no split-placement choice in the launcher.
+    // verbatim (never a synthesized /command), the cwd is the project's folder, and
+    // the projectId binds the agent to its project. A session always opens as a new
+    // session (tab) — there is no split-placement choice in the launcher.
     const plan = buildLaunchPlan({
-      folder,
+      folder: project.path,
       prompt: '',
       placement: 'tab',
-      projectId: project.id,
-      worktreePath,
-      worktreeBase
+      projectId: project.id
     });
 
     // Hand the plan to the store: it creates the tab/split and records the new

@@ -482,12 +482,11 @@ pub fn create_branch(dir: &str, name: &str) -> Result<String, String> {
 
 // ───────────────────────── git worktrees ─────────────────────────
 //
-// Auto-worktree projects launch each agent session into an isolated git
-// worktree under `<repo>/.worktrees/<branch>`, branched off HEAD, so concurrent
-// sessions never clobber one another's working tree. A session's worktree is
-// pruned on close when it left nothing behind (clean tree, no commits past the
-// base it forked from); otherwise it's kept for the user to reconcile. The
-// management UI can list and explicitly prune accumulated worktrees.
+// The worktree management UI lets a user create an isolated git worktree under
+// `<repo>/.worktrees/<branch>` (branched off HEAD), open a session into one, and
+// list or explicitly prune accumulated worktrees. Creation, listing, and removal
+// are all driven manually from that UI — there is no automatic create-on-launch
+// or prune-on-close.
 
 /// Result of creating a fresh session worktree. JS sees `path/branch/base`.
 #[derive(Debug, Clone, Serialize)]
@@ -499,16 +498,6 @@ pub struct WorktreeCreated {
     pub branch: String,
     /// The base commit SHA (HEAD at creation) the branch forked from.
     pub base: String,
-}
-
-/// Outcome of a clean-only worktree removal. JS sees `removed/reason`.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorktreeRemoval {
-    /// True when the worktree (and its branch) were removed.
-    pub removed: bool,
-    /// Short why-kept reason when `removed` is false (`"dirty"` / `"has commits"`).
-    pub reason: Option<String>,
 }
 
 /// One accumulated session worktree, for the management UI. JS sees
@@ -584,50 +573,6 @@ pub fn worktree_create(repo_path: &str) -> Result<WorktreeCreated, String> {
         .unwrap_or_else(|| wt_str.to_string());
 
     Ok(WorktreeCreated { path, branch, base })
-}
-
-/// Remove a session worktree only if it's "clean": its `status --porcelain` is
-/// empty AND it has zero commits past `base`. When clean, the worktree is removed
-/// and its branch deleted (`removed=true`). When not clean, it's left intact
-/// (`removed=false`, with a short reason). Only `Err`s on unexpected git failures.
-pub fn worktree_remove_if_clean(worktree_path: &str, base: &str) -> Result<WorktreeRemoval, String> {
-    // Resolve the branch and owning repo BEFORE removing, so we can delete the
-    // branch from the main repo afterwards (the worktree dir is gone by then).
-    let branch = run_git(worktree_path, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .ok_or_else(|| format!("{worktree_path} is not a git worktree"))?;
-    let main_repo = main_repo_dir(worktree_path);
-
-    let porcelain = run_git(worktree_path, &["status", "--porcelain"])
-        .ok_or_else(|| format!("git status failed in {worktree_path}"))?;
-    if !porcelain.is_empty() {
-        return Ok(WorktreeRemoval {
-            removed: false,
-            reason: Some("dirty".to_string()),
-        });
-    }
-
-    let count = run_git(
-        worktree_path,
-        &["rev-list", &format!("{base}..HEAD"), "--count"],
-    )
-    .ok_or_else(|| format!("git rev-list failed in {worktree_path}"))?;
-    if count.trim() != "0" {
-        return Ok(WorktreeRemoval {
-            removed: false,
-            reason: Some("has commits".to_string()),
-        });
-    }
-
-    // Clean: prune the worktree, then delete the now-unused branch from the main
-    // repo (the worktree dir no longer exists after removal).
-    remove_worktree(worktree_path, false)?;
-    if let Some(repo) = main_repo.as_deref() {
-        delete_branch(repo, &branch);
-    }
-    Ok(WorktreeRemoval {
-        removed: true,
-        reason: None,
-    })
 }
 
 /// Resolve the MAIN repository working dir that owns `worktree_path`, so a branch
@@ -915,7 +860,7 @@ mod tests {
     }
 
     #[test]
-    fn launching_an_auto_worktree_project() {
+    fn worktree_create_makes_a_session_worktree() {
         let repo = TempRepo::new("create");
         let info = worktree_create(repo.str()).expect("create should succeed");
         // Path is under <repo>/.worktrees/ (canonicalize to absorb macOS's
@@ -970,26 +915,6 @@ mod tests {
         let b = worktree_create(repo.str()).unwrap();
         assert_ne!(a.branch, b.branch, "branches must differ");
         assert_ne!(a.path, b.path, "paths must differ");
-    }
-
-    #[test]
-    fn clean_worktree_is_removed_on_close() {
-        let repo = TempRepo::new("clean");
-        let info = worktree_create(repo.str()).unwrap();
-        let res = worktree_remove_if_clean(&info.path, &info.base).unwrap();
-        assert!(res.removed, "clean worktree should be removed: {:?}", res);
-        assert!(!Path::new(&info.path).is_dir(), "worktree dir should be gone");
-    }
-
-    #[test]
-    fn dirty_worktree_is_kept_on_close() {
-        let repo = TempRepo::new("dirty");
-        let info = worktree_create(repo.str()).unwrap();
-        // Make the worktree dirty with an uncommitted file.
-        fs::write(Path::new(&info.path).join("scratch.txt"), "wip\n").unwrap();
-        let res = worktree_remove_if_clean(&info.path, &info.base).unwrap();
-        assert!(!res.removed, "dirty worktree should be kept: {:?}", res);
-        assert!(Path::new(&info.path).is_dir(), "worktree dir should remain");
     }
 
     #[test]
