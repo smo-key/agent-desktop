@@ -2,13 +2,12 @@
 
 ## Purpose
 
-Per-project data (the user-created task definitions and per-project configuration
-such as the auto-worktree setting) is stored inside the project's own folder under
-a committed `.agent-desktop/` directory, instead of at the user level in the
-app-data directory. This makes the data travel with the repo — shared across a
-team and portable across machines — and keyed by project path rather than an
-opaque internal id. A one-time migration relocates any prior user-level data into
-the project folders and then removes the user-level copies.
+Per-project data (the user-created task definitions) is stored inside the
+project's own folder under a committed `.agent-desktop/` directory, instead of at
+the user level in the app-data directory. This makes the data travel with the
+repo — shared across a team and portable across machines — and keyed by project
+path rather than an opaque internal id. A one-time migration relocates any prior
+user-level data into the project folders and then removes the user-level copies.
 
 ## Requirements
 
@@ -16,13 +15,12 @@ the project folders and then removes the user-level copies.
 
 Per-project data SHALL be stored in a `.agent-desktop/` directory inside the
 project's own folder (`<project_path>/.agent-desktop/`), committed with the repo
-(NO `.gitignore` entry is added for it). The directory SHALL contain two files:
-`tasks.json` (the project's task definitions) and `config.json` (the project's
-configuration). The directory SHALL be created on first write and is absent until
-then.
+(NO `.gitignore` entry is added for it). The directory SHALL contain `tasks.json`
+(the project's task definitions). The directory SHALL be created on first write
+and is absent until then.
 
 #### Scenario: Directory location
-- **WHEN** project P at path `/repo` persists its tasks or config
+- **WHEN** project P at path `/repo` persists its tasks
 - **THEN** the data is written under `/repo/.agent-desktop/` (creating it if absent)
 
 #### Scenario: Not gitignored
@@ -44,30 +42,10 @@ or unparseable file SHALL be treated as an empty task list and SHALL NOT throw.
 - **WHEN** `.agent-desktop/tasks.json` does not exist for project P
 - **THEN** P loads with an empty task list and no error is raised
 
-### Requirement: Project config file format
-
-The per-project `config.json` SHALL store an additive envelope
-`{ version, autoWorktree?: boolean }`. The `autoWorktree` setting SHALL be read
-from and written to this file; it SHALL NOT be stored on the project record in
-`projects.json`. A missing file or absent `autoWorktree` SHALL be treated as
-`autoWorktree: false`.
-
-#### Scenario: Auto-worktree read from config
-- **WHEN** a session launches for project P whose `.agent-desktop/config.json` has `autoWorktree: true`
-- **THEN** the launch path reads `autoWorktree` as `true` from the project-folder config
-
-#### Scenario: Absent config defaults off
-- **WHEN** project P has no `.agent-desktop/config.json` (or it lacks `autoWorktree`)
-- **THEN** `autoWorktree` is treated as `false`
-
-#### Scenario: Not stored in the registry
-- **WHEN** project P's `autoWorktree` is enabled and saved
-- **THEN** the value is persisted in `.agent-desktop/config.json` and the project's record in `projects.json` carries no `autoWorktree` field
-
 ### Requirement: Path-keyed persistence commands
 
-The backend SHALL expose commands to load and save a project's tasks and config
-by **project path**: load returns the file's contents or `None` when the file
+The backend SHALL expose commands to load and save a project's tasks by
+**project path**: load returns the file's contents or `None` when the file
 does not exist; save writes atomically (sibling temp file + rename) so a crash
 mid-write never leaves a truncated file. A missing directory on load SHALL yield
 `None` rather than an error.
@@ -77,7 +55,7 @@ mid-write never leaves a truncated file. A missing directory on load SHALL yield
 - **THEN** it returns `None` (not an error)
 
 #### Scenario: Atomic save
-- **WHEN** `project_tasks_save` (or `project_config_save`) writes a file
+- **WHEN** `project_tasks_save` writes a file
 - **THEN** the write goes to a sibling temp file then renames over the target, so readers always see a whole file
 
 ### Requirement: Sanitized committed task file
@@ -124,27 +102,21 @@ in-memory state for the session.
 ### Requirement: One-time migration from user-level storage
 
 On the first run after this change, the system SHALL migrate existing user-level
-data into project folders and then remove the user-level copies. For each project
-with user-level tasks (from `<app_data_dir>/tasks.json`, or the legacy
+task data into project folders and then remove the user-level copies. For each
+project with user-level tasks (from `<app_data_dir>/tasks.json`, or the legacy
 `terminals.json` fallback), it SHALL write the project's `.agent-desktop/tasks.json`
-(sanitized); and it SHALL lift each project's `autoWorktree` (from `projects.json`)
-into its `.agent-desktop/config.json`. After all RESOLVABLE, writable projects
-are migrated, it SHALL delete BOTH user-level source files — `tasks.json` AND the
-legacy `terminals.json` — and strip the `autoWorktree` field from every migrated
-project record in `projects.json`. Clearing the legacy `terminals.json` is
-REQUIRED for idempotency: it is the fallback source, so leaving it would re-fire
-the migration on every launch and overwrite/resurrect per-project data. A project
-whose folder cannot be written SHALL be skipped, leaving its user-level data
-intact for a later run. The migration SHALL be idempotent — once both user-level
-source files are gone, it reads null from both and does not run again.
+(sanitized). After all RESOLVABLE, writable projects are migrated, it SHALL delete
+BOTH user-level source files — `tasks.json` AND the legacy `terminals.json`.
+Clearing the legacy `terminals.json` is REQUIRED for idempotency: it is the
+fallback source, so leaving it would re-fire the migration on every launch and
+overwrite/resurrect per-project data. A project whose folder cannot be written
+SHALL be skipped, leaving its user-level data intact for a later run. The
+migration SHALL be idempotent — once both user-level source files are gone, it
+reads null from both and does not run again.
 
 #### Scenario: Tasks migrated to project folder
 - **WHEN** the app first runs after this change with a user-level `tasks.json` holding tasks for project P (path writable)
 - **THEN** P's tasks are written to `/P/.agent-desktop/tasks.json` (sanitized) and the user-level `tasks.json` is deleted afterward
-
-#### Scenario: autoWorktree lifted out of the registry
-- **WHEN** project P had `autoWorktree: true` in `projects.json` at migration
-- **THEN** `/P/.agent-desktop/config.json` has `autoWorktree: true` and P's record in `projects.json` no longer has an `autoWorktree` field
 
 #### Scenario: Unwritable project skipped
 - **WHEN** project Q's folder is not writable during migration
