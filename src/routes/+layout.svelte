@@ -6,8 +6,19 @@
   // xterm's base stylesheet is imported once for the whole app; individual
   // terminal panes only need to construct the addon/renderer.
   import '@xterm/xterm/css/xterm.css';
+  import { theme } from '$lib/settings/theme.svelte';
 
   let { children } = $props();
+
+  // Stamp the resolved theme ('dark' | 'light') onto <html> so tokens.css's
+  // `:root[data-theme='...']` blocks take effect. `app.html` ships
+  // `data-theme="dark"` statically (today's unchanged default, no flash before
+  // this effect runs); `theme.load()` (called from +page.svelte's onMount)
+  // then corrects it reactively once the persisted preference resolves.
+  $effect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.dataset.theme = theme.resolved;
+  });
 </script>
 
 {@render children?.()}

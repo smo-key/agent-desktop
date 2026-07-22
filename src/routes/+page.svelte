@@ -19,6 +19,7 @@
   import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
   import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
+  import { theme } from '$lib/settings/theme.svelte';
   import VoicePanel from '$lib/voice/VoicePanel.svelte';
   import ModelOnboarding from '$lib/onboarding/ModelOnboarding.svelte';
   import { onboarding } from '$lib/onboarding/onboarding.svelte';
@@ -132,6 +133,10 @@
     void subagentsVisible.load();
     // Load the needs-input alert channel modes (opt-in; both default OFF / silent).
     void notifications.load();
+    // Load the theme preference (dark/light/system; defaults to dark — today's
+    // unchanged look). `+layout.svelte`'s effect re-stamps `data-theme` on
+    // <html> once this resolves.
+    void theme.load();
     // Load the persisted one-time onboarding flag FIRST so a returning user who has
     // already seen the gate never sees a flash of it, then load voice-input
     // preferences and check whether the on-device models that selection needs are
