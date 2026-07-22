@@ -3,6 +3,34 @@
 All notable changes to this project are documented here.
 This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
 
+## [0.3.0] - 2026-07-22
+
+### Features
+
+- **quick-install**: One-line Windows installer
+- **windows**: Compile and run on Windows x64
+- **terminal-file-drop**: Hand dropped files to the session under the cursor
+
+### Bug Fixes
+
+- **windows**: Resolve adversarial review findings
+- **onboarding**: Keep the titlebar visible & draggable during the model gate
+
+### Documentation
+
+- **impeccable**: Save ModelOnboarding critique snapshot
+- **openspec**: Propose session-file-drop change
+- **design**: Migrate impeccable context to PRODUCT.md + DESIGN.md
+
+### CI/Build
+
+- **windows**: Add a dispatch-only Windows installer bundle job
+
+### Miscellaneous
+
+- Release v0.3.0 — Windows x64 support
+- **skills**: Add impeccable UI polish skill
+
 ## [0.2.4] - 2026-06-14
 
 ### Miscellaneous
