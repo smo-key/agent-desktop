@@ -43,6 +43,12 @@ So the goal is not "make it compile" but "ship a Windows installer that works".
   the Windows matrix leg so a Windows break blocks the release instead of
   silently dropping the artifact. WebView2 is bundled via Tauri's default
   download bootstrapper.
+- **NEW: one-line Windows install command.** A `docs/install.ps1` PowerShell
+  installer mirroring `install.sh` (detect arch → resolve the latest release
+  asset → verify its sha256 → install), reachable at a stable GitHub Pages URL
+  and documented in the README. PowerShell rather than extending `install.sh`,
+  because stock Windows has no POSIX shell. `install.sh` stops calling Windows
+  "coming soon" and prints the PowerShell command instead.
 
 ## Capabilities
 
@@ -52,6 +58,9 @@ So the goal is not "make it compile" but "ship a Windows installer that works".
   the settings modal, rather than a hardcoded `/bin/zsh`.
 
 ### Modified Capabilities
+- `quick-install`: adds a Windows one-line install command (`install.ps1`), and
+  the POSIX installer directs Windows users to it instead of reporting Windows as
+  unsupported.
 - `activity-events`: the event hook's delivery transport is a cross-platform
   local socket rather than specifically a Unix-domain socket.
 - `agent-orchestration-runtime`: same transport change for the control socket.
@@ -69,7 +78,11 @@ So the goal is not "make it compile" but "ship a Windows installer that works".
   `src/lib/usage/spawn.ts`, `src/lib/ui/SettingsModal.svelte`, and the durable
   settings slice.
 - **CI:** `.github/workflows/release.yml` — drop `continue-on-error`, add a fast
-  Windows `cargo check` gate.
+  Windows `cargo check` gate, a dispatch-only `windows-bundle` job that proves the
+  installer packaging without a tag or Release, and run the `install.ps1` unit
+  tests on the Windows runner (they cannot run on the macOS/Linux runners).
+- **Install:** new `docs/install.ps1` + `docs/tests/install_ps_test.ps1`; the
+  Windows branch of `docs/install.sh`; README install section.
 - **Not verifiable in-session:** no Windows machine is available here. Local
   `cargo check --target x86_64-pc-windows-msvc` (via `cargo-xwin`) and the CI
   Windows leg prove it *compiles and bundles*; confirming it *runs* requires

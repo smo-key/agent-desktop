@@ -237,6 +237,14 @@ jobs:
         working-directory: src-tauri
         run: cargo check --target x86_64-pc-windows-msvc --all-targets
 
+      # The PowerShell installer's unit tests. They cannot run in `yarn
+      # test:install` (POSIX sh on the macOS/Linux runners, which have no
+      # PowerShell), so this Windows job is the only place their real
+      # interpreter exists. Release-blocking, like the rest of this job.
+      - name: install.ps1 unit tests
+        shell: pwsh
+        run: pwsh -NoProfile -File docs/tests/install_ps_test.ps1
+
   # ---------------------------------------------------------------------------
   # windows-bundle: build the REAL Windows installer end-to-end (sidecars from
   # source, quality gate, NSIS/MSI packaging) and upload it as a workflow

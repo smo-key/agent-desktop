@@ -92,3 +92,22 @@
   orchestration op round-trips.
 - [ ] 8.6 Run the `adversarial-code-review` skill over the implementation diff and
   resolve every CRITICAL finding (CLAUDE.md close-out gate).
+
+## 9. One-line Windows install
+
+- [x] 9.1 Add `docs/install.ps1`: detect arch, resolve the latest release's
+  Windows x64 asset, verify its sha256 against the release metadata digest, run
+  the installer. Pure logic in functions so it is unit-testable.
+- [x] 9.2 Add `docs/tests/install_ps_test.ps1` covering the pure logic (arch
+  detection, asset/digest resolution, checksum verify, unsupported messages).
+- [x] 9.3 Run those tests in CI on the Windows runner — they cannot run on the
+  macOS/Linux runners, which have no PowerShell.
+- [x] 9.4 `docs/install.sh`: detect a Windows-like `uname` and print the
+  PowerShell command instead of "coming soon"; keep the non-Windows unsupported
+  message unchanged. Cover both in `docs/tests/install_test.sh`.
+- [x] 9.5 README: document the Windows one-liner alongside the POSIX one.
+- [x] 9.6 `yarn check:gate` passes (POSIX installer tests included).
+- [ ] 9.7 **Requires a published release carrying Windows assets.** Run the
+  one-liner on real Windows and confirm it installs and launches. Until such a
+  release exists the script correctly reports "no Windows installer in the latest
+  release" — verify that path too.
