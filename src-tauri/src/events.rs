@@ -249,38 +249,65 @@ impl Drop for EventServer {
     }
 }
 
-/// Bind the event socket for `socket_path` and spawn the accept thread. Each
-/// accepted connection's one line is parsed, recorded into `state` (ring +
-/// durable sink), and passed to `on_event`. Malformed lines are dropped. Returns
-/// the [`EventServer`] the caller must keep alive.
+/// Bind the event socket at `address` and spawn the accept thread. Each accepted
+/// connection's one line is parsed, recorded into `state` (ring + durable sink),
+/// and passed to `on_event`. Malformed lines are dropped. Returns the
+/// [`EventServer`] the caller must keep alive.
 ///
-/// `socket_path` is the app-data path the socket is derived from; the actual
-/// address is [`crate::ipc::socket_address`] of it — the same path on Unix, a
-/// named pipe on Windows. A stale entry from a prior run never blocks the bind
-/// (unlinked on Unix; impossible on Windows).
+/// `address` MUST come from [`crate::ipc::events_address`] — the same call that
+/// produces the value exported to sessions as `AGENT_DESKTOP_SOCKET_PATH`. Taking
+/// the address (rather than a path we re-derive here) is what makes it impossible
+/// for the bound socket and the advertised one to disagree.
 ///
-/// `on_event` runs on the accept thread; it must be `Send`. In production it
-/// emits the Tauri `overview://event`; in tests it pushes to a channel.
+/// A stale entry from a prior run never blocks the bind (unlinked on Unix;
+/// impossible on Windows).
+///
+/// `on_event` runs on the single processing thread; it must be `Send`. In
+/// production it emits the Tauri `overview://event`; in tests it pushes to a
+/// channel.
 pub fn start_event_server<F>(
-    socket_path: &Path,
+    address: &str,
     state: Arc<EventState>,
     on_event: F,
 ) -> Result<EventServer, String>
 where
     F: Fn(AgentEvent) + Send + 'static,
 {
-    if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create_dir_all {parent:?}: {e}"))?;
-    }
-    let address = crate::ipc::socket_address(socket_path);
     let listener =
-        crate::ipc::bind_listener(&address).map_err(|e| format!("bind {address:?}: {e}"))?;
+        crate::ipc::bind_listener(address).map_err(|e| format!("bind {address:?}: {e}"))?;
+    let address = address.to_string();
+
+    // Accept and process are split across two threads joined by a channel.
+    //
+    // Accepting must return to `accept()` as fast as possible: on Unix the kernel
+    // backlog (128) absorbed a burst while we worked inline, but a Windows named
+    // pipe has NO backlog — the listener keeps ONE spare instance, so a third
+    // concurrent client gets ERROR_PIPE_BUSY and falls back to waiting. The hook
+    // abandons its event after 200ms and exits silently, so slow inline work (a
+    // durable-sink append plus a Tauri emit, per event) would silently drop events
+    // whenever several panes act at once.
+    //
+    // Processing stays on ONE thread, not a worker per connection, because event
+    // ORDER is load-bearing: the timeline and status derivation read the ring and
+    // the durable sink as a sequence (a PostToolUse must not be recorded before
+    // its PreToolUse). A thread per connection would free the accept loop just as
+    // well but would let concurrent events interleave arbitrarily.
+    let (tx, rx) = std::sync::mpsc::channel::<crate::ipc::Stream>();
 
     std::thread::spawn(move || {
         for stream in listener.incoming() {
-            let Ok(mut stream) = stream else {
+            let Ok(stream) = stream else {
                 continue; // accept error: skip this connection, keep serving.
             };
+            // Receiver gone (server dropped): stop accepting.
+            if tx.send(stream).is_err() {
+                return;
+            }
+        }
+    });
+
+    std::thread::spawn(move || {
+        for mut stream in rx {
             let mut raw = String::new();
             if stream.read_to_string(&mut raw).is_err() {
                 continue;
@@ -505,7 +532,7 @@ mod tests {
         let socket = tmp.path().join("events.sock");
         let state = Arc::new(EventState::new(tmp.path().join("events")));
         let (tx, rx) = mpsc::channel::<AgentEvent>();
-        let server = start_event_server(&socket, state.clone(), move |e| {
+        let server = start_event_server(&crate::ipc::socket_address(&socket), state.clone(), move |e| {
             let _ = tx.send(e);
         })
         .unwrap();
@@ -553,7 +580,7 @@ mod tests {
         let socket = tmp.path().join("events.sock");
         let state = Arc::new(EventState::new(tmp.path().join("events")));
         let (tx, rx) = mpsc::channel::<AgentEvent>();
-        let server = start_event_server(&socket, state.clone(), move |e| {
+        let server = start_event_server(&crate::ipc::socket_address(&socket), state.clone(), move |e| {
             let _ = tx.send(e);
         })
         .unwrap();
@@ -580,7 +607,7 @@ mod tests {
         // Simulate a stale socket file left by a crash.
         std::fs::write(&socket, b"stale").unwrap();
         let state = Arc::new(EventState::new(tmp.path().join("events")));
-        let server = start_event_server(&socket, state, |_| {}).expect("binds despite stale file");
+        let server = start_event_server(&crate::ipc::socket_address(&socket), state, |_| {}).expect("binds despite stale file");
         // The socket is now a live listener — a client can connect.
         let start = Instant::now();
         loop {
@@ -605,7 +632,7 @@ mod tests {
 
         let state = Arc::new(EventState::new(tmp.path().join("events")));
         let (tx, rx) = mpsc::channel::<AgentEvent>();
-        let server = start_event_server(&socket, state, move |e| {
+        let server = start_event_server(&crate::ipc::socket_address(&socket), state, move |e| {
             let _ = tx.send(e);
         })
         .expect("binds despite a stale address");
@@ -630,7 +657,7 @@ mod tests {
         let socket = tmp.path().join("events.sock");
         let state = Arc::new(EventState::new(tmp.path().join("events")));
         let (tx, rx) = mpsc::channel::<AgentEvent>();
-        let server = start_event_server(&socket, state.clone(), move |e| {
+        let server = start_event_server(&crate::ipc::socket_address(&socket), state.clone(), move |e| {
             let _ = tx.send(e);
         })
         .unwrap();

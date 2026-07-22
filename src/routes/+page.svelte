@@ -123,9 +123,11 @@
     // Load the compact-mode preference (opt-in; defaults OFF / full three-line rows).
     void compactMode.load();
     // Resolve the platform default shell from the backend and load the user's
-    // shell preference. Must run before any shell pane spawns, or a pane would
-    // fall back to the Unix default on Windows and die instantly.
-    void shellSettings.load();
+    // shell preference. The layout restore below AWAITS this: until it resolves,
+    // `defaultShell()` still reports the Unix default, and restoring a Windows
+    // layout against it would rewrite every saved `pwsh` to `/bin/zsh` — spawning
+    // dead panes AND persisting the mangled value back over the good one.
+    const shellReady = shellSettings.load();
     // Load the subagents-visibility preference (defaults ON / subagents shown).
     void subagentsVisible.load();
     // Load the needs-input alert channel modes (opt-in; both default OFF / silent).
@@ -224,7 +226,9 @@
       })
       .catch(() => {});
     let stopWatching: (() => void) | undefined;
-    void restorePersistedLayout().then(() => {
+    // Gated on `shellReady` (never rejects) so pane programs resolve against the
+    // real platform default rather than the pre-hydration placeholder.
+    void shellReady.then(restorePersistedLayout).then(() => {
       restored = true;
       // Seed restored agents' titles from the durable cache synchronously, so the
       // cards render their real titles immediately rather than flashing their

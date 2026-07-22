@@ -100,6 +100,27 @@ pub fn socket_address(path: &Path) -> String {
     address_for(path, cfg!(windows), std::process::id())
 }
 
+/// Basename of the event socket under the app-data root.
+pub const EVENTS_SOCKET_FILE: &str = "events.sock";
+/// Basename of the orchestration control socket under the app-data root.
+pub const CONTROL_SOCKET_FILE: &str = "control.sock";
+
+/// The event socket's address for an app-data root.
+///
+/// This and [`control_address`] are the ONLY places either address is derived.
+/// The server binds this value and the launch env exports this value — the same
+/// call in both places, so they cannot drift. They previously drifted (the
+/// exporter used the raw path while the server bound a pipe name), which silently
+/// killed the whole event pipeline on Windows while every test passed.
+pub fn events_address(base: &Path) -> String {
+    socket_address(&base.join(EVENTS_SOCKET_FILE))
+}
+
+/// The orchestration control socket's address for an app-data root. See [`events_address`].
+pub fn control_address(base: &Path) -> String {
+    socket_address(&base.join(CONTROL_SOCKET_FILE))
+}
+
 /// Bind a listener at `address`.
 ///
 /// On Unix a leftover socket file from a crashed run makes `bind` fail with
@@ -109,6 +130,12 @@ pub fn socket_address(path: &Path) -> String {
 pub fn bind_listener(address: &str) -> io::Result<Listener> {
     #[cfg(unix)]
     {
+        // The address IS a filesystem path here, so its directory must exist and
+        // any leftover socket file from a crashed run must go (bind would
+        // otherwise fail with AddrInUse). Neither applies to a Windows pipe name.
+        if let Some(parent) = Path::new(address).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let _ = std::fs::remove_file(address);
     }
     let name = address.to_fs_name::<GenericFilePath>()?;

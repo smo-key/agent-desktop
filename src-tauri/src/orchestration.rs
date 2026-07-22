@@ -29,7 +29,6 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 
 use crate::ipc::ListenerExt;
-use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -275,35 +274,36 @@ impl Drop for ControlServer {
 /// event), and awaited (with [`REQUEST_TIMEOUT`]); the JSON response is written
 /// back over the same connection. Per-target ops are serialized.
 ///
+/// `address` MUST come from [`crate::ipc::control_address`] — the same call that
+/// produces the value exported to a coordinator as `AGENT_DESKTOP_CONTROL_SOCKET`,
+/// so the bound socket and the advertised one cannot disagree.
+///
 /// `on_request` runs on a per-connection serving thread and must be `Send + Sync`.
 /// Returns the [`ControlServer`] the caller keeps alive (and whose
 /// [`pending`](ControlServer::pending) the reply command routes through).
-pub fn start_control_server<F>(socket_path: &Path, on_request: F) -> Result<ControlServer, String>
+pub fn start_control_server<F>(address: &str, on_request: F) -> Result<ControlServer, String>
 where
     F: Fn(u64, &ControlRequest) + Send + Sync + 'static,
 {
-    start_control_server_with_timeout(socket_path, REQUEST_TIMEOUT, on_request)
+    start_control_server_with_timeout(address, REQUEST_TIMEOUT, on_request)
 }
 
 /// [`start_control_server`] with an explicit per-request `timeout`. Production uses
 /// [`REQUEST_TIMEOUT`]; tests pass a short timeout to exercise the timeout path
 /// end-to-end without a 30s wait.
 fn start_control_server_with_timeout<F>(
-    socket_path: &Path,
+    address: &str,
     timeout: Duration,
     on_request: F,
 ) -> Result<ControlServer, String>
 where
     F: Fn(u64, &ControlRequest) + Send + Sync + 'static,
 {
-    if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create_dir_all {parent:?}: {e}"))?;
-    }
     // A stale entry from a prior run never blocks the bind: unlinked on Unix,
     // impossible on Windows (a dead process leaves no pipe). See `crate::ipc`.
-    let address = crate::ipc::socket_address(socket_path);
     let listener =
-        crate::ipc::bind_listener(&address).map_err(|e| format!("bind {address:?}: {e}"))?;
+        crate::ipc::bind_listener(address).map_err(|e| format!("bind {address:?}: {e}"))?;
+    let address = address.to_string();
 
     let pending = Arc::new(PendingRegistry::new());
     let queues = Arc::new(TargetQueues::new());
@@ -380,7 +380,7 @@ fn serve_connection<F>(
 mod tests {
     use super::*;
     use std::io::{Read, Write};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::AtomicBool;
     use std::time::{Instant, SystemTime};
 
@@ -647,7 +647,7 @@ mod tests {
             // by start_control_server. Capture it via a shared cell the closure reads.
             let captured: Arc<Mutex<Option<Arc<PendingRegistry>>>> = Arc::new(Mutex::new(None));
             let cap = captured.clone();
-            let srv = start_control_server(&socket, move |id, req| {
+            let srv = start_control_server(&crate::ipc::socket_address(&socket), move |id, req| {
                 let pending = cap.lock().unwrap().clone().expect("pending wired");
                 let op = req.op.clone();
                 std::thread::spawn(move || {
@@ -676,7 +676,8 @@ mod tests {
         let cap = captured.clone();
         // The frontend deliberately never replies.
         let server =
-            start_control_server_with_timeout(&socket, Duration::from_millis(80), move |_id, _req| {
+            start_control_server_with_timeout(
+            &crate::ipc::socket_address(&socket), Duration::from_millis(80), move |_id, _req| {
                 let _ = cap.lock().unwrap().clone();
             })
             .unwrap();
@@ -719,7 +720,7 @@ mod tests {
         // targets so they aren't serialized and truly run concurrently.
         let captured: Arc<Mutex<Option<Arc<PendingRegistry>>>> = Arc::new(Mutex::new(None));
         let cap = captured.clone();
-        let server = start_control_server(&socket, move |id, req| {
+        let server = start_control_server(&crate::ipc::socket_address(&socket), move |id, req| {
             let pending = cap.lock().unwrap().clone().unwrap();
             let pane = req.args["paneId"].as_str().unwrap_or("").to_string();
             std::thread::spawn(move || {
@@ -753,7 +754,7 @@ mod tests {
         let tmp = TempDir::new("stale");
         let socket = tmp.path().join("c.sock");
         std::fs::write(&socket, b"stale").unwrap();
-        let server = start_control_server(&socket, |_, _| {}).expect("binds despite stale file");
+        let server = start_control_server(&crate::ipc::socket_address(&socket), |_, _| {}).expect("binds despite stale file");
         let start = Instant::now();
         loop {
             if crate::ipc::connect(server.address()).is_ok() {

@@ -65,9 +65,15 @@ export class ShellStore {
     } catch {
       // Non-Tauri/dev context or command failure: keep the existing default.
     }
-    const settings = await loadSettings();
-    this.prefs = parseShellPrefs(settings.shell);
-    setShellPreference(this.prefs.program || null);
+    try {
+      const settings = await loadSettings();
+      this.prefs = parseShellPrefs(settings.shell);
+      setShellPreference(this.prefs.program || null);
+    } catch {
+      // Keep the defaults. This MUST NOT reject: the layout restore in
+      // +page.svelte is chained onto this promise, so a rejection here would
+      // leave the user with no restored panes at all.
+    }
     this.loaded = true;
   }
 

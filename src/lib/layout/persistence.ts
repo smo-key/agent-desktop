@@ -314,9 +314,16 @@ function sanitizeRegistry(
   for (const leafNode of leavesInOrder(root)) {
     const raw = src[leafNode.paneId];
     if (isRecord(raw)) {
-      // Falls back when absent, blank, or not launchable on THIS platform (a
-      // /bin/zsh layout restored on Windows would otherwise spawn a dead pane).
-      const program = resolveProgram(raw.program as string | undefined);
+      // Keep the PERSISTED program verbatim; only supply a default when it is
+      // absent or the wrong type. The platform substitution happens at SPAWN
+      // time (see `respawnLeaves` / PaneNode) rather than here, because
+      // rewriting it here would be serialized straight back by the next
+      // autosave — a macOS user's `fish` opened once on Windows would become
+      // `pwsh` on disk and then `/bin/zsh` back on macOS, silently and forever.
+      const program =
+        typeof raw.program === 'string' && raw.program.trim()
+          ? raw.program.trim()
+          : defaultShell();
       // A persisted sessionId means we can resume the prior transcript on restart.
       // When present, carry it through and set resume:true so TerminalPane emits
       // `--resume <id>` instead of `--session-id <id>`.
@@ -471,7 +478,10 @@ export function respawnLeaves(
       const s = w.registry[leafNode.paneId] ?? { program: defaultShell(), cwd: null };
       // Pass ONLY program + cwd (the leaf's saved session) — never any live
       // process state. The registry is already sanitized to those two keys.
-      spawn(leafNode.paneId, { program: s.program, cwd: s.cwd });
+      // `resolveProgram` substitutes a platform-appropriate shell when the saved
+      // one cannot run here (a `/bin/zsh` layout opened on Windows), WITHOUT
+      // touching the stored value, so returning to the original OS restores it.
+      spawn(leafNode.paneId, { program: resolveProgram(s.program), cwd: s.cwd });
     }
   }
 }

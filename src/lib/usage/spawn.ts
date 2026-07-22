@@ -28,8 +28,10 @@ export interface UsagePaths {
    */
   eventHookPath: string;
   /**
-   * Absolute path to the app-hosted Unix-domain socket the event hook delivers
-   * to (passed to the spawned process as `AGENT_DESKTOP_SOCKET_PATH`).
+   * ADDRESS of the app-hosted local socket the event hook delivers to (passed to
+   * the spawned process as `AGENT_DESKTOP_SOCKET_PATH`). A filesystem path on
+   * macOS/Linux, a `\\.\pipe\…` name on Windows — opaque to the hook, which
+   * passes it straight to `net.createConnection({ path })`.
    */
   socketPath: string;
   /**

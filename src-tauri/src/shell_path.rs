@@ -48,10 +48,21 @@ const SEP: char = if cfg!(windows) { ';' } else { ':' };
 /// Shared by every caller that seeds or forwards a child's home (`pr::seed_gh_env`,
 /// `claude_title::seed_claude_env`, and `~` expansion in `lib.rs`).
 pub fn home_dir() -> String {
+    // On Windows `USERPROFILE` WINS over `HOME`. Git Bash / MSYS2 / Cygwin (and
+    // some AD roaming profiles) set `HOME` to a POSIX-style value like
+    // `/c/Users/dev`; preferring it would make `compose_path` build entries such
+    // as `/c/Users/dev\AppData\Roaming\npm`, which Win32 resolves relative to the
+    // current drive and never matches the real npm-global dir where `claude.cmd`
+    // lives — i.e. the safety net would omit exactly what it exists to find.
+    if cfg!(windows) {
+        if let Ok(p) = std::env::var("USERPROFILE") {
+            if !p.is_empty() {
+                return p;
+            }
+        }
+    }
     match std::env::var("HOME") {
         Ok(h) if !h.is_empty() => h,
-        // Not `#[cfg(windows)]`-gated: reading USERPROFILE is harmless on Unix
-        // (unset there) and keeps one code path.
         _ => std::env::var("USERPROFILE").unwrap_or_default(),
     }
 }
@@ -133,7 +144,15 @@ fn compose_path(login: &str, process: &str, home: &str, windows: bool) -> String
                 format!(r"{home}\.local\bin"),
                 format!(r"{home}\.cargo\bin"),
             ],
-            r"C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Program Files\nodejs;C:\Program Files\Git\cmd",
+            // Must include the directories holding BOTH shells `default_shell`
+            // can return, or the "always present" powershell.exe fallback is not
+            // actually resolvable from the safety net.
+            concat!(
+                r"C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;",
+                r"C:\Windows\System32\WindowsPowerShell\v1.0;",
+                r"C:\Program Files\PowerShell\7;",
+                r"C:\Program Files\nodejs;C:\Program Files\Git\cmd"
+            ),
         )
     } else {
         (
@@ -150,14 +169,13 @@ fn compose_path(login: &str, process: &str, home: &str, windows: bool) -> String
     merge_path_sources_with(&sources, sep)
 }
 
-/// Merge `PATH` strings using the HOST separator, preserving first-seen order and
-/// dropping empty/duplicate entries. Pure — the load-bearing core.
-fn merge_path_sources(sources: &[&str]) -> String {
-    merge_path_sources_with(sources, SEP)
-}
-
-/// [`merge_path_sources`] with an explicit separator, so the Windows layout can
-/// be exercised from a Unix host.
+/// Merge `PATH` strings with an explicit separator, preserving first-seen order
+/// and dropping empty/duplicate entries. Pure — the load-bearing core.
+///
+/// The separator is always passed in, never taken from the host: a host-dependent
+/// wrapper made these tests assert Unix semantics that silently inverted on
+/// Windows (a `:`-joined fixture split on `;` merges nothing), and `cargo test`
+/// never runs on Windows to catch it.
 fn merge_path_sources_with(sources: &[&str], sep: char) -> String {
     let mut seen = std::collections::HashSet::new();
     let mut out: Vec<&str> = Vec::new();
@@ -236,7 +254,7 @@ mod tests {
 
     #[test]
     fn merge_dedupes_preserving_first_seen_order() {
-        let merged = merge_path_sources(&["/a:/b", "/b:/c", "/a:/d"]);
+        let merged = merge_path_sources_with(&["/a:/b", "/b:/c", "/a:/d"], ':');
         assert_eq!(merged, "/a:/b:/c:/d");
     }
 
@@ -244,7 +262,7 @@ mod tests {
     fn merge_drops_empty_segments() {
         // Leading/trailing/double colons must not yield empty PATH entries (an
         // empty entry means "current dir" to the shell — a security/footgun).
-        let merged = merge_path_sources(&[":/a::", "", "/b:"]);
+        let merged = merge_path_sources_with(&[":/a::", "", "/b:"], ':');
         assert_eq!(merged, "/a:/b");
     }
 
@@ -254,7 +272,7 @@ mod tests {
         // The well-known union must restore it (and Homebrew) regardless.
         let sparse = "/usr/bin:/bin:/usr/sbin:/sbin";
         let well_known = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
-        let merged = merge_path_sources(&[sparse, "/Users/x/.local/bin", well_known]);
+        let merged = merge_path_sources_with(&[sparse, "/Users/x/.local/bin", well_known], ':');
         let dirs: Vec<&str> = merged.split(':').collect();
         assert!(dirs.contains(&"/Users/x/.local/bin"), "claude dir missing: {merged}");
         assert!(dirs.contains(&"/opt/homebrew/bin"), "homebrew missing: {merged}");
@@ -369,6 +387,11 @@ mod tests {
     }
 
     #[test]
+    // Asserts Unix-specific directories against the LIVE host PATH, so it is
+    // meaningful only on Unix. Without this gate it fails on Windows (a
+    // `;`-joined PATH split on `:` never contains `/usr/bin`) — an assertion
+    // about the host masquerading as an assertion about the code.
+    #[cfg(unix)]
     fn resolved_path_always_contains_standard_and_local_dirs() {
         // Integration-ish: whatever the environment, the seeded PATH must carry
         // the safety-net dirs so a sparse GUI launch can still find claude.
@@ -379,5 +402,22 @@ mod tests {
             let local = format!("{home}/.local/bin");
             assert!(dirs.contains(&local.as_str()), "missing ~/.local/bin: {p}");
         }
+    }
+
+    /// The Windows safety net must actually be able to resolve BOTH shells
+    /// `default_shell` can return — otherwise its "always present"
+    /// `powershell.exe` fallback is unreachable from a sparse PATH.
+    #[test]
+    fn windows_safety_net_contains_both_powershells() {
+        let path = compose_path("", "", r"C:\Users\dev", true);
+        let dirs: Vec<&str> = path.split(';').collect();
+        assert!(
+            dirs.contains(&r"C:\Windows\System32\WindowsPowerShell\v1.0"),
+            "powershell.exe dir missing: {path}"
+        );
+        assert!(
+            dirs.contains(&r"C:\Program Files\PowerShell\7"),
+            "pwsh dir missing: {path}"
+        );
     }
 }

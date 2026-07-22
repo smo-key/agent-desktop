@@ -52,13 +52,19 @@ export function defaultShell(): string {
   return resolveProgram(storedPreference, platformDefault);
 }
 
-/** True when `program` looks like a Windows executable or path. */
+/**
+ * True when `program` looks like a Windows executable or path.
+ *
+ * Deliberately does NOT treat a bare `pwsh` as Windows-only: PowerShell 7 runs on
+ * Linux and macOS (`brew install powershell`), so rejecting it there would
+ * silently discard a legitimate choice. Only a drive/UNC path or an explicit
+ * Windows executable extension counts.
+ */
 function looksWindows(program: string): boolean {
   return (
     /^[A-Za-z]:[\\/]/.test(program) || // C:\… or C:/…
     program.startsWith('\\\\') || // UNC
-    /\.(exe|cmd|bat)$/i.test(program) ||
-    program.toLowerCase() === 'pwsh'
+    /\.(exe|cmd|bat)$/i.test(program)
   );
 }
 
@@ -68,17 +74,39 @@ function looksUnix(program: string): boolean {
 }
 
 /**
- * Whether `program` can plausibly be launched given the platform implied by
- * `platformDefaultForHost`.
+ * Whether this host is Windows.
  *
- * The platform is inferred from the backend's own default rather than a separate
- * OS API, so there is exactly one source of truth. This is what stops a layout
- * authored on macOS (recording `/bin/zsh`) from spawning a dead pane when the
- * same profile is restored on Windows.
+ * An EXPLICIT signal rather than something inferred from the resolved default
+ * shell: inferring made the whole app's notion of its platform hinge on one
+ * string, so a Windows box defaulting to `pwsh` (no drive letter, no `.exe`)
+ * would read as Unix and reject every Windows program in a restored layout.
+ * Detected from the user agent (same approach as `overview/alerts.svelte.ts`)
+ * and overridable for tests.
  */
-export function isLaunchableHere(program: string, platformDefaultForHost: string): boolean {
-  const hostIsWindows = looksWindows(platformDefaultForHost);
-  if (hostIsWindows) return !looksUnix(program);
+function detectWindows(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Win/i.test(navigator.userAgent ?? navigator.platform ?? '');
+}
+
+let hostWindows = detectWindows();
+
+/** Override the detected platform (tests, and any future backend-authoritative signal). */
+export function setHostIsWindows(value: boolean): void {
+  hostWindows = value;
+}
+
+/** True when this host is Windows. */
+export function hostIsWindows(): boolean {
+  return hostWindows;
+}
+
+/**
+ * Whether `program` can plausibly be launched on this host. This is what stops a
+ * layout authored on macOS (recording `/bin/zsh`) from spawning a dead pane when
+ * the same profile is restored on Windows, and vice-versa.
+ */
+export function isLaunchableHere(program: string, windows: boolean = hostWindows): boolean {
+  if (windows) return !looksUnix(program);
   return !looksWindows(program);
 }
 
@@ -96,6 +124,6 @@ export function resolveProgram(
   if (typeof stored !== 'string') return fallback;
   const trimmed = stored.trim();
   if (!trimmed) return fallback;
-  if (!isLaunchableHere(trimmed, fallback)) return fallback;
+  if (!isLaunchableHere(trimmed)) return fallback;
   return trimmed;
 }

@@ -16,6 +16,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { migrateToProjectFolders } from '../projects/migrateProjectFolders';
+import { defaultShell } from '$lib/shell/defaultShell';
 import {
   addTask,
   removeTask,
@@ -71,15 +72,11 @@ export interface BareTerminal {
   initialInput?: string;
 }
 
-/** The user's interactive login shell (commands run through it). */
-function loginShell(): string {
-  const fromEnv = typeof process !== 'undefined' && process.env && process.env.SHELL;
-  return fromEnv || '/bin/zsh';
-}
-
-/** The shell's basename (e.g. `/bin/zsh` → `zsh`) — the default name for a shell. */
+/** The shell's basename (e.g. `/bin/zsh` → `zsh`, `C:\\…\\pwsh.exe` → `pwsh.exe`)
+ *  — the default name for a shell terminal. Splits on BOTH separators so a
+ *  Windows program path does not come back whole. */
 function shellName(shell: string): string {
-  return shell.split('/').pop() || shell;
+  return shell.split(/[/\\]/).pop() || shell;
 }
 
 /** Monotonic id factories (process-local). */
@@ -159,8 +156,19 @@ export class ProjectTasksStore {
     this.onTaskComplete = fn;
   }
 
-  /** The user's login shell, resolved once. */
-  readonly shell = loginShell();
+  /**
+   * The program terminals and tasks run in (`shell-selection`).
+   *
+   * A GETTER, not a `readonly` field: a field initializer runs at module import
+   * — before the backend's platform default has been resolved — and would freeze
+   * the pre-hydration value forever. This previously read `process.env.SHELL`
+   * with a `/bin/zsh` fallback, and since `process` is undefined in the webview
+   * it ALWAYS returned `/bin/zsh`, making every project terminal and task a dead
+   * pane on Windows.
+   */
+  get shell(): string {
+    return defaultShell();
+  }
 
   /** Terminals belonging to `projectId` (empty when none / null). */
   forProject(projectId: string | null): TaskDef[] {
