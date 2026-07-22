@@ -2,6 +2,7 @@ pub mod activity;
 pub mod claude_title;
 pub mod events;
 pub mod git;
+pub mod ipc;
 pub mod models;
 pub mod notify_click;
 pub mod orchestration;
@@ -194,9 +195,10 @@ fn resolve_path(cwd: Option<String>, token: String) -> Result<Option<String>, St
         return Ok(None);
     }
     let candidate: PathBuf = if let Some(rest) = token.strip_prefix('~') {
-        let Ok(home) = std::env::var("HOME") else {
+        let home = crate::shell_path::home_dir();
+        if home.is_empty() {
             return Ok(None);
-        };
+        }
         if rest.is_empty() {
             PathBuf::from(home)
         } else if let Some(rest) = rest.strip_prefix('/') {
@@ -287,8 +289,16 @@ fn detect_installed(names: &[String], home: &str, roots: &[&str]) -> Vec<String>
 /// this to offer only installed apps in the "Open files with" settings.
 #[tauri::command]
 fn installed_apps(names: Vec<String>) -> Vec<String> {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = crate::shell_path::home_dir();
     detect_installed(&names, &home, APP_ROOTS)
+}
+
+/// The program a new shell pane launches when the user has set no preference
+/// (`shell-selection`). Platform-derived — `pwsh`/`powershell.exe` on Windows,
+/// `$SHELL`/`/bin/zsh` on Unix — because only the backend can probe `PATH`.
+#[tauri::command]
+fn default_shell() -> String {
+    crate::shell_path::default_shell()
 }
 
 /// Build the argument vector passed to `open` (after the program name) for
@@ -1544,6 +1554,7 @@ pub fn run() {
             resolve_path,
             open_path,
             installed_apps,
+            default_shell,
             session_focus,
             layout_load,
             layout_save,

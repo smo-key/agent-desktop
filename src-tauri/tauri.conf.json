@@ -58,6 +58,11 @@
     "android": {
       "debugApplicationIdSuffix": ".debug"
     },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    },
     "macOS": {
       "hardenedRuntime": true,
       "entitlements": "entitlements.plist",

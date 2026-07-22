@@ -15,6 +15,7 @@
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { shellSettings } from '$lib/settings/shell.svelte';
   import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
   import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
@@ -121,6 +122,10 @@
     void autoAdvance.load();
     // Load the compact-mode preference (opt-in; defaults OFF / full three-line rows).
     void compactMode.load();
+    // Resolve the platform default shell from the backend and load the user's
+    // shell preference. Must run before any shell pane spawns, or a pane would
+    // fall back to the Unix default on Windows and die instantly.
+    void shellSettings.load();
     // Load the subagents-visibility preference (defaults ON / subagents shown).
     void subagentsVisible.load();
     // Load the needs-input alert channel modes (opt-in; both default OFF / silent).

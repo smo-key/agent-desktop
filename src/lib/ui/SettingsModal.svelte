@@ -20,6 +20,7 @@
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { shellSettings } from '$lib/settings/shell.svelte';
   import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
   import { notifications, type AlertMode } from '$lib/settings/notifications.svelte';
   import { ensureDesktopPermission } from '$lib/overview/alerts.svelte';
@@ -228,6 +229,27 @@
                 type="checkbox"
                 checked={subagentsVisible.prefs.enabled}
                 onchange={(e) => subagentsVisible.setEnabled(e.currentTarget.checked)}
+              />
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <span class="label">Terminal</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Shell for new panes</span>
+            <div class="control">
+              <!-- Empty means "use the platform default", which the placeholder
+                   shows so the user can see what is in effect before choosing. -->
+              <input
+                class="custom"
+                type="text"
+                placeholder={shellSettings.platformDefault}
+                aria-label="Shell for new panes"
+                value={shellSettings.prefs.program}
+                onchange={(e) => shellSettings.setProgram(e.currentTarget.value)}
               />
             </div>
           </li>

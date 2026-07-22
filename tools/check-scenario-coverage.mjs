@@ -302,7 +302,15 @@ const MANUAL_SCENARIOS = {
   projects: new Set(['project_rows_carry_no_git_line']),
   // activity-events: the live socket end-to-end is covered headlessly by the Rust
   // accept test, so nothing is MANUAL here.
-  'activity-events': new Set(),
+  // activity-events: end-to-end delivery over a real WINDOWS named pipe cannot be
+  // exercised from the macOS/Linux runners this suite runs on. Everything about it
+  // that IS host-independent is genuinely covered elsewhere: the pipe-address
+  // derivation is unit-tested in Rust (`ipc.rs` — name shape, per-process and
+  // per-path uniqueness, no path leakage), the delivery path itself is one shared
+  // code path asserted on Unix ("Events flow on macOS and Linux"), and the hook
+  // client is transport-opaque (event-hook.test.ts binds a named pipe when it runs
+  // ON Windows). What remains is confirming it live on a real Windows install.
+  'activity-events': new Set(['events_flow_on_windows']),
   // activity-timeline: the two genuinely-live aspects are the route's own
   // setInterval wiring — the slow safety-poll backstop, and the ABSENCE of the
   // retired 1.5s fast poll. Both are $effect intervals in +page.svelte with no

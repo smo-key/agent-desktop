@@ -62,7 +62,8 @@ pub fn claude_title_args(model: &str) -> Vec<String> {
 /// so `claude` is found when launched from Finder with a stripped environment.
 fn seed_claude_env(cmd: &mut tokio::process::Command) {
     cmd.env("PATH", crate::shell_path::resolved_path());
-    if let Ok(home) = std::env::var("HOME") {
+    let home = crate::shell_path::home_dir();
+    if !home.is_empty() {
         cmd.env("HOME", home);
     }
 }

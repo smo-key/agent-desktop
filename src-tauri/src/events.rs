@@ -2,7 +2,8 @@
 //!
 //! Every app-launched claude session is wired (via the per-session `--settings`
 //! hooks, see `resources/event-hook.cjs`) to deliver each hook lifecycle event as
-//! one JSON line over the app-hosted Unix-domain socket this module owns. The
+//! one JSON line over the app-hosted local socket this module owns (a Unix-domain
+//! socket on macOS/Linux, a named pipe on Windows — see [`crate::ipc`]). The
 //! accept loop parses each line into an [`AgentEvent`] and:
 //!   1. appends it to a bounded per-pane in-memory ring (the hot cache the
 //!      overview seeds from), and
@@ -19,7 +20,8 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::io::Read;
-use std::os::unix::net::UnixListener;
+
+use crate::ipc::ListenerExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -226,23 +228,36 @@ fn truncate_head(path: &Path, max: u64) {
     let _ = std::fs::write(path, out);
 }
 
-/// Owns the listener thread for the event socket. Dropping it removes the socket
-/// file; the app holds exactly one in managed state for its lifetime.
+/// Owns the listener thread for the event socket. Dropping it releases the socket
+/// (unlinking the file on Unix); the app holds exactly one in managed state for
+/// its lifetime.
 pub struct EventServer {
-    socket_path: PathBuf,
+    address: String,
+}
+
+impl EventServer {
+    /// The address clients connect to — the exact string exported to a launched
+    /// session as `AGENT_DESKTOP_SOCKET_PATH`.
+    pub fn address(&self) -> &str {
+        &self.address
+    }
 }
 
 impl Drop for EventServer {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.socket_path);
+        crate::ipc::cleanup_address(&self.address);
     }
 }
 
-/// Bind the event socket at `socket_path` (removing any STALE file first so a
-/// crash/restart never fails to bind), and spawn the accept thread. Each accepted
-/// connection's one line is parsed, recorded into `state` (ring + durable sink),
-/// and passed to `on_event`. Malformed lines are dropped. Returns the
-/// [`EventServer`] the caller must keep alive.
+/// Bind the event socket for `socket_path` and spawn the accept thread. Each
+/// accepted connection's one line is parsed, recorded into `state` (ring +
+/// durable sink), and passed to `on_event`. Malformed lines are dropped. Returns
+/// the [`EventServer`] the caller must keep alive.
+///
+/// `socket_path` is the app-data path the socket is derived from; the actual
+/// address is [`crate::ipc::socket_address`] of it — the same path on Unix, a
+/// named pipe on Windows. A stale entry from a prior run never blocks the bind
+/// (unlinked on Unix; impossible on Windows).
 ///
 /// `on_event` runs on the accept thread; it must be `Send`. In production it
 /// emits the Tauri `overview://event`; in tests it pushes to a channel.
@@ -254,14 +269,12 @@ pub fn start_event_server<F>(
 where
     F: Fn(AgentEvent) + Send + 'static,
 {
-    // A leftover socket file (prior run / crash) makes bind() fail with
-    // AddrInUse; unlink it first so a restart always binds cleanly.
-    let _ = std::fs::remove_file(socket_path);
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create_dir_all {parent:?}: {e}"))?;
     }
+    let address = crate::ipc::socket_address(socket_path);
     let listener =
-        UnixListener::bind(socket_path).map_err(|e| format!("bind {socket_path:?}: {e}"))?;
+        crate::ipc::bind_listener(&address).map_err(|e| format!("bind {address:?}: {e}"))?;
 
     std::thread::spawn(move || {
         for stream in listener.incoming() {
@@ -280,9 +293,7 @@ where
         }
     });
 
-    Ok(EventServer {
-        socket_path: socket_path.to_path_buf(),
-    })
+    Ok(EventServer { address })
 }
 
 /// Reconstruct a completed-tool timeline for a session that has no durable sink
@@ -445,7 +456,10 @@ mod tests {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let dir = std::env::temp_dir().join(format!("agentdesk-events-{tag}-{nanos}"));
+            // Keep this SHORT: a Unix-domain socket path under it must fit
+            // SUN_LEN (~104 bytes on macOS), and the system temp dir is already
+            // long. Mirrors the same guard in `orchestration::tests`.
+            let dir = std::env::temp_dir().join(format!("ade-{tag}-{nanos}"));
             std::fs::create_dir_all(&dir).unwrap();
             TempDir(dir)
         }
@@ -473,10 +487,12 @@ mod tests {
         }
     }
 
-    fn send_line(socket: &Path, line: &str) {
+    /// Deliver one line the way the Node hook does: connect to the server's
+    /// address, write, close. Platform-agnostic — the same call reaches a Unix
+    /// socket or a Windows named pipe.
+    fn send_line(address: &str, line: &str) {
         use std::io::Write;
-        use std::os::unix::net::UnixStream;
-        let mut s = UnixStream::connect(socket).unwrap();
+        let mut s = crate::ipc::connect(address).unwrap();
         s.write_all(line.as_bytes()).unwrap();
         // Drop closes the stream -> server reads to EOF.
     }
@@ -495,7 +511,7 @@ mod tests {
         .unwrap();
 
         send_line(
-            &socket,
+            server.address(),
             r#"{"paneId":"p1","sessionId":"s1","hookEventName":"PreToolUse","ts":5,"toolName":"Bash","summary":"Bash:ls"}"#,
         );
 
@@ -542,13 +558,13 @@ mod tests {
         })
         .unwrap();
 
-        send_line(&socket, "{not json");
-        send_line(&socket, r#"{"hookEventName":"Stop"}"#); // missing paneId
+        send_line(server.address(), "{not json");
+        send_line(server.address(), r#"{"hookEventName":"Stop"}"#); // missing paneId
         // No callback for either malformed line.
         assert!(rx.recv_timeout(Duration::from_millis(400)).is_err());
         // A subsequent valid line still works (loop survived).
         send_line(
-            &socket,
+            server.address(),
             r#"{"paneId":"p2","sessionId":"s2","hookEventName":"Stop","ts":1}"#,
         );
         let got = rx.recv_timeout(Duration::from_secs(5)).expect("still serving");
@@ -568,11 +584,72 @@ mod tests {
         // The socket is now a live listener — a client can connect.
         let start = Instant::now();
         loop {
-            if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+            if crate::ipc::connect(server.address()).is_ok() {
                 break;
             }
             assert!(start.elapsed() < Duration::from_secs(2), "never became live");
         }
+        drop(server);
+    }
+
+    /// An address left behind by a previous run never blocks startup. On Unix
+    /// that is a stale socket FILE (unlinked before bind); on Windows a dead
+    /// process cannot leave a pipe behind at all, and a live one gets a distinct
+    /// pid-scoped name. Either way the server binds and serves.
+    #[test]
+    fn a_stale_address_never_blocks_startup() {
+        let tmp = TempDir::new("stad");
+        let socket = tmp.path().join("events.sock");
+        // Leave junk exactly where the previous run's socket would have been.
+        std::fs::write(&socket, b"leftover from a crashed run").unwrap();
+
+        let state = Arc::new(EventState::new(tmp.path().join("events")));
+        let (tx, rx) = mpsc::channel::<AgentEvent>();
+        let server = start_event_server(&socket, state, move |e| {
+            let _ = tx.send(e);
+        })
+        .expect("binds despite a stale address");
+
+        // Not merely bound — actually serving.
+        send_line(
+            server.address(),
+            r#"{"paneId":"p1","sessionId":"s1","hookEventName":"Stop","ts":1}"#,
+        );
+        let got = rx.recv_timeout(Duration::from_secs(5)).expect("serving");
+        assert_eq!(got.pane_id, "p1");
+        drop(server);
+    }
+
+    /// The end-to-end delivery path on the developer platforms: a session's hook
+    /// line reaches the ring, the durable sink, and the callback over a real
+    /// Unix-domain socket.
+    #[cfg(unix)]
+    #[test]
+    fn events_flow_on_macos_and_linux() {
+        let tmp = TempDir::new("uflow");
+        let socket = tmp.path().join("events.sock");
+        let state = Arc::new(EventState::new(tmp.path().join("events")));
+        let (tx, rx) = mpsc::channel::<AgentEvent>();
+        let server = start_event_server(&socket, state.clone(), move |e| {
+            let _ = tx.send(e);
+        })
+        .unwrap();
+
+        // The address IS the socket path on Unix — unchanged from before the
+        // cross-platform port, so the hook's env contract is untouched.
+        assert_eq!(server.address(), socket.to_string_lossy());
+        assert!(socket.exists(), "a real socket file is bound at the path");
+
+        send_line(
+            server.address(),
+            r#"{"paneId":"pane-7","sessionId":"sess-7","hookEventName":"PreToolUse","ts":11,"toolName":"Bash"}"#,
+        );
+
+        let got = rx.recv_timeout(Duration::from_secs(5)).expect("emitted");
+        assert_eq!(got.pane_id, "pane-7");
+        // Reached the hot ring and the durable sink too.
+        assert_eq!(state.ring_for("pane-7").len(), 1);
+        assert_eq!(state.sink_for("sess-7").len(), 1);
         drop(server);
     }
 

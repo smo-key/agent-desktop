@@ -178,6 +178,53 @@ jobs:
             return data.id;
 
   # ---------------------------------------------------------------------------
+  # windows-check: fast, release-BLOCKING proof that src-tauri still compiles for
+  # Windows. Runs on every push (not just releases) and needs no sidecars, no
+  # frontend build, and no bundling, so a Windows-breaking change is reported in
+  # ~2 minutes instead of surfacing at bundle time — or, as before this gate
+  # existed, going unnoticed until someone asked for a Windows build.
+  # `cargo check` does not link, so the sidecar binaries are irrelevant here;
+  # `tauri-build` still demands they EXIST, hence the stubs.
+  # ---------------------------------------------------------------------------
+  windows-check:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: wincheck-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            wincheck-
+
+      # tauri-build validates that every `externalBin` exists before the crate is
+      # checked. Real sidecars take ~20 minutes to build from source and none of
+      # their bytes affect type-checking, so stub them.
+      - name: Stub sidecars for the check
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries src-tauri/models
+          for n in whisper-cli whisper-server llama-server; do
+            printf 'MZ' > "src-tauri/binaries/$n-x86_64-pc-windows-msvc.exe"
+          done
+          : > src-tauri/models/ggml-tiny.bin
+
+      - name: cargo check (x86_64-pc-windows-msvc)
+        working-directory: src-tauri
+        run: cargo check --target x86_64-pc-windows-msvc --all-targets
+
+  # ---------------------------------------------------------------------------
   # build: native build matrix; uploads to the draft release created above.
   # ---------------------------------------------------------------------------
   build:
@@ -200,14 +247,14 @@ jobs:
           - runner: ubuntu-22.04-arm
             triple: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
-    # Windows is BEST-EFFORT for now: its native build does not yet compile
-    # (src-tauri's events.rs/orchestration.rs use Unix-domain sockets, which do
-    # not exist on Windows). Mark ONLY the Windows leg continue-on-error so a
-    # Windows failure does not fail the build matrix or block `publish-release` —
-    # macOS + Linux are released now and the Windows installer is added once the
-    # IPC is ported to named pipes. macOS/Linux failures still hard-fail the
-    # matrix and correctly block publishing an incomplete release.
-    continue-on-error: ${{ contains(matrix.triple, 'windows') }}
+    # ALL FOUR targets are required — no leg is continue-on-error. Windows used to
+    # be best-effort because src-tauri did not compile there (events.rs /
+    # orchestration.rs bound Unix-domain sockets); that IPC now runs over a
+    # cross-platform local socket (src-tauri/src/ipc.rs), so a Windows break is a
+    # real regression and must block the release rather than silently publishing
+    # without the Windows installer — which is exactly how Windows rotted to
+    # non-compiling unnoticed. `fail-fast: false` still lets every other target
+    # finish and upload, so one failure never hides another.
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v6
@@ -383,13 +430,16 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # publish-release: flip the draft to published once the build matrix finishes.
-  # The Windows leg is continue-on-error (best-effort), so `build` succeeds — and
-  # this job runs — as long as macOS + Linux built and uploaded; a Windows
-  # failure no longer leaves the release stuck as a draft. If macOS or Linux
-  # fails, `build` fails, this job is skipped, and the release stays a draft.
+  # Every target is required, so `build` succeeds — and this job runs — only when
+  # all four built and uploaded. If ANY leg fails (Windows included), `build`
+  # fails, this job is skipped, and the release stays a draft rather than being
+  # published with a platform's installer missing.
   # ---------------------------------------------------------------------------
   publish-release:
-    needs: [gate, create-release, build]
+    # `windows-check` runs in parallel with the (much longer) build matrix, so
+    # gating on it here costs no wall-clock but guarantees a release can never be
+    # published from a tree that does not compile for Windows.
+    needs: [gate, create-release, build, windows-check]
     if: needs.gate.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:

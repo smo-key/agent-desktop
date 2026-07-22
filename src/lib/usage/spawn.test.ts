@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildMcpToolkitConfig,
   buildSpawnOverride,
+  nodeCommand,
   quoteCommand,
   type UsagePaths
 } from './spawn';
@@ -23,7 +24,7 @@ const PATHS: UsagePaths = {
 
 /** The full hook event set the event hook is wired into, with Pre/Post matching all tools. */
 function expectedHooks(eventHookPath: string) {
-  const cmd = { type: 'command', command: `"${eventHookPath}"` };
+  const cmd = { type: 'command', command: `node "${eventHookPath}"` };
   return {
     SessionStart: [{ hooks: [cmd] }],
     UserPromptSubmit: [{ hooks: [cmd] }],
@@ -60,7 +61,7 @@ describe('buildSpawnOverride', () => {
     expect(parsed.disableAgentView).toBe(true);
     // Command paths are shell-quoted so the spaced app-data path survives claude's
     // shell invocation (the wrapper/hook silently never run otherwise).
-    expect(parsed.statusLine).toEqual({ type: 'command', command: `"${PATHS.wrapperPath}"` });
+    expect(parsed.statusLine).toEqual({ type: 'command', command: `node "${PATHS.wrapperPath}"` });
     // The single event hook is wired into the full lifecycle event set so the
     // overview's status + per-tool timeline are event-sourced.
     expect(parsed.hooks).toEqual(expectedHooks(PATHS.eventHookPath));
@@ -110,9 +111,9 @@ describe('buildSpawnOverride', () => {
       'hooks'
     ]);
     expect(parsed.remoteControlAtStartup).toBe(false);
-    expect(parsed.statusLine.command).toBe(`"${PATHS.wrapperPath}"`);
+    expect(parsed.statusLine.command).toBe(`node "${PATHS.wrapperPath}"`);
     expect(parsed.hooks.PreToolUse[0].matcher).toBe('*');
-    expect(parsed.hooks.PreToolUse[0].hooks[0].command).toBe(`"${PATHS.eventHookPath}"`);
+    expect(parsed.hooks.PreToolUse[0].hooks[0].command).toBe(`node "${PATHS.eventHookPath}"`);
   });
 
   it('Full event set registered at spawn', () => {
@@ -224,6 +225,73 @@ describe('buildSpawnOverride', () => {
     expect(quoteCommand(spaced)).toBe(`"${spaced}"`);
     // Chars special inside double quotes are escaped.
     expect(quoteCommand('/x/$HOME/`b`/"c"/a.js')).toBe('"/x/\\$HOME/\\`b\\`/\\"c\\"/a.js"');
+  });
+
+  it('Hooks fire on Windows', () => {
+    // Windows honors NEITHER the `#!/usr/bin/env node` shebang nor the executable
+    // bit, so a bare script path as the hook command never runs. Because a hook
+    // that fails to run is SILENT, that would disable the whole event pipeline —
+    // and every agent's derived status with it — showing no error at all.
+    // The command must therefore invoke `node` explicitly.
+    const winPath = 'C:\\Users\\dev\\AppData\\Roaming\\agent desktop\\bin\\event-hook.cjs';
+    const { args } = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'p1',
+      usagePaths: { ...PATHS, eventHookPath: winPath, wrapperPath: winPath }
+    });
+    const parsed = JSON.parse(args[1]);
+
+    for (const [event, entries] of Object.entries(parsed.hooks)) {
+      const command = (entries as Array<{ hooks: Array<{ command: string }> }>)[0].hooks[0].command;
+      expect(command.startsWith('node '), `${event} does not invoke node: ${command}`).toBe(true);
+      // The spaced path stays quoted, so the shell cannot split it, and the
+      // separators are forward slashes — `quoteCommand` escapes `\` for POSIX
+      // shells, but cmd.exe treats `\` literally, so an escaped Windows path
+      // would reach node with doubled separators. Node accepts `/` on Windows.
+      expect(command).toBe('node "C:/Users/dev/AppData/Roaming/agent desktop/bin/event-hook.cjs"');
+      expect(command).not.toContain('\\\\');
+    }
+    // The statusline wrapper is invoked the same way.
+    expect(parsed.statusLine.command).toBe(
+      'node "C:/Users/dev/AppData/Roaming/agent desktop/bin/event-hook.cjs"'
+    );
+  });
+
+  it('Hooks continue to fire on Unix', () => {
+    // The same single code path on macOS/Linux — not a regression, since the
+    // shebang was `/usr/bin/env node`, so `node` already had to be on PATH.
+    const { args } = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'p1',
+      usagePaths: PATHS
+    });
+    const parsed = JSON.parse(args[1]);
+    expect(parsed.hooks).toEqual(expectedHooks(PATHS.eventHookPath));
+    expect(parsed.hooks.Stop[0].hooks[0].command).toBe(`node "${PATHS.eventHookPath}"`);
+    // Every lifecycle event still registered — none dropped by the change.
+    expect(Object.keys(parsed.hooks)).toEqual([
+      'SessionStart',
+      'UserPromptSubmit',
+      'PreToolUse',
+      'PostToolUse',
+      'Notification',
+      'Stop',
+      'SubagentStop',
+      'SessionEnd'
+    ]);
+  });
+
+  it('nodeCommand quotes the script path but not the interpreter', () => {
+    expect(nodeCommand('/a b/c.cjs')).toBe('node "/a b/c.cjs"');
+    // Shell-special characters inside the path are still escaped.
+    expect(nodeCommand('/x/$H/`b`.cjs')).toBe('node "/x/\\$H/\\`b\\`.cjs"');
+    // A Windows path is normalized to forward slashes (see toNodePath).
+    expect(nodeCommand('C:\\a b\\c.cjs')).toBe('node "C:/a b/c.cjs"');
+    // A Unix path containing a literal backslash is NOT treated as a Windows
+    // path, so it keeps its escaping.
+    expect(nodeCommand('/tmp/od\\d.cjs')).toBe('node "/tmp/od\\\\d.cjs"');
   });
 
   it('does not mutate the input args array', () => {

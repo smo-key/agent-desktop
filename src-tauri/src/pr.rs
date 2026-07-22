@@ -360,7 +360,8 @@ pub fn parse_pulls_url(stdout: &str) -> Option<String> {
 /// `gh` can read its auth/config under `~`.
 fn seed_gh_env(cmd: &mut tokio::process::Command) {
     cmd.env("PATH", crate::shell_path::resolved_path());
-    if let Ok(home) = std::env::var("HOME") {
+    let home = crate::shell_path::home_dir();
+    if !home.is_empty() {
         cmd.env("HOME", home);
     }
 }
