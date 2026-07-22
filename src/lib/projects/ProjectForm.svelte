@@ -394,7 +394,11 @@
     padding: 0;
     border-radius: var(--r-full);
     border: 2px solid transparent;
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+    /* Ring edge that stays visible against ANY swatch hue (including the
+       curated project-color palette below): a light-tinted ring on dark
+       surfaces, a dark-tinted one on light surfaces, via --line-strong's
+       polarity flip — a plain white ring would vanish on a light dialog. */
+    box-shadow: inset 0 0 0 1px var(--line-strong);
     cursor: pointer;
     transition: transform var(--dur-fast);
   }
@@ -410,6 +414,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    /* Curated project-color swatch hues (projects.ts palette) — deliberately
+       NOT theme tokens; these are a user-facing feature palette, not chrome. */
     background: conic-gradient(
       from 0deg,
       #ff5d5d,
@@ -499,7 +505,7 @@
     cursor: pointer;
   }
   .pf-logo-x:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--line-faint);
   }
   .pf-folder {
     flex: 1;
@@ -572,6 +578,9 @@
     width: 16px;
     height: 16px;
     border-radius: var(--r-full);
+    /* Intentionally literal white in both themes: a physical toggle-knob color
+       (the iOS-switch convention) distinguished from its track by --shadow-sm,
+       not by hue contrast — not theme debt. */
     background: #fff;
     box-shadow: var(--shadow-sm);
     transition: transform var(--dur-fast);
@@ -589,6 +598,12 @@
     border: 1px solid transparent;
     border-radius: var(--r-md);
     background: var(--blue-500);
+    /* Literal white text-on-accent-button, same reasoning as the knob above:
+       reads fine against --blue-500 in both themes (see Inbox.svelte's
+       .lh .launch comment for the contrast numbers); --fg-on-accent is tuned
+       near-black and isn't the right fit here. The glossy inset highlight
+       below is likewise theme-invariant — it's a highlight on a saturated
+       button surface, not on the app background. */
     color: #fff;
     font-family: var(--font-sans);
     font-size: 13.5px;

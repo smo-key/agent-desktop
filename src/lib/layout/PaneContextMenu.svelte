@@ -82,17 +82,20 @@
 {/if}
 
 <style>
+  /* GH-dark terminal-chrome palette (--term-*): this menu pops up over panes,
+     which are terminals, so it deliberately matches the terminal's own accent
+     family rather than the app's NASA-blue --accent. */
   .menu {
     position: fixed;
     z-index: 1000;
     min-width: 176px;
     padding: 4px;
-    background: #1b212b;
-    border: 1px solid #30363d;
+    background: var(--space-700);
+    border: 1px solid var(--term-border);
     border-radius: 8px;
     box-shadow:
       0 8px 28px rgba(0, 0, 0, 0.5),
-      0 1px 0 rgba(255, 255, 255, 0.03) inset;
+      0 1px 0 var(--line-faint) inset;
     user-select: none;
     -webkit-user-select: none;
     font-family:
@@ -109,30 +112,31 @@
     border: 0;
     border-radius: 5px;
     background: transparent;
-    color: #c9d1d9;
+    color: var(--term-fg);
     font-size: 12.5px;
     text-align: left;
     cursor: default;
   }
   .item:hover:not(:disabled) {
-    background: #1f6feb;
+    background: var(--term-accent-strong);
+    /* Literal white: reads fine against --term-accent-strong in both themes. */
     color: #fff;
   }
   .item:disabled {
-    color: #6e7681;
+    color: var(--term-fg-subtle);
   }
 
   .sc {
     font-size: 11px;
-    color: #6e7681;
+    color: var(--term-fg-subtle);
   }
   .item:hover:not(:disabled) .sc {
-    color: #c8d6f5;
+    color: var(--term-fg-on-accent);
   }
 
   .divider {
     height: 1px;
     margin: 4px 6px;
-    background: #30363d;
+    background: var(--term-border);
   }
 </style>

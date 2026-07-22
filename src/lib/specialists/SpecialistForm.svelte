@@ -184,7 +184,7 @@
   }
   .sf-err {
     margin: -8px 0 0;
-    color: #ff8077;
+    color: var(--abort-bright);
     font-size: 12px;
   }
 

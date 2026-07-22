@@ -51,8 +51,8 @@
     max-width: 60%;
     padding: 3px 8px;
     border-radius: 999px;
-    background: rgba(13, 17, 23, 0.82);
-    box-shadow: inset 0 0 0 1px rgba(88, 166, 255, 0.35);
+    background: color-mix(in srgb, var(--term-bg) 82%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--term-accent) 35%, transparent);
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
     pointer-events: none;
@@ -65,7 +65,7 @@
     transition: opacity 0.15s ease;
   }
   .task-badge.idle {
-    box-shadow: inset 0 0 0 1px rgba(110, 118, 129, 0.4);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--term-idle) 40%, transparent);
     opacity: 0.6;
   }
 
@@ -74,19 +74,19 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #484f58; /* idle: grey */
+    background: var(--term-idle);
     pointer-events: none;
     transition: background 0.15s ease;
   }
   .dot.on {
-    background: #3fb950; /* live: green */
-    box-shadow: 0 0 0 2px rgba(63, 185, 80, 0.18);
+    background: var(--term-green);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--term-green) 18%, transparent);
   }
 
   .label {
     font-size: 11px;
     line-height: 1.2;
-    color: #adbac7;
+    color: var(--term-fg);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

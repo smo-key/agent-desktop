@@ -1496,6 +1496,10 @@
   .lh .logo { width: 22px; height: 22px; }
   .lh h1 { font-family: var(--font-display); font-weight: 600; font-size: 17px; margin: 0; display: flex; align-items: baseline; gap: 8px; }
   .lh .count { font-family: var(--font-mono); font-size: 11px; color: var(--fg-3); background: var(--space-750); border: 1px solid var(--line-subtle); border-radius: var(--r-full); padding: 2px 8px; }
+  /* Text-on-accent-button color is intentionally NOT --fg-on-accent: that alias
+     is tuned near-black (contrast-optimized) and would flip this button's text
+     dark in both themes. White reads fine on --blue-500 in both dark (~3.8:1,
+     the pre-theming app's own choice) and light (~4.6:1). */
   .lh .launch { margin-left: auto; font-family: var(--font-sans); font-weight: 700; font-size: 15px; color: #fff; background: var(--blue-500); border: none; border-radius: var(--r-md); width: 30px; height: 30px; cursor: pointer; }
   /* Middle region holds the agent list (or empty state); flexes to fill. */
   .agent-region { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -1529,7 +1533,7 @@
     color: var(--fg-4);
     cursor: pointer;
   }
-  .group-h .group-action:hover { color: var(--danger, #e5484d); }
+  .group-h .group-action:hover { color: var(--danger); }
 
   /* "Show all / Collapse" toggle under the Archived lane's preview rows. Mono/
      uppercase to read as a lane affordance, full-width row indent to align with
@@ -1552,8 +1556,8 @@
   .show-all:hover { color: var(--fg-2); }
 
   .row { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 10px 16px; cursor: pointer; border: none; border-left: 2px solid transparent; background: none; transition: background var(--dur-fast); }
-  .row:hover { background: rgba(255,255,255,0.025); }
-  .row.sel { background: rgba(61,123,255,0.10); border-left-color: var(--blue-500); }
+  .row:hover { background: var(--line-faint); }
+  .row.sel { background: var(--blue-tint); border-left-color: var(--blue-500); }
   .row.attn.sel { background: var(--orange-tint); border-left-color: var(--orange-500); }
   /* When an agent JUST enters "needs you", flash its card from 50% of the orange
      accent to clear in 2.5s. An overlay pseudo-element keeps the wash behind the
@@ -1637,7 +1641,7 @@
   .fhead .ttl { font-weight: 600; font-size: 13.5px; color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   /* The clickable title (renames on click) reads as plain text until hovered. */
   .fhead .ttl-btn { display: inline-flex; align-items: center; max-width: 100%; padding: 2px 6px; margin: -2px -6px; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; cursor: text; text-align: left; font-family: var(--font-sans); }
-  .fhead .ttl-btn:hover { background: rgba(255, 255, 255, 0.04); border-color: var(--line-subtle); }
+  .fhead .ttl-btn:hover { background: var(--line-faint); border-color: var(--line-subtle); }
   /* The inline rename input mirrors the session-rail rename affordance. */
   .fhead .ttl-edit { flex: 1 1 auto; min-width: 0; max-width: 100%; font-weight: 600; font-size: 13.5px; font-family: var(--font-sans); color: var(--fg-1); background: var(--space-800); border: 1px solid var(--blue-500); box-shadow: var(--focus-ring); border-radius: var(--r-sm); padding: 2px 6px; outline: none; }
   .fhead .spc { flex: 1; }
@@ -1648,18 +1652,18 @@
   .fhead .hbtn { flex: none; height: 26px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: var(--r-sm); background: var(--space-750); border: 1px solid var(--line-subtle); color: var(--fg-2); cursor: pointer; font-family: var(--font-sans); font-size: 12px; font-weight: 600; }
   .fhead .hbtn:hover { color: var(--fg-1); border-color: var(--line-default); }
   /* Destructive actions (Archive / Delete) read red at rest, intensifying on hover. */
-  .fhead .hbtn.danger { color: #ff8077; border-color: rgba(242, 86, 75, 0.32); }
-  .fhead .hbtn.danger:hover { color: #ff8077; border-color: rgba(242, 86, 75, 0.5); background: var(--abort-tint); }
+  .fhead .hbtn.danger { color: var(--abort-bright); border-color: color-mix(in srgb, var(--abort-bright) 32%, transparent); }
+  .fhead .hbtn.danger:hover { color: var(--abort-bright); border-color: color-mix(in srgb, var(--abort-bright) 50%, transparent); background: var(--abort-tint); }
 
   .focus-slot { flex: 1; min-height: 0; display: flex; padding: 10px; }
   /* The teleported surface fills the slot. */
   .focus-slot :global(.surface),
   .focus-slot :global(.workspace) { flex: 1 1 auto; min-width: 0; min-height: 0; }
-  .focus-slot.attn { box-shadow: inset 0 0 0 1px rgba(238,126,77,0.18); border-radius: var(--r-md); }
+  .focus-slot.attn { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--orange-500) 18%, transparent); border-radius: var(--r-md); }
   .focus-slot.hidden { display: none; }
 
   .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 40px; }
-  .empty .ring { width: 64px; height: 64px; border-radius: 50%; background: var(--nominal-tint); color: #6fe0a6; display: flex; align-items: center; justify-content: center; font-size: 30px; }
+  .empty .ring { width: 64px; height: 64px; border-radius: 50%; background: var(--nominal-tint); color: var(--nominal-bright); display: flex; align-items: center; justify-content: center; font-size: 30px; }
   .empty .ring.closed { background: var(--space-750); color: var(--fg-3); }
   .empty p code { font-family: var(--font-mono); font-size: 12px; color: var(--fg-2); background: var(--space-750); padding: 1px 5px; border-radius: var(--r-sm); }
   .empty h3 { font-family: var(--font-display); font-weight: 600; font-size: 18px; margin: 0; color: var(--fg-1); }
@@ -1674,14 +1678,15 @@
   .b-flight { color: var(--blue-300); }
   .b-flight .dot { animation: flightflash 2.4s ease-in-out infinite; }
   @keyframes flightflash {
-    0%, 100% { opacity: 1; box-shadow: 0 0 0 1px rgba(86,156,255,0.35); }
-    50% { opacity: 0.3; box-shadow: 0 0 0 0 rgba(86,156,255,0); }
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 1px color-mix(in srgb, var(--blue-400) 35%, transparent); }
+    50% { opacity: 0.3; box-shadow: 0 0 0 0 transparent; }
   }
   @media (prefers-reduced-motion: reduce) { .b-flight .dot { animation: none; } }
   .b-review { color: var(--orange-300); }
-  .b-nominal { color: #6fe0a6; }
-  .b-abort { color: #ff8077; }
+  .b-nominal { color: var(--nominal-bright); }
+  .b-abort { color: var(--abort-bright); }
   .b-standby { color: var(--fg-3); }
 
+  /* See .lh .launch above re: why this stays literal white, not --fg-on-accent. */
   .btn-primary { font-family: var(--font-sans); font-weight: 600; font-size: 13px; color: #fff; background: var(--blue-500); border: none; border-radius: var(--r-md); padding: 9px 15px; cursor: pointer; }
 </style>

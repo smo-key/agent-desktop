@@ -1113,7 +1113,7 @@
     border: 1px solid var(--orange-600);
     border-radius: var(--r-full);
     background: var(--orange-500);
-    color: #1a0d06;
+    color: var(--fg-on-accent);
     font-family: var(--font-display);
     font-size: 11px;
     font-weight: 600;
@@ -1148,13 +1148,16 @@
   }
   /* Failed download: danger-tinted, clickable to retry. */
   .update-pill.is-failed {
-    background: var(--danger, #e5484d);
-    border-color: var(--danger, #e5484d);
+    background: var(--danger);
+    border-color: var(--danger);
+    /* Literal white: reads fine against --danger in both themes (3.9:1 dark /
+       5.4:1 light) — --fg-on-accent is tuned near-black for a DIFFERENT accent
+       pairing and would be wrong here (a red pill needs light text). */
     color: #fff;
   }
   .update-pill.is-failed:hover {
-    background: #d93d42;
-    border-color: #d93d42;
+    background: color-mix(in srgb, var(--danger) 88%, black);
+    border-color: color-mix(in srgb, var(--danger) 88%, black);
     box-shadow: none;
   }
 
@@ -1186,7 +1189,7 @@
   .help-btn:hover {
     color: var(--fg-1);
     border-color: var(--line-strong);
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--line-faint);
   }
 
   /* Title-bar icon button (settings gear). Matches the help button's footprint and
@@ -1214,13 +1217,13 @@
   .tb-btn:hover {
     color: var(--fg-1);
     border-color: var(--line-strong);
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--line-faint);
   }
   /* Active (panel open) state for the terminals toggle. */
   .tb-btn.active {
     color: var(--fg-1);
     border-color: var(--line-strong);
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--line-subtle);
   }
   /* Running-terminal count badge on the toggle (visible even when panel hidden). */
   .tb-badge {
@@ -1235,8 +1238,8 @@
     font-size: 9px;
     font-weight: 700;
     line-height: 1;
-    color: #06080c;
-    background: #3ccb7f;
+    color: var(--fg-on-accent);
+    background: var(--nominal-500);
     border-radius: 7px;
     pointer-events: none;
   }

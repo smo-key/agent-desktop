@@ -383,10 +383,10 @@
     flex: none;
   }
   .tp-dot.on {
-    background: #3ccb7f;
+    background: var(--nominal-500);
   }
   .tp-dot.fail {
-    background: #e5484d;
+    background: var(--danger);
   }
   .tp-name {
     flex: 1 1 auto;
@@ -440,7 +440,7 @@
     background: var(--space-900);
   }
   .tp-gutter:hover {
-    background: var(--accent, #4c8dff);
+    background: var(--accent);
   }
 
   .tp-empty {

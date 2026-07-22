@@ -112,14 +112,14 @@
   .cm-item:hover .cm-ic { color: var(--fg-2); }
   .cm-item.danger .cm-ic { color: inherit; }
   .cm-item:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--line-faint);
     color: var(--fg-1);
   }
   .cm-item.danger {
-    color: #ff8077;
+    color: var(--abort-bright);
   }
   .cm-item.danger:hover {
     background: var(--abort-tint);
-    color: #ff8077;
+    color: var(--abort-bright);
   }
 </style>

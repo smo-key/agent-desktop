@@ -315,7 +315,7 @@
     font: inherit;
   }
   .rowbtn:hover {
-    background: rgba(255, 255, 255, 0.025);
+    background: var(--line-faint);
   }
   /* Drag-to-reorder: the lifted row dims; the drop target shows a neutral ring (the
      move lands AT the target's slot). `-webkit-user-drag: element` is required for
@@ -340,10 +340,10 @@
     flex: none;
   }
   .dot.on {
-    background: var(--nominal-500, #3ccb7f);
+    background: var(--nominal-500);
   }
   .dot.fail {
-    background: #e5484d;
+    background: var(--danger);
   }
   .rowbtn :global(.mc-icon) {
     color: var(--fg-3);

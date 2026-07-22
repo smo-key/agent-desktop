@@ -37,7 +37,7 @@
     padding: 14px 18px;
     background: var(--space-800);
     border: 1px solid var(--line-default);
-    border-left: 4px solid var(--nominal-500, #3ccb7f);
+    border-left: 4px solid var(--nominal-500);
     border-radius: var(--r-md);
     box-shadow: var(--shadow-lg);
     color: var(--fg-1);
@@ -54,7 +54,7 @@
     place-items: center;
     width: 19px;
     height: 19px;
-    color: var(--nominal-500, #3ccb7f);
+    color: var(--nominal-500);
     font-size: 15px;
     font-weight: 700;
     line-height: 1;

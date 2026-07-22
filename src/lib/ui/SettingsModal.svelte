@@ -550,7 +550,7 @@
     cursor: pointer;
   }
   .x:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--line-faint);
     color: var(--fg-1);
   }
 
@@ -662,11 +662,11 @@
     border-radius: var(--r-sm);
     border: 1px solid var(--line-default);
     background: var(--space-650);
-    color: var(--danger, #e5484d);
+    color: var(--danger);
     cursor: pointer;
   }
   .model-delete:not(:disabled):hover {
-    border-color: var(--danger, #e5484d);
+    border-color: var(--danger);
     background: var(--space-600);
   }
 

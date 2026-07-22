@@ -198,7 +198,7 @@
       color var(--dur-fast);
   }
   .row:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--line-faint);
     color: var(--fg-1);
   }
   .row.active {
@@ -216,7 +216,7 @@
   }
   .dot.on {
     background: var(--nominal-500);
-    box-shadow: 0 0 0 2px rgba(60, 203, 127, 0.18);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--nominal-500) 18%, transparent);
   }
 
   .name {
@@ -271,7 +271,7 @@
     opacity: 1;
   }
   .close:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--line-subtle);
     color: var(--fg-1);
   }
 
@@ -299,7 +299,7 @@
   .new:hover {
     border-color: var(--blue-500);
     color: var(--fg-1);
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--line-faint);
   }
   .plus {
     font-size: 15px;

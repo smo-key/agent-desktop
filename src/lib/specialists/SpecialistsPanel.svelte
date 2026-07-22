@@ -312,17 +312,17 @@
     font: inherit;
   }
   .rowbtn:hover {
-    background: rgba(255, 255, 255, 0.025);
+    background: var(--line-faint);
   }
   .rowbtn :global(.mc-icon) {
     color: var(--fg-3);
   }
   /* A broken entry reads in the abort/red accent. */
   .rowbtn.broken {
-    border-left-color: rgba(242, 86, 75, 0.4);
+    border-left-color: color-mix(in srgb, var(--abort-500) 40%, transparent);
   }
   .rowbtn.broken :global(.mc-icon) {
-    color: #ff8077;
+    color: var(--abort-bright);
   }
   .nm {
     flex: 1 1 auto;
@@ -347,6 +347,6 @@
     margin-top: 1px;
   }
   .nm .s.err {
-    color: #ff8077;
+    color: var(--abort-bright);
   }
 </style>

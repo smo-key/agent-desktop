@@ -341,7 +341,9 @@
     width: 3px;
     min-height: 4px;
     border-radius: var(--r-full);
-    background: #fff;
+    /* --fg-1 (not a literal white): this panel's bg is --space-800, which is
+       white in light mode — literal white bars would vanish there. */
+    background: var(--fg-1);
     transition: height 0.08s linear;
   }
 
@@ -369,7 +371,7 @@
     flex: none;
     border: none;
     border-radius: var(--r-full);
-    background: var(--accent, #3b82f6);
+    background: var(--accent);
     color: #fff;
     cursor: pointer;
     transition: filter 0.15s ease;
@@ -395,7 +397,7 @@
     cursor: pointer;
   }
   .x:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--line-faint);
     color: var(--fg-1);
   }
 
@@ -411,9 +413,9 @@
     background: linear-gradient(
       90deg,
       var(--fg-3) 0%,
-      #3b82f6 25%,
-      #60a5fa 50%,
-      #3b82f6 75%,
+      var(--blue-500) 25%,
+      var(--blue-400) 50%,
+      var(--blue-500) 75%,
       var(--fg-3) 100%
     );
     background-size: 200% 100%;
@@ -445,8 +447,8 @@
     background: var(--space-650);
   }
   .guidance.denied {
-    border-color: rgba(229, 72, 77, 0.45);
-    background: rgba(229, 72, 77, 0.08);
+    border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
   }
   .guidance-msg {
     margin: 0;
@@ -499,6 +501,6 @@
     margin: 0;
     font-size: 12px;
     line-height: 1.5;
-    color: #ff8a8d;
+    color: var(--abort-bright);
   }
 </style>

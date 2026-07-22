@@ -790,7 +790,7 @@
   }
 
   .cp-file:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--line-faint);
     color: var(--fg-1);
   }
 
@@ -802,7 +802,7 @@
 
   .cp-file-row:focus {
     outline: none;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--line-faint);
     color: var(--fg-1);
   }
 
@@ -873,7 +873,7 @@
 
   .pp-commit-clickable:focus {
     outline: none;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--line-faint);
     color: var(--fg-1);
   }
 
@@ -912,7 +912,7 @@
 
   .opr-pr-row:focus {
     outline: none;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--line-faint);
   }
 
   .opr-number {

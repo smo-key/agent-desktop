@@ -111,7 +111,7 @@
     cursor: pointer;
   }
   .x:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--line-faint);
     color: var(--fg-1);
   }
 
@@ -143,11 +143,11 @@
     background: var(--space-600);
   }
   .btn.danger {
-    color: var(--danger, #e5484d);
+    color: var(--danger);
     border-color: var(--line-default);
   }
   .btn.danger:hover {
-    border-color: var(--danger, #e5484d);
+    border-color: var(--danger);
     background: var(--space-600);
   }
 </style>

@@ -185,9 +185,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--space-900, #0d1017);
-    color: var(--fg-4, #6b7280);
-    font-family: var(--font-mono, monospace);
+    background: var(--space-900);
+    color: var(--fg-4);
+    font-family: var(--font-mono);
     font-size: 12px;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -202,7 +202,7 @@
     transition: box-shadow 0.1s ease;
   }
   .leaf.focused {
-    box-shadow: inset 0 0 0 1px #58a6ff;
+    box-shadow: inset 0 0 0 1px var(--term-accent);
     z-index: 1;
   }
 

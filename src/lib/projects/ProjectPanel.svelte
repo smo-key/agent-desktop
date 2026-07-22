@@ -451,11 +451,11 @@
     transition: background var(--dur-fast), border-color var(--dur-fast);
   }
   .pp-rail-ic:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--line-faint);
   }
   .pp-rail-ic.active {
     background: var(--blue-tint);
-    border-color: rgba(61, 123, 255, 0.35);
+    border-color: color-mix(in srgb, var(--blue-500) 35%, transparent);
   }
   .pp-rail-attn {
     position: absolute;
@@ -504,7 +504,7 @@
       color var(--dur-fast);
   }
   .pp-item:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--line-faint);
     color: var(--fg-1);
   }
   .pp-item.active {

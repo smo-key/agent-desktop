@@ -260,7 +260,7 @@
     align-items: center;
     gap: 9px;
     width: 100%;
-    background: rgba(56, 65, 85, 0.35);
+    background: var(--bg-input);
     border: 1px solid var(--line-default);
     border-radius: var(--r-md);
     padding: 10px 12px;
@@ -323,12 +323,12 @@
     border-radius: var(--r-sm);
   }
   .psel-opt:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--line-faint);
     color: var(--fg-1);
   }
   /* Keyboard highlight (roving). Mirrors hover but with a clear accent edge. */
   .psel-opt.hl {
-    background: rgba(61, 123, 255, 0.16);
+    background: color-mix(in srgb, var(--blue-500) 16%, transparent);
     color: var(--fg-1);
     box-shadow: inset 2px 0 0 var(--blue-500);
   }

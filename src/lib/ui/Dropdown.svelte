@@ -276,7 +276,7 @@
     border-radius: var(--r-sm);
   }
   .dd-opt.highlight {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--line-faint);
     color: var(--fg-1);
   }
   .dd-opt.highlight .dd-ic {

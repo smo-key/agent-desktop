@@ -117,7 +117,7 @@
   .gutter {
     flex: 0 0 6px;
     position: relative;
-    background: #161b22;
+    background: var(--space-800);
     touch-action: none;
     z-index: 2;
   }
@@ -137,7 +137,7 @@
   .gutter::after {
     content: '';
     position: absolute;
-    background: #21262d;
+    background: var(--space-700);
   }
   .gutter.row::after {
     top: 0;
@@ -171,6 +171,6 @@
 
   .gutter:hover::after,
   .gutter.active::after {
-    background: #58a6ff;
+    background: var(--term-accent);
   }
 </style>

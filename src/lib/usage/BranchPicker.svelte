@@ -363,13 +363,13 @@
   }
 
   .bp-opt:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--line-faint);
     color: var(--fg-1);
   }
 
   /* Roving keyboard highlight — mirrors ProjectSelect's `.psel-opt.hl`. */
   .bp-opt.hl {
-    background: rgba(61, 123, 255, 0.16);
+    background: color-mix(in srgb, var(--blue-500) 16%, transparent);
     color: var(--fg-1);
     box-shadow: inset 2px 0 0 var(--blue-500);
   }
@@ -413,12 +413,12 @@
 
   .bp-create:hover:not(:disabled) {
     color: var(--blue-300);
-    background: rgba(61, 123, 255, 0.1);
+    background: color-mix(in srgb, var(--blue-500) 10%, transparent);
   }
 
   .bp-create.hl {
     color: var(--blue-300);
-    background: rgba(61, 123, 255, 0.16);
+    background: color-mix(in srgb, var(--blue-500) 16%, transparent);
     box-shadow: inset 2px 0 0 var(--blue-500);
   }
 

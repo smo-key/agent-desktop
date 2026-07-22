@@ -188,6 +188,28 @@
   --abort-500: #f2564b;
   --abort-tint: rgba(242, 86, 75, 0.13);
   --danger: #e5484d;
+  /* "Bright" text/icon-safe status variants (S4): several components use a
+     lighter, higher-legibility red/green for small text on a dark surface
+     than --abort-500/--nominal-500 (which are tuned more for fills/borders).
+     Kept as distinct tokens so retokenizing those literals doesn't shift
+     --abort-500/--nominal-500's own many other consumers. */
+  --abort-bright: #ff8077;
+  --nominal-bright: #6fe0a6;
+
+  /* ---- Terminal chrome — GitHub-dark accents shared by TerminalPane and its
+     surrounding chrome (drop-target rings, the per-pane task badge). Distinct
+     from the app's own --blue-500/--nominal-500 (a different, terminal-native
+     hue family), so it gets its own small token set rather than reusing them. */
+  --term-bg: #0d1117;
+  --term-fg: #c9d1d9;
+  --term-fg-muted: #8b949e;
+  --term-idle: #484f58;
+  --term-border: #30363d;
+  --term-accent: #58a6ff;
+  --term-accent-strong: #1f6feb;
+  --term-fg-subtle: #6e7681;
+  --term-fg-on-accent: #c8d6f5;
+  --term-green: #3fb950;
 
   /* ---- Elevation — shadows + glows ---------------------------------------- */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -270,6 +292,25 @@
   --abort-500: #cf222e;
   --abort-tint: rgba(207, 34, 46, 0.12);
   --danger: #cf222e;
+  /* Reuse the already AA-verified --abort-500/--nominal-500 light values —
+     unlike dark mode, light mode doesn't need a separate lighter/brighter
+     variant for text legibility. */
+  --abort-bright: #cf222e;
+  --nominal-bright: #1a7f37;
+
+  /* ---- Terminal chrome — a "GitHub-light" companion to the dark set above,
+     so TerminalPane's own chrome (and the task badge overlaid on it) tracks
+     the same resolved theme as the terminal canvas itself. */
+  --term-bg: #ffffff;
+  --term-fg: #1f2328;
+  --term-fg-muted: #59636e;
+  --term-idle: #8c959f;
+  --term-border: #d0d7de;
+  --term-accent: #0969da;
+  --term-accent-strong: #0969da;
+  --term-fg-subtle: #656d76;
+  --term-fg-on-accent: #ffffff;
+  --term-green: #116329;
 
   /* ---- Elevation — shadows + glows (softened for a light canvas) --------- */
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);

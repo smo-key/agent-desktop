@@ -314,7 +314,7 @@
     padding: var(--s-3);
     text-align: left;
     background: var(--abort-tint);
-    border: 1px solid rgba(242, 86, 75, 0.25);
+    border: 1px solid color-mix(in srgb, var(--abort-500) 25%, transparent);
     border-radius: var(--r-md);
     font-size: var(--t-body-s);
     line-height: var(--lh-normal);
