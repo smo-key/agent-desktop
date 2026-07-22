@@ -22,6 +22,8 @@
   import { noteOutput, noteExit, noteBusy, noteResize, clearRuntime } from './overview/runtime';
   import { detectTerminalBusy } from './overview/terminalBusy';
   import { events } from './overview/events.svelte';
+  import { theme as themeStore } from './settings/theme.svelte';
+  import { termThemeFor } from './terminalTheme';
 
   // PtyEvent — the exact wire shape the Rust backend streams over the per-pane
   // Channel (internally tagged on `event`):
@@ -194,32 +196,6 @@
   // True once `term.open()` has run, so the WebGL effect knows the renderer is
   // attachable. Plain local (not state): only read inside async/effect bodies.
   let opened = false;
-
-  // GitHub-ish dark theme. Note: the xterm 6 key is `selectionBackground`
-  // (the old `selection` key was removed).
-  const THEME = {
-    background: '#0d1117',
-    foreground: '#c9d1d9',
-    cursor: '#58a6ff',
-    cursorAccent: '#0d1117',
-    selectionBackground: '#284766',
-    black: '#484f58',
-    red: '#ff7b72',
-    green: '#3fb950',
-    yellow: '#d29922',
-    blue: '#58a6ff',
-    magenta: '#bc8cff',
-    cyan: '#39c5cf',
-    white: '#b1bac4',
-    brightBlack: '#6e7681',
-    brightRed: '#ffa198',
-    brightGreen: '#56d364',
-    brightYellow: '#e3b341',
-    brightBlue: '#79c0ff',
-    brightMagenta: '#d2a8ff',
-    brightCyan: '#56d4dd',
-    brightWhite: '#f0f6fc'
-  };
 
   /** Guarded fit: skip 0×0 containers (hidden / mid-layout) so we never push a
    *  zero-size resize down to the PTY, and skip entirely while a gutter drag is
@@ -540,7 +516,7 @@
         fontFamily:
           'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
         fontSize: 13,
-        theme: THEME,
+        theme: termThemeFor(themeStore.resolved),
         cursorBlink: true
       });
 
@@ -861,6 +837,19 @@
     } else {
       disposeWebgl();
     }
+  });
+
+  // Live theme switching (theming spec S3): `theme` is set once at
+  // construction, but xterm 6 supports live reassignment via
+  // `term.options.theme` — re-apply it whenever the resolved app theme
+  // changes, so every mounted pane (dozens can exist at once; hidden
+  // workspaces stay mounted) re-themes without recreating the terminal.
+  // `term` is read as a plain (non-reactive) local, deliberately (like the
+  // WebGL effect above): only `themeStore.resolved` should re-trigger this.
+  $effect(() => {
+    const resolved = themeStore.resolved;
+    if (!term) return;
+    term.options.theme = termThemeFor(resolved);
   });
 
   // When a gutter drag ends (deferFit goes true -> false), run one fit to

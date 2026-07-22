@@ -25,6 +25,7 @@
   import { notifications, type AlertMode } from '$lib/settings/notifications.svelte';
   import { ensureDesktopPermission } from '$lib/overview/alerts.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
+  import { theme, type ThemeMode } from '$lib/settings/theme.svelte';
   import { appVersionLabel } from '$lib/settings/version';
   import { updateStore } from '$lib/updates/updateStore.svelte';
   import { runUpdateCheck } from '$lib/updates/checkForUpdate';
@@ -125,6 +126,11 @@
     { value: 'off', label: 'Never' },
     { value: 'app-unfocused', label: 'When app is in the background' }
   ];
+  const THEME_OPTIONS: DropdownOption[] = [
+    { value: 'dark', label: 'Dark' },
+    { value: 'light', label: 'Light' },
+    { value: 'system', label: 'Match system' }
+  ];
 
   // Per-row: is the value a curated choice, or a custom name needing the text field?
   // Derived from the live prefs so reopening reflects the saved value.
@@ -207,18 +213,35 @@
       </header>
 
       <section class="group">
+        <span class="label">Appearance</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Theme</span>
+            <div class="control">
+              <!-- Focus the first setting control on open (skips the header ×). -->
+              <Dropdown
+                value={theme.prefs.mode}
+                options={THEME_OPTIONS}
+                onChange={(v) => theme.setMode(v as ThemeMode)}
+                ariaLabel="Theme"
+                autofocusTrigger
+              />
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group">
         <span class="label">Sessions panel</span>
         <ul class="rows">
           <li class="row">
             <span class="desc">Density</span>
             <div class="control">
-              <!-- Focus the first setting control on open (skips the header ×). -->
               <Dropdown
                 value={compactMode.prefs.enabled ? 'compact' : 'default'}
                 options={DENSITY_OPTIONS}
                 onChange={(v) => compactMode.setEnabled(v === 'compact')}
                 ariaLabel="Density"
-                autofocusTrigger
               />
             </div>
           </li>
