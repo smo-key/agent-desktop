@@ -230,8 +230,12 @@
         use:tooltip={{ text: c.project.name, placement: 'right' }}
       >
         <ProjectIcon icon={c.project.icon} color={c.project.color} logo={c.project.logo} size={18} />
-        {#if c.attn}<span class="pp-rail-attn" aria-hidden="true"></span>
-        {:else if c.working}<span class="pp-rail-work" aria-hidden="true"></span>{/if}
+        <!-- Collapsed rail is too small for both counts side by side; show the more
+             urgent one — the WAITING count (amber) when any agent needs you, else the
+             WORKING count (blue). The expanded panel shows the full waiting + working
+             breakdown. -->
+        {#if c.waiting > 0}<span class="pp-rail-badge attn" aria-hidden="true">{c.waiting}</span>
+        {:else if c.working > 0}<span class="pp-rail-badge work" aria-hidden="true">{c.working}</span>{/if}
       </button>
     {/each}
     {#if unassigned > 0}
@@ -303,8 +307,16 @@
         <Icon name={c.project.icon} size={16} color={c.project.color} />
       {/if}
       <span class="pp-name" use:tooltip={c.project.path}>{c.project.name}</span>
-      {#if c.attn}<span class="pp-attn" use:tooltip={'Needs attention'}></span>
-      {:else if c.working}<span class="pp-work" use:tooltip={'Working'}></span>{/if}
+      {#if c.waiting > 0}
+        <span class="pp-stat attn" use:tooltip={`${c.waiting} waiting for you`}>
+          <span class="pp-attn" aria-hidden="true"></span>{c.waiting}
+        </span>
+      {/if}
+      {#if c.working > 0}
+        <span class="pp-stat work" use:tooltip={`${c.working} working`}>
+          <span class="pp-work" aria-hidden="true"></span>{c.working}
+        </span>
+      {/if}
       <span class="pp-ct">{c.count}</span>
     </div>
   {/each}
@@ -457,28 +469,32 @@
     background: var(--blue-tint);
     border-color: rgba(61, 123, 255, 0.35);
   }
-  .pp-rail-attn {
+  /* Collapsed-rail count badge: a small numeric pill in the icon's top-right
+     corner. Amber for the waiting (needs-you) count, blue (flashing) for the
+     working count — see the markup for which one shows. The border matches the
+     rail background so the badge reads as separate from the icon. */
+  .pp-rail-badge {
     position: absolute;
-    top: 3px;
-    right: 3px;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--orange-500);
+    top: 0;
+    right: 0;
+    min-width: 13px;
+    height: 13px;
+    padding: 0 3px;
+    border-radius: 7px;
+    box-sizing: border-box;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 10px;
+    text-align: center;
+    color: var(--space-900);
     border: 1.5px solid var(--space-900);
   }
-  /* The blue counterpart to the attention dot: shown when a project has a
-     working agent but none that need you, flashing slowly so it reads as
-     "in flight" at a glance (mirrors the inbox's in-flight dot). */
-  .pp-rail-work {
-    position: absolute;
-    top: 3px;
-    right: 3px;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
+  .pp-rail-badge.attn {
+    background: var(--orange-500);
+  }
+  .pp-rail-badge.work {
     background: var(--blue-300);
-    border: 1.5px solid var(--space-900);
     animation: pp-flash 2.4s ease-in-out infinite;
   }
   .pp-item {
@@ -534,6 +550,26 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* A per-project count chip: a colored dot + its number. Two can show at once —
+     amber for WAITING (needs you) and blue for WORKING — so the row distinguishes
+     how many agents want you from how many are still running. Each is hidden when
+     its count is zero. */
+  .pp-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .pp-stat.attn {
+    color: var(--orange-300);
+  }
+  .pp-stat.work {
+    color: var(--blue-300);
+  }
   .pp-attn {
     width: 6px;
     height: 6px;
@@ -541,8 +577,7 @@
     background: var(--orange-500);
     flex: none;
   }
-  /* Working (in-flight) dot: the blue, flashing counterpart to .pp-attn, shown
-     when a project is working but nothing needs you (attention takes precedence). */
+  /* Working (in-flight) dot: the blue, flashing counterpart to .pp-attn. */
   .pp-work {
     width: 6px;
     height: 6px;
@@ -562,7 +597,7 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .pp-work,
-    .pp-rail-work {
+    .pp-rail-badge.work {
       animation: none;
     }
   }
