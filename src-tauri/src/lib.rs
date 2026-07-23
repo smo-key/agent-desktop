@@ -4,6 +4,7 @@ pub mod events;
 pub mod git;
 pub mod ipc;
 pub mod models;
+pub mod no_window;
 pub mod notify_click;
 pub mod orchestration;
 pub mod polish;
