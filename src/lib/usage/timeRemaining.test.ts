@@ -4,7 +4,15 @@
 process.env.TZ = 'UTC';
 
 import { describe, it, expect } from 'vitest';
-import { timeRemainingShort, resetClause, usageLimitTooltip, type ClockFormat } from './timeRemaining';
+import {
+  timeRemainingShort,
+  resetClause,
+  usageLimitTooltip,
+  nextReset,
+  resetCountdownLabel,
+  nextResetCountdown,
+  type ClockFormat
+} from './timeRemaining';
 
 const NOW = 1_000_000;
 
@@ -93,5 +101,81 @@ describe('usageLimitTooltip', () => {
     expect(usageLimitTooltip('5-hour', null, NOW + 2 * 3600, NOW, FMT)).toBe(
       '5-hour limit — — used · resets at T15:46'
     );
+  });
+});
+
+describe('nextReset', () => {
+  it('picks the soonest window with a future reset', () => {
+    const w = nextReset(
+      [
+        { name: '7-day', resetsAt: NOW + 5 * 86400 },
+        { name: '5-hour', resetsAt: NOW + 2 * 3600 }
+      ],
+      NOW
+    );
+    expect(w?.name).toBe('5-hour');
+  });
+
+  it('ignores null / non-finite / already-elapsed resets', () => {
+    expect(
+      nextReset(
+        [
+          { name: 'a', resetsAt: null },
+          { name: 'b', resetsAt: Number.NaN },
+          { name: 'c', resetsAt: NOW - 10 }, // elapsed
+          { name: 'd', resetsAt: NOW + 100 }
+        ],
+        NOW
+      )?.name
+    ).toBe('d');
+  });
+
+  it('returns null when no window has a known future reset', () => {
+    expect(nextReset([{ name: 'a', resetsAt: null }, { name: 'b', resetsAt: NOW - 1 }], NOW)).toBeNull();
+    expect(nextReset([], NOW)).toBeNull();
+  });
+});
+
+describe('resetCountdownLabel', () => {
+  it('minutes under an hour (min 1m)', () => {
+    expect(resetCountdownLabel(NOW + 47 * 60, NOW)).toBe('resets in 47m');
+    expect(resetCountdownLabel(NOW + 30, NOW)).toBe('resets in 1m');
+  });
+
+  it('hours + minutes under a day, dropping a zero minute', () => {
+    expect(resetCountdownLabel(NOW + 4 * 3600 + 32 * 60, NOW)).toBe('resets in 4h 32m');
+    expect(resetCountdownLabel(NOW + 5 * 3600, NOW)).toBe('resets in 5h');
+  });
+
+  it('days + hours at or beyond a day, dropping a zero hour', () => {
+    expect(resetCountdownLabel(NOW + 2 * 86400 + 3 * 3600, NOW)).toBe('resets in 2d 3h');
+    expect(resetCountdownLabel(NOW + 86400, NOW)).toBe('resets in 1d');
+  });
+
+  it('null for null / non-finite / already elapsed', () => {
+    expect(resetCountdownLabel(null, NOW)).toBeNull();
+    expect(resetCountdownLabel(Number.NaN, NOW)).toBeNull();
+    expect(resetCountdownLabel(NOW, NOW)).toBeNull();
+    expect(resetCountdownLabel(NOW - 100, NOW)).toBeNull();
+  });
+});
+
+describe('nextResetCountdown', () => {
+  it('labels + names the soonest window with an absolute tooltip', () => {
+    const rc = nextResetCountdown(
+      [
+        { name: '7-day', resetsAt: NOW + 5 * 86400 },
+        { name: '5-hour', resetsAt: NOW + 2 * 3600 }
+      ],
+      NOW,
+      FMT
+    );
+    expect(rc).toEqual({ label: 'resets in 2h', tooltip: '5-hour limit · resets at T15:46' });
+  });
+
+  it('returns null when no window has a known future reset', () => {
+    expect(
+      nextResetCountdown([{ name: '5-hour', resetsAt: null }], NOW, FMT)
+    ).toBeNull();
   });
 });

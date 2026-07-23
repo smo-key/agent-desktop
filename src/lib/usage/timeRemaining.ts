@@ -83,3 +83,72 @@ export function usageLimitTooltip(
   const clause = resetClause(resetsAt, nowSeconds, fmt);
   return clause ? `${base} · ${clause}` : base;
 }
+
+/** One named rate-limit window, as the reset-countdown helpers consume it. */
+export interface ResetWindow {
+  /** Human label for the window, e.g. "5-hour" / "7-day". */
+  name: string;
+  /** When it resets (unix SECONDS), or null when unknown. */
+  resetsAt: number | null;
+}
+
+/**
+ * PURE: the window that resets SOONEST among `windows` — the smallest `resetsAt`
+ * still ahead of `nowSeconds`. Windows with a null / non-finite / already-elapsed
+ * reset are ignored. Returns null when none has a known future reset.
+ */
+export function nextReset(windows: ResetWindow[], nowSeconds: number): ResetWindow | null {
+  let best: ResetWindow | null = null;
+  for (const w of windows) {
+    if (w.resetsAt === null || !Number.isFinite(w.resetsAt) || w.resetsAt <= nowSeconds) continue;
+    if (best === null || (w.resetsAt as number) < (best.resetsAt as number)) best = w;
+  }
+  return best;
+}
+
+/**
+ * PURE: a live countdown label to a reset — "resets in 4h 32m" / "resets in 47m" /
+ * "resets in 2d 3h" (largest two units, trailing zero unit dropped; minutes floor
+ * to a minimum of "1m"). Returns null for a null / non-finite / already-elapsed
+ * `resetsAt`, so the caller hides the metric — matching `timeRemainingShort`.
+ */
+export function resetCountdownLabel(resetsAt: number | null, nowSeconds: number): string | null {
+  if (resetsAt === null || !Number.isFinite(resetsAt)) return null;
+  // Gate on the RAW (unfloored) remaining seconds so this exclusion matches
+  // `nextReset`'s (`resetsAt <= now`) exactly — a fractional reset within the
+  // current second still yields a label ("resets in 1m") instead of the two
+  // helpers disagreeing and hiding the metric.
+  if (resetsAt - nowSeconds <= 0) return null;
+  let diff = Math.floor(resetsAt - nowSeconds);
+  const days = Math.floor(diff / 86400);
+  diff -= days * 86400;
+  const hours = Math.floor(diff / 3600);
+  diff -= hours * 3600;
+  const mins = Math.floor(diff / 60);
+  let body: string;
+  if (days > 0) body = hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+  else if (hours > 0) body = mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  else body = `${Math.max(1, mins)}m`;
+  return `resets in ${body}`;
+}
+
+/**
+ * PURE: the footer reset-countdown metric — a `{ label, tooltip }` for the window
+ * that resets soonest among `windows`, or null when none has a known future reset
+ * (the caller then renders nothing). `label` is the relative countdown
+ * (`resetCountdownLabel`); `tooltip` names the window and its absolute reset time,
+ * e.g. "5-hour limit · resets at 3:45 PM". Pure given `fmt`; unit-tested.
+ */
+export function nextResetCountdown(
+  windows: ResetWindow[],
+  nowSeconds: number,
+  fmt: ClockFormat = DEFAULT_CLOCK
+): { label: string; tooltip: string } | null {
+  const w = nextReset(windows, nowSeconds);
+  if (w === null) return null;
+  const label = resetCountdownLabel(w.resetsAt, nowSeconds);
+  if (label === null) return null;
+  const clause = resetClause(w.resetsAt, nowSeconds, fmt);
+  const tooltip = clause ? `${w.name} limit · ${clause}` : `${w.name} limit`;
+  return { label, tooltip };
+}

@@ -167,3 +167,29 @@ timezone and locale.
 - **WHEN** a rate-limit window's reset time is unknown
 - **THEN** its tooltip shows only the percent used, with no reset clause
 
+### Requirement: Optional footer countdown to the next limit reset
+
+The footer SHALL support an OPT-IN setting (a toggle in the settings modal,
+DEFAULT OFF, persisted in the shared settings blob) that, when enabled, shows a
+live COUNTDOWN to the next account-limit reset as a text metric in the footer —
+styled like the existing "time since last message" metric. The countdown SHALL
+target the window that resets SOONEST among the 5-hour and 7-day windows, and SHALL
+render as a relative label (e.g. "resets in 4h 32m", "resets in 47m", "resets in
+2d 3h") that updates on the footer's clock. Its tooltip SHALL name that window and
+its absolute local reset time (e.g. "5-hour limit · resets at 3:45 PM"). WHEN no
+window has a known future reset, the metric SHALL be hidden entirely. WHEN the
+setting is OFF, no such metric SHALL be shown (the reset time remains available via
+the per-bar tooltip).
+
+#### Scenario: Countdown shown when enabled
+- **WHEN** the setting is enabled and the 5-hour window resets sooner than the 7-day window
+- **THEN** the footer shows a countdown to the 5-hour window's reset (e.g. "resets in 2h 05m"), with a tooltip naming the window and its absolute reset time
+
+#### Scenario: Countdown hidden when no reset is known
+- **WHEN** the setting is enabled but neither window has a known future reset
+- **THEN** no countdown metric is shown
+
+#### Scenario: Off by default
+- **WHEN** the setting is disabled (the default)
+- **THEN** the footer shows no reset countdown metric; the reset time is still available in each limit bar's tooltip
+

@@ -29,6 +29,8 @@
   import BranchPicker from './BranchPicker.svelte';
   import ContextBar from './ContextBar.svelte';
   import { friendlyTime } from '$lib/overview/friendlyTime';
+  import { nextResetCountdown } from './timeRemaining';
+  import { limitReset } from '$lib/settings/limitReset.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import { modelLabel, effortLabel } from './modelLabel';
 
@@ -244,6 +246,21 @@
     {/if}
     <span class="metric" use:tooltip={'Total cost of the focused session'}>{costLabel(view.cost)}</span>
     <span class="metric dim" use:tooltip={'Time since the last message in the focused session'}>{friendlyTime(view.lastTs, now * 1000)}</span>
+    {#if limitReset.prefs.enabled}
+      {@const reset = nextResetCountdown(
+        [
+          { name: '5-hour', resetsAt: view.fiveHour.resetsAt },
+          { name: '7-day', resetsAt: view.sevenDay.resetsAt }
+        ],
+        now
+      )}
+      {#if reset}
+        <!-- Live countdown to the soonest account-limit reset — same `.metric`
+             styling as the "time since last message" element, gated behind the
+             opt-in `limitReset` setting. Hidden when no reset time is known. -->
+        <span class="metric dim" use:tooltip={reset.tooltip}>{reset.label}</span>
+      {/if}
+    {/if}
   </div>
 </footer>
 

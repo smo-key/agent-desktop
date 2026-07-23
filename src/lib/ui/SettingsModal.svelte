@@ -20,6 +20,7 @@
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { limitReset } from '$lib/settings/limitReset.svelte';
   import { shellSettings } from '$lib/settings/shell.svelte';
   import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
   import { notifications, type AlertMode } from '$lib/settings/notifications.svelte';
@@ -371,6 +372,22 @@
                 type="checkbox"
                 checked={autoAdvance.prefs.enabled}
                 onchange={(e) => autoAdvance.setEnabled(e.currentTarget.checked)}
+              />
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <span class="label">Account limits</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Show time until the next limit reset in the footer</span>
+            <div class="control">
+              <input
+                type="checkbox"
+                checked={limitReset.prefs.enabled}
+                onchange={(e) => limitReset.setEnabled(e.currentTarget.checked)}
               />
             </div>
           </li>
