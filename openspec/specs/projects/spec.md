@@ -169,7 +169,7 @@ The system SHALL let the user create a project (name + folder + icon/color), per
 - **THEN** it is placed at the head of the list, an existing project for the same folder is replaced in place (keeping its id so bound agents stay valid), and a blank-path project is ignored
 
 ### Requirement: Filter The Fleet By Project
-The system SHALL provide a project panel (shared by both overviews) that filters the agent roster by project, showing each project's live agent count and a per-project status breakdown, plus an "All agents" option and a bucket for unassigned agents. The status breakdown SHALL DISTINGUISH, with SEPARATE counts, how many of the project's live agents are WAITING on the user (waiting/errored) versus how many are actively WORKING (status `working`): the panel SHALL show a WAITING count (attention-colored, e.g. amber) and a WORKING count (a distinct working color, e.g. blue and flashing) side by side, each shown only when its count is greater than zero. The two counts are independent (a project may show both at once); neither suppresses the other. When no live agent is waiting AND none is working, the project SHALL show NO status indicator. Paused, archived (closed), and previewed agents SHALL contribute to neither count. In the COLLAPSED icon rail, where space precludes both counts, the panel SHALL show the more urgent one — the waiting count when any agent needs the user, else the working count.
+The system SHALL provide a project panel (shared by both overviews) that filters the agent roster by project, showing each project's live agent count and a per-project status breakdown, plus an "All agents" option and a bucket for unassigned agents. The status breakdown SHALL DISTINGUISH, with SEPARATE counts, how many of the project's live agents are WAITING on the user (waiting/errored) versus how many are actively WORKING (status `working`): the panel SHALL show a WAITING count (attention-colored, e.g. amber) and a WORKING count (a distinct working color, e.g. blue and flashing) side by side, each shown only when its count is greater than zero. The two counts are independent (a project may show both at once); neither suppresses the other. When no live agent is waiting AND none is working, the project SHALL show NO status indicator. Paused, archived (closed), and previewed agents SHALL contribute to neither count. In the COLLAPSED icon rail, where space precludes both counts, the panel SHALL show the more urgent one — the waiting count when any agent needs the user, else the working count. The waiting/working breakdown SHALL be controlled by a settings toggle (DEFAULT ON); when the toggle is OFF the panel SHALL instead show the prior SINGLE precedence indicator — a needs-you (attention) dot when any agent is waiting/errored, else a working dot — in both the expanded rows and the collapsed rail.
 
 #### Scenario: Filter agents by project
 - **WHEN** a project (or "All agents", or the unassigned bucket) is selected in the panel
@@ -180,6 +180,10 @@ The system SHALL provide a project panel (shared by both overviews) that filters
 - **WHEN** a project has 2 agents waiting on the user and 3 agents actively working
 - **THEN** the panel shows a waiting count of 2 (attention-colored) AND a working count of 3 (working-colored) side by side
 - **AND** a project with only working agents shows just the working count, and one whose only working agent is paused, archived, or previewed shows neither count
+
+#### Scenario: The breakdown can be turned off
+- **WHEN** the waiting/working breakdown setting is disabled
+- **THEN** each project shows a single precedence indicator (a needs-you dot if any agent is waiting/errored, else a working dot) instead of the separate waiting/working counts, in both the expanded rows and the collapsed rail
 
 #### Scenario: Collapsed rail shows the more urgent count
 - **WHEN** the panel is collapsed to the icon rail and a project has both waiting and working agents

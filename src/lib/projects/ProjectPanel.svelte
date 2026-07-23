@@ -30,6 +30,7 @@
   import ContextMenu, { type MenuItem } from '../ui/ContextMenu.svelte';
   import { tooltip } from '../ui/tooltip';
   import { pushProject, pullProject } from './projectGitActions';
+  import { projectAgentCounts } from '$lib/settings/projectAgentCounts.svelte';
 
   let {
     rows,
@@ -233,9 +234,13 @@
         <!-- Collapsed rail is too small for both counts side by side; show the more
              urgent one — the WAITING count (amber) when any agent needs you, else the
              WORKING count (blue). The expanded panel shows the full waiting + working
-             breakdown. -->
-        {#if c.waiting > 0}<span class="pp-rail-badge attn" aria-hidden="true">{c.waiting}</span>
-        {:else if c.working > 0}<span class="pp-rail-badge work" aria-hidden="true">{c.working}</span>{/if}
+             breakdown. When the breakdown is disabled, fall back to the prior single
+             precedence dot. -->
+        {#if projectAgentCounts.prefs.enabled}
+          {#if c.waiting > 0}<span class="pp-rail-badge attn" aria-hidden="true">{c.waiting}</span>
+          {:else if c.working > 0}<span class="pp-rail-badge work" aria-hidden="true">{c.working}</span>{/if}
+        {:else if c.waiting > 0}<span class="pp-rail-dot attn" aria-hidden="true"></span>
+        {:else if c.working > 0}<span class="pp-rail-dot work" aria-hidden="true"></span>{/if}
       </button>
     {/each}
     {#if unassigned > 0}
@@ -307,15 +312,21 @@
         <Icon name={c.project.icon} size={16} color={c.project.color} />
       {/if}
       <span class="pp-name" use:tooltip={c.project.path}>{c.project.name}</span>
-      {#if c.waiting > 0}
-        <span class="pp-stat attn" use:tooltip={`${c.waiting} waiting for you`}>
-          <span class="pp-attn" aria-hidden="true"></span>{c.waiting}
-        </span>
-      {/if}
-      {#if c.working > 0}
-        <span class="pp-stat work" use:tooltip={`${c.working} working`}>
-          <span class="pp-work" aria-hidden="true"></span>{c.working}
-        </span>
+      {#if projectAgentCounts.prefs.enabled}
+        {#if c.waiting > 0}
+          <span class="pp-stat attn" use:tooltip={`${c.waiting} waiting for you`}>
+            <span class="pp-attn" aria-hidden="true"></span>{c.waiting}
+          </span>
+        {/if}
+        {#if c.working > 0}
+          <span class="pp-stat work" use:tooltip={`${c.working} working`}>
+            <span class="pp-work" aria-hidden="true"></span>{c.working}
+          </span>
+        {/if}
+      {:else if c.waiting > 0}
+        <span class="pp-attn" use:tooltip={'Needs attention'}></span>
+      {:else if c.working > 0}
+        <span class="pp-work" use:tooltip={'Working'}></span>
       {/if}
       <span class="pp-ct">{c.count}</span>
     </div>
@@ -497,6 +508,24 @@
     background: var(--blue-300);
     animation: pp-flash 2.4s ease-in-out infinite;
   }
+  /* The prior single precedence dot for the collapsed rail, shown when the
+     waiting/working breakdown setting is OFF (amber = needs you, blue = working). */
+  .pp-rail-dot {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    border: 1.5px solid var(--space-900);
+  }
+  .pp-rail-dot.attn {
+    background: var(--orange-500);
+  }
+  .pp-rail-dot.work {
+    background: var(--blue-300);
+    animation: pp-flash 2.4s ease-in-out infinite;
+  }
   .pp-item {
     display: flex;
     align-items: center;
@@ -597,7 +626,8 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .pp-work,
-    .pp-rail-badge.work {
+    .pp-rail-badge.work,
+    .pp-rail-dot.work {
       animation: none;
     }
   }
