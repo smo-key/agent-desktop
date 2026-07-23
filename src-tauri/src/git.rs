@@ -224,27 +224,51 @@ pub fn status_for_paths(paths: &[String]) -> HashMap<String, GitStatus> {
 // own message on BOTH success and failure (a push/pull is an explicit action the
 // user wants feedback on), so the frontend can show it in a toast.
 
+/// Make a network git `Command` fully NON-INTERACTIVE — suppressing not just
+/// git's built-in TERMINAL prompt but also any GUI credential helper (notably
+/// Windows' Git Credential Manager, `credential.helper=manager`) and an ssh
+/// passphrase / host-key prompt. Cached credentials still resolve silently; only
+/// the interactive UI is disabled, so an authenticated remote keeps working while
+/// an unauthenticated one fails fast.
+///
+/// Why this matters beyond `GIT_TERMINAL_PROMPT`: on an HTTPS remote with no
+/// cached credential, GCM is a SEPARATE GUI process that pops its own sign-in
+/// WINDOW — `GIT_TERMINAL_PROMPT=0` (git's terminal prompt) and `CREATE_NO_WINDOW`
+/// (git's console flash) do NOT stop it. Left interactive, the automatic
+/// background fetch spawns a storm of auth windows (one per repo, every poll) that
+/// reads as malware to endpoint protection. `credential.interactive=false` is the
+/// config key GCM honors; `GCM_INTERACTIVE=never` is the belt-and-suspenders env
+/// for older GCM builds. The `-c` MUST precede the subcommand, so callers apply
+/// this BEFORE adding `-C <dir>` / the subcommand args.
+fn no_credential_prompt(cmd: &mut Command) -> &mut Command {
+    cmd.arg("-c")
+        .arg("credential.interactive=false")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "never")
+        .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=10")
+}
+
 /// Run `git -C <dir> <args...>` as a user-initiated action, returning git's own
 /// message either way: `Ok(message)` on a clean exit, `Err(message)` otherwise.
 /// Push/pull write their progress to stderr, so the message prefers stderr when
 /// stdout is empty (and vice-versa on failure). Never panics.
 ///
-/// Runs git NON-INTERACTIVELY so a network sync can never hang the async command
-/// waiting on a prompt: `GIT_TERMINAL_PROMPT=0` makes git's own credential prompt
-/// fail fast, and a `BatchMode=yes` ssh (with a bounded connect timeout) makes ssh
-/// refuse rather than block on a passphrase / unknown-host-key prompt. Both turn
-/// an otherwise-infinite wait into a clean `Err` the frontend can toast.
+/// Runs git NON-INTERACTIVELY (see [`no_credential_prompt`]) so a network sync can
+/// never hang waiting on a prompt: git's terminal prompt, a GUI credential helper
+/// (Git Credential Manager), and an ssh passphrase / host-key prompt are all
+/// suppressed. A sync that would otherwise prompt fails fast with a clean `Err`
+/// the frontend can toast, instead of blocking (or popping an auth window).
 fn run_git_action(dir: &str, args: &[&str]) -> Result<String, String> {
     if dir.is_empty() {
         return Err("no project folder".to_string());
     }
-    let output = Command::new("git")
-        .no_console_window()
+    let mut cmd = Command::new("git");
+    cmd.no_console_window();
+    no_credential_prompt(&mut cmd);
+    let output = cmd
         .arg("-C")
         .arg(dir)
         .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=10")
         .output()
         .map_err(|e| format!("failed to run git: {e}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -351,19 +375,27 @@ pub fn fetch_dir(dir: &str) -> bool {
 }
 
 /// Run a bounded, non-interactive `git -C <dir> fetch`. Mirrors
-/// [`run_git_action`]'s guards (no credential prompt; ssh `BatchMode` + connect
-/// timeout) but adds an OVERALL wall-clock `timeout`: a stalled fetch is killed
-/// once the deadline passes so a background thread can never block indefinitely
-/// or accumulate across polls. stdio is nulled (the background path never reads
-/// fetch's output). Returns `true` only on a clean, in-time exit.
+/// [`run_git_action`]'s guards via [`no_credential_prompt`] (no terminal prompt,
+/// no GUI credential-helper window, ssh `BatchMode` + connect timeout) but adds an
+/// OVERALL wall-clock `timeout`: a stalled fetch is killed once the deadline
+/// passes so a background thread can never block indefinitely or accumulate across
+/// polls. stdio is nulled (the background path never reads fetch's output).
+/// Returns `true` only on a clean, in-time exit.
+///
+/// The credential-prompt suppression is load-bearing here: this is the AUTOMATIC
+/// fetch, fired on launch (every project, in parallel) and on a recurring poll, so
+/// an interactive credential helper would pop an auth window for every
+/// unauthenticated HTTPS remote on every cycle — an endless window storm rather
+/// than a one-off. Suppressed, an unauthenticated remote simply fails fast (the
+/// ahead/behind count stays at its last-fetched value) with no UI.
 fn run_git_fetch(dir: &str, timeout: Duration) -> bool {
-    let spawned = Command::new("git")
-        .no_console_window()
+    let mut cmd = Command::new("git");
+    cmd.no_console_window();
+    no_credential_prompt(&mut cmd);
+    let spawned = cmd
         .arg("-C")
         .arg(dir)
         .arg("fetch")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=10")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

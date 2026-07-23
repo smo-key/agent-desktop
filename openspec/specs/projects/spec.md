@@ -19,8 +19,10 @@ footer is showing — the **ahead** (↑) indicator becomes a Push button and th
 **behind** (↓) indicator a Pull button. Both surfaces invoke the SAME action
 against the project's FOLDER (independent of any running agent session), shelling
 out to `git push` / `git pull --ff-only` in that folder, run NON-INTERACTIVELY
-(no credential / passphrase / host-key prompt) so a sync that would otherwise
-prompt fails fast instead of hanging. Pull is fast-forward only, so a divergent
+(no terminal credential prompt, no GUI credential-helper window — e.g. Windows'
+Git Credential Manager — and no ssh passphrase / host-key prompt; cached
+credentials still resolve silently) so a sync that would otherwise prompt fails
+fast instead of hanging or popping an auth window. Pull is fast-forward only, so a divergent
 branch fails cleanly without ever leaving the worktree mid-merge.
 
 A Push of a branch that already tracks an upstream runs `git push`. A Push of an
@@ -218,8 +220,11 @@ and project pane's "commits to pull" (↓ behind) count reflects new remote comm
 WITHOUT any manual fetch. The background fetch SHALL run always-on on a SLOW clock
 (on the order of a few minutes), plus an initial fetch shortly after launch, and
 SHALL be SEPARATE from the fast local status poll. It SHALL cover all tracked
-project folders in parallel, run NON-INTERACTIVELY (so an offline or
-credential-less folder fails fast rather than hanging), and be READ-ONLY — it
+project folders in parallel, run NON-INTERACTIVELY — suppressing not only git's
+terminal prompt but any GUI credential helper (e.g. Windows' Git Credential
+Manager) and ssh prompts, so an offline or credential-less folder fails fast
+rather than hanging OR popping an auth window on every poll (cached credentials
+still resolve silently) — and be READ-ONLY — it
 updates only remote-tracking refs (and, under a non-default fetch refspec, at most
 other non-checked-out branch refs) and never modifies the worktree. The fast local
 status probe SHALL remain unchanged (it computes ahead/behind from local refs and
@@ -238,7 +243,8 @@ does not itself fetch); it reads the freshly-advanced refs on its next poll.
 - **WHEN** the background fetch runs over the tracked project folders
 - **THEN** it fetches them in parallel, and a folder that cannot fetch (no remote,
   offline, or missing credentials) fails fast and is skipped without blocking the
-  other folders or surfacing an error to the user.
+  other folders, surfacing an error to the user, or popping an interactive
+  credential-helper (e.g. Git Credential Manager) auth window.
 
 #### Scenario: Fetch never alters the working tree
 
