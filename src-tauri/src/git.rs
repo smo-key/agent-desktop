@@ -350,28 +350,49 @@ pub fn pull(dir: &str) -> Result<String, String> {
 /// regardless of transport, so they can never accumulate.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The outcome of a background fetch for one folder, surfaced to the frontend so a
+/// SILENT background-fetch failure can drive a subtle UI indicator instead of just
+/// leaving the ahead/behind count quietly stale.
+///
+/// `Skipped` (no remote / blank path) draws NO indicator — there is nothing to
+/// fetch. `Ok` is a clean fetch. `Failed` means the folder HAS a remote but the
+/// fetch did not complete (offline / missing credentials / timeout) — the ONE case
+/// the UI flags, so the user knows the count may be stale and can act on it.
+/// Serialized lowercase (`"skipped"` / `"ok"` / `"failed"`) for the frontend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FetchStatus {
+    Skipped,
+    Ok,
+    Failed,
+}
+
 /// Fetch the project's remote-tracking refs so the local ahead/behind probe
 /// (which reads `@{upstream}`, advanced only by a fetch) reflects new remote
-/// commits. Returns whether a fetch actually ran successfully (clean, in-time
-/// exit).
+/// commits. Returns a [`FetchStatus`]: `Skipped` (no remote / blank path — nothing
+/// to fetch), `Ok` (clean fetch), or `Failed` (has a remote but the fetch did not
+/// complete).
 ///
-/// A folder with NO remote is skipped (`false`) rather than shelling out a doomed
-/// fetch. Otherwise the fetch runs NON-INTERACTIVELY (`GIT_TERMINAL_PROMPT=0`, an
-/// ssh `BatchMode` with a bounded connect timeout) so a background thread can
-/// never hang on a prompt, and under an OVERALL [`FETCH_TIMEOUT`] so it can never
-/// hang on the network either (offline / credential-less / unreachable → killed
-/// → `false`).
+/// The fetch runs NON-INTERACTIVELY (see [`no_credential_prompt`]: no terminal
+/// prompt, no GUI credential-helper window, ssh `BatchMode` + connect timeout) so
+/// a background thread can never hang on a prompt, and under an OVERALL
+/// [`FETCH_TIMEOUT`] so it can never hang on the network either (offline /
+/// credential-less / unreachable → killed → `Failed`).
 ///
 /// Worktree-safe: a fetch updates only refs (remote-tracking refs, `FETCH_HEAD`,
 /// and — under a non-default fetch refspec — at most other NON-checked-out branch
 /// refs); it never touches the index, the worktree, or the checked-out branch
 /// (git refuses to fetch into the checked-out branch), so it is safe to run while
 /// the user works in the repo.
-pub fn fetch_dir(dir: &str) -> bool {
+pub fn fetch_dir(dir: &str) -> FetchStatus {
     if dir.is_empty() || !has_remote(dir) {
-        return false;
+        return FetchStatus::Skipped;
     }
-    run_git_fetch(dir, FETCH_TIMEOUT)
+    if run_git_fetch(dir, FETCH_TIMEOUT) {
+        FetchStatus::Ok
+    } else {
+        FetchStatus::Failed
+    }
 }
 
 /// Run a bounded, non-interactive `git -C <dir> fetch`. Mirrors
@@ -427,21 +448,26 @@ fn run_git_fetch(dir: &str, timeout: Duration) -> bool {
     }
 }
 
-/// Fetch remote-tracking refs for every `path` in PARALLEL, best-effort. Each
-/// folder is fetched on its own thread (mirroring [`status_for_paths`]) so total
-/// latency tracks the slowest single repo, and a folder that can't fetch (no
-/// remote / offline / off-repo) is simply skipped without blocking the others.
-/// Never fails: there is nothing to report — the next status poll reads whatever
-/// refs were advanced.
-pub fn fetch_remotes(paths: &[String]) {
+/// Fetch remote-tracking refs for every `path` in PARALLEL, best-effort, returning
+/// each path's [`FetchStatus`] keyed by the path verbatim (so the frontend resolves
+/// each project's row directly). Each folder is fetched on its own thread
+/// (mirroring [`status_for_paths`]) so total latency tracks the slowest single
+/// repo, and a folder that can't fetch (no remote / offline / off-repo) never
+/// blocks the others. Never fails: a thread that somehow panics simply omits its
+/// entry, which the UI treats as "no indicator".
+pub fn fetch_remotes(paths: &[String]) -> HashMap<String, FetchStatus> {
     let handles: Vec<_> = paths
         .iter()
         .cloned()
-        .map(|path| thread::spawn(move || fetch_dir(&path)))
+        .map(|path| thread::spawn(move || (path.clone(), fetch_dir(&path))))
         .collect();
+    let mut map = HashMap::new();
     for handle in handles {
-        let _ = handle.join();
+        if let Ok((path, status)) = handle.join() {
+            map.insert(path, status);
+        }
     }
+    map
 }
 
 // ───────────────────────── branch operations ─────────────────────────
@@ -1388,11 +1414,20 @@ mod tests {
         let norem = TempRepo::new("bgfetch-batch-norem");
 
         // A mix of: a fetchable repo, a remoteless repo, and an off-repo path.
-        fetch_remotes(&[
+        let outcomes = fetch_remotes(&[
             repo.str().to_string(),
             norem.str().to_string(),
             "/definitely/not/a/repo/anywhere".to_string(),
         ]);
+
+        // Each path reports its own outcome: the fetchable repo Ok, the remoteless
+        // repo and the off-repo path Skipped (nothing to fetch — no indicator).
+        assert_eq!(outcomes.get(repo.str()), Some(&FetchStatus::Ok));
+        assert_eq!(outcomes.get(norem.str()), Some(&FetchStatus::Skipped));
+        assert_eq!(
+            outcomes.get("/definitely/not/a/repo/anywhere"),
+            Some(&FetchStatus::Skipped)
+        );
 
         // The good repo was fetched (behind now reflects the remote)...
         assert_eq!(
@@ -1412,11 +1447,30 @@ mod tests {
     #[test]
     fn fetch_dir_is_a_safe_no_op_for_a_remoteless_or_bogus_folder() {
         // fetch_dir directly: a repo with no remote has nothing to fetch, and an
-        // off-repo / blank path is a safe no-op — never a panic/error.
+        // off-repo / blank path is a safe no-op (Skipped) — never a panic/error,
+        // and never Failed (Skipped draws no UI indicator).
         let repo = TempRepo::new("bgfetch-norem");
-        assert!(!fetch_dir(repo.str()), "a repo with no remote does not fetch");
-        assert!(!fetch_dir("/definitely/not/a/repo/anywhere"), "off-repo is a no-op");
-        assert!(!fetch_dir(""), "a blank dir is a no-op");
+        assert_eq!(fetch_dir(repo.str()), FetchStatus::Skipped, "no remote → Skipped");
+        assert_eq!(
+            fetch_dir("/definitely/not/a/repo/anywhere"),
+            FetchStatus::Skipped,
+            "off-repo → Skipped"
+        );
+        assert_eq!(fetch_dir(""), FetchStatus::Skipped, "blank dir → Skipped");
+    }
+
+    #[test]
+    fn fetch_dir_reports_failed_when_a_configured_remote_cannot_be_reached() {
+        // A repo that HAS a remote but cannot reach it fails fast (the local path
+        // remote does not exist) — the one case surfaced to the UI as Failed, so a
+        // stale ahead/behind count becomes visible rather than silent.
+        let repo = TempRepo::new("bgfetch-failed");
+        run(repo.str(), &["remote", "add", "origin", "/nonexistent/bare/repo.git"]);
+        assert_eq!(
+            fetch_dir(repo.str()),
+            FetchStatus::Failed,
+            "a configured-but-unreachable remote reports Failed"
+        );
     }
 
     #[cfg(unix)]

@@ -230,6 +230,15 @@ other non-checked-out branch refs) and never modifies the worktree. The fast loc
 status probe SHALL remain unchanged (it computes ahead/behind from local refs and
 does not itself fetch); it reads the freshly-advanced refs on its next poll.
 
+Because the fetch is silent, a fetch FAILURE would otherwise leave the ahead/behind
+count quietly stale with no signal. So the background fetch SHALL report each
+folder's outcome (no-remote / fetched / failed), and when a folder that HAS a
+remote FAILS to fetch (offline / missing credentials), the git indicator for that
+project SHALL show a subtle, non-modal warning (a ⚠ pill with an explanatory
+tooltip) — NOT a popup, toast, or repeated alert. A folder with no remote (nothing
+to fetch) SHALL show no such indicator, and the indicator SHALL clear itself once a
+later background fetch for that folder succeeds.
+
 #### Scenario: New remote commit becomes visible without a manual fetch
 
 - **WHEN** a tracked project's branch tracks an upstream and a new commit lands on
@@ -245,6 +254,16 @@ does not itself fetch); it reads the freshly-advanced refs on its next poll.
   offline, or missing credentials) fails fast and is skipped without blocking the
   other folders, surfacing an error to the user, or popping an interactive
   credential-helper (e.g. Git Credential Manager) auth window.
+
+#### Scenario: A failed background fetch is surfaced without spamming
+
+- **WHEN** the background fetch for a project that HAS a remote fails (offline or
+  missing credentials) while another tracked project with no remote is simply
+  skipped
+- **THEN** the failing project's git indicator shows a subtle ⚠ warning pill with a
+  tooltip explaining the count may be stale and how to fix it, the no-remote project
+  shows no such indicator, and neither produces a popup, toast, or repeated alert;
+  the ⚠ clears on the next successful background fetch for that project.
 
 #### Scenario: Fetch never alters the working tree
 
