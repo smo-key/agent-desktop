@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Agent Desktop",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "identifier": "com.arthur.agent-desktop",
   "build": {
     "frontendDist": "../build",
@@ -20,7 +20,7 @@
         "fullscreen": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "dragDropEnabled": false
+        "dragDropEnabled": true
       }
     ],
     "security": {
@@ -57,6 +57,11 @@
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
     },
     "macOS": {
       "hardenedRuntime": true,

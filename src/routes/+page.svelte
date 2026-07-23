@@ -15,6 +15,7 @@
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { shellSettings } from '$lib/settings/shell.svelte';
   import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
   import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
@@ -27,6 +28,7 @@
   import { startNewSession } from '$lib/launcher/newSession';
   import { workspace } from '$lib/layout/workspace.svelte';
   import { insertFilenameInto, focusedTerminalHandle } from '$lib/layout/insertFilename';
+  import { initFileDrop } from '$lib/layout/fileDrop';
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
   import { restorePersistedLayout, watchAndPersist } from '$lib/layout/store-backend.svelte';
   import { snapshots } from '$lib/usage/snapshots.svelte';
@@ -120,6 +122,12 @@
     void autoAdvance.load();
     // Load the compact-mode preference (opt-in; defaults OFF / full three-line rows).
     void compactMode.load();
+    // Resolve the platform default shell from the backend and load the user's
+    // shell preference. The layout restore below AWAITS this: until it resolves,
+    // `defaultShell()` still reports the Unix default, and restoring a Windows
+    // layout against it would rewrite every saved `pwsh` to `/bin/zsh` — spawning
+    // dead panes AND persisting the mangled value back over the good one.
+    const shellReady = shellSettings.load();
     // Load the subagents-visibility preference (defaults ON / subagents shown).
     void subagentsVisible.load();
     // Load the needs-input alert channel modes (opt-in; both default OFF / silent).
@@ -218,7 +226,9 @@
       })
       .catch(() => {});
     let stopWatching: (() => void) | undefined;
-    void restorePersistedLayout().then(() => {
+    // Gated on `shellReady` (never rejects) so pane programs resolve against the
+    // real platform default rather than the pre-hydration placeholder.
+    void shellReady.then(restorePersistedLayout).then(() => {
       restored = true;
       // Seed restored agents' titles from the durable cache synchronously, so the
       // cards render their real titles immediately rather than flashing their
@@ -300,6 +310,14 @@
       unlistenNotifyClick = un;
     });
 
+    // Drag-drop OS files onto a session (terminal-file-drop): native drag-drop
+    // hands us real paths + the cursor position; images paste as inline images,
+    // other files insert as quoted paths, drops elsewhere are inert.
+    let unlistenFileDrop: (() => void) | undefined;
+    void initFileDrop().then((un) => {
+      unlistenFileDrop = un;
+    });
+
     return () => {
       stopUpdatePolling();
       stopWatching?.();
@@ -310,6 +328,7 @@
       unlistenTermClose?.();
       unlistenVoice?.();
       unlistenNotifyClick?.();
+      unlistenFileDrop?.();
       events.onEvent = undefined;
     };
   });
@@ -830,6 +849,11 @@
       <span class="title">Agent Mission Control</span>
     </div>
     <div class="tb-right" data-tauri-drag-region>
+      <!-- During the first-launch onboarding gate keep the titlebar (logo + drag
+           region) but hide these controls — they act on a workspace that isn't set
+           up yet. The empty cell still balances the centered title and stays a drag
+           region, so the window remains movable while the gate is up. -->
+      {#if !onboarding.visible}
       <!-- Opt back into pointer events (the bar is a drag region) so the buttons are
            clickable. Gear opens Settings; "?" opens the shortcuts modal (⌘/ and ?). -->
       <!-- Update pill (desktop-auto-update spec): leftmost of the right-side
@@ -907,6 +931,7 @@
         <Icon name="settings" size={14} />
       </button>
       <button class="help-btn" aria-label="Keyboard shortcuts" use:tooltip={{ text: 'Keyboard shortcuts (⌘/)', placement: 'bottom' }} onclick={() => help.show()}>?</button>
+      {/if}
     </div>
   </header>
 
@@ -1003,7 +1028,12 @@
 <HelpModal />
 <SettingsModal />
 <ConfirmModal />
-<VoicePanel />
+<!-- Voice input (the bottom-center mic FAB + the dictation panel) sits above the
+     onboarding gate's z-index, so hide it entirely while the first-launch gate is
+     up: the models it needs aren't downloaded yet and the takeover owns the screen. -->
+{#if !onboarding.visible}
+  <VoicePanel />
+{/if}
 <!-- First-launch model download gate: a full-screen takeover shown only while the
      on-device models the current voice selection needs are missing (and not skipped
      this session). Rendered last so it overlays the workspace. -->
@@ -1030,8 +1060,8 @@
     display: flex;
     align-items: center;
     gap: 9px;
-    height: 40px;
-    flex: 0 0 40px;
+    height: var(--titlebar-h);
+    flex: 0 0 var(--titlebar-h);
     padding: 0 14px 0 80px;
     background: var(--space-900);
     border-bottom: 1px solid var(--line-subtle);

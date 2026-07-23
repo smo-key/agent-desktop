@@ -35,6 +35,11 @@
 }
 
 :root {
+  /* ---- Layout metrics ----------------------------------------------------- */
+  /* Custom titlebar height. Shared so overlays (e.g. the onboarding gate) can sit
+     below the persistent, draggable titlebar instead of covering it. */
+  --titlebar-h: 40px;
+
   /* ---- Deep space — backgrounds & surfaces (near-black, faint cool tint) --- */
   --space-950: #06080c;
   --space-900: #090c12;

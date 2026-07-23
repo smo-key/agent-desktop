@@ -309,7 +309,9 @@ fn seed_env(cmd: &mut CommandBuilder) {
 
     cmd.env("PATH", crate::shell_path::resolved_path());
 
-    if let Ok(home) = std::env::var("HOME") {
+    // `HOME` on Unix, `USERPROFILE` on Windows — see `shell_path::home_dir`.
+    let home = crate::shell_path::home_dir();
+    if !home.is_empty() {
         cmd.env("HOME", home);
     }
 

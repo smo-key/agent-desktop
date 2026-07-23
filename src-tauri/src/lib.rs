@@ -2,7 +2,9 @@ pub mod activity;
 pub mod claude_title;
 pub mod events;
 pub mod git;
+pub mod ipc;
 pub mod models;
+pub mod no_window;
 pub mod notify_click;
 pub mod orchestration;
 pub mod polish;
@@ -94,13 +96,6 @@ const SNAPSHOT_DIR: &str = "snapshots";
 /// Subdir (under app-data) holding the durable per-session event logs the event
 /// pipeline appends to (`events/<sessionId>.jsonl`).
 const EVENTS_DIR: &str = "events";
-/// Basename (under app-data) of the Unix-domain socket the event hook delivers to.
-const SOCKET_FILE: &str = "events.sock";
-/// Basename (under app-data) of the orchestration CONTROL socket — the bundled MCP
-/// toolkit adapter connects here to round-trip toolkit ops through the frontend
-/// executor (see `orchestration.rs`). Sibling of `events.sock`; its absolute path
-/// is conveyed to a launched coordinator session via `orchestration::CONTROL_SOCKET_ENV`.
-const CONTROL_SOCKET_FILE: &str = "control.sock";
 
 /// Absolute paths the frontend needs to launch sessions wired into the usage
 /// dashboard. Serialized camelCase for the JS side.
@@ -117,15 +112,20 @@ pub struct UsagePaths {
     /// `--settings` `hooks` config (the full lifecycle event set) of every spawned
     /// session so the overview's status + per-tool timeline are event-sourced.
     pub event_hook_path: String,
-    /// Absolute path to the app-hosted Unix socket the event hook delivers to —
-    /// passed as `AGENT_DESKTOP_SOCKET_PATH` in the spawned process env.
+    /// ADDRESS of the app-hosted local socket the event hook delivers to — a
+    /// filesystem path on Unix, a `\\.\pipe\…` name on Windows (see
+    /// [`crate::ipc::socket_address`]). Passed as `AGENT_DESKTOP_SOCKET_PATH` in
+    /// the spawned process env. MUST equal what `events::start_event_server`
+    /// binds, or the hook connects to nothing and silently drops every event.
     pub socket_path: String,
     /// Absolute path to the installed orchestration MCP adapter — `node <this>` is
     /// the coordinator launch's `--mcp-config` server command (`buildMcpToolkitConfig`).
     pub adapter_path: String,
-    /// Absolute path to the Rust orchestration CONTROL socket (sibling of
-    /// `socket_path`) — goes into the coordinator's `--mcp-config` server env as
-    /// `AGENT_DESKTOP_CONTROL_SOCKET` so the adapter can reach the executor.
+    /// ADDRESS of the Rust orchestration CONTROL socket (sibling of
+    /// `socket_path`, same path-vs-pipe-name rule) — goes into the coordinator's
+    /// `--mcp-config` server env as `AGENT_DESKTOP_CONTROL_SOCKET` so the adapter
+    /// can reach the executor. MUST equal what `orchestration::start_control_server`
+    /// binds.
     pub control_socket_path: String,
 }
 
@@ -194,9 +194,10 @@ fn resolve_path(cwd: Option<String>, token: String) -> Result<Option<String>, St
         return Ok(None);
     }
     let candidate: PathBuf = if let Some(rest) = token.strip_prefix('~') {
-        let Ok(home) = std::env::var("HOME") else {
+        let home = crate::shell_path::home_dir();
+        if home.is_empty() {
             return Ok(None);
-        };
+        }
         if rest.is_empty() {
             PathBuf::from(home)
         } else if let Some(rest) = rest.strip_prefix('/') {
@@ -287,8 +288,16 @@ fn detect_installed(names: &[String], home: &str, roots: &[&str]) -> Vec<String>
 /// this to offer only installed apps in the "Open files with" settings.
 #[tauri::command]
 fn installed_apps(names: Vec<String>) -> Vec<String> {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = crate::shell_path::home_dir();
     detect_installed(&names, &home, APP_ROOTS)
+}
+
+/// The program a new shell pane launches when the user has set no preference
+/// (`shell-selection`). Platform-derived — `pwsh`/`powershell.exe` on Windows,
+/// `$SHELL`/`/bin/zsh` on Unix — because only the backend can probe `PATH`.
+#[tauri::command]
+fn default_shell() -> String {
+    crate::shell_path::default_shell()
 }
 
 /// Build the argument vector passed to `open` (after the program name) for
@@ -1011,9 +1020,15 @@ pub fn install_usage_assets_in(base: &std::path::Path) -> Result<UsagePaths, Str
         wrapper_path: wrapper.to_string_lossy().into_owned(),
         snapshot_dir: snapshots.to_string_lossy().into_owned(),
         event_hook_path: event_hook.to_string_lossy().into_owned(),
-        socket_path: base.join(SOCKET_FILE).to_string_lossy().into_owned(),
+        // The socket ADDRESS, not the raw path: on Windows the servers bind a
+        // `\\.\pipe\…` name, and a client handed the filesystem path would get
+        // ENOENT and — because both clients swallow connect errors — drop every
+        // event and every toolkit call SILENTLY. `ipc::socket_address` is
+        // deterministic within a process, so this is byte-identical to what
+        // `start_event_server` / `start_control_server` bind, and unchanged on Unix.
+        socket_path: crate::ipc::events_address(base),
         adapter_path: adapter.to_string_lossy().into_owned(),
-        control_socket_path: base.join(CONTROL_SOCKET_FILE).to_string_lossy().into_owned(),
+        control_socket_path: crate::ipc::control_address(base),
     })
 }
 
@@ -1345,6 +1360,26 @@ fn orchestration_reply(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Decode the image file at `path` and place it on the OS clipboard as an image,
+/// so a subsequent Ctrl+V (`0x16`) written into an agent's PTY is ingested as an
+/// inline image attachment — the drag-drop-onto-session flow (terminal-file-drop).
+/// Decoding to RGBA happens here (the clipboard image is raw pixels, not an
+/// encoded blob), which transparently handles non-PNG inputs. Every failure
+/// (unreadable file, undecodable/unsupported image, clipboard error) is returned
+/// as a string so the frontend can skip that file without crashing the drop.
+#[tauri::command]
+fn copy_image_to_clipboard(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let rgba = image::open(&path)
+        .map_err(|e| format!("decode {path}: {e}"))?
+        .to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    let img = tauri::image::Image::new_owned(rgba.into_raw(), w, h);
+    app.clipboard()
+        .write_image(&img)
+        .map_err(|e| format!("clipboard write_image: {e}"))
+}
+
 pub fn run() {
     // Capture the app launch time (Unix epoch millis) ONCE for this run. The
     // subagents seed/watcher use it to drop subagents that predate this launch
@@ -1378,6 +1413,11 @@ pub fn run() {
         // + `process:default` in capabilities/default.json.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Clipboard image write for drag-drop-onto-session (terminal-file-drop):
+        // `copy_image_to_clipboard` calls this plugin's Rust API directly, so the
+        // frontend never invokes a clipboard IPC command and no clipboard
+        // capability is granted.
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(move |app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -1431,7 +1471,7 @@ pub fn run() {
             app.manage(event_state.clone());
             if let Ok(base) = app_data_dir(app.handle()) {
                 let handle = app.handle().clone();
-                match events::start_event_server(&base.join(SOCKET_FILE), event_state, move |ev| {
+                match events::start_event_server(&ipc::events_address(&base), event_state, move |ev| {
                     if let Err(e) = handle.emit(EVENT_EVENT, &ev) {
                         log::warn!("emit {EVENT_EVENT} failed: {e}");
                     }
@@ -1453,7 +1493,7 @@ pub fn run() {
             if let Ok(base) = app_data_dir(app.handle()) {
                 let handle = app.handle().clone();
                 match orchestration::start_control_server(
-                    &base.join(CONTROL_SOCKET_FILE),
+                    &ipc::control_address(&base),
                     move |id, req| {
                         if let Err(e) = handle.emit(
                             orchestration::REQUEST_EVENT,
@@ -1495,6 +1535,7 @@ pub fn run() {
             resolve_path,
             open_path,
             installed_apps,
+            default_shell,
             session_focus,
             layout_load,
             layout_save,
@@ -1546,7 +1587,8 @@ pub fn run() {
             polish::voice_polish,
             whisper_server::voice_transcribe_partial,
             voice_bundled_model_path,
-            voice_model_path
+            voice_model_path,
+            copy_image_to_clipboard
         ])
         .on_window_event(|window, event| {
             // Kill + reap every pane on app quit so no zombie/orphan processes
@@ -1872,10 +1914,19 @@ mod tests {
             let mode = fs::metadata(&hook).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o755, "event hook must be mode 0755");
         }
-        // The socket path sits at the app-data root and the events dir exists.
+        // The exported socket ADDRESS must be exactly what the event server binds
+        // for the same app-data root — asserting the raw PATH here instead is what
+        // let the Windows divergence (pipe name vs path) pass CI while the event
+        // pipeline was dead.
+        assert_eq!(
+            paths.socket_path,
+            crate::ipc::events_address(tmp.path())
+        );
+        // On Unix that address IS the filesystem path, unchanged.
+        #[cfg(unix)]
         assert_eq!(
             PathBuf::from(&paths.socket_path),
-            tmp.path().join(SOCKET_FILE)
+            tmp.path().join(crate::ipc::EVENTS_SOCKET_FILE)
         );
         assert!(
             tmp.path().join(EVENTS_DIR).is_dir(),
@@ -1898,9 +1949,61 @@ mod tests {
             assert_eq!(mode & 0o777, 0o755, "adapter must be mode 0755");
         }
         assert_eq!(
-            PathBuf::from(&paths.control_socket_path),
-            tmp.path().join(CONTROL_SOCKET_FILE)
+            paths.control_socket_path,
+            crate::ipc::control_address(tmp.path())
         );
+        #[cfg(unix)]
+        assert_eq!(
+            PathBuf::from(&paths.control_socket_path),
+            tmp.path().join(crate::ipc::CONTROL_SOCKET_FILE)
+        );
+        // The two sockets must never resolve to the same address on any platform.
+        assert_ne!(paths.socket_path, paths.control_socket_path);
+    }
+
+    /// THE invariant the Windows port hinges on: the address a session is told to
+    /// connect to must be exactly the address the server binds.
+    ///
+    /// This is asserted against the LIVE servers rather than by recomputing the
+    /// expression, because the original bug was precisely that `install_usage_assets_in`
+    /// computed a different value (the raw path) from what `start_event_server`
+    /// bound (a pipe name on Windows) — and every existing test passed while the
+    /// event pipeline and the whole orchestration toolkit were silently dead.
+    #[test]
+    fn exported_socket_addresses_match_what_the_servers_bind() {
+        let tmp = TempDir::new("addrmatch");
+        let paths = install_usage_assets_in(tmp.path()).unwrap();
+
+        let state = std::sync::Arc::new(crate::events::EventState::new(
+            tmp.path().join(EVENTS_DIR),
+        ));
+        let event_server =
+            crate::events::start_event_server(&crate::ipc::events_address(tmp.path()), state, |_| {})
+                .unwrap();
+        assert_eq!(
+            paths.socket_path,
+            event_server.address(),
+            "AGENT_DESKTOP_SOCKET_PATH must equal the bound event-socket address"
+        );
+
+        let control_server =
+            crate::orchestration::start_control_server(&crate::ipc::control_address(tmp.path()), |_, _| {})
+                .unwrap();
+        assert_eq!(
+            paths.control_socket_path,
+            control_server.address(),
+            "AGENT_DESKTOP_CONTROL_SOCKET must equal the bound control-socket address"
+        );
+
+        // And a client can actually reach the event socket at the exported address
+        // — the step the hook performs, which returned ENOENT on Windows before.
+        assert!(
+            crate::ipc::connect(&paths.socket_path).is_ok(),
+            "a client must be able to connect at the exported address"
+        );
+
+        drop(event_server);
+        drop(control_server);
     }
 
     #[test]

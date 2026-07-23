@@ -5,6 +5,7 @@
   import type { WebglAddon } from '@xterm/addon-webgl';
   import { Channel, invoke } from '@tauri-apps/api/core';
   import { registerTerminal, unregisterTerminal } from './layout/terminals';
+  import { dropTarget } from './layout/dropTarget.svelte';
   import { fileLinkAt, urlAt } from './terminalLinks';
   import { lineEditSeq } from './terminalKeys';
   import { openWith } from './settings/openWith.svelte';
@@ -884,7 +885,13 @@
   });
 </script>
 
-<div class="pane" data-pane-id={paneId} data-exited={exited} data-loading={loading}>
+<div
+  class="pane"
+  class:drop-target={dropTarget.paneId === paneId}
+  data-pane-id={paneId}
+  data-exited={exited}
+  data-loading={loading}
+>
   <div class="host" bind:this={host}>
     <!-- ⌘-hover file-link underline overlay; positioned + shown imperatively. -->
     <div class="file-link-underline" bind:this={underlineEl}></div>
@@ -907,6 +914,20 @@
     height: 100%;
     background: #0d1117;
     overflow: hidden;
+  }
+
+  /* Drag-drop affordance (terminal-file-drop): an accent ring + faint wash marking
+     the session under a dragged file. An overlay (not a border) so it never
+     reflows the terminal; above the launch spinner (z-index:10) and never traps
+     the drop (pointer-events:none). */
+  .pane.drop-target::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 11;
+    pointer-events: none;
+    border: 2px solid #58a6ff;
+    background: rgba(88, 166, 255, 0.08);
   }
 
   .host {

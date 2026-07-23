@@ -28,8 +28,10 @@ export interface UsagePaths {
    */
   eventHookPath: string;
   /**
-   * Absolute path to the app-hosted Unix-domain socket the event hook delivers
-   * to (passed to the spawned process as `AGENT_DESKTOP_SOCKET_PATH`).
+   * ADDRESS of the app-hosted local socket the event hook delivers to (passed to
+   * the spawned process as `AGENT_DESKTOP_SOCKET_PATH`). A filesystem path on
+   * macOS/Linux, a `\\.\pipe\…` name on Windows — opaque to the hook, which
+   * passes it straight to `net.createConnection({ path })`.
    */
   socketPath: string;
   /**
@@ -101,6 +103,39 @@ const STATUS_LINE_TYPE = 'command';
  */
 export function quoteCommand(path: string): string {
   return `"${path.replace(/(["\\$`])/g, '\\$1')}"`;
+}
+
+/**
+ * Build a claude `command` that runs one of our installed `.cjs` scripts.
+ *
+ * Explicitly invokes `node` rather than relying on the script's `#!/usr/bin/env
+ * node` shebang + executable bit. Windows honors NEITHER, so a bare path there
+ * never executes — and because a hook that fails to run is silent, that would
+ * disable the whole event pipeline (and with it every agent's derived status)
+ * with no visible error.
+ *
+ * Used on all platforms so there is one code path. This is not a regression on
+ * Unix: the shebang was `/usr/bin/env node`, so `node` already had to be on PATH.
+ */
+export function nodeCommand(scriptPath: string): string {
+  return `node ${quoteCommand(toNodePath(scriptPath))}`;
+}
+
+/**
+ * Normalize a WINDOWS-style path (`C:\…` or a `\\server\share` UNC) to forward
+ * slashes. Node accepts `/` on Windows, and this sidesteps a shell-escaping
+ * mismatch: `quoteCommand` escapes `\` because that is what POSIX shells require
+ * inside double quotes, but `cmd.exe` treats `\` literally — so an escaped
+ * Windows path would reach the interpreter with doubled separators. That happens
+ * to survive Win32 path normalization (repeated separators are collapsed), but
+ * relying on that quirk is needlessly fragile.
+ *
+ * Only paths that actually LOOK like Windows paths are touched, so a Unix path
+ * containing a literal backslash (legal, if pathological) is left alone.
+ */
+function toNodePath(scriptPath: string): string {
+  const isWindowsPath = /^[A-Za-z]:[\\/]/.test(scriptPath) || scriptPath.startsWith('\\\\');
+  return isWindowsPath ? scriptPath.replace(/\\/g, '/') : scriptPath;
 }
 
 /**
@@ -177,20 +212,21 @@ export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
 
   let env: Array<[string, string]> | undefined;
   if (usagePaths) {
-    // Both command paths are shell-quoted (see quoteCommand): they live under a
-    // spaced app-data path, and claude runs them through a shell.
+    // Both commands run through `node` (see nodeCommand) with the script path
+    // shell-quoted: the scripts live under a SPACED app-data path, claude runs
+    // these through a shell, and Windows honors no shebang.
     settings.statusLine = {
       type: STATUS_LINE_TYPE,
-      command: quoteCommand(usagePaths.wrapperPath)
+      command: nodeCommand(usagePaths.wrapperPath)
     };
     // The single event hook is wired into the FULL lifecycle event set. Each
     // invocation normalizes its event and delivers one JSON line over the
-    // app-hosted Unix socket (AGENT_DESKTOP_SOCKET_PATH), feeding the overview's
+    // app-hosted local socket (AGENT_DESKTOP_SOCKET_PATH), feeding the overview's
     // event-sourced status + per-tool timeline. Pre/PostToolUse match ALL tools
     // (matcher '*') so every tool call produces a timeline entry; the pending
     // AskUserQuestion payload rides on its PreToolUse event (it is not in the
     // transcript until answered), replacing the old question.json sidecar.
-    const hookCmd = { type: 'command', command: quoteCommand(usagePaths.eventHookPath) };
+    const hookCmd = { type: 'command', command: nodeCommand(usagePaths.eventHookPath) };
     settings.hooks = {
       SessionStart: [{ hooks: [hookCmd] }],
       UserPromptSubmit: [{ hooks: [hookCmd] }],

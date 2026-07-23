@@ -17,6 +17,7 @@
 // parameters that are NOT part of the topology (program + cwd). Persistence
 // (task 4.x) serializes exactly `{ workspaces: [...], activeWorkspaceId }`.
 
+import { defaultShell } from '$lib/shell/defaultShell';
 import {
   freshWorkspace,
   splitLeaf,
@@ -162,13 +163,18 @@ export interface WorkspaceEntry {
   registry: Record<string, PaneSession>;
 }
 
-/** The login shell for new (split) panes: honor $SHELL, else /bin/zsh. */
+/**
+ * The program for new (split) panes: the user's preference when set, else the
+ * platform default the backend resolved (`shell-selection`).
+ *
+ * This used to read `process.env.SHELL` and fall back to a hardcoded `/bin/zsh`.
+ * That was doubly wrong in the webview: `process` is normally undefined there, so
+ * it almost always took the `/bin/zsh` branch — which on Windows spawns a pane
+ * that dies instantly. `$SHELL` is now consulted in Rust, where it actually
+ * exists.
+ */
 function loginShell(): string {
-  // import.meta.env is statically replaced; process may be undefined in the
-  // webview, so read defensively. SHELL is the user's interactive shell.
-  const fromEnv =
-    typeof process !== 'undefined' && process.env && process.env.SHELL;
-  return fromEnv || '/bin/zsh';
+  return defaultShell();
 }
 
 /** A monotonic, process-local id factory for fresh paneIds. */

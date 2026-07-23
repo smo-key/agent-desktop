@@ -11,6 +11,7 @@ import {
   serializeTasks,
   importLegacyTasks,
   tasksForProject,
+  shellCommandFlags,
   taskSpawnSpec,
   serializeProjectTasks,
   parseProjectTasks,
@@ -226,6 +227,30 @@ describe('project-terminals — spawn spec', () => {
   it('Create a shell terminal spawns an interactive shell in the project cwd', () => {
     const spec = taskSpawnSpec(t({ command: null, cwd: null }), '/proj', '/bin/zsh');
     expect(spec).toEqual({ program: '/bin/zsh', args: [], cwd: '/proj' });
+  });
+
+  it('runs a command with the flags the chosen shell actually understands', () => {
+    // `-lc` is POSIX-only. PowerShell has no such parameter, so a Windows task
+    // spawned with it dies immediately — and since the terminal just flips to
+    // "stopped", it looks like the command itself failed.
+    expect(shellCommandFlags('/bin/zsh')).toEqual(['-lc']);
+    expect(shellCommandFlags('/bin/bash')).toEqual(['-lc']);
+    expect(shellCommandFlags('pwsh')).toEqual(['-NoLogo', '-Command']);
+    expect(shellCommandFlags('powershell.exe')).toEqual(['-NoLogo', '-Command']);
+    expect(shellCommandFlags('C:\\Program Files\\PowerShell\\7\\pwsh.exe')).toEqual([
+      '-NoLogo',
+      '-Command'
+    ]);
+    expect(shellCommandFlags('C:\\Windows\\system32\\cmd.exe')).toEqual(['/C']);
+
+    const win = taskSpawnSpec(t({ command: 'npm run dev', cwd: null }), 'C:\\proj', 'pwsh');
+    expect(win).toEqual({
+      program: 'pwsh',
+      args: ['-NoLogo', '-Command', 'npm run dev'],
+      cwd: 'C:\\proj'
+    });
+    // A blank command is still a plain interactive shell on every platform.
+    expect(taskSpawnSpec(t({ command: null, cwd: null }), 'C:\\proj', 'pwsh').args).toEqual([]);
   });
 
   it('honors an explicit per-terminal cwd over the project path', () => {

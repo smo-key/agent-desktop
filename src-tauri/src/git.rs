@@ -19,6 +19,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::no_window::NoConsoleWindow;
+
 use serde::Serialize;
 
 /// The most paths we surface for the uncommitted-files hover list. The UI only
@@ -95,7 +97,13 @@ pub fn parse_porcelain_paths(porcelain: &str) -> Vec<String> {
 /// Run `git -C <dir> <args...>`, returning trimmed stdout on a clean exit, else
 /// `None` (non-zero exit, spawn error, or non-UTF8 output). Fully guarded.
 fn run_git(dir: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
+    let output = Command::new("git")
+        .no_console_window()
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -107,7 +115,13 @@ fn run_git(dir: &str, args: &[&str]) -> Option<String> {
 /// else `None`. Used for `status --porcelain`, whose first status column can be a
 /// SPACE (` M file`) that a leading trim would eat — corrupting the path parse.
 fn run_git_raw(dir: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
+    let output = Command::new("git")
+        .no_console_window()
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -225,6 +239,7 @@ fn run_git_action(dir: &str, args: &[&str]) -> Result<String, String> {
         return Err("no project folder".to_string());
     }
     let output = Command::new("git")
+        .no_console_window()
         .arg("-C")
         .arg(dir)
         .args(args)
@@ -343,6 +358,7 @@ pub fn fetch_dir(dir: &str) -> bool {
 /// fetch's output). Returns `true` only on a clean, in-time exit.
 fn run_git_fetch(dir: &str, timeout: Duration) -> bool {
     let spawned = Command::new("git")
+        .no_console_window()
         .arg("-C")
         .arg(dir)
         .arg("fetch")

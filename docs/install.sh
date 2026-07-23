@@ -10,7 +10,8 @@
 # It is short on purpose so you can read it before piping it into a shell.
 #
 # Supported today: macOS (Apple Silicon), Linux (x86_64 / arm64).
-# Windows and Intel Macs are coming soon.
+# Windows has its own installer — see install.ps1 (stock Windows has no POSIX
+# shell, so this script cannot run there). Intel Macs are coming soon.
 set -eu
 
 # --- configuration ----------------------------------------------------------
@@ -19,6 +20,8 @@ GITHUB_REPO="smo-key/agent-desktop"
 RELEASES_PAGE="https://github.com/$GITHUB_REPO/releases"
 API_LATEST="https://api.github.com/repos/$GITHUB_REPO/releases/latest"
 APP_NAME="Agent Desktop"
+# The Windows one-liner, printed when this script is run under Git Bash / MSYS.
+PS_INSTALL_URL="https://smo-key.github.io/agent-desktop/install.ps1"
 
 # --- pure logic (unit-tested via docs/tests) --------------------------------
 
@@ -178,10 +181,35 @@ Categories=Development;Utility;
 EOF
 }
 
+# is_windows_uname OS -> 0 when OS names a Windows environment (Git Bash, MSYS,
+# Cygwin). Those DO have a POSIX shell, so this script runs — but the asset it
+# would install is a macOS/Linux one, and the real Windows installer is the
+# PowerShell script.
+is_windows_uname() {
+  case "$1" in
+    MINGW* | MSYS* | CYGWIN* | Windows_NT) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# windows_message -> the PowerShell one-liner to run instead of this script.
+windows_message() {
+  printf 'Agent Desktop installs on Windows with PowerShell, not this script.\n'
+  printf 'Run this in a PowerShell window:\n'
+  printf '\n  irm %s | iex\n\n' "$PS_INSTALL_URL"
+  printf 'Browse all downloads: %s\n' "$RELEASES_PAGE"
+}
+
 # unsupported_message OS ARCH -> friendly text for platforms with no installer.
+# Windows is NOT "coming soon" any more, so it gets its own message pointing at
+# the PowerShell installer rather than a dead end.
 unsupported_message() {
+  if is_windows_uname "$1"; then
+    windows_message
+    return 0
+  fi
   printf 'Agent Desktop has no installer for %s/%s yet.\n' "$1" "$2"
-  printf 'Windows and Intel-Mac builds are coming soon.\n'
+  printf 'Intel-Mac builds are coming soon.\n'
   printf 'Browse all downloads: %s\n' "$RELEASES_PAGE"
 }
 

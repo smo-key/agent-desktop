@@ -6,7 +6,16 @@ name: Release
 # matrix produces + publishes signed installers for all four targets to a single
 # GitHub Release.
 #
-# A manual workflow_dispatch (force_publish) can drive a build for testing.
+# Manual workflow_dispatch inputs:
+#   bundle_test   — build the Windows installer end-to-end and upload it as a
+#                   workflow artifact. No tag, no Release. Use this to prove the
+#                   packaging BEFORE a version bump, since `gate` pushes the tag
+#                   before any build runs and a packaging failure would otherwise
+#                   burn the version number.
+#   force_publish — force a release build without a version bump. NOTE: this only
+#                   works for a version whose tag does NOT yet exist; otherwise it
+#                   overrides the gate's idempotency decision and then fails at
+#                   `git tag -a`. Prefer `bundle_test` for testing a build.
 
 on:
   push:
@@ -15,6 +24,10 @@ on:
     inputs:
       force_publish:
         description: "Force a release build even without a version bump (uses the current package.json version)"
+        type: boolean
+        default: false
+      bundle_test:
+        description: "Build the Windows installer end-to-end and upload it as a workflow artifact (no tag, no Release)"
         type: boolean
         default: false
 
@@ -178,6 +191,149 @@ jobs:
             return data.id;
 
   # ---------------------------------------------------------------------------
+  # windows-check: fast, release-BLOCKING proof that src-tauri still compiles for
+  # Windows. Runs on every push (not just releases) and needs no sidecars, no
+  # frontend build, and no bundling, so a Windows-breaking change is reported in
+  # ~2 minutes instead of surfacing at bundle time — or, as before this gate
+  # existed, going unnoticed until someone asked for a Windows build.
+  # `cargo check` does not link, so the sidecar binaries are irrelevant here;
+  # `tauri-build` still demands they EXIST, hence the stubs.
+  # ---------------------------------------------------------------------------
+  windows-check:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: wincheck-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            wincheck-
+
+      # tauri-build validates that every `externalBin` exists before the crate is
+      # checked. Real sidecars take ~20 minutes to build from source and none of
+      # their bytes affect type-checking, so stub them.
+      - name: Stub sidecars for the check
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries src-tauri/models
+          for n in whisper-cli whisper-server llama-server; do
+            printf 'MZ' > "src-tauri/binaries/$n-x86_64-pc-windows-msvc.exe"
+          done
+          : > src-tauri/models/ggml-tiny.bin
+
+      - name: cargo check (x86_64-pc-windows-msvc)
+        working-directory: src-tauri
+        run: cargo check --target x86_64-pc-windows-msvc --all-targets
+
+      # The PowerShell installer's unit tests. They cannot run in `yarn
+      # test:install` (POSIX sh on the macOS/Linux runners, which have no
+      # PowerShell), so this Windows job is the only place their real
+      # interpreter exists. Release-blocking, like the rest of this job.
+      - name: install.ps1 unit tests
+        shell: pwsh
+        run: pwsh -NoProfile -File docs/tests/install_ps_test.ps1
+
+  # ---------------------------------------------------------------------------
+  # windows-bundle: build the REAL Windows installer end-to-end (sidecars from
+  # source, quality gate, NSIS/MSI packaging) and upload it as a workflow
+  # ARTIFACT — no version bump, no tag, no GitHub Release.
+  #
+  # Why this exists: the Windows bundle path had never completed even once (its
+  # leg was continue-on-error and failed every release), while `gate` pushes the
+  # release tag BEFORE any build runs. Discovering a Windows packaging failure
+  # during a real release therefore burns the version number and leaves a stuck
+  # draft that release-gate.sh's idempotency guard refuses to retry. This proves
+  # the packaging first. It also produces a downloadable installer for the manual
+  # on-Windows validation that no CI job can perform.
+  #
+  # `force_publish` cannot serve this purpose: it forces should_release=true for a
+  # version whose tag already exists, and the `git tag -a` step then fails.
+  # ---------------------------------------------------------------------------
+  windows-bundle:
+    if: github.event_name == 'workflow_dispatch' && inputs.bundle_test
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: yarn
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-x86_64-pc-windows-msvc-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-x86_64-pc-windows-msvc-
+
+      # Shares the release matrix's sidecar cache key, so a successful build here
+      # also warms the cache the real release leg will use.
+      - name: Cache sidecars
+        uses: actions/cache@v5
+        with:
+          path: src-tauri/binaries
+          key: sidecars-x86_64-pc-windows-msvc-w${{ env.WHISPER_TAG }}-l${{ env.LLAMA_TAG }}-${{ hashFiles('scripts/fetch-whisper.sh', 'scripts/fetch-llama.sh', 'scripts/lib/target-triple.sh') }}
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Provision sidecars + model
+        shell: bash
+        env:
+          TARGET_TRIPLE: x86_64-pc-windows-msvc
+          WHISPER_TAG: ${{ env.WHISPER_TAG }}
+          LLAMA_TAG: ${{ env.LLAMA_TAG }}
+        run: |
+          ./scripts/fetch-whisper.sh
+          ./scripts/fetch-llama.sh
+          ./scripts/fetch-models.sh
+          ./scripts/validate-sidecars.sh
+
+      - name: Quality gate
+        run: yarn check:gate
+
+      # Updater artifacts stay ENABLED so this exercises the same signing path a
+      # real release takes, rather than a subtly easier one.
+      - name: Build the Windows installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: yarn tauri build --target x86_64-pc-windows-msvc
+
+      - name: Upload the installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: agent-desktop-windows-x64
+          path: |
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
   # build: native build matrix; uploads to the draft release created above.
   # ---------------------------------------------------------------------------
   build:
@@ -200,14 +356,14 @@ jobs:
           - runner: ubuntu-22.04-arm
             triple: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
-    # Windows is BEST-EFFORT for now: its native build does not yet compile
-    # (src-tauri's events.rs/orchestration.rs use Unix-domain sockets, which do
-    # not exist on Windows). Mark ONLY the Windows leg continue-on-error so a
-    # Windows failure does not fail the build matrix or block `publish-release` —
-    # macOS + Linux are released now and the Windows installer is added once the
-    # IPC is ported to named pipes. macOS/Linux failures still hard-fail the
-    # matrix and correctly block publishing an incomplete release.
-    continue-on-error: ${{ contains(matrix.triple, 'windows') }}
+    # ALL FOUR targets are required — no leg is continue-on-error. Windows used to
+    # be best-effort because src-tauri did not compile there (events.rs /
+    # orchestration.rs bound Unix-domain sockets); that IPC now runs over a
+    # cross-platform local socket (src-tauri/src/ipc.rs), so a Windows break is a
+    # real regression and must block the release rather than silently publishing
+    # without the Windows installer — which is exactly how Windows rotted to
+    # non-compiling unnoticed. `fail-fast: false` still lets every other target
+    # finish and upload, so one failure never hides another.
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v6
@@ -383,13 +539,16 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # publish-release: flip the draft to published once the build matrix finishes.
-  # The Windows leg is continue-on-error (best-effort), so `build` succeeds — and
-  # this job runs — as long as macOS + Linux built and uploaded; a Windows
-  # failure no longer leaves the release stuck as a draft. If macOS or Linux
-  # fails, `build` fails, this job is skipped, and the release stays a draft.
+  # Every target is required, so `build` succeeds — and this job runs — only when
+  # all four built and uploaded. If ANY leg fails (Windows included), `build`
+  # fails, this job is skipped, and the release stays a draft rather than being
+  # published with a platform's installer missing.
   # ---------------------------------------------------------------------------
   publish-release:
-    needs: [gate, create-release, build]
+    # `windows-check` runs in parallel with the (much longer) build matrix, so
+    # gating on it here costs no wall-clock but guarantees a release can never be
+    # published from a tree that does not compile for Windows.
+    needs: [gate, create-release, build, windows-check]
     if: needs.gate.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:

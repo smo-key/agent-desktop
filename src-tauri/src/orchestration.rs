@@ -27,8 +27,8 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixListener;
-use std::path::{Path, PathBuf};
+
+use crate::ipc::ListenerExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -244,7 +244,7 @@ impl TargetQueues {
 /// Owns the control-socket listener thread + the shared pending/queue state.
 /// Dropping it removes the socket file; the app holds exactly one in managed state.
 pub struct ControlServer {
-    socket_path: PathBuf,
+    address: String,
     pending: Arc<PendingRegistry>,
 }
 
@@ -253,11 +253,17 @@ impl ControlServer {
     pub fn pending(&self) -> &Arc<PendingRegistry> {
         &self.pending
     }
+
+    /// The address the bundled MCP adapter connects to — the exact string exported
+    /// as [`CONTROL_SOCKET_ENV`].
+    pub fn address(&self) -> &str {
+        &self.address
+    }
 }
 
 impl Drop for ControlServer {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.socket_path);
+        crate::ipc::cleanup_address(&self.address);
     }
 }
 
@@ -268,35 +274,36 @@ impl Drop for ControlServer {
 /// event), and awaited (with [`REQUEST_TIMEOUT`]); the JSON response is written
 /// back over the same connection. Per-target ops are serialized.
 ///
+/// `address` MUST come from [`crate::ipc::control_address`] — the same call that
+/// produces the value exported to a coordinator as `AGENT_DESKTOP_CONTROL_SOCKET`,
+/// so the bound socket and the advertised one cannot disagree.
+///
 /// `on_request` runs on a per-connection serving thread and must be `Send + Sync`.
 /// Returns the [`ControlServer`] the caller keeps alive (and whose
 /// [`pending`](ControlServer::pending) the reply command routes through).
-pub fn start_control_server<F>(socket_path: &Path, on_request: F) -> Result<ControlServer, String>
+pub fn start_control_server<F>(address: &str, on_request: F) -> Result<ControlServer, String>
 where
     F: Fn(u64, &ControlRequest) + Send + Sync + 'static,
 {
-    start_control_server_with_timeout(socket_path, REQUEST_TIMEOUT, on_request)
+    start_control_server_with_timeout(address, REQUEST_TIMEOUT, on_request)
 }
 
 /// [`start_control_server`] with an explicit per-request `timeout`. Production uses
 /// [`REQUEST_TIMEOUT`]; tests pass a short timeout to exercise the timeout path
 /// end-to-end without a 30s wait.
 fn start_control_server_with_timeout<F>(
-    socket_path: &Path,
+    address: &str,
     timeout: Duration,
     on_request: F,
 ) -> Result<ControlServer, String>
 where
     F: Fn(u64, &ControlRequest) + Send + Sync + 'static,
 {
-    // A leftover socket file (prior run / crash) makes bind() fail with AddrInUse;
-    // unlink it first so a restart always binds cleanly.
-    let _ = std::fs::remove_file(socket_path);
-    if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create_dir_all {parent:?}: {e}"))?;
-    }
+    // A stale entry from a prior run never blocks the bind: unlinked on Unix,
+    // impossible on Windows (a dead process leaves no pipe). See `crate::ipc`.
     let listener =
-        UnixListener::bind(socket_path).map_err(|e| format!("bind {socket_path:?}: {e}"))?;
+        crate::ipc::bind_listener(address).map_err(|e| format!("bind {address:?}: {e}"))?;
+    let address = address.to_string();
 
     let pending = Arc::new(PendingRegistry::new());
     let queues = Arc::new(TargetQueues::new());
@@ -319,16 +326,13 @@ where
         }
     });
 
-    Ok(ControlServer {
-        socket_path: socket_path.to_path_buf(),
-        pending,
-    })
+    Ok(ControlServer { address, pending })
 }
 
 /// Serve one accepted connection: read the request line, register it, dispatch it
 /// (serialized per target), await the reply (or time out), and write the response.
 fn serve_connection<F>(
-    stream: std::os::unix::net::UnixStream,
+    stream: crate::ipc::Stream,
     pending: &Arc<PendingRegistry>,
     queues: &Arc<TargetQueues>,
     on_request: &F,
@@ -336,11 +340,11 @@ fn serve_connection<F>(
 ) where
     F: Fn(u64, &ControlRequest) + Send + Sync,
 {
-    let mut writer = match stream.try_clone() {
-        Ok(w) => w,
-        Err(_) => return,
-    };
-    let mut reader = BufReader::new(stream);
+    // `Read`/`Write` are implemented for `&Stream`, so the read and write halves
+    // are two borrows of the one stream — no `try_clone` (which named pipes do
+    // not offer) and no fallible duplication step.
+    let mut writer = &stream;
+    let mut reader = BufReader::new(&stream);
     let mut line = String::new();
     if reader.read_line(&mut line).is_err() {
         return;
@@ -376,7 +380,7 @@ fn serve_connection<F>(
 mod tests {
     use super::*;
     use std::io::{Read, Write};
-    use std::os::unix::net::UnixStream;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::AtomicBool;
     use std::time::{Instant, SystemTime};
 
@@ -618,8 +622,9 @@ mod tests {
     // ---- Full socket round-trip ----
 
     /// Helper: connect, send one request line, read the one response line back.
-    fn round_trip(socket: &Path, request_line: &str) -> Value {
-        let mut s = UnixStream::connect(socket).unwrap();
+    /// Platform-agnostic — reaches a Unix socket or a Windows named pipe.
+    fn round_trip(address: &str, request_line: &str) -> Value {
+        let mut s = crate::ipc::connect(address).unwrap();
         s.write_all(request_line.as_bytes()).unwrap();
         s.write_all(b"\n").unwrap();
         s.flush().unwrap();
@@ -642,7 +647,7 @@ mod tests {
             // by start_control_server. Capture it via a shared cell the closure reads.
             let captured: Arc<Mutex<Option<Arc<PendingRegistry>>>> = Arc::new(Mutex::new(None));
             let cap = captured.clone();
-            let srv = start_control_server(&socket, move |id, req| {
+            let srv = start_control_server(&crate::ipc::socket_address(&socket), move |id, req| {
                 let pending = cap.lock().unwrap().clone().expect("pending wired");
                 let op = req.op.clone();
                 std::thread::spawn(move || {
@@ -654,7 +659,7 @@ mod tests {
             srv
         };
 
-        let resp = round_trip(&socket, r#"{"op":"list_agents","args":{}}"#);
+        let resp = round_trip(server.address(), r#"{"op":"list_agents","args":{}}"#);
         assert_eq!(resp["result"], json!({"echo": "list_agents"}));
         assert!(resp["id"].as_u64().unwrap() >= 1, "id assigned");
         drop(server);
@@ -671,13 +676,14 @@ mod tests {
         let cap = captured.clone();
         // The frontend deliberately never replies.
         let server =
-            start_control_server_with_timeout(&socket, Duration::from_millis(80), move |_id, _req| {
+            start_control_server_with_timeout(
+            &crate::ipc::socket_address(&socket), Duration::from_millis(80), move |_id, _req| {
                 let _ = cap.lock().unwrap().clone();
             })
             .unwrap();
         *captured.lock().unwrap() = Some(server.pending().clone());
 
-        let resp = round_trip(&socket, r#"{"op":"never","args":{}}"#);
+        let resp = round_trip(server.address(), r#"{"op":"never","args":{}}"#);
         assert_eq!(resp["error"], json!("timeout"));
         assert!(resp["id"].as_u64().unwrap() >= 1, "id present on timeout response");
         // The slot is cleaned up so a late reply finds no waiter.
@@ -714,7 +720,7 @@ mod tests {
         // targets so they aren't serialized and truly run concurrently.
         let captured: Arc<Mutex<Option<Arc<PendingRegistry>>>> = Arc::new(Mutex::new(None));
         let cap = captured.clone();
-        let server = start_control_server(&socket, move |id, req| {
+        let server = start_control_server(&crate::ipc::socket_address(&socket), move |id, req| {
             let pending = cap.lock().unwrap().clone().unwrap();
             let pane = req.args["paneId"].as_str().unwrap_or("").to_string();
             std::thread::spawn(move || {
@@ -726,8 +732,8 @@ mod tests {
         .unwrap();
         *captured.lock().unwrap() = Some(server.pending().clone());
 
-        let s1 = socket.clone();
-        let s2 = socket.clone();
+        let s1 = server.address().to_string();
+        let s2 = s1.clone();
         let h1 = std::thread::spawn(move || {
             round_trip(&s1, r#"{"op":"read_agent","args":{"paneId":"alpha"}}"#)
         });
@@ -748,10 +754,10 @@ mod tests {
         let tmp = TempDir::new("stale");
         let socket = tmp.path().join("c.sock");
         std::fs::write(&socket, b"stale").unwrap();
-        let server = start_control_server(&socket, |_, _| {}).expect("binds despite stale file");
+        let server = start_control_server(&crate::ipc::socket_address(&socket), |_, _| {}).expect("binds despite stale file");
         let start = Instant::now();
         loop {
-            if UnixStream::connect(&socket).is_ok() {
+            if crate::ipc::connect(server.address()).is_ok() {
                 break;
             }
             assert!(start.elapsed() < Duration::from_secs(2), "never became live");

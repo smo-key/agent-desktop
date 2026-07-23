@@ -20,6 +20,7 @@
 // commands, and the window-close flush lives in `store-backend.svelte.ts`
 // (which imports this module) — kept separate so this stays pure + testable.
 
+import { defaultShell, resolveProgram } from '$lib/shell/defaultShell';
 import {
   closeLeaf,
   freshWorkspace,
@@ -199,7 +200,7 @@ function projectRegistry(
   for (const leafNode of leavesInOrder(root)) {
     const src = registry[leafNode.paneId];
     out[leafNode.paneId] = {
-      program: src?.program ?? '/bin/zsh',
+      program: src?.program ?? defaultShell(),
       cwd: src?.cwd ?? null,
       // Keep the project binding when present (omitted key serializes cleanly).
       ...(src?.projectId ? { projectId: src.projectId } : {}),
@@ -313,7 +314,16 @@ function sanitizeRegistry(
   for (const leafNode of leavesInOrder(root)) {
     const raw = src[leafNode.paneId];
     if (isRecord(raw)) {
-      const program = typeof raw.program === 'string' ? raw.program : '/bin/zsh';
+      // Keep the PERSISTED program verbatim; only supply a default when it is
+      // absent or the wrong type. The platform substitution happens at SPAWN
+      // time (see `respawnLeaves` / PaneNode) rather than here, because
+      // rewriting it here would be serialized straight back by the next
+      // autosave — a macOS user's `fish` opened once on Windows would become
+      // `pwsh` on disk and then `/bin/zsh` back on macOS, silently and forever.
+      const program =
+        typeof raw.program === 'string' && raw.program.trim()
+          ? raw.program.trim()
+          : defaultShell();
       // A persisted sessionId means we can resume the prior transcript on restart.
       // When present, carry it through and set resume:true so TerminalPane emits
       // `--resume <id>` instead of `--session-id <id>`.
@@ -365,7 +375,7 @@ function sanitizeRegistry(
           : {})
       };
     } else {
-      out[leafNode.paneId] = { program: '/bin/zsh', cwd: null };
+      out[leafNode.paneId] = { program: defaultShell(), cwd: null };
     }
   }
   return out;
@@ -465,10 +475,13 @@ export function respawnLeaves(
 ): void {
   for (const w of workspaces) {
     for (const leafNode of leavesInOrder(w.ws.root)) {
-      const s = w.registry[leafNode.paneId] ?? { program: '/bin/zsh', cwd: null };
+      const s = w.registry[leafNode.paneId] ?? { program: defaultShell(), cwd: null };
       // Pass ONLY program + cwd (the leaf's saved session) — never any live
       // process state. The registry is already sanitized to those two keys.
-      spawn(leafNode.paneId, { program: s.program, cwd: s.cwd });
+      // `resolveProgram` substitutes a platform-appropriate shell when the saved
+      // one cannot run here (a `/bin/zsh` layout opened on Windows), WITHOUT
+      // touching the stored value, so returning to the original OS restores it.
+      spawn(leafNode.paneId, { program: resolveProgram(s.program), cwd: s.cwd });
     }
   }
 }
