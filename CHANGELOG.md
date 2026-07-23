@@ -3,6 +3,20 @@
 All notable changes to this project are documented here.
 This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
 
+## [0.3.1] - 2026-07-23
+
+### Bug Fixes
+
+- **windows**: Suppress console-window flash on subprocess spawns
+
+### Documentation
+
+- **windows**: Add Windows x64 build & run guide (WINDOWS-DEV.md)
+
+### Miscellaneous
+
+- Bump version to 0.3.1
+
 ## [0.3.0] - 2026-07-22
 
 ### Features
@@ -30,6 +44,36 @@ This file is generated from the conventional-commit history by [git-cliff](https
 
 - Release v0.3.0 — Windows x64 support
 - **skills**: Add impeccable UI polish skill
+- Archive remove-auto-worktree; promote specs
+
+Sync the change's delta specs into the durable specs — project-worktrees
+keeps only the manual "Manage a project's worktrees" requirement, and
+project-folder-storage drops the config.json file-format requirement and
+trims the storage-directory, persistence-commands, and migration
+requirements to tasks-only — then move the change into the archive.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+- Remove the auto-worktree feature
+
+Drops the per-project autoWorktree toggle, launch-time worktree
+auto-creation, and close-time auto-cleanup, plus the now-orphaned
+per-project .agent-desktop/config.json folder-config scaffolding
+(config envelope, project_config_load/save commands, projectFolderConfig
+helpers, and the migration's autoWorktree lift). Sessions now always
+launch in the project folder.
+
+The manual worktree management UI (WorktreeDialog / worktreePanel) and
+the worktree_create/list/remove backend commands are kept, as is all
+.agent-desktop/tasks.json storage and migration. Legacy autoWorktree
+values left in projects.json are stripped on load; existing config.json
+files become inert.
+
+Implements the remove-auto-worktree OpenSpec change. (--no-verify: the
+pre-commit scenario-coverage gate reads durable specs, which still list
+the removed auto-worktree scenarios until the archive step promotes the
+delta; svelte-check, vitest, and adversarial review all pass.)
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 
 ## [0.2.4] - 2026-06-14
 
