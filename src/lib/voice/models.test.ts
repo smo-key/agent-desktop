@@ -14,6 +14,7 @@ import {
   downloadRows,
   modelsDiskUsage,
   deleteModels,
+  ensureModels,
   type PerModel
 } from './models';
 
@@ -140,5 +141,63 @@ describe('deleteModels', () => {
   it('degrades a backend failure to 0 freed (never throws)', async () => {
     invokeMock.mockRejectedValueOnce(new Error('boom'));
     await expect(deleteModels()).resolves.toBe(0);
+  });
+});
+
+describe('ensureModels — never runs two downloads at once', () => {
+  // The Rust downloader starts each model by UNLINKING any existing `.part` file
+  // and finishes by renaming `.part` into place, and readiness is an existence
+  // check with no size/checksum. So two overlapping downloads of the same model
+  // race: the first to finish renames the OTHER's truncated file into place, and
+  // the model is then reported ready forever while every transcription fails.
+  // The panel's "Try again" control re-triggers model readiness, so this has to
+  // collapse rather than stack.
+  it('collapses concurrent calls into a single download', async () => {
+    let releaseDownload!: () => void;
+    const download = new Promise((r) => (releaseDownload = () => r(undefined)));
+
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'voice_models_status') return Promise.resolve({ ready: false, missing: ['a'] });
+      if (cmd === 'voice_download_models') return download;
+      return Promise.resolve(null);
+    });
+
+    const first = ensureModels('fast', false);
+    const second = ensureModels('fast', false); // the impatient second click
+    releaseDownload();
+    await Promise.all([first, second]);
+
+    const downloads = invokeMock.mock.calls.filter((c) => c[0] === 'voice_download_models');
+    expect(downloads).toHaveLength(1);
+  });
+
+  it('runs a later download after the first finishes, never overlapping', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const started: string[] = [];
+    let releaseFirst!: () => void;
+    const gate = new Promise((r) => (releaseFirst = () => r(undefined)));
+
+    invokeMock.mockImplementation(async (cmd: string, args: { tier?: string }) => {
+      if (cmd === 'voice_models_status') return { ready: false, missing: ['a'] };
+      if (cmd === 'voice_download_models') {
+        started.push(args.tier!);
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        if (args.tier === 'fast') await gate;
+        active -= 1;
+        return null;
+      }
+      return null;
+    });
+
+    const a = ensureModels('fast', false);
+    const b = ensureModels('accurate', false);
+    releaseFirst();
+    await Promise.all([a, b]);
+
+    // The load-bearing assertion: the two downloads never ran at the same time.
+    expect(maxActive).toBe(1);
+    expect(started).toEqual(['fast', 'accurate']);
   });
 });

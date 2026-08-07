@@ -206,6 +206,11 @@ export class DictationPipeline {
     // here would strand the CLOSED panel's store in the recording phase, which
     // (among other things) pins VoicePanel's waveform rAF loop forever.
     if (this.#finished) return;
+    // A transcript preserved across retry() (from a failed INSERT) is superseded the
+    // moment the user starts speaking again — otherwise it would resurface later as
+    // if it were this utterance. It survives exactly as long as no new capture has
+    // begun, which is what makes it useful after a denied mic or a failed retry.
+    voiceStore.setFinal('');
     voiceStore.setState('recording');
     // Reset retention state for this session, then drive live partials from the
     // frontend (full-message retention over the sliding reprocess window).

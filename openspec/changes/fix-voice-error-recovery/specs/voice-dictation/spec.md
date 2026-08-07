@@ -22,7 +22,10 @@ Retry SHALL NOT discard a COMPLETED transcript. Some failures occur after a
 successful transcription — a dead pane or no focused agent means the *insert*
 failed, not the dictation — and the panel stays open specifically so that text is
 not lost. In those phases the panel SHALL display the completed transcript
-alongside the guidance, and retry SHALL preserve it.
+alongside the guidance, and retry SHALL preserve it. The preserved transcript
+SHALL be superseded once a new capture actually begins recording, and the live
+recording/finalizing rows SHALL show only the current utterance — a preserved
+transcript SHALL NOT be rendered as if it were the one being captured now.
 
 A solo right-Command tap while the panel is in a failure phase SHALL retry rather
 than attempt to finalize — finalizing is a no-op in any non-recording phase, so
@@ -78,6 +81,25 @@ SHALL NOT write its result or its error over the live session.
 
 - **WHEN** a finalization from an abandoned session completes after the user has started a new capture
 - **THEN** the new session's phase, transcript, and panel visibility are left untouched
+
+### Requirement: Model downloads never overlap
+
+Model-readiness requests SHALL be serialized: at most one download SHALL run at a
+time, and repeated identical requests SHALL collapse into one. The downloader
+clears and renames a `.part` file per model and readiness is an existence check,
+so overlapping downloads of the same model leave a truncated file reported as
+ready. Retrying model readiness is a user-reachable action, so it SHALL be safe to
+trigger repeatedly.
+
+#### Scenario: Collapses concurrent calls into a single download
+
+- **WHEN** model readiness is requested twice for the same selection while a download is in flight
+- **THEN** only one download runs and both callers observe the same result
+
+#### Scenario: Runs a later download after the first finishes, never overlapping
+
+- **WHEN** readiness is requested for a different selection while a download is in flight
+- **THEN** the second download starts only after the first completes
 
 ### Requirement: Microphone release on every teardown path
 

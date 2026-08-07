@@ -193,9 +193,11 @@
     return Math.round(4 + Math.min(1, level) * 22);
   }
 
-  // The text shown in the recording / processing rows: the live partial, falling
-  // back to the committed final (e.g. while finalizing) or a gentle placeholder.
-  const overlayText = $derived(voiceStore.partial || voiceStore.finalText);
+  // The recording + processing rows show the LIVE partial only (with a placeholder
+  // when it is empty). They deliberately do NOT fall back to `finalText`: retry()
+  // preserves that across a failed insert, so a fallback would render a PREVIOUS
+  // utterance as if it were the one being captured or finalized now. The completed
+  // transcript has its own home in the guidance block.
 </script>
 
 
@@ -287,7 +289,7 @@
     {:else if voiceStore.state === 'transcribing'}
       <!-- PROCESSING: the same captured text, shimmering blue until finalized. -->
       <div class="proc">
-        <span class="proc-text">{overlayText || 'Transcribing…'}</span>
+        <span class="proc-text">{voiceStore.partial || 'Transcribing…'}</span>
       </div>
     {:else}
       <!-- RECORDING (or requesting mic): live waveform + transcript + confirm (✓). -->

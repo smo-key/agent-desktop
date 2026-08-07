@@ -147,7 +147,40 @@ export async function deleteModels(): Promise<number> {
  * is the source of truth the UI renders; this function never throws — a transport
  * failure is recorded as `modelDownload.error`.
  */
-export async function ensureModels(tier: string, polish: boolean): Promise<void> {
+export function ensureModels(tier: string, polish: boolean): Promise<void> {
+  const key = `${tier}:${polish}`;
+  // An identical request already queued/running: share it rather than stacking.
+  const already = queuedEnsures.get(key);
+  if (already) return already;
+  // Otherwise chain after whatever is in flight, so downloads never OVERLAP.
+  const run = ensureChain
+    .catch(() => {})
+    .then(() => runEnsureModels(tier, polish))
+    .finally(() => queuedEnsures.delete(key));
+  queuedEnsures.set(key, run);
+  ensureChain = run.catch(() => {});
+  return run;
+}
+
+/**
+ * SERIALIZATION for [`ensureModels`]. Downloads must never overlap: the Rust
+ * downloader starts each model by unlinking any existing `.part` file and finishes
+ * by renaming `.part` into place, and readiness is an existence check with no size
+ * or checksum. Two concurrent downloads of the same model therefore corrupt it —
+ * the first to finish renames the OTHER's truncated file into place, after which
+ * the model is reported ready forever while every transcription against it fails,
+ * recoverable only via Settings → Delete models.
+ *
+ * This is reachable by ordinary UI actions: the voice panel's "Try again" control
+ * re-checks readiness, and Settings + onboarding both call in as well. `ensureModels`
+ * re-queries status at the head of each run, so a queued call that is no longer
+ * needed costs one cheap IPC and returns.
+ */
+let ensureChain: Promise<void> = Promise.resolve();
+const queuedEnsures = new Map<string, Promise<void>>();
+
+/** The actual work behind [`ensureModels`]; always invoked via its queue. */
+async function runEnsureModels(tier: string, polish: boolean): Promise<void> {
   const status = await modelsStatus(tier, polish);
   if (status.ready) {
     modelDownload.markReady();

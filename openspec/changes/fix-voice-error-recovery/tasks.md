@@ -2,8 +2,8 @@
 
 - [x] 1.1 Add a `session` capture-session counter to `VoiceStore` (the dependency
       VoicePanel's pipeline effect watches to rebuild a spent pipeline).
-- [x] 1.2 Add `retry()`: clear error + partial + finalText, return to `idle`, bump
-      `session`. No-op while closed.
+- [x] 1.2 Add `retry()`: clear error + partial, return to `idle`, bump `session`.
+      No-op while closed. (`finalText` is preserved — see 4.6.)
 - [x] 1.3 Give `setError(msg, phase = 'error')` an explicit phase so `'denied'`
       survives instead of being clobbered to `'error'`.
 - [x] 1.4 Tests in `voiceStore.test.ts` for retry (open/closed/from-denied) and
@@ -52,10 +52,22 @@
       yet — try again" can actually be retried instead of looping forever.
 - [x] 4.8 Test `initVoiceActivation`'s dispatch, not just the pure decision table.
 
-## 5. Verify
+## 5. Second adversarial-review round (both findings caused by round-1 fixes)
 
-- [x] 5.1 `yarn run check` clean (0 errors).
-- [x] 5.2 `yarn test` green.
-- [ ] 5.3 MANUAL: in a live window, force a failed dictation (confirm with no
+- [x] 5.1 Serialize `ensureModels`: task 4.7 made "Try again" re-trigger model
+      readiness, but `ensureModels` had no re-entrancy guard and the Rust
+      downloader unlinks the in-flight `.part` then renames whatever it finds,
+      with existence-only readiness — so two overlapping downloads rename a
+      truncated file into place and report it ready forever. Now chained, with
+      identical requests collapsing. Tests in `models.test.ts`.
+- [x] 5.2 A preserved transcript (task 4.6) must not resurface as the CURRENT
+      utterance: clear it once a new capture reaches `recording`, and drop the
+      `finalText` fallback from the finalizing row as well as the recording row.
+
+## 6. Verify
+
+- [x] 6.1 `yarn run check` clean (0 errors).
+- [x] 6.2 `yarn test` green.
+- [ ] 6.3 MANUAL: in a live window, force a failed dictation (confirm with no
       speech) and confirm the panel shows "Try again" / "Dismiss", that Try again
       starts a fresh recording, and that a right-⌘ tap also retries.
