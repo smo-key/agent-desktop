@@ -146,6 +146,9 @@ export async function deleteModels(): Promise<number> {
  * once the download command returns (or immediately if already ready). The store
  * is the source of truth the UI renders; this function never throws — a transport
  * failure is recorded as `modelDownload.error`.
+ *
+ * Safe to call repeatedly (the voice panel's "Try again" does): identical requests
+ * share one run, and downloads never overlap — see the serialization note below.
  */
 export function ensureModels(tier: string, polish: boolean): Promise<void> {
   const key = `${tier}:${polish}`;
@@ -177,7 +180,7 @@ export function ensureModels(tier: string, polish: boolean): Promise<void> {
 let downloadChain: Promise<void> = Promise.resolve();
 const queuedEnsures = new Map<string, Promise<void>>();
 
-/** The actual work behind [`ensureModels`]; always invoked via its queue. */
+/** The work behind [`ensureModels`]; always reached through its dedupe map. */
 async function runEnsureModels(tier: string, polish: boolean): Promise<void> {
   const status = await modelsStatus(tier, polish);
   if (status.ready) {
