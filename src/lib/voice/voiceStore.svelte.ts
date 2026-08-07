@@ -34,6 +34,15 @@ export class VoiceStore {
   /** Last error message, or null when none. */
   error = $state<string | null>(null);
 
+  /**
+   * Monotonic CAPTURE-SESSION counter. VoicePanel's pipeline `$effect` reads it,
+   * so bumping it tears the current `DictationPipeline` down and builds a fresh
+   * one WITHOUT closing the panel. That is what makes in-place `retry()` work: a
+   * pipeline that has finalized or failed is `#finished` and has released the
+   * mic, so recovering needs a NEW pipeline, not a nudge to the old one.
+   */
+  session = $state(0);
+
   /** Open the panel, resetting transient state. Single instance: if already
    *  open this is a NO-OP so a stray second call can't wipe an in-progress
    *  partial/state mid-capture. */
@@ -69,10 +78,36 @@ export class VoiceStore {
     this.state = s;
   }
 
-  /** Record an error message and force the phase to `error`. */
-  setError(msg: string): void {
+  /**
+   * Record an error message and move to a failure phase.
+   *
+   * `phase` defaults to `'error'` (the generic failure). Pass `'denied'` for a
+   * blocked microphone so the panel keeps rendering the denied-specific System
+   * Settings guidance — this used to be a `setState('denied')` followed by a
+   * `setError()` that immediately clobbered it back to `'error'`, which silently
+   * hid that hint.
+   */
+  setError(msg: string, phase: 'error' | 'denied' = 'error'): void {
     this.error = msg;
-    this.state = 'error';
+    this.state = phase;
+  }
+
+  /**
+   * Recover from a failed/denied attempt IN PLACE, without closing the panel:
+   * clear the error + transcripts, return to `idle`, and bump `session` so
+   * VoicePanel discards the spent pipeline and starts a fresh capture.
+   *
+   * This is the escape hatch from the failure phases — the guidance block's
+   * "Try again" control and a right-⌘ tap while errored both land here. A no-op
+   * while closed, so a stray call can never resurrect a dismissed panel.
+   */
+  retry(): void {
+    if (!this.open) return;
+    this.state = 'idle';
+    this.error = null;
+    this.partial = '';
+    this.finalText = '';
+    this.session += 1;
   }
 }
 

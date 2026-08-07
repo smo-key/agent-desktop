@@ -68,4 +68,54 @@ describe('VoiceStore', () => {
     expect(s.error).toBe('mic unavailable');
     expect(s.state).toBe('error');
   });
+
+  // Spec: voice-dictation — "Permission denied guidance survives the error message".
+  // setError used to hard-force 'error', clobbering a 'denied' phase set moments
+  // earlier — which hid the System Settings hint that only renders while denied.
+  it('permission denied guidance survives the error message', () => {
+    const s = new VoiceStore();
+    s.show();
+    s.setError('Microphone access is blocked.', 'denied');
+    expect(s.state).toBe('denied');
+    expect(s.error).toBe('Microphone access is blocked.');
+  });
+
+  // Spec: voice-dictation — "Retrying a failed dictation".
+  it('retrying a failed dictation', () => {
+    const s = new VoiceStore();
+    s.show();
+    s.setState('recording');
+    s.setPartial('mumble');
+    s.setFinal('mumble');
+    const before = s.session;
+    s.setError('Didn’t catch that — try again.');
+
+    s.retry();
+
+    expect(s.open).toBe(true); // stays open — retry is not a dismiss
+    expect(s.state).toBe('idle');
+    expect(s.error).toBeNull();
+    expect(s.partial).toBe('');
+    expect(s.finalText).toBe('');
+    // The bumped session is what makes VoicePanel discard the spent pipeline and
+    // build a fresh one (the old one is #finished and its mic is released).
+    expect(s.session).toBe(before + 1);
+  });
+
+  it('retry() while closed is a no-op', () => {
+    const s = new VoiceStore();
+    const before = s.session;
+    s.retry();
+    expect(s.open).toBe(false);
+    expect(s.session).toBe(before);
+  });
+
+  it('retry() recovers from the denied phase too', () => {
+    const s = new VoiceStore();
+    s.show();
+    s.setError('Microphone access is blocked.', 'denied');
+    s.retry();
+    expect(s.state).toBe('idle');
+    expect(s.error).toBeNull();
+  });
 });

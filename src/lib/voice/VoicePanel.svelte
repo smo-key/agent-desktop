@@ -43,6 +43,12 @@
 
   $effect(() => {
     if (!voiceStore.open) return;
+    // Depend on the capture-SESSION counter as well as `open`: a pipeline that has
+    // finalized or failed is spent (`#finished`, mic released), so recovering in
+    // place needs a brand-new one. `voiceStore.retry()` bumps `session`, which
+    // re-runs this effect — tearing the spent pipeline down via the cleanup below
+    // and building a fresh one — without the panel ever closing.
+    void voiceStore.session; // re-run on retry, with a fresh capture session
 
     const p = new DictationPipeline();
     let cancelled = false;
@@ -64,8 +70,9 @@
         if (cancelled) return;
         const outcome = classifyMicError(err);
         if (outcome === 'denied') {
-          voiceStore.setState('denied');
-          voiceStore.setError(MIC_DENIED_GUIDANCE);
+          // Pass the phase explicitly: a bare setError() forces 'error', which
+          // used to clobber the 'denied' phase and hide the System Settings hint.
+          voiceStore.setError(MIC_DENIED_GUIDANCE, 'denied');
         } else {
           // setError forces state to 'error'.
           voiceStore.setError(micGuidanceFor('error'));
@@ -230,15 +237,38 @@
     {/if}
 
     {#if voiceStore.state === 'denied' || voiceStore.state === 'error'}
-      <!-- Denied / error state: prominent guidance; recording does NOT proceed. -->
+      <!-- Denied / error state: prominent guidance; recording does NOT proceed.
+           This branch replaces the .rec row (and its ✓ / × controls), so it MUST
+           carry its own way out — without them the panel was a dead end: no
+           button on screen, the right-⌘ tap inert, and only an undiscoverable
+           Escape left. "Try again" recovers in place (fresh capture session);
+           "Dismiss" closes the panel. -->
       <div class="guidance" class:denied={voiceStore.state === 'denied'}>
         <p class="guidance-msg">{voiceStore.error ?? status}</p>
         {#if voiceStore.state === 'denied'}
           <p class="guidance-hint">
             Open System Settings → Privacy &amp; Security → Microphone, allow
-            agent-desktop, then reopen voice input.
+            agent-desktop, then try again.
           </p>
         {/if}
+        <div class="guidance-actions">
+          <button
+            type="button"
+            class="g-retry"
+            use:tooltip={'Try again (tap right ⌘)'}
+            onclick={() => voiceStore.retry()}
+          >
+            Try again
+          </button>
+          <button
+            type="button"
+            class="g-dismiss"
+            use:tooltip={'Dismiss (Esc)'}
+            onclick={() => discard()}
+          >
+            Dismiss
+          </button>
+        </div>
       </div>
     {:else if voiceStore.state === 'transcribing'}
       <!-- PROCESSING: the same captured text, shimmering blue until finalized. -->
@@ -460,6 +490,48 @@
     font-size: 12px;
     line-height: 1.5;
     color: var(--fg-3);
+  }
+
+  /* The guidance block's WAY OUT. This branch replaces the .rec row's ✓ / ×, so
+     without these the failure state has no on-screen control at all. Sizing and
+     colour follow the DESIGN.md button-primary / button-ghost recipes (body type,
+     rounded.md, blue-500 / fg-2). */
+  .guidance-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 2px;
+  }
+  .g-retry,
+  .g-dismiss {
+    padding: 6px 14px;
+    border-radius: var(--r-md);
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+    cursor: pointer;
+    transition:
+      background 0.15s ease,
+      color 0.15s ease;
+  }
+  .g-retry {
+    border: none;
+    background: var(--accent);
+    color: var(--fg-on-accent);
+    font-weight: 500;
+  }
+  .g-retry:hover {
+    background: var(--accent-hover);
+  }
+  .g-dismiss {
+    border: 1px solid var(--line-default);
+    background: transparent;
+    color: var(--fg-2);
+  }
+  .g-dismiss:hover {
+    background: var(--bg-hover);
+    color: var(--fg-1);
   }
 
   /* "Preparing models…" download progress: a determinate bar fed by the
