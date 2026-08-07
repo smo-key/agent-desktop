@@ -64,10 +64,22 @@
       utterance: clear it once a new capture reaches `recording`, and drop the
       `finalText` fallback from the finalizing row as well as the recording row.
 
-## 6. Verify
+## 6. Third adversarial-review round
 
-- [x] 6.1 `yarn run check` clean (0 errors).
-- [x] 6.2 `yarn test` green.
-- [ ] 6.3 MANUAL: in a live window, force a failed dictation (confirm with no
+- [x] 6.1 Queue only the DOWNLOAD, not the readiness check. Task 5.1's chain put
+      the cheap status IPC behind a `curl` that has no timeout, so one stalled
+      transfer wedged every later caller — including "Try again" itself. Readiness
+      now runs outside the queue; test pins it.
+- [x] 6.2 Move `begin()`'s Channel setup inside the try/finally so a throw before
+      the invoke can't pin `modelDownload.active` (disabling Settings' Delete and
+      the onboarding gate). Pre-existing; fixed while in the function.
+- [x] 6.3 Correct a stale comment in VoicePanel claiming `.proc` still uses the
+      `finalText` fallback — it no longer does.
+
+## 7. Verify
+
+- [x] 7.1 `yarn run check` clean (0 errors).
+- [x] 7.2 `yarn test` green.
+- [ ] 7.3 MANUAL: in a live window, force a failed dictation (confirm with no
       speech) and confirm the panel shows "Try again" / "Dismiss", that Try again
       starts a fresh recording, and that a right-⌘ tap also retries.

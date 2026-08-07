@@ -91,6 +91,12 @@ so overlapping downloads of the same model leave a truncated file reported as
 ready. Retrying model readiness is a user-reachable action, so it SHALL be safe to
 trigger repeatedly.
 
+Only the download SHALL be serialized. The readiness check SHALL NOT queue behind
+an in-flight download: transfers have no timeout, so a stalled one would otherwise
+block every later caller — including the retry control whose purpose is to
+re-check. A download SHALL always clear its in-progress indicator, including when
+it fails before starting.
+
 #### Scenario: Collapses concurrent calls into a single download
 
 - **WHEN** model readiness is requested twice for the same selection while a download is in flight
@@ -100,6 +106,12 @@ trigger repeatedly.
 
 - **WHEN** readiness is requested for a different selection while a download is in flight
 - **THEN** the second download starts only after the first completes
+
+#### Scenario: A readiness check still resolves while a download is stalled
+
+- **WHEN** a download has stalled and never returns
+- **AND** readiness is requested for a selection whose models are already present
+- **THEN** that request resolves rather than queueing behind the stalled download
 
 ### Requirement: Microphone release on every teardown path
 

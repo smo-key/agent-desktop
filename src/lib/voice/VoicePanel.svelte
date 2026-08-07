@@ -299,11 +299,10 @@
             <span class="bar" style:height={`${barHeight(b)}px`}></span>
           {/each}
         </div>
-        <!-- Live capture shows the LIVE partial only. It must not fall back to
-             `finalText`, which retry() now preserves from a previous attempt —
-             that text belongs to the old utterance and would read as if the new
-             recording had already picked it up. (`.proc` below still uses the
-             fallback: there it IS this utterance, mid-finalization.) -->
+        <!-- Live capture shows the LIVE partial only — as does `.proc` above.
+             Neither falls back to `finalText`, which retry() preserves from a
+             previous attempt: that text belongs to the old utterance and would
+             read as if this one had already picked it up. -->
         <span class="rec-text" class:dim={!voiceStore.partial}
           >{voiceStore.partial || status}</span
         >

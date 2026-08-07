@@ -171,6 +171,33 @@ describe('ensureModels — never runs two downloads at once', () => {
     expect(downloads).toHaveLength(1);
   });
 
+  // A stalled download must not wedge the app. `curl` is spawned with no timeout,
+  // so a hung transfer never returns; if the cheap readiness check were queued
+  // behind it, every later caller would block forever — including the voice panel's
+  // "Try again", whose entire job is to re-check.
+  //
+  // Loaded through a FRESH module instance: this test deliberately leaves a
+  // never-settling download in the module-level queue, which would otherwise block
+  // every later test in this file.
+  it('a readiness check still resolves while a download is stalled', async () => {
+    vi.resetModules();
+    const { ensureModels: freshEnsureModels } = await import('./models');
+
+    invokeMock.mockImplementation((cmd: string, args: { tier?: string }) => {
+      if (cmd === 'voice_models_status') {
+        // The stalled selection is missing; the other one is already on disk.
+        return Promise.resolve(
+          args.tier === 'fast' ? { ready: false, missing: ['a'] } : { ready: true, missing: [] }
+        );
+      }
+      if (cmd === 'voice_download_models') return new Promise(() => {}); // never settles
+      return Promise.resolve(null);
+    });
+
+    void freshEnsureModels('fast', false); // hangs forever, deliberately not awaited
+    await expect(freshEnsureModels('accurate', false)).resolves.toBeUndefined();
+  });
+
   it('runs a later download after the first finishes, never overlapping', async () => {
     let active = 0;
     let maxActive = 0;
