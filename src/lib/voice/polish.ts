@@ -145,12 +145,24 @@ export async function runPolish(raw: string): Promise<string> {
  * If there is NO existing agent, spin up a NEW agent seeded with the text instead
  * of failing — so dictation always lands somewhere. Returns the [`InsertResult`]
  * so the caller closes the panel on success or keeps it open on a real failure.
+ *
+ * `isStale` is the caller's ABANDONMENT fence, re-checked after the polish await
+ * (which can run for seconds). When it reports true this returns `null` having
+ * touched nothing: no store write, no insert, no spawned agent. Without it, an
+ * utterance the user discarded — or one belonging to a capture session they have
+ * since replaced — would still be typed into the terminal, or would even spawn a
+ * whole new agent seeded with it, long after the fact. Defaults to "never stale"
+ * so existing callers and tests are unaffected.
  */
-export async function finishDictation(rawFinal: string): Promise<InsertResult> {
+export async function finishDictation(
+  rawFinal: string,
+  isStale: () => boolean = () => false
+): Promise<InsertResult | null> {
   const text = await finalizeTranscript(rawFinal, {
     polish: voice.prefs.polish,
     run: runPolish
   });
+  if (isStale()) return null;
   voiceStore.setFinal(text);
 
   const result = insertDictation(text);

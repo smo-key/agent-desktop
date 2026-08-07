@@ -7,6 +7,7 @@ import {
   finishDictation
 } from './polish';
 import { voice } from '$lib/settings/voice.svelte';
+import { voiceStore } from './voiceStore.svelte';
 
 // Tests for the PURE transcript-polish core (tasks.md 6.2–6.4; spec capability
 // `transcript-polish`). The `it(...)` titles align with the spec
@@ -118,10 +119,28 @@ describe('finishDictation — propagates the insert result', () => {
     voice.prefs.polish = false;
     try {
       const result = await finishDictation('hello world');
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.reason).toBe('no-target');
+      expect(result).not.toBeNull();
+      expect(result?.ok).toBe(false);
+      if (result && !result.ok) expect(result.reason).toBe('no-target');
     } finally {
       voice.prefs.polish = prev;
+    }
+  });
+
+  // An abandoned session must not deliver its dictation. The polish pass runs for
+  // seconds, so the user can easily discard/retry while it is in flight; without
+  // the fence the text still lands in the terminal — or spawns a whole new agent
+  // seeded with it — long after they moved on.
+  it('Abandoned session — inserts nothing and touches no state', async () => {
+    const prevPolish = voice.prefs.polish;
+    const prevFinal = voiceStore.finalText;
+    voice.prefs.polish = false;
+    try {
+      const result = await finishDictation('hello world', () => true);
+      expect(result).toBeNull();
+      expect(voiceStore.finalText).toBe(prevFinal);
+    } finally {
+      voice.prefs.polish = prevPolish;
     }
   });
 });

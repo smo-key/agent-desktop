@@ -35,11 +35,20 @@ export class VoiceStore {
   error = $state<string | null>(null);
 
   /**
-   * Monotonic CAPTURE-SESSION counter. VoicePanel's pipeline `$effect` reads it,
-   * so bumping it tears the current `DictationPipeline` down and builds a fresh
-   * one WITHOUT closing the panel. That is what makes in-place `retry()` work: a
-   * pipeline that has finalized or failed is `#finished` and has released the
-   * mic, so recovering needs a NEW pipeline, not a nudge to the old one.
+   * Monotonic CAPTURE-SESSION id, bumped by BOTH `show()` and `retry()` — every
+   * distinct capture gets its own value.
+   *
+   * VoicePanel's pipeline `$effect` reads it, so bumping it tears the current
+   * `DictationPipeline` down and builds a fresh one WITHOUT closing the panel.
+   * That is what makes in-place `retry()` work: a pipeline that has finalized or
+   * failed is `#finished` and has released the mic, so recovering needs a NEW
+   * pipeline, not a nudge to the old one.
+   *
+   * It is also the STALENESS FENCE for slow async work. `DictationPipeline`'s
+   * `#finished` flag is per-instance, but this store is a singleton — so a final
+   * pass still in flight from an abandoned session would otherwise write its
+   * result (or insert its text, or close the panel) over whatever session is live
+   * now. Long-running work snapshots this id and re-checks it after each await.
    */
   session = $state(0);
 
@@ -53,6 +62,7 @@ export class VoiceStore {
     this.partial = '';
     this.finalText = '';
     this.error = null;
+    this.session += 1;
   }
 
   /** Close the panel and reset UI state. (Later slices also stop capture here
@@ -94,19 +104,25 @@ export class VoiceStore {
 
   /**
    * Recover from a failed/denied attempt IN PLACE, without closing the panel:
-   * clear the error + transcripts, return to `idle`, and bump `session` so
-   * VoicePanel discards the spent pipeline and starts a fresh capture.
+   * clear the error, return to `idle`, and bump `session` so VoicePanel discards
+   * the spent pipeline and starts a fresh capture.
    *
    * This is the escape hatch from the failure phases — the guidance block's
    * "Try again" control and a right-⌘ tap while errored both land here. A no-op
    * while closed, so a stray call can never resurrect a dismissed panel.
+   *
+   * `finalText` is deliberately PRESERVED. Some failures happen AFTER a successful
+   * transcription — a dead pane or no focused agent means the insert failed, not
+   * the dictation — and the pipeline keeps the panel open precisely so that text
+   * isn't silently lost. Wiping it here would destroy a finished transcript on the
+   * panel's most inviting control. The live `partial` IS cleared: it belongs to the
+   * capture being abandoned.
    */
   retry(): void {
     if (!this.open) return;
     this.state = 'idle';
     this.error = null;
     this.partial = '';
-    this.finalText = '';
     this.session += 1;
   }
 }

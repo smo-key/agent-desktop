@@ -95,11 +95,41 @@ describe('VoiceStore', () => {
     expect(s.open).toBe(true); // stays open — retry is not a dismiss
     expect(s.state).toBe('idle');
     expect(s.error).toBeNull();
-    expect(s.partial).toBe('');
-    expect(s.finalText).toBe('');
+    expect(s.partial).toBe(''); // the abandoned capture's live text
     // The bumped session is what makes VoicePanel discard the spent pipeline and
     // build a fresh one (the old one is #finished and its mic is released).
     expect(s.session).toBe(before + 1);
+  });
+
+  // Some failures happen AFTER a good transcription — a dead pane or no focused
+  // agent means the INSERT failed, not the dictation — and the pipeline keeps the
+  // panel open precisely so that text isn't lost. Wiping it on the panel's most
+  // inviting control would destroy a finished transcript.
+  it('retry() preserves a completed transcript from a failed insert', () => {
+    const s = new VoiceStore();
+    s.show();
+    s.setState('recording');
+    s.setFinal('the long prompt I just dictated');
+    s.setError('The focused agent has exited — nothing to insert into');
+
+    s.retry();
+
+    expect(s.finalText).toBe('the long prompt I just dictated');
+    expect(s.error).toBeNull();
+    expect(s.state).toBe('idle');
+  });
+
+  // `session` fences slow async work (the final whisper pass + polish) against a
+  // session the user has since abandoned — so it must advance on a fresh OPEN too,
+  // not only on retry. Close-then-reopen is otherwise indistinguishable from
+  // "still the same session" to an in-flight finalize.
+  it('show() starts a new capture session', () => {
+    const s = new VoiceStore();
+    s.show();
+    const first = s.session;
+    s.close();
+    s.show();
+    expect(s.session).toBe(first + 1);
   });
 
   it('retry() while closed is a no-op', () => {

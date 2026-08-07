@@ -201,6 +201,11 @@ export class DictationPipeline {
    */
   async start(): Promise<void> {
     await this.#capture.start();
+    // Cancelled while the mic request was pending: `#capture.start()` released the
+    // stream it was handed, so there is nothing recording. Announcing 'recording'
+    // here would strand the CLOSED panel's store in the recording phase, which
+    // (among other things) pins VoicePanel's waveform rAF loop forever.
+    if (this.#finished) return;
     voiceStore.setState('recording');
     // Reset retention state for this session, then drive live partials from the
     // frontend (full-message retention over the sliding reprocess window).
@@ -296,6 +301,17 @@ export class DictationPipeline {
     if (this.#finished || voiceStore.state !== 'recording') return;
     this.#finished = true;
 
+    // STALENESS FENCE. `#finished` is per-instance but `voiceStore` is a singleton,
+    // and the awaits below (model resolution, the whole-utterance final pass, then
+    // polish) run for seconds. If the user abandons this session meanwhile —
+    // Escape then reopen, or "Try again" — every write past an await would land on
+    // a session that has nothing to do with this audio: a stale "Didn't catch that"
+    // stamped over a live recording, this utterance typed into the terminal after
+    // being discarded, or close() killing the panel mid-dictation. Snapshot the
+    // session id and re-check it after each await.
+    const session = voiceStore.session;
+    const stale = () => !voiceStore.open || voiceStore.session !== session;
+
     voiceStore.setState('transcribing');
     // Stop capture FIRST so the mic indicator turns off while we transcribe, and
     // grab the full utterance PCM before tearing the graph down.
@@ -307,6 +323,7 @@ export class DictationPipeline {
         tierModelPath(voice.prefs.modelTier),
         bundledModelPath()
       ]);
+      if (stale()) return;
       const modelPath = resolveFinalModelPath(tierPath, tinyPath);
       if (!modelPath) {
         voiceStore.setError('Voice models aren’t ready yet — try again in a moment.');
@@ -318,6 +335,8 @@ export class DictationPipeline {
       }
 
       const rawFinal = await transcribeFinal(samples, sampleRate, modelPath);
+      // The expensive await: the session may well be gone by now.
+      if (stale()) return;
       if (!rawFinal.trim()) {
         // No speech recognized (silence / too quiet / too short): show a notice and
         // keep the panel open so the user knows, rather than closing with nothing.
@@ -329,12 +348,18 @@ export class DictationPipeline {
       // only on a successful insert; on `no-target` (no focused agent) or a dead
       // pane, leave the panel OPEN showing the error state so the user sees it and
       // their dictation isn't silently lost.
-      const result = await finishDictation(rawFinal);
+      // The fence goes INSIDE: finishDictation polishes (another multi-second
+      // await) and only then writes the store, inserts, and possibly spawns an
+      // agent — checking staleness after it returned would be far too late. A null
+      // result means it bailed having touched nothing.
+      const result = await finishDictation(rawFinal, stale);
+      if (!result || stale()) return;
       if (result.ok) {
         voiceStore.close();
       }
       // else: insertDictation already set the error state on the store; keep open.
     } catch (e) {
+      if (stale()) return;
       voiceStore.setError(e instanceof Error ? e.message : String(e));
       // Do NOT throw and do NOT close — leave the error visible for the user.
     }
@@ -345,7 +370,12 @@ export class DictationPipeline {
    * insert. This is the × / Escape path. Idempotent.
    */
   cancel(): void {
-    if (this.#finished) return;
+    // ALWAYS stop capture, even when already finished. VoicePanel cancels twice on
+    // the teardown-during-mic-request path — once from the effect cleanup, then
+    // again from start()'s `.then` when getUserMedia finally resolves — and an
+    // early return on `#finished` made that second call (the one that runs AFTER
+    // the stream exists) dead code, stranding a live mic. `#stopCapture` is
+    // idempotent, so re-running it is free.
     this.#finished = true;
     this.#stopCapture();
   }

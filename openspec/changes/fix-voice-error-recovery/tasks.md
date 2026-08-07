@@ -26,10 +26,36 @@
 - [x] 3.3 Pass `'denied'` explicitly to `setError` for a blocked mic, and drop the
       now-redundant `setState('denied')`.
 
-## 4. Verify
+## 4. Adversarial-review fixes (2 independent reviewers, both CRITICAL-flagged)
 
-- [x] 4.1 `yarn run check` clean (0 errors).
-- [x] 4.2 `yarn test` green.
-- [ ] 4.3 MANUAL: in a live window, force a failed dictation (confirm with no
+- [x] 4.1 `MicCapture`: add a `#stopped` flag so a `stop()` issued while
+      `getUserMedia` is pending releases the stream granted afterwards. Without it
+      the OS mic stayed on for the life of the app — and `retry()` is offered in
+      exactly the `denied` phase where a fresh permission prompt appears.
+      Regression test in a new `capture.test.ts` (jsdom).
+- [x] 4.2 `DictationPipeline.cancel()`: always run `#stopCapture()`. The early
+      return on `#finished` made VoicePanel's `.then()` teardown recovery — the
+      call that runs *after* the stream exists — dead code.
+- [x] 4.3 `DictationPipeline.start()`: don't announce `recording` when cancelled
+      mid-request, which stranded a CLOSED panel in the recording phase.
+- [x] 4.4 Waveform `$effect`: gate on `voiceStore.open` too, so a stray recording
+      phase can't pin a 60fps rAF loop forever.
+- [x] 4.5 Session fence: bump `session` on `show()` as well as `retry()`, snapshot
+      it in `stopAndInsert()`, and re-check after every await (including inside
+      `finishDictation`, where the insert/spawn actually happen). Stops an
+      abandoned utterance from being typed into the terminal — or spawning an
+      agent — and from writing its error over a live session.
+- [x] 4.6 `retry()` preserves `finalText`, and the guidance block renders it: a
+      failed *insert* means the transcript is good, and the accent-coloured
+      primary action was silently destroying it.
+- [x] 4.7 `ensureModels` effect depends on `session`, so "Voice models aren't ready
+      yet — try again" can actually be retried instead of looping forever.
+- [x] 4.8 Test `initVoiceActivation`'s dispatch, not just the pure decision table.
+
+## 5. Verify
+
+- [x] 5.1 `yarn run check` clean (0 errors).
+- [x] 5.2 `yarn test` green.
+- [ ] 5.3 MANUAL: in a live window, force a failed dictation (confirm with no
       speech) and confirm the panel shows "Try again" / "Dismiss", that Try again
       starts a fresh recording, and that a right-⌘ tap also retries.
