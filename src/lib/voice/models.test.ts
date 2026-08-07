@@ -198,6 +198,37 @@ describe('ensureModels — never runs two downloads at once', () => {
     await expect(freshEnsureModels('accurate', false)).resolves.toBeUndefined();
   });
 
+  // The readiness check runs OUTSIDE the download queue (so a stall can't wedge
+  // it) — which means it can now execute while another selection is mid-download.
+  // Its "everything is present" short-circuit must therefore not stomp the live
+  // download's session: markReady() clears active/perModel/error, which would flip
+  // Settings' "Delete models" back on mid-download (deleting the .part out from
+  // under curl), blank the progress UI, and discard an already-surfaced error.
+  it('a readiness check does not clobber a live download session', async () => {
+    vi.resetModules();
+    const { ensureModels: freshEnsureModels } = await import('./models');
+    const { modelDownload } = await import('./modelStore.svelte');
+
+    invokeMock.mockImplementation((cmd: string, args: { tier?: string }) => {
+      if (cmd === 'voice_models_status') {
+        return Promise.resolve(
+          args.tier === 'accurate' ? { ready: false, missing: ['a'] } : { ready: true, missing: [] }
+        );
+      }
+      if (cmd === 'voice_download_models') return new Promise(() => {}); // still running
+      return Promise.resolve(null);
+    });
+
+    void freshEnsureModels('accurate', false); // starts the download
+    await new Promise((r) => setTimeout(r, 0)); // let it reach begin()
+    expect(modelDownload.active).toBe(true);
+
+    // A different, already-satisfied selection asks about readiness mid-download.
+    await freshEnsureModels('fast', false);
+
+    expect(modelDownload.active).toBe(true); // the live download still owns the store
+  });
+
   it('runs a later download after the first finishes, never overlapping', async () => {
     let active = 0;
     let maxActive = 0;

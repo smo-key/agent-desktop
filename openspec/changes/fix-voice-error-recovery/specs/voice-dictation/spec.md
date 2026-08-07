@@ -41,7 +41,7 @@ routing the tap there would leave the gesture inert with the error on screen.
 
 - **WHEN** the voice panel is showing an error message
 - **AND** the user activates the retry control
-- **THEN** the error message and any transcript are cleared
+- **THEN** the error message and the in-progress partial transcript are cleared
 - **AND** the panel stays open and returns to the idle phase
 - **AND** a fresh capture session starts
 
@@ -84,8 +84,8 @@ SHALL NOT write its result or its error over the live session.
 
 ### Requirement: Model downloads never overlap
 
-Model-readiness requests SHALL be serialized: at most one download SHALL run at a
-time, and repeated identical requests SHALL collapse into one. The downloader
+Model downloads SHALL be serialized: at most one SHALL run at a time, and
+repeated identical requests SHALL collapse into one. The downloader
 clears and renames a `.part` file per model and readiness is an existence check,
 so overlapping downloads of the same model leave a truncated file reported as
 ready. Retrying model readiness is a user-reachable action, so it SHALL be safe to
@@ -95,7 +95,8 @@ Only the download SHALL be serialized. The readiness check SHALL NOT queue behin
 an in-flight download: transfers have no timeout, so a stalled one would otherwise
 block every later caller — including the retry control whose purpose is to
 re-check. A download SHALL always clear its in-progress indicator, including when
-it fails before starting.
+it fails before starting. A readiness check that finds nothing to download SHALL
+NOT clear the in-progress state of a download that is still running.
 
 #### Scenario: Collapses concurrent calls into a single download
 
@@ -106,6 +107,12 @@ it fails before starting.
 
 - **WHEN** readiness is requested for a different selection while a download is in flight
 - **THEN** the second download starts only after the first completes
+
+#### Scenario: A readiness check does not clobber a live download session
+
+- **WHEN** one selection is mid-download
+- **AND** readiness is checked for a different selection whose models are already present
+- **THEN** the running download keeps ownership of the progress state
 
 #### Scenario: A readiness check still resolves while a download is stalled
 

@@ -181,7 +181,13 @@ const queuedEnsures = new Map<string, Promise<void>>();
 async function runEnsureModels(tier: string, polish: boolean): Promise<void> {
   const status = await modelsStatus(tier, polish);
   if (status.ready) {
-    modelDownload.markReady();
+    // Because readiness runs outside the download queue, this can land WHILE another
+    // selection is downloading. `markReady()` clears active/perModel/error, so
+    // announcing "ready" then would stomp that live session: Settings' Delete models
+    // would re-enable mid-download (unlinking the `.part` out from under curl), the
+    // progress UI would blank, and an already-surfaced error would be discarded. The
+    // running download owns the store until it finishes.
+    if (!modelDownload.active) modelDownload.markReady();
     return;
   }
 
@@ -194,9 +200,12 @@ async function runEnsureModels(tier: string, polish: boolean): Promise<void> {
 /** Download the missing models for a selection. Serialized by [`runEnsureModels`]. */
 async function runDownload(tier: string, polish: boolean): Promise<void> {
   modelDownload.begin();
-  // Everything after begin() lives in the try, so `finish()` is guaranteed and the
-  // store can never be left pinned "downloading" (which disables Settings' Delete
-  // and the onboarding gate) by a throw before the invoke.
+  // Everything after begin() lives in the try, so a THROW before/around the invoke
+  // can't leave the store pinned "downloading" (which disables Settings' Delete and
+  // the onboarding gate). Note this does not cover a HANG: `curl` is spawned with no
+  // timeout, so a stalled transfer never settles the invoke, `finish()` never runs,
+  // and no later download can start. Giving the transfer a timeout is the real fix
+  // and belongs on the Rust side.
   try {
     const channel = new Channel<DownloadEvent>();
     channel.onmessage = (msg) => {

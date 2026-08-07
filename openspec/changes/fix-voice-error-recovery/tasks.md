@@ -76,10 +76,20 @@
 - [x] 6.3 Correct a stale comment in VoicePanel claiming `.proc` still uses the
       `finalText` fallback — it no longer does.
 
-## 7. Verify
+## 7. Fourth adversarial-review round
 
-- [x] 7.1 `yarn run check` clean (0 errors).
-- [x] 7.2 `yarn test` green.
-- [ ] 7.3 MANUAL: in a live window, force a failed dictation (confirm with no
+- [x] 7.1 Guard the readiness short-circuit: moving the status check out of the
+      queue (6.1) also moved its store mutation out, so `markReady()` could fire
+      mid-download and clear active/perModel/error — re-enabling Settings' Delete
+      (which unlinks the `.part` under curl), blanking progress, and discarding a
+      surfaced error. Now skipped while a download owns the store; mutation-tested.
+- [x] 7.2 Correct the `runDownload` comment: the try/finally covers a throw, not a
+      HANG (curl has no timeout) — the real fix belongs on the Rust side.
+
+## 8. Verify
+
+- [x] 8.1 `yarn run check` clean (0 errors).
+- [x] 8.2 `yarn test` green.
+- [ ] 8.3 MANUAL: in a live window, force a failed dictation (confirm with no
       speech) and confirm the panel shows "Try again" / "Dismiss", that Try again
       starts a fresh recording, and that a right-⌘ tap also retries.
