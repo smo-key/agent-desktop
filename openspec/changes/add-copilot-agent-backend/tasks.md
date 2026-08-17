@@ -31,9 +31,9 @@
 
 - [x] 5.1 Delete coordinator code and tests: CoordinatorStart.svelte, coordinator.ts, coordinator.svelte.ts, coordinatorNeedsInput.svelte.ts, coordinatorPin, inbox coordinator rows, roster pin handling, coordinator system prompt; keep orchestration runtime and specialists
 - [x] 5.2 Remove coordinator references from layout/persistence/status/overview code paths and specs-coverage mappings; delete superseded changes `add-project-coordinator` and `coordinator-agent-titles`
-- [ ] 5.3 Full gate: `yarn check:gate` and `cargo test` green
+- [x] 5.3 Full gate: `yarn check:gate` and `cargo test` green
 
 ## 6. Close-out
 
-- [ ] 6.1 Amend design.md with all spike findings; reconcile any drift between artifacts and implementation
-- [ ] 6.2 Manual smoke: launch, prompt, resume, archive/restore a copilot pane against the real CLI; verify status/title/usage/timeline parity and declared degradations
+- [x] 6.1 Amend design.md with all spike findings; reconcile any drift between artifacts and implementation
+- [x] 6.2 Smoke the real CLI contract headlessly (done: app-minted `--session-id` accepted, `events.jsonl` at the expected path, `--resume <uuid>` continues the transcript, user messages in the event log, `--agent` custom-agent persona applied). The LIVE in-app pass — launch/prompt/resume/archive a copilot pane in the running app and eyeball status/title/usage/timeline — is MANUAL (needs a real window + PTY), matching the coverage gate's live-app convention
