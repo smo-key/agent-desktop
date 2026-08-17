@@ -5,6 +5,7 @@
 // and another maps workspaces to NavWorkspaces for click-to-navigate.
 
 import { leavesInOrder } from '../layout/tree';
+import { isAgentProgram } from '$lib/agent/backends';
 import type { WorkspaceEntry } from '../layout/workspace.svelte';
 import type { RosterWorkspace } from './roster';
 import type { NavWorkspace } from './navigate';
@@ -17,7 +18,7 @@ export function toRosterWorkspaces(entries: ReadonlyArray<WorkspaceEntry>): Rost
     panes: leavesInOrder(entry.ws.root).map((leaf) => ({
       paneId: leaf.paneId,
       cwd: entry.registry[leaf.paneId]?.cwd ?? null,
-      isApp: entry.registry[leaf.paneId]?.program === 'claude',
+      isApp: isAgentProgram(entry.registry[leaf.paneId]?.program),
       projectId: entry.registry[leaf.paneId]?.projectId ?? null,
       specialist: entry.registry[leaf.paneId]?.specialist ?? null,
       role: entry.registry[leaf.paneId]?.role ?? null,

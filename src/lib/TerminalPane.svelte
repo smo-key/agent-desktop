@@ -14,11 +14,10 @@
   import {
     InitialInputSender,
     initialInputForMount,
-    LaunchPromptReadiness,
-    SUBMIT_DELAY_MS,
-    READY_MAX_MS
+    LaunchPromptReadiness
   } from './launcher/initialInput';
   import { LaunchSpinner, spinnerLabel } from './launcher/spinner';
+  import { backendFor, backendForProgram, isAgentProgram } from './agent/backends';
   import { noteOutput, noteExit, noteBusy, noteResize, clearRuntime } from './overview/runtime';
   import { detectTerminalBusy } from './overview/terminalBusy';
   import { events } from './overview/events.svelte';
@@ -472,8 +471,14 @@
 
     // Arm the launch spinner from the same launch-time values: agent panes
     // (claude) show it; a prompt-bearing pane holds it until the prompt lands.
+    // Startup timing comes from the pane's backend descriptor (agent-backends:
+    // Initial prompt uses backend timing); shell panes never deliver a prompt,
+    // so the claude defaults are a harmless fallback there.
+    const readinessTiming = backendForProgram(program)?.readiness ??
+      backendFor('claude').readiness;
+
     spinner = new LaunchSpinner({
-      isAgent: program === 'claude',
+      isAgent: isAgentProgram(program),
       hasPrompt: initialInputSender.hasPrompt
     });
     loading = spinner.loading;
@@ -485,7 +490,7 @@
       spinnerCapTimer = setTimeout(() => {
         spinner?.onTimeout();
         loading = spinner?.loading ?? false;
-      }, READY_MAX_MS);
+      }, readinessTiming.maxMs);
     }
 
     // Initial-prompt delivery waits for claude's startup output to go QUIET — the
@@ -507,7 +512,7 @@
           if (ptyId === undefined) return;
           void invoke('pty_write', { id: ptyId, data }).catch(() => {});
         },
-        (run) => setTimeout(run, SUBMIT_DELAY_MS)
+        (run) => setTimeout(run, readinessTiming.submitDelayMs)
       );
       // The prompt is being injected (or the readiness cap fired) — drop the
       // launch spinner now that the agent's starting text has landed.
@@ -519,7 +524,9 @@
       readiness = new LaunchPromptReadiness(
         deliverInitial,
         (run, ms) => setTimeout(run, ms),
-        (h) => clearTimeout(h)
+        (h) => clearTimeout(h),
+        readinessTiming.quietMs,
+        readinessTiming.maxMs
       );
     }
 
@@ -584,7 +591,7 @@
           // the 1 s heartbeat sampling) does not bounce the row. `term.write` above is
           // async; reading the buffer now reflects the PRIOR frame (at worst a one-chunk
           // lag), which the grace window also absorbs.
-          noteBusy(paneId, detectTerminalBusy(recentTerminalText()), Date.now());
+          noteBusy(paneId, detectTerminalBusy(recentTerminalText(), program), Date.now());
           // First/each output byte (re)starts the readiness quiet window; the
           // gate delivers the initial prompt once output settles (TUI ready).
           readiness?.noteOutput();
@@ -617,7 +624,7 @@
       // global ~/.claude/settings.json untouched. Shell panes spawn unchanged.
       // `getUsagePaths()` is memoized (one round-trip across all panes) and
       // resolves to null on failure, in which case `claude` spawns unwrapped.
-      const usagePaths = program === 'claude' ? await getUsagePaths() : null;
+      const usagePaths = isAgentProgram(program) ? await getUsagePaths() : null;
       if (disposed) return;
       const { args: spawnArgs, env: spawnEnv } = buildSpawnOverride({
         program,
@@ -646,6 +653,13 @@
         return;
       }
       ptyId = id;
+      // Copilot panes: register the pane→session watch with the Rust events
+      // tailer (`copilot-observability`) so this session's event log feeds the
+      // shared status/timeline/snapshot pipelines. Best-effort — a failure just
+      // means no derived observability for the pane.
+      if (program === 'copilot' && sessionId) {
+        void invoke('copilot_watch', { paneId, sessionId }).catch(() => {});
+      }
       // PTY wired: arm the readiness hard-cap backstop now. The quiet window only
       // starts once output is seen (handled in the data channel above), so a slow
       // startup that stays silent can't deliver the prompt prematurely.
@@ -749,7 +763,7 @@
         // "working". Record a synthetic turn-end (a no-op unless this pane is actually
         // working) so the row returns to "waiting". The keystroke still flows to the PTY
         // unchanged (return true) so claude performs the interrupt itself.
-        if (e.type === 'keydown' && e.key === 'Escape' && program === 'claude') {
+        if (e.type === 'keydown' && e.key === 'Escape' && isAgentProgram(program)) {
           events.markInterrupt(paneId);
         }
         return true;
@@ -806,6 +820,11 @@
     // Drop this pane's overview runtime entry so a closed pane leaves no stale
     // status behind (a removed pane should simply vanish from the roster).
     clearRuntime(paneId);
+    // Drop the copilot events-tailer registration (no-op for other backends /
+    // unknown panes).
+    if (program === 'copilot') {
+      void invoke('copilot_unwatch', { paneId }).catch(() => {});
+    }
 
     // Cancel any pending initial-prompt delivery timers and the spinner backstop.
     readiness?.dispose();

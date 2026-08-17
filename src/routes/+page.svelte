@@ -16,6 +16,8 @@
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
   import { shellSettings } from '$lib/settings/shell.svelte';
+  import { agentSettings } from '$lib/settings/agent.svelte';
+  import { isAgentProgram } from '$lib/agent/backends';
   import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
   import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
@@ -128,6 +130,9 @@
     // layout against it would rewrite every saved `pwsh` to `/bin/zsh` — spawning
     // dead panes AND persisting the mangled value back over the good one.
     const shellReady = shellSettings.load();
+    // Load the agent-backend preference (Claude / Copilot for new sessions) and
+    // probe whether the selected CLI is installed (agent-backends).
+    void agentSettings.load();
     // Load the subagents-visibility preference (defaults ON / subagents shown).
     void subagentsVisible.load();
     // Load the needs-input alert channel modes (opt-in; both default OFF / silent).
@@ -336,7 +341,10 @@
   // The app's app-pane session refs ({sessionId, cwd}), joining each snapshot's
   // Claude session id with its pane cwd from the workspace registry (pure helper).
   function currentSessionRefs(): SessionRef[] {
-    return appSessionRefs(snapshots.byPane, (paneId) => workspace.session(paneId).cwd);
+    return appSessionRefs(snapshots.byPane, (paneId) => {
+      const sess = workspace.session(paneId);
+      return { cwd: sess.cwd, program: sess.program };
+    });
   }
 
   // The app's claude panes as {paneId, sessionId, cwd} — the input to the
@@ -347,8 +355,8 @@
     const refs: PaneRef[] = [];
     for (const ws of workspace.workspaces) {
       for (const [paneId, sess] of Object.entries(ws.registry)) {
-        if (sess.program === 'claude' && sess.sessionId) {
-          refs.push({ paneId, sessionId: sess.sessionId, cwd: sess.cwd });
+        if (isAgentProgram(sess.program) && sess.sessionId) {
+          refs.push({ paneId, sessionId: sess.sessionId, cwd: sess.cwd, program: sess.program });
         }
       }
     }

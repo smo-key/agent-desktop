@@ -16,6 +16,8 @@
 // `statusLine.command` (verified, appendix A.1) so the wrapper knows which
 // snapshot file to write and where.
 
+import { backendFor } from '$lib/agent/backends';
+
 /** Absolute paths resolved once from the `usage_paths` Tauri command. */
 export interface UsagePaths {
   /** Absolute path to the installed `statusline-wrapper.js`. */
@@ -176,7 +178,24 @@ function toNodePath(scriptPath: string): string {
 export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
   const { program, args, paneId, sessionId, resume, usagePaths } = input;
 
-  // Only `claude` panes are wrapped; everything else spawns verbatim.
+  // Copilot panes get their backend's declared args (`--session-id`/`--no-remote`
+  // fresh, `--resume` on restore) plus the pane env — and deliberately NO
+  // `--settings`/hooks/statusline, which are Claude-only surfaces (session-launcher:
+  // Copilot spawn is minimal and clean). Observability comes from the Rust
+  // events tailer keyed by the same app-minted session id.
+  if (program === 'copilot') {
+    const backend = backendFor('copilot');
+    const injected = sessionId
+      ? resume
+        ? backend.resumeArgs(sessionId)
+        : backend.freshArgs(sessionId)
+      : [];
+    const env: Array<[string, string]> = [['AGENT_DESKTOP_PANE', paneId]];
+    if (usagePaths) env.push(['AGENT_DESKTOP_SNAPSHOT_DIR', usagePaths.snapshotDir]);
+    return { args: [...injected, ...args], env };
+  }
+
+  // Only agent panes are wrapped; everything else (shells) spawns verbatim.
   if (program !== 'claude') {
     return { args: [...args] };
   }

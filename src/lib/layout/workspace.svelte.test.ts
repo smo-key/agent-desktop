@@ -236,3 +236,39 @@ describe('workspace — coordinator archive / delete / restore (coordinator-life
     expect(findCoordinatorPane(coordinatorPanes(store), 'proj-A')?.paneId).toBe(paneId);
   });
 });
+
+describe('workspace — copilot panes are first-class agent panes (agent-backends)', () => {
+  it('Persisted panes keep their backend', () => {
+    // A copilot pane mints an app-owned session id at launch (same contract as
+    // claude) and archive → restore resumes it AS a copilot pane.
+    const { store, paneId } = withPane('copilot');
+    const s0 = store.session(paneId);
+    expect(s0.program).toBe('copilot');
+    expect(s0.sessionId).toBeTruthy();
+
+    store.closeAgent(paneId);
+    store.restoreAgent(paneId);
+    const s1 = store.session(paneId);
+    expect(s1.program).toBe('copilot');
+    expect(s1.closed).toBe(false);
+    expect(s1.resume).toBe(true); // copilot --resume <sessionId>
+    expect(s1.sessionId).toBe(s0.sessionId);
+  });
+
+  it('preview/commit restore works for an archived copilot pane', () => {
+    const { store, paneId } = withPane('copilot');
+    const sessionId = store.session(paneId).sessionId;
+    store.closeAgent(paneId);
+    store.previewArchived(paneId, 2);
+    const s = store.session(paneId);
+    expect(s.closed).toBe(false);
+    expect(s.resume).toBe(true);
+    expect(s.preview).toBe(true);
+    expect(s.sessionId).toBe(sessionId);
+  });
+
+  it('shell panes still mint no session id', () => {
+    const { store, paneId } = withPane('/bin/zsh');
+    expect(store.session(paneId).sessionId).toBeUndefined();
+  });
+});

@@ -20,10 +20,24 @@
   import { projects } from '../projects/projects.svelte';
   import { projectForId } from '../projects/projects';
   import ProjectSelect from '../projects/ProjectSelect.svelte';
+  import Dropdown, { type DropdownOption } from '../ui/Dropdown.svelte';
+  import { AGENT_KINDS, backendFor, parseAgentKind, type AgentKind } from '$lib/agent/backends';
+  import { defaultAgentKind } from '$lib/agent/defaultAgent';
 
   // --- Local form state (the launcher store holds only open/close) ----------
   // The chosen project id (supplies the launch folder), null until picked/created.
   let selectedProjectId = $state<string | null>(null);
+
+  // Per-session agent choice, seeded from the GLOBAL setting each open
+  // (agent-backends: Launcher Agent Selection). Changing it never writes the
+  // global preference.
+  let selectedAgent = $state<AgentKind>(defaultAgentKind());
+
+  /** Agent-backend choices for the launcher's agent dropdown. */
+  const agentOptions: DropdownOption[] = AGENT_KINDS.map((k) => ({
+    value: k,
+    label: backendFor(k).displayName
+  }));
 
   // The resolved project (its folder is where the agent launches).
   const project = $derived(projectForId(projects.list, selectedProjectId));
@@ -43,6 +57,7 @@
     if (!launcher.open) return;
     untrack(() => {
       selectedProjectId = null;
+      selectedAgent = defaultAgentKind();
     });
   });
 
@@ -61,7 +76,8 @@
       folder: project.path,
       prompt: '',
       placement: 'tab',
-      projectId: project.id
+      projectId: project.id,
+      agent: selectedAgent
     });
 
     // Hand the plan to the store: it creates the tab/split and records the new
@@ -119,6 +135,19 @@
           autofocus
           value={selectedProjectId}
           onChange={(id) => (selectedProjectId = id)}
+        />
+      </section>
+
+      <!-- Agent section (agent-backends: Launcher Agent Selection). Seeded from
+           the global setting each time the modal opens; changing it here
+           overrides THIS session only — the global default is untouched. -->
+      <section class="field">
+        <span class="label">Agent</span>
+        <Dropdown
+          ariaLabel="Agent for this session"
+          options={agentOptions}
+          value={selectedAgent}
+          onChange={(v: string) => (selectedAgent = parseAgentKind(v))}
         />
       </section>
 

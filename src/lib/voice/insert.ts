@@ -29,6 +29,7 @@ import { getTerminal, type TerminalHandle } from '../layout/terminals';
 import { workspace } from '../layout/workspace.svelte';
 import { findLeaf, leavesInOrder } from '../layout/tree';
 import { voiceStore } from './voiceStore.svelte';
+import { isAgentProgram } from '$lib/agent/backends';
 
 /** The outcome of attempting to insert dictated text into a terminal. */
 export type InsertResult = { ok: true } | { ok: false; reason: 'no-target' | 'dead-pane' };
@@ -116,7 +117,7 @@ function activeAgentPaneIds(): string[] {
     if (!entry) return [];
     return leavesInOrder(entry.ws.root)
       .map((l) => l.paneId)
-      .filter((pid) => entry.registry[pid]?.program === 'claude');
+      .filter((pid) => isAgentProgram(entry.registry[pid]?.program));
   } catch {
     return [];
   }

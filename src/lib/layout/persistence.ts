@@ -21,6 +21,7 @@
 // (which imports this module) — kept separate so this stays pure + testable.
 
 import { defaultShell, resolveProgram } from '$lib/shell/defaultShell';
+import { isAgentProgram } from '$lib/agent/backends';
 import {
   closeLeaf,
   freshWorkspace,
@@ -332,21 +333,21 @@ function sanitizeRegistry(
       const persistedSessionId =
         typeof raw.sessionId === 'string' && raw.sessionId ? raw.sessionId : undefined;
       const sessionId =
-        program === 'claude' ? (persistedSessionId ?? crypto.randomUUID()) : undefined;
+        isAgentProgram(program) ? (persistedSessionId ?? crypto.randomUUID()) : undefined;
       // A closed (Archived) pane restores as closed: no spawn, no resume until the
       // user restores it (which sets resume:true then).
-      const closed = raw.closed === true && program === 'claude';
+      const closed = raw.closed === true && isAgentProgram(program);
       // A paused pane stays LIVE (it resumes), unlike closed — so the user can keep
       // messaging it. It keeps its baseline count so it doesn't auto-resume at once;
       // an absent/legacy count restores as null and is re-established lazily.
-      const paused = raw.paused === true && program === 'claude' && !closed;
+      const paused = raw.paused === true && isAgentProgram(program) && !closed;
       const pausedCount =
         paused && typeof raw.pausedCount === 'number' && Number.isFinite(raw.pausedCount)
           ? raw.pausedCount
           : paused
             ? null
             : undefined;
-      const resume = program === 'claude' && !closed && !!persistedSessionId;
+      const resume = isAgentProgram(program) && !closed && !!persistedSessionId;
       out[leafNode.paneId] = {
         program,
         cwd: typeof raw.cwd === 'string' ? raw.cwd : null,
@@ -424,6 +425,9 @@ export function pruneEmptySessions(
       leaves
         .filter((leaf) => {
           const s = w.registry[leaf.paneId];
+          // Claude panes only: the history probe reads the CLAUDE transcript, so a
+          // copilot pane would always look history-less and be wrongly dropped.
+          // Copilot panes are never auto-pruned (safe default).
           return !!s && s.program === 'claude' && s.resume === true && !hasHistory(leaf.paneId);
         })
         .map((leaf) => leaf.id)

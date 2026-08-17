@@ -21,6 +21,8 @@
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
   import { shellSettings } from '$lib/settings/shell.svelte';
+  import { agentSettings } from '$lib/settings/agent.svelte';
+  import { AGENT_KINDS, backendFor, type AgentKind } from '$lib/agent/backends';
   import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
   import { notifications, type AlertMode } from '$lib/settings/notifications.svelte';
   import { ensureDesktopPermission } from '$lib/overview/alerts.svelte';
@@ -83,6 +85,12 @@
   });
 
   // The buckets, in display order, with human labels.
+  /** Agent-backend choices for the "Agent for new sessions" dropdown. */
+  const agentOptions: DropdownOption[] = AGENT_KINDS.map((k) => ({
+    value: k,
+    label: backendFor(k).displayName
+  }));
+
   const ROWS: { bucket: FileBucket; label: string }[] = [
     { bucket: 'code', label: 'Code files' },
     { bucket: 'html', label: 'HTML files and URLs' },
@@ -232,6 +240,32 @@
               />
             </div>
           </li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <span class="label">Agent</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Agent for new sessions</span>
+            <div class="control">
+              <Dropdown
+                ariaLabel="Agent for new sessions"
+                options={agentOptions}
+                value={agentSettings.prefs.kind}
+                onChange={(v: string) => agentSettings.setKind(v as AgentKind)}
+              />
+            </div>
+          </li>
+          {#if agentSettings.installed === false}
+            <li class="row hint-row">
+              <span class="desc hint">
+                {backendFor(agentSettings.prefs.kind).displayName} CLI not found —
+                install with
+                <code>{backendFor(agentSettings.prefs.kind).installHint}</code>
+              </span>
+            </li>
+          {/if}
         </ul>
       </section>
 
@@ -567,6 +601,19 @@
     font-size: 13px;
     color: var(--fg-1);
     min-width: 0;
+  }
+
+  /* Quiet install-detection hint under the agent dropdown (agent-backends):
+     informational only — the selection is never blocked. */
+  .hint-row {
+    padding-top: 0;
+  }
+  .desc.hint {
+    color: var(--fg-3);
+  }
+  .desc.hint code {
+    font-family: var(--font-mono);
+    color: var(--fg-2);
   }
 
   .control {

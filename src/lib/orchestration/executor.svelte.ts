@@ -43,6 +43,7 @@ import { specialists } from '../specialists/specialists.svelte';
 import { parseSpecialist } from '../specialists/specialists';
 import { specialistLaunchArgs } from './launchArgs';
 import { buildLaunchPlan } from '../launcher/plan';
+import { isAgentProgram } from '$lib/agent/backends';
 import { findCoordinatorPane, type CoordinatorPaneView } from './coordinator';
 import { coordinatorNeedsInput } from './coordinatorNeedsInput.svelte';
 
@@ -228,7 +229,7 @@ export class OrchestrationExecutor {
     if (!paneId) return { error: 'missing paneId' };
     const pane = this.deps.locate(paneId);
     if (!pane) return { error: `no such agent pane: ${paneId}` };
-    if (pane.session.program !== 'claude') return { error: `not an agent pane: ${paneId}` };
+    if (!isAgentProgram(pane.session.program)) return { error: `not an agent pane: ${paneId}` };
     if (pane.session.closed === true) return { error: `agent pane is closed: ${paneId}` };
     if (pane.session.role === 'coordinator') {
       return { error: `cannot target a coordinator pane: ${paneId}` };
@@ -390,7 +391,7 @@ export class OrchestrationExecutor {
     if (!paneId) return { error: 'missing paneId' };
     const pane = this.deps.locate(paneId);
     if (!pane) return { error: `no such agent pane: ${paneId}` };
-    if (pane.session.program !== 'claude') return { error: `not an agent pane: ${paneId}` };
+    if (!isAgentProgram(pane.session.program)) return { error: `not an agent pane: ${paneId}` };
     if (pane.session.role === 'coordinator') {
       return { error: `cannot target a coordinator pane: ${paneId}` };
     }
@@ -476,7 +477,7 @@ function panesInProjectReal(projectId: string): LocatedPane[] {
   for (const entry of workspace.workspaces) {
     for (const leaf of leavesInOrder(entry.ws.root)) {
       const session = entry.registry[leaf.paneId];
-      if (!session || session.program !== 'claude') continue;
+      if (!session || !isAgentProgram(session.program)) continue;
       if ((session.projectId ?? null) !== projectId) continue;
       out.push({ workspaceId: entry.id, paneId: leaf.paneId, session });
     }

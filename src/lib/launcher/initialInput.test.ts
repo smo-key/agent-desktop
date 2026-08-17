@@ -9,6 +9,7 @@ import {
   READY_QUIET_MS,
   SUBMIT_BYTES
 } from './initialInput';
+import { backendFor } from '$lib/agent/backends';
 
 describe('initialInputForMount (one-shot prompt is never re-sent to a resumed pane)', () => {
   it('delivers the launch prompt on a FRESH spawn (resume falsey)', () => {
@@ -324,5 +325,31 @@ describe('LaunchPromptReadiness (deliver only once the TUI is ready)', () => {
     expect(clock.pending()).toBe(0);
     clock.advance(READY_MAX_MS);
     expect(onReady).not.toHaveBeenCalled();
+  });
+});
+
+describe('backend-declared readiness timing (agent-backends)', () => {
+  it('Initial prompt uses backend timing', () => {
+    // The readiness gate takes its quiet window from the SPAWNED backend's
+    // descriptor rather than claude-calibrated constants baked into the
+    // launcher: with an injected (backend) quietMs of 100ms, delivery fires at
+    // first-output + 100ms — well before the claude default would.
+    const clock = fakeClock();
+    const timing = backendFor('copilot').readiness;
+    let fired = 0;
+    const r = new LaunchPromptReadiness(
+      () => fired++,
+      clock.schedule,
+      clock.cancel,
+      100, // a backend-declared quiet window, distinct from READY_QUIET_MS
+      timing.maxMs
+    );
+    r.wired();
+    r.noteOutput();
+    clock.advance(99);
+    expect(fired).toBe(0);
+    clock.advance(1);
+    expect(fired).toBe(1);
+    r.dispose();
   });
 });

@@ -18,6 +18,7 @@
 // (task 4.x) serializes exactly `{ workspaces: [...], activeWorkspaceId }`.
 
 import { defaultShell } from '$lib/shell/defaultShell';
+import { isAgentProgram, type AgentKind } from '$lib/agent/backends';
 import {
   freshWorkspace,
   splitLeaf,
@@ -141,10 +142,11 @@ export interface PaneSession {
   coordinatorPaneId?: string;
 }
 
-/** A fresh Claude session id for a `claude` pane (so the app owns it and can find
- *  the agent's exact transcript), else `undefined` for non-claude panes. */
-function claudeSessionId(program: string): string | undefined {
-  return program === 'claude' ? crypto.randomUUID() : undefined;
+/** A fresh APP-MINTED session id for an agent pane (claude or copilot — both
+ *  CLIs accept `--session-id <uuid>`, so the app owns the id and can locate the
+ *  session's transcript / event log), else `undefined` for shell panes. */
+function agentSessionId(program: string): string | undefined {
+  return isAgentProgram(program) ? crypto.randomUUID() : undefined;
 }
 
 /**
@@ -234,7 +236,7 @@ function makeEntry(
         extraArgs,
         role,
         coordinatorPaneId,
-        sessionId: claudeSessionId(program)
+        sessionId: agentSessionId(program)
       }
     }
   };
@@ -446,7 +448,7 @@ export class WorkspaceStore {
         extraArgs,
         role,
         coordinatorPaneId,
-        sessionId: claudeSessionId(program)
+        sessionId: agentSessionId(program)
       }
     };
     return id;
@@ -551,7 +553,7 @@ export class WorkspaceStore {
    * pane's mount spawn it. Returns the new pane's `paneId`.
    */
   launch(plan: {
-    program: 'claude';
+    program: AgentKind;
     cwd: string;
     placement: 'tab' | 'split-right' | 'split-down';
     initialInput?: string;
@@ -835,7 +837,7 @@ export class WorkspaceStore {
       if (!leafByPaneId(entry.ws.root, paneId)) continue;
       const cur = entry.registry[paneId];
       if (!cur) return;
-      const resume = cur.program === 'claude' && !!cur.sessionId;
+      const resume = isAgentProgram(cur.program) && !!cur.sessionId;
       entry.registry = { ...entry.registry, [paneId]: { ...cur, closed: false, resume } };
       return;
     }
@@ -856,7 +858,7 @@ export class WorkspaceStore {
       if (!cur) return;
       // Only a claude pane with a session id can resume a transcript; otherwise leave
       // it archived (the caller falls back to a plain select).
-      if (cur.program !== 'claude' || !cur.sessionId) return;
+      if (!isAgentProgram(cur.program) || !cur.sessionId) return;
       // Re-preview must NOT reset an already-established baseline (the auto-preview
       // effect re-runs on every focus tick): only seed `previewCount` when absent.
       const previewCount = cur.preview ? (cur.previewCount ?? userMsgCount) : userMsgCount;
