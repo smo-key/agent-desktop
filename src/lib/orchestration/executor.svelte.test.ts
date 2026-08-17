@@ -19,7 +19,7 @@ import type { Specialist } from '../specialists/specialists';
 const PROJ = 'proj-1';
 
 /** A minimal located-pane fake. */
-function pane(paneId: string, over: Partial<{ projectId: string | null; closed: boolean; specialist: string | null; cwd: string | null; program: string; role: 'coordinator' }> = {}) {
+function pane(paneId: string, over: Partial<{ projectId: string | null; closed: boolean; specialist: string | null; cwd: string | null; program: string; role?: never }> = {}) {
   return {
     workspaceId: 'ws-1',
     paneId,
@@ -42,7 +42,6 @@ function makeDeps(over: Partial<ExecutorDeps> = {}) {
   const sent: Array<{ paneId: string; text: string }> = [];
   const archived: string[] = [];
   const unarchived: string[] = [];
-  const coordNeeds: Array<{ paneId: string; message: string | null }> = [];
   const deps: ExecutorDeps = {
     reply: (id, outcome) => {
       replies.push({ id, outcome });
@@ -61,15 +60,13 @@ function makeDeps(over: Partial<ExecutorDeps> = {}) {
       launched.push(plan);
       return 'pane-new';
     },
-    coordinatorFor: () => null,
     archive: (paneId) => archived.push(paneId),
     unarchive: (paneId) => unarchived.push(paneId),
     schedule: (run) => run(), // run synchronously for deterministic tests
-    setCoordinatorNeedsInput: (paneId, message) => coordNeeds.push({ paneId, message }),
     titleOf: () => null,
     ...over
   };
-  return { deps, replies, launched, sent, archived, unarchived, coordNeeds };
+  return { deps, replies, launched, sent, archived, unarchived };
 }
 
 describe('OrchestrationExecutor — scoping & safety (4.6)', () => {
@@ -111,36 +108,8 @@ describe('OrchestrationExecutor — scoping & safety (4.6)', () => {
     expect(replies[0].outcome.error).toMatch(/unknown op/);
   });
 
-  it('rejects message_agent targeting a coordinator pane (self/other coordinator)', async () => {
-    const { deps, replies, sent } = makeDeps({
-      locate: () => pane('coord', { role: 'coordinator' }),
-      statusOf: () => 'waiting'
-    });
-    const ex = new OrchestrationExecutor(deps);
-    await ex.onRequest({ id: 6, op: 'message_agent', args: { projectId: PROJ, paneId: 'coord', text: 'loop?' } });
-    expect(replies[0].outcome.error).toMatch(/coordinator/);
-    expect(sent).toEqual([]);
-  });
 
-  it('rejects archive_agent targeting a coordinator pane (would close the coordinator)', async () => {
-    const { deps, replies, archived } = makeDeps({
-      locate: () => pane('coord', { role: 'coordinator' })
-    });
-    const ex = new OrchestrationExecutor(deps);
-    await ex.onRequest({ id: 7, op: 'archive_agent', args: { projectId: PROJ, paneId: 'coord' } });
-    expect(replies[0].outcome.error).toMatch(/coordinator/);
-    expect(archived).toEqual([]);
-  });
 
-  it('rejects unarchive_agent targeting a coordinator pane', async () => {
-    const { deps, replies, unarchived } = makeDeps({
-      locate: () => pane('coord', { role: 'coordinator', closed: true })
-    });
-    const ex = new OrchestrationExecutor(deps);
-    await ex.onRequest({ id: 8, op: 'unarchive_agent', args: { projectId: PROJ, paneId: 'coord' } });
-    expect(replies[0].outcome.error).toMatch(/coordinator/);
-    expect(unarchived).toEqual([]);
-  });
 });
 
 describe('OrchestrationExecutor — message_agent (4.3 / 4.6 idle gating)', () => {
@@ -233,15 +202,6 @@ describe('OrchestrationExecutor — read/list/inspect (4.3/4.4)', () => {
     expect(agents[2].archived).toBe(true);
   });
 
-  it('list_agents omits coordinator panes (a coordinator does not list itself/other coordinators)', async () => {
-    const { deps, replies } = makeDeps({
-      panesInProject: () => [pane('p1'), pane('coord', { role: 'coordinator' }), pane('p2')]
-    });
-    const ex = new OrchestrationExecutor(deps);
-    await ex.onRequest({ id: 1, op: 'list_agents', args: { projectId: PROJ } });
-    const agents = replies[0].outcome.result.agents;
-    expect(agents.map((a: any) => a.paneId)).toEqual(['p1', 'p2']);
-  });
 
   it('Agent identified by its generated title', async () => {
     // list_agents + inspect_agent report the generated session title (via titleOf)
@@ -295,17 +255,9 @@ describe('OrchestrationExecutor — spawn_agent (4.2)', () => {
     await ex.onRequest({ id: 1, op: 'spawn_agent', args: { projectId: PROJ, prompt: 'build it' } });
     expect(launched[0]).toMatchObject({ program: 'claude', cwd: '/repo', initialInput: 'build it', projectId: PROJ });
     expect(launched[0].specialist).toBeUndefined();
-    // No coordinator for the project → no attribution back-reference.
-    expect(launched[0].coordinatorPaneId).toBeUndefined();
     expect(replies[0].outcome.result).toEqual({ paneId: 'pane-new', specialist: null });
   });
 
-  it('attributes the spawned agent to the project coordinator (task 6.5)', async () => {
-    const { deps, launched } = makeDeps({ coordinatorFor: () => 'coord-pane' });
-    const ex = new OrchestrationExecutor(deps);
-    await ex.onRequest({ id: 1, op: 'spawn_agent', args: { projectId: PROJ, prompt: 'go' } });
-    expect(launched[0].coordinatorPaneId).toBe('coord-pane');
-  });
 
   it('composes a specialist launch and records the specialist on the pane', async () => {
     const { deps, replies, launched } = makeDeps({
@@ -386,42 +338,5 @@ describe('OrchestrationExecutor — archive / unarchive (4.5)', () => {
     await ex.onRequest({ id: 1, op: 'unarchive_agent', args: { projectId: PROJ, paneId: 'p1' } });
     expect(unarchived).toEqual([]);
     expect(replies[0].outcome.error).toMatch(/outside/);
-  });
-});
-
-describe('OrchestrationExecutor — request_user_input (tasks 10.11–10.12)', () => {
-  it('sets the project coordinator needs-input flag with the message and replies ok', async () => {
-    const { deps, replies, coordNeeds } = makeDeps({ coordinatorFor: () => 'coord-pane' });
-    const ex = new OrchestrationExecutor(deps);
-    await ex.onRequest({
-      id: 1,
-      op: 'request_user_input',
-      args: { projectId: PROJ, message: 'need a decision' }
-    });
-    expect(coordNeeds).toEqual([{ paneId: 'coord-pane', message: 'need a decision' }]);
-    expect(replies[0].outcome.result).toMatchObject({ notified: true, paneId: 'coord-pane' });
-  });
-
-  it('sets the flag with a null message when none is given', async () => {
-    const { deps, coordNeeds } = makeDeps({ coordinatorFor: () => 'coord-pane' });
-    const ex = new OrchestrationExecutor(deps);
-    await ex.onRequest({ id: 1, op: 'request_user_input', args: { projectId: PROJ } });
-    expect(coordNeeds).toEqual([{ paneId: 'coord-pane', message: null }]);
-  });
-
-  it('errors (no flag) when the project has no live coordinator pane', async () => {
-    const { deps, replies, coordNeeds } = makeDeps({ coordinatorFor: () => null });
-    const ex = new OrchestrationExecutor(deps);
-    await ex.onRequest({ id: 1, op: 'request_user_input', args: { projectId: PROJ } });
-    expect(coordNeeds).toEqual([]);
-    expect(replies[0].outcome.error).toMatch(/no live coordinator/);
-  });
-
-  it('rejects with no orchestrator projectId in args', async () => {
-    const { deps, replies, coordNeeds } = makeDeps({ coordinatorFor: () => 'coord-pane' });
-    const ex = new OrchestrationExecutor(deps);
-    await ex.onRequest({ id: 1, op: 'request_user_input', args: {} });
-    expect(coordNeeds).toEqual([]);
-    expect(replies[0].outcome.error).toMatch(/projectId/);
   });
 });

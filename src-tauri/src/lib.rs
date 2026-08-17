@@ -74,7 +74,7 @@ const STATUSLINE_WRAPPER_SRC: &str = include_str!("../resources/statusline-wrapp
 const EVENT_HOOK_SRC: &str = include_str!("../resources/event-hook.cjs");
 
 /// The baked orchestration MCP ADAPTER source (installed beside the wrapper). It is
-/// the dependency-free stdio MCP server attached to a launched COORDINATOR session
+/// the dependency-free stdio MCP server attached to a launched agent session
 /// (`--mcp-config`); it forwards each toolkit tool call over the Rust control socket
 /// to the frontend executor. Authored as CommonJS so it runs standalone under the
 /// `node` shebang. See `resources/orchestration-mcp.cjs`.
@@ -89,7 +89,7 @@ const WRAPPER_FILE: &str = "statusline-wrapper.js";
 /// Installed event-hook basename (a standalone `.js`, run via its shebang).
 const EVENT_HOOK_FILE: &str = "event-hook.js";
 /// Installed orchestration MCP adapter basename (a standalone `.js`, run via `node`
-/// in the coordinator's `--mcp-config` server).
+/// in the agent's `--mcp-config` server).
 const ORCHESTRATION_MCP_FILE: &str = "orchestration-mcp.js";
 /// Subdir (under app-data) the wrapper writes per-pane snapshots into and the
 /// `SnapshotWatcher` watches.
@@ -120,12 +120,12 @@ pub struct UsagePaths {
     /// binds, or the hook connects to nothing and silently drops every event.
     pub socket_path: String,
     /// Absolute path to the installed orchestration MCP adapter — `node <this>` is
-    /// the coordinator launch's `--mcp-config` server command (`buildMcpToolkitConfig`).
+    /// the toolkit launch's `--mcp-config` server command (`buildMcpToolkitConfig`).
     pub adapter_path: String,
     /// ADDRESS of the Rust orchestration CONTROL socket (sibling of
-    /// `socket_path`, same path-vs-pipe-name rule) — goes into the coordinator's
-    /// `--mcp-config` server env as `AGENT_DESKTOP_CONTROL_SOCKET` so the adapter
-    /// can reach the executor. MUST equal what `orchestration::start_control_server`
+    /// `socket_path`, same path-vs-pipe-name rule) — goes into the toolkit
+    /// launch's `--mcp-config` server env as `AGENT_DESKTOP_CONTROL_SOCKET` so
+    /// the adapter can reach the executor. MUST equal what `orchestration::start_control_server`
     /// binds.
     pub control_socket_path: String,
 }
@@ -2044,7 +2044,7 @@ mod tests {
 
         // The orchestration MCP adapter is installed beside the wrapper (same baked
         // source + shebang + 0755 contract) and the control socket path (sibling of
-        // the events socket) is returned for the coordinator's --mcp-config server.
+        // the events socket) is returned for the toolkit launch's --mcp-config server.
         let adapter = PathBuf::from(&paths.adapter_path);
         assert_eq!(adapter, tmp.path().join(BIN_DIR).join(ORCHESTRATION_MCP_FILE));
         assert!(adapter.is_file(), "orchestration adapter must exist");

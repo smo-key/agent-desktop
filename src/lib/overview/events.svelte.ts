@@ -60,7 +60,7 @@ export class EventStore {
    * Sticky per-pane "has ever begun a turn" latch. The bounded ring (`appendBounded`,
    * `EVENT_RING_CAP`) drops the OLDEST events, so a single long turn (>cap events) can
    * EVICT the original `UserPromptSubmit`. Recomputing `everPrompted` from the ring
-   * alone would then report `false` and wrongly flip a busy coordinator into the
+   * alone would then report `false` and wrongly flip a busy ordinator into the
    * Needs-you lane. We set this latch the moment ANY turn activity is ingested or seeded
    * (a prompt, or any tool/Stop event that PROVES a turn ran — see `impliesEverPrompted`)
    * and NEVER clear it, so the signal survives ring eviction. Keyed by paneId. Not
@@ -136,8 +136,8 @@ export class EventStore {
         const clean = Array.isArray(events) ? events.filter(isEvent) : [];
         if (clean.length === 0) continue; // nothing authoritative to seed; keep existing
         // Latch everPrompted from seeded history too, so a resume of a long-running
-        // session keeps a busy coordinator out of the Needs-you lane even when the
-        // seeded slice no longer contains the original prompt (only later turn activity).
+        // session keeps its ever-prompted signal even when the seeded slice no
+        // longer contains the original prompt (only later turn activity).
         if (clean.some(impliesEverPrompted)) this.everPromptedPanes.add(paneId);
         // MERGE rather than overwrite. `clean` is authoritative for real events up to its
         // last `ts`; preserve only what the snapshot can't reproduce and that is still

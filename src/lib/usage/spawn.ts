@@ -38,12 +38,12 @@ export interface UsagePaths {
   socketPath: string;
   /**
    * Absolute path to the installed orchestration MCP adapter — `node <this>` is the
-   * coordinator launch's `--mcp-config` server command (see `buildMcpToolkitConfig`).
+   * MCP-toolkit launch's `--mcp-config` server command (see `buildMcpToolkitConfig`).
    */
   adapterPath: string;
   /**
    * Absolute path to the Rust orchestration CONTROL socket (sibling of `socketPath`)
-   * — goes into the coordinator's `--mcp-config` server env as
+   * — goes into the toolkit launch's `--mcp-config` server env as
    * `AGENT_DESKTOP_CONTROL_SOCKET` so the adapter can reach the executor.
    */
   controlSocketPath: string;
@@ -62,7 +62,7 @@ export interface SpawnOverrideInput {
    * Injected as `--session-id <id>` (fresh pane) or `--resume <id>` (restored
    * pane with resume:true) so the overview can locate THIS agent's exact
    * transcript (`~/.claude/projects/<cwd>/<id>.jsonl`) — matching by cwd alone is
-   * ambiguous when several sessions share a folder. Absent for non-claude panes.
+   * ambiguous when several sessions share a folder. Absent for shell panes.
    */
   sessionId?: string;
   /**
@@ -269,7 +269,7 @@ export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
 
 /**
  * The `--mcp-config` JSON that attaches the bundled orchestration toolkit to a
- * launched coordinator session. A single stdio MCP server (`orchestration`) runs
+ * launched agent session. A single stdio MCP server (`orchestration`) runs
  * the bundled adapter via `node <adapterPath>` with the control-socket path in its
  * env, so the adapter forwards each tool call to the Rust control socket.
  *
@@ -283,9 +283,9 @@ export interface McpToolkitConfig {
       args: string[];
       env: {
         AGENT_DESKTOP_CONTROL_SOCKET: string;
-        /** The COORDINATOR's own project id — the adapter merges it into every
-         *  forwarded tool call's `args` so the executor can scope the op (it
-         *  rejects ops without `args.projectId`; the coordinator LLM can't be
+        /** The launching agent's own project id — the adapter merges it into
+         *  every forwarded tool call's `args` so the executor can scope the op
+         *  (it rejects ops without `args.projectId`; the agent LLM can't be
          *  relied on to pass it). See `orchestration-mcp.cjs` / `PROJECT_ID_ENV`. */
         AGENT_DESKTOP_PROJECT_ID: string;
       };
@@ -295,7 +295,7 @@ export interface McpToolkitConfig {
 
 /**
  * The MCP server name the toolkit is registered under. Tools therefore surface to
- * the coordinator as `mcp__orchestration__<tool>` (e.g. `mcp__orchestration__spawn_agent`).
+ * the agent as `mcp__orchestration__<tool>` (e.g. `mcp__orchestration__spawn_agent`).
  */
 export const ORCHESTRATION_MCP_SERVER = 'orchestration';
 
@@ -306,7 +306,7 @@ export const ORCHESTRATION_MCP_SERVER = 'orchestration';
 export const CONTROL_SOCKET_ENV = 'AGENT_DESKTOP_CONTROL_SOCKET';
 
 /**
- * The env var the bundled adapter reads for the COORDINATOR's own project id, which
+ * The env var the bundled adapter reads for the launching agent's own project id, which
  * it merges into every forwarded tool call's `args.projectId` — must match the
  * adapter's `PROJECT_ID_ENV` constant. The executor scopes every op on
  * `args.projectId` and rejects ops without it, so this is REQUIRED for the toolkit
@@ -316,18 +316,18 @@ export const PROJECT_ID_ENV = 'AGENT_DESKTOP_PROJECT_ID';
 
 /**
  * Build the per-session `--mcp-config` content (task 3.6) that attaches the
- * orchestration toolkit to a coordinator `claude` launch. The coordinator-launch
- * task (6.2) passes the returned object (typically `JSON.stringify`-ed, or written
- * to a temp file) as `--mcp-config`.
+ * orchestration toolkit to an agent launch. Callers pass the returned object
+ * (typically `JSON.stringify`-ed, or written to a temp file) via the backend's
+ * MCP-config flag.
  *
  *  - `adapterPath` — absolute path to the installed `orchestration-mcp.cjs`
  *    (resolved the same way as the wrapper / event-hook resources).
  *  - `socketPath`  — absolute path to the Rust control socket
  *    (`orchestration::CONTROL_SOCKET_ENV` value).
- *  - `projectId`   — the COORDINATOR's own project id. Placed in the server `env`
+ *  - `projectId`   — the launching agent's own project id. Placed in the server `env`
  *    as `AGENT_DESKTOP_PROJECT_ID` so the adapter merges it into every forwarded
  *    tool call's `args.projectId`; the executor scopes every op on it and rejects
- *    ops without it (the coordinator LLM can't be relied on to pass it).
+ *    ops without it (the agent LLM can't be relied on to pass it).
  *
  * Pure: depends only on its inputs.
  */

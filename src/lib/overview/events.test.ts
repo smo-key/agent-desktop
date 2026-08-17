@@ -260,7 +260,7 @@ describe('deriveEventActivity', () => {
 
   it('A subagent run proves the session was prompted', () => {
     // A subagent can only run after a prompt — so SubagentStop implies everPrompted
-    // (the store's sticky latch), keeping a coordinator out of the never-prompted state.
+    // (the store's sticky latch), keeping a long-running session out of the never-prompted state.
     expect(impliesEverPrompted(ev('SubagentStop'))).toBe(true);
     expect(deriveEventActivity([ev('SubagentStop')], true).everPrompted).toBe(true);
   });

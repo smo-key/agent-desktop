@@ -29,8 +29,8 @@
 
 ## 5. Phase 4 — Coordinator removal
 
-- [ ] 5.1 Delete coordinator code and tests: CoordinatorStart.svelte, coordinator.ts, coordinator.svelte.ts, coordinatorNeedsInput.svelte.ts, coordinatorPin, inbox coordinator rows, roster pin handling, coordinator system prompt; keep orchestration runtime and specialists
-- [ ] 5.2 Remove coordinator references from layout/persistence/status/overview code paths and specs-coverage mappings; delete superseded changes `add-project-coordinator` and `coordinator-agent-titles`
+- [x] 5.1 Delete coordinator code and tests: CoordinatorStart.svelte, coordinator.ts, coordinator.svelte.ts, coordinatorNeedsInput.svelte.ts, coordinatorPin, inbox coordinator rows, roster pin handling, coordinator system prompt; keep orchestration runtime and specialists
+- [x] 5.2 Remove coordinator references from layout/persistence/status/overview code paths and specs-coverage mappings; delete superseded changes `add-project-coordinator` and `coordinator-agent-titles`
 - [ ] 5.3 Full gate: `yarn check:gate` and `cargo test` green
 
 ## 6. Close-out

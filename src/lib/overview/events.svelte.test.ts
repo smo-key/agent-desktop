@@ -63,9 +63,9 @@ describe('EventStore', () => {
     expect(store.timeline('bad')).toHaveLength(0);
   });
 
-  // REGRESSION: a coordinator prompted once then running a single long turn emits more
+  // REGRESSION: a session prompted once then running a single long turn emits more
   // than the ring cap of events, evicting its original UserPromptSubmit from the bounded
-  // ring. The sticky latch must keep everPrompted true so the busy coordinator stays
+  // ring. The sticky latch must keep everPrompted true so the busy session stays
   // Working (out of the Needs-you lane) rather than flipping back to Waiting.
   it('everPrompted survives the prompt being evicted from the ring', () => {
     const store = new EventStore();

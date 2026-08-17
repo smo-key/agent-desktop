@@ -79,7 +79,6 @@
   import { focusRequest } from '$lib/overview/focusRequest.svelte';
   import { listen } from '@tauri-apps/api/event';
   import { runtimeMap } from '$lib/overview/runtime';
-  import { coordinatorNeedsInput } from '$lib/orchestration/coordinatorNeedsInput.svelte';
   import { windowFocus } from '$lib/overview/windowFocus.svelte';
   import { focusAgent } from '$lib/overview/focusAgent.svelte';
   import { alerts } from '$lib/overview/alerts.svelte';
@@ -278,7 +277,7 @@
     });
 
     // Start the ORCHESTRATION EXECUTOR: subscribe to `orchestration://request`
-    // (the Rust control socket round-trips a coordinator's toolkit ops here) and
+    // (the Rust control socket round-trips the MCP toolkit's ops here) and
     // perform each op against the pane/launcher/activity stores, replying via the
     // `orchestration_reply` command. Mirrors the other listeners' lifecycle.
     let unlistenExecutor: (() => void) | undefined;
@@ -424,7 +423,7 @@
   //
   // This effect owns ONLY the recurring interval, and reads no rune synchronously,
   // so it mounts ONCE — unlike the local status poll above, an immediate re-fetch
-  // on every `projects.list` reassignment (coordinator start, drag-reorder, edit,
+  // on every `projects.list` reassignment (drag-reorder, edit,
   // reload) would be an off-schedule network fetch storm. The interval re-reads the
   // live list each tick, so a newly added project is picked up within one cycle (and
   // its LOCAL branch/status already shows at once via the fast 4s poll). The INITIAL
@@ -494,8 +493,7 @@
       alertNowMs,
       activity.bySession,
       undefined,
-      events.activityMap(),
-      new Set(Object.keys(coordinatorNeedsInput.all()))
+      events.activityMap()
     ).map((r) => {
       // Enrich the row for its desktop notification: the TITLE reads
       // "<Project Name>: <Agent Title>". The Agent Title is the GENERATED session
@@ -503,23 +501,14 @@
       // workspace/cwd `name` — so it reads "Fix login dialog" rather than the bare
       // "Session N". The Project Name is the agent's owning project's display name
       // (dropped when it has none). `notificationTitle`/`Body` read `name`/
-      // `projectName`; the focus/coordinator logic keys on `paneId`, so both
-      // overrides are alert-display only.
+      // `projectName`; the focus logic keys on `paneId`, so both overrides are
+      // alert-display only.
       const title = titles.titleFor(r.paneId);
       const proj = projectForId(projects.list, r.projectId);
       const projectName = proj ? projectLabel(proj) : null;
       return { ...r, name: title ?? r.name, projectName };
     })
   );
-  // Clear a coordinator's explicit needs-input flag once it resumes (status back to
-  // `working`). This mirror of the Inbox effect must ALSO run here on the always-
-  // mounted route, otherwise the flag would never clear while the user is in grid view
-  // (Inbox unmounted), pinning a coordinator in attention. Idempotent with the Inbox's.
-  $effect(() => {
-    for (const r of alertRows) {
-      if (r.role === 'coordinator') coordinatorNeedsInput.clearOnWorking(r.paneId, r.status);
-    }
-  });
   // The agent the user is "viewing": the focused grid PANE in grid view (focusedPaneId,
   // not the leaf id), else the inbox focus agent — used by the `agent-unfocused` mode.
   const viewedPaneId = $derived(view.isGrid ? workspace.focusedPaneId : focusAgent.paneId);

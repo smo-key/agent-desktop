@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildRoster,
-  coordinatorNeedsInput,
   deriveStatus,
   laneOf,
   laneForRow,
   needsAttention,
   isWorking,
-  isArchivedCoordinator,
   showContext,
   groupByLane,
   reorderLane,
@@ -409,7 +407,7 @@ describe('roster — silence does not bounce a working agent (demotion hysteresi
   });
 
   it('rowFor threads the pane runtime lastStatus so the hold survives a quiet tick', () => {
-    // A live non-coordinator pane, quiet within the idle-grace band, with no
+    // A live pane, quiet within the idle-grace band, with no
     // event-sourced status: prior status 'working' on the runtime keeps it In flight.
     const silent = WORKING_WINDOW_MS + 1_000;
     const wsX = ws('wX', 'X', [{ paneId: 'p', cwd: '/r' }]);
@@ -602,39 +600,6 @@ describe('roster — control-room lanes', () => {
     expect(archivedPaneIds(rows)).toEqual([]);
   });
 
-  // agent-roster-display: "Archived coordinator is labeled" — an archived (closed)
-  // coordinator row carries the bot "Coordinator" badge; a LIVE coordinator does not
-  // (it keeps its existing pinned-row presentation, no archived label added).
-  it('isArchivedCoordinator: only a closed coordinator row is labeled', () => {
-    // The label case: a coordinator whose session is archived (closed).
-    expect(
-      isArchivedCoordinator(laneRow('coord', { role: 'coordinator', closed: true }))
-    ).toBe(true);
-    // A LIVE coordinator is NOT labeled (no archived badge on the live presentation).
-    expect(
-      isArchivedCoordinator(laneRow('coord', { role: 'coordinator' }))
-    ).toBe(false);
-    // A preview-ed (resumed-from-archived, closed:false) coordinator is live again.
-    expect(
-      isArchivedCoordinator(laneRow('coord', { role: 'coordinator', closed: false, preview: true }))
-    ).toBe(false);
-    // A plain archived (closed) agent is NOT a coordinator → no coordinator label.
-    expect(
-      isArchivedCoordinator(laneRow('agent', { closed: true }))
-    ).toBe(false);
-    // A coordinator-spawned agent (carries coordinatorPaneId, not role) is not labeled.
-    expect(
-      isArchivedCoordinator(laneRow('spawned', { coordinatorPaneId: 'coord', closed: true }))
-    ).toBe(false);
-  });
-
-  it('an archived coordinator sits in the Archived (done) lane', () => {
-    // The closed coordinator lands in `done` like any archived row, where its label
-    // renders.
-    expect(
-      laneForRow(laneRow('coord', { role: 'coordinator', status: 'finished', closed: true }))
-    ).toBe('done');
-  });
 });
 
 // Per-lane display ordering: every bucket shows its agents most-recently-added
@@ -776,183 +741,16 @@ describe('roster — event-sourced status', () => {
   });
 });
 
-// Coordinator needs-input suppression (tasks 10.11–10.12): a live coordinator must
-// surface "needs you" ONLY for a pending AskUserQuestion OR the explicit
-// request_user_input flag — NEVER the default idle/waiting heuristic.
-describe('roster — coordinator needs-input suppression', () => {
-  const now = 1_000_000;
-  /** A single-pane coordinator workspace. */
-  const coordWs: RosterWorkspace = {
-    id: 'w1',
-    name: 'W',
-    panes: [{ paneId: 'coord', cwd: '/x', isApp: true, role: 'coordinator', projectId: 'A' }]
-  };
-  const evAct = (over: Partial<EventActivity> = {}): Record<string, EventActivity> => ({
-    coord: { status: null, currentAction: null, question: null, questions: null, ...over }
-  });
-
-  it('coordinatorNeedsInput pure helper: true on a pending question OR the flag', () => {
-    expect(coordinatorNeedsInput({ question: null, questions: null }, false)).toBe(false);
-    expect(coordinatorNeedsInput({ question: 'pick one?', questions: null }, false)).toBe(true);
-    expect(
-      coordinatorNeedsInput(
-        { question: null, questions: [{ header: '', question: 'q?', multiSelect: false, options: [] }] },
-        false
-      )
-    ).toBe(true);
-    expect(coordinatorNeedsInput({ question: null, questions: null }, true)).toBe(true);
-  });
-
-  it('Engaged but quiet coordinator reads Idle, out of attention', () => {
-    // PTY says "waiting" (long silence), no active-work affordance — a coordinator
-    // that HAS started a turn (`everPrompted`), with no question and no flag, is now
-    // genuinely idle at its prompt: NOT `working` (so no flashing in-flight dot) and
-    // NOT `waiting` (so it never nags from the Needs-you lane).
-    const runtime = runtimeOf(rt('coord', { lastOutputAt: now - 999_999 }));
-    const [row] = buildRoster(
-      {},
-      [coordWs],
-      runtime,
-      now,
-      {},
-      WORKING_WINDOW_MS,
-      evAct({ status: 'waiting', everPrompted: true })
-    );
-    expect(row.status).toBe('idle');
-    expect(needsAttention(row)).toBe(false);
-  });
-
-  it('Actively running coordinator reads Working', () => {
-    // Recent PTY output (within the working window) → the coordinator is actively
-    // running → `working` (the flashing in-flight dot).
-    const runtime = runtimeOf(rt('coord', { lastOutputAt: now }));
-    const [row] = buildRoster(
-      {},
-      [coordWs],
-      runtime,
-      now,
-      {},
-      WORKING_WINDOW_MS,
-      evAct({ status: 'waiting', everPrompted: true })
-    );
-    expect(row.status).toBe('working');
-    expect(needsAttention(row)).toBe(false);
-  });
-
-  it('Engaged coordinator with a fresh busy affordance reads Working', () => {
-    // Quiet PTY but a fresh terminal active-work affordance (within BUSY_GRACE_MS) —
-    // e.g. "esc to interrupt" / "Waiting for N dynamic workflow(s)" — keeps it In
-    // flight even between output chunks.
-    const runtime = runtimeOf(rt('coord', { lastOutputAt: now - 999_999, terminalBusyAt: now }));
-    const [row] = buildRoster(
-      {},
-      [coordWs],
-      runtime,
-      now,
-      {},
-      WORKING_WINDOW_MS,
-      evAct({ status: 'waiting', everPrompted: true })
-    );
-    expect(row.status).toBe('working');
-  });
-
-  it('Engaged coordinator with a stale busy affordance reads Idle', () => {
-    // The busy affordance was last seen longer ago than BUSY_GRACE_MS and the PTY is
-    // quiet → the work has ended → Idle (no in-flight dot), out of attention.
-    const runtime = runtimeOf(
-      rt('coord', { lastOutputAt: now - 999_999, terminalBusyAt: now - (BUSY_GRACE_MS + 1) })
-    );
-    const [row] = buildRoster(
-      {},
-      [coordWs],
-      runtime,
-      now,
-      {},
-      WORKING_WINDOW_MS,
-      evAct({ status: 'waiting', everPrompted: true })
-    );
-    expect(row.status).toBe('idle');
-    expect(needsAttention(row)).toBe(false);
-  });
-
-  it('Just-launched coordinator awaits the first instruction', () => {
-    // It spawns at an empty prompt and has never been prompted (`everPrompted` false,
-    // or no events at all), so it is `waiting` ON YOU — not the quiet-stays-working
-    // suppression that only applies once it has started its first turn.
-    const runtime = runtimeOf(rt('coord', { lastOutputAt: now }));
-    const [launched] = buildRoster(
-      {},
-      [coordWs],
-      runtime,
-      now,
-      {},
-      WORKING_WINDOW_MS,
-      evAct({ status: 'waiting', everPrompted: false })
-    );
-    expect(launched.status).toBe('waiting');
-    expect(needsAttention(launched)).toBe(true);
-
-    // With no event activity at all (events not wired yet) it is likewise waiting.
-    const [noEvents] = buildRoster({}, [coordWs], runtime, now);
-    expect(noEvents.status).toBe('waiting');
-    expect(needsAttention(noEvents)).toBe(true);
-  });
-
-  it('a coordinator with a pending AskUserQuestion DOES need attention', () => {
-    const runtime = runtimeOf(rt('coord', { lastOutputAt: now }));
-    const [row] = buildRoster(
-      {},
-      [coordWs],
-      runtime,
-      now,
-      {},
-      WORKING_WINDOW_MS,
-      evAct({ status: 'waiting', question: 'which approach?' })
-    );
-    expect(row.status).toBe('waiting');
-    expect(needsAttention(row)).toBe(true);
-  });
-
-  it('a coordinator with the explicit request_user_input flag DOES need attention', () => {
-    const runtime = runtimeOf(rt('coord', { lastOutputAt: now }));
-    const [row] = buildRoster(
-      {},
-      [coordWs],
-      runtime,
-      now,
-      {},
-      WORKING_WINDOW_MS,
-      evAct({ status: 'working' }),
-      new Set(['coord'])
-    );
-    expect(row.status).toBe('waiting');
-    expect(needsAttention(row)).toBe(true);
-  });
-
-  it('a NON-coordinator pane is unaffected by the suppression (default heuristic applies)', () => {
-    const normalWs: RosterWorkspace = {
-      id: 'w2',
-      name: 'N',
-      panes: [{ paneId: 'agent', cwd: '/y', isApp: true, projectId: 'A' }]
-    };
-    const runtime = runtimeOf(rt('agent', { lastOutputAt: now - 999_999 }));
-    const [row] = buildRoster({}, [normalWs], runtime, now, {}, WORKING_WINDOW_MS, {
-      agent: { status: 'waiting', currentAction: null, question: null, questions: null }
-    });
-    expect(row.status).toBe('waiting');
-    expect(needsAttention(row)).toBe(true);
-  });
-});
 
 // In-flight vs Needs-input override (agent-status-derivation): when Claude Code is
-// actively working but its event hooks report idle, a LIVE non-coordinator pane with
+// actively working but its event hooks report idle, a LIVE pane with
 // NO pending question is shown In flight (`working`) rather than Needs input. The
 // signal is the per-pane `terminalBusyAt` timestamp (the last positive
 // detectTerminalBusy observation); the override holds while that timestamp is within
 // `BUSY_GRACE_MS` of now (hysteresis — fix-needs-you-bounce), so a flickering /
 // briefly-missed affordance does not bounce the row. The override is strictly
 // additive: timestamp absent or older than the window → exactly the prior derivation;
-// it never applies to the coordinator or to a pending-question row.
+// it never applies to a pending-question row.
 describe('roster — terminal-busy In-flight override', () => {
   const now = 1_000_000;
   // PTY alive and quiet PAST the working window → the byte heuristic alone reads
@@ -1053,31 +851,6 @@ describe('roster — terminal-busy In-flight override', () => {
     expect(row.status).toBe('finished');
   });
 
-  // The GENERAL terminal-busy override does NOT reach the coordinator path: the
-  // coordinator decides its own status (its needs-you suppression + its own activity
-  // sensing). With a fresh busy affordance and no question/flag it reads Working via
-  // the coordinator's own activity check; a pending question stays Waiting (Needs
-  // you) regardless of any busy affordance.
-  it('coordinator: a fresh busy affordance reads Working, but a pending question stays Waiting', () => {
-    const coordWs: RosterWorkspace = {
-      id: 'wc',
-      name: 'C',
-      panes: [{ paneId: 'p', cwd: '/x', isApp: true, role: 'coordinator', projectId: 'A' }]
-    };
-    const runtime = runtimeOf(busyNow());
-    const [working] = buildRoster({}, [coordWs], runtime, now, {}, WORKING_WINDOW_MS, {
-      p: { status: 'waiting', currentAction: null, question: null, questions: null, everPrompted: true }
-    });
-    expect(working.status).toBe('working');
-    expect(needsAttention(working)).toBe(false);
-
-    // A pending AskUserQuestion → Needs you, even though the busy affordance is fresh.
-    const [asking] = buildRoster({}, [coordWs], runtime, now, {}, WORKING_WINDOW_MS, {
-      p: { status: 'waiting', currentAction: null, question: 'pick one?', questions: null, everPrompted: true }
-    });
-    expect(asking.status).toBe('waiting');
-    expect(needsAttention(asking)).toBe(true);
-  });
 });
 
 // Task 15.1 — roster carries modelId

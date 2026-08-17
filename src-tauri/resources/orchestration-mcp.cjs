@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Agent-desktop ORCHESTRATION MCP ADAPTER — the bundled, dependency-free stdio MCP
-// server attached to a launched COORDINATOR `claude` session. It exposes the seven
-// project-scoped agent-management toolkit tools as MCP tools and forwards each tool
+// server attached to a launched agent session. It exposes the project-scoped
+// agent-management toolkit tools as MCP tools and forwards each tool
 // call over the Rust CONTROL SOCKET to the frontend executor, returning the socket
 // result as the MCP tool result (and surfacing a socket error as an MCP tool error).
 //
@@ -54,7 +54,7 @@ const TOOLS = [
   {
     name: 'spawn_agent',
     description:
-      "Spawn a new claude agent pane in the coordinator's project. Optionally compose it from a specialist (.claude/agents/<name>.md) and/or a working directory.",
+      "Spawn a new agent pane in your project. Optionally compose it from a specialist (.claude/agents/<name>.md) and/or a working directory.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -92,7 +92,7 @@ const TOOLS = [
   {
     name: 'list_agents',
     description:
-      "List every claude agent pane in the coordinator's project (coordinator-spawned and user-started).",
+      "List every agent pane in your project (toolkit-spawned and user-started).",
     inputSchema: { type: 'object', properties: {} }
   },
   {
@@ -120,20 +120,6 @@ const TOOLS = [
       type: 'object',
       properties: { paneId: { type: 'string', description: 'Target agent pane id.' } },
       required: ['paneId']
-    }
-  },
-  {
-    name: 'request_user_input',
-    description:
-      "Notify the user that you (the coordinator) need their input — call this whenever you need a decision/answer from the user but are NOT asking via the AskUserQuestion tool. Surfaces the coordinator in the user's Needs-you lane. Otherwise keep working and delegating; do not sit idle expecting attention.",
-    inputSchema: {
-      type: 'object',
-      properties: {
-        message: {
-          type: 'string',
-          description: 'Optional short reason/prompt describing what you need from the user.'
-        }
-      }
     }
   }
 ];

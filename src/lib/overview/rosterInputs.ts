@@ -21,8 +21,6 @@ export function toRosterWorkspaces(entries: ReadonlyArray<WorkspaceEntry>): Rost
       isApp: isAgentProgram(entry.registry[leaf.paneId]?.program),
       projectId: entry.registry[leaf.paneId]?.projectId ?? null,
       specialist: entry.registry[leaf.paneId]?.specialist ?? null,
-      role: entry.registry[leaf.paneId]?.role ?? null,
-      coordinatorPaneId: entry.registry[leaf.paneId]?.coordinatorPaneId ?? null,
       closed: entry.registry[leaf.paneId]?.closed ?? false,
       paused: entry.registry[leaf.paneId]?.paused ?? false,
       pausedCount: entry.registry[leaf.paneId]?.pausedCount ?? null,

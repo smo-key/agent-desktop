@@ -347,7 +347,7 @@ describe('buildSpawnOverride', () => {
 });
 
 describe('buildMcpToolkitConfig', () => {
-  // Task 3.6: the per-session --mcp-config the coordinator launch (task 6.2) consumes.
+  // Task 3.6: the per-session --mcp-config a toolkit-mounting launch consumes.
   it('builds an mcp-config naming the bundled adapter run via node with the socket + projectId env', () => {
     const cfg = buildMcpToolkitConfig(
       '/Users/me/Library/Application Support/agent-desktop/bin/orchestration-mcp.js',
@@ -362,7 +362,7 @@ describe('buildMcpToolkitConfig', () => {
           env: {
             AGENT_DESKTOP_CONTROL_SOCKET:
               '/Users/me/Library/Application Support/agent-desktop/control.sock',
-            // The coordinator's own project id rides into the adapter so it can stamp
+            // The launching agent's own project id rides into the adapter so it can stamp
             // it into every forwarded tool call's args (the executor scopes on it).
             AGENT_DESKTOP_PROJECT_ID: 'proj-coord-1'
           }
