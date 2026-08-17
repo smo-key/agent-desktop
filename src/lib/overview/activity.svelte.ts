@@ -30,6 +30,9 @@ export interface PaneRef {
   sessionId: string;
   /** The pane's absolute working directory (a fast-path hint), or null. */
   cwd: string | null;
+  /** The pane's agent backend (`claude` when absent); `copilot` panes are served
+   *  from the copilot session event log on the Rust side. */
+  program?: string;
 }
 
 /** A session's high-level activity, derived from its transcript. */

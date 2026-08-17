@@ -4,14 +4,38 @@
 
 const KNOWN_FAMILIES = new Set(['opus', 'sonnet', 'haiku', 'fable']);
 
+/** Segments rendered as ACRONYMS by the generic (non-Claude) prettifier. */
+const ACRONYM_SEGMENTS = new Set(['gpt', 'o1', 'o3', 'o4']);
+
+/**
+ * Generic readable label for a NON-Claude model id (Copilot sessions report ids
+ * like `gpt-5`, `o4-mini`, `gemini-2.5-pro`): segments joined with spaces,
+ * known acronym segments uppercased, version segments kept verbatim, everything
+ * else capitalized. `null` when the id yields nothing renderable.
+ */
+export function genericModelLabel(id: string): string | null {
+  const segments = id.split('-').filter((s) => s.length > 0);
+  if (segments.length === 0) return null;
+  return segments
+    .map((seg) => {
+      if (ACRONYM_SEGMENTS.has(seg.toLowerCase())) return seg.toUpperCase();
+      if (/^\d+(\.\d+)?$/.test(seg)) return seg;
+      return seg.charAt(0).toUpperCase() + seg.slice(1);
+    })
+    .join(' ');
+}
+
 /**
  * Parse a Claude model id of the form `claude-<family>-<num>[-<num>][-<YYYYMMDD>]`
  * and return a human-readable versioned label like `Opus 4.8` or `Sonnet 4.6`.
- * Falls back to `displayName` (if non-empty) then `'—'` when id is null/empty
- * or doesn't match the expected pattern.
+ * Falls back to `displayName` (if non-empty), then — for a non-Claude id from
+ * another backend (`gpt-5`, `o4-mini`) — to the generic prettifier, then `'—'`.
  */
 export function modelLabel(id: string | null, displayName: string | null): string {
-  const fallback = displayName && displayName.length > 0 ? displayName : '—';
+  const fallback =
+    displayName && displayName.length > 0
+      ? displayName
+      : (id && genericModelLabel(id)) || '—';
 
   if (!id || id.length === 0) return fallback;
 

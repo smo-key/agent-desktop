@@ -1,3 +1,4 @@
+import { isAgentProgram } from '$lib/agent/backends';
 import { describe, expect, it } from 'vitest';
 import { appSessionIds } from './appSessions';
 import type { Snapshot, SnapshotMap } from './snapshots.svelte';
@@ -37,5 +38,17 @@ describe('appSessionIds', () => {
 
   it('is empty for an empty map', () => {
     expect(appSessionIds({})).toEqual([]);
+  });
+});
+
+describe('agent-pane classification (usage-dashboard)', () => {
+  it('Non-agent filtering uses the registry', () => {
+    // The footer's "terminal panes" filter asks the backend registry, so a
+    // copilot pane counts as an agent session exactly like claude, and only
+    // real shells are treated as terminals.
+    expect(isAgentProgram('claude')).toBe(true);
+    expect(isAgentProgram('copilot')).toBe(true);
+    expect(isAgentProgram('/bin/zsh')).toBe(false);
+    expect(isAgentProgram('pwsh')).toBe(false);
   });
 });

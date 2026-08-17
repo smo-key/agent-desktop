@@ -549,7 +549,7 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<String> {
 /// One session the frontend wants subagents for: its Claude `session_id` plus the
 /// `cwd` the session runs in (used to locate its project dir). Serialized
 /// camelCase for the JS side.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRef {
     /// The Claude session id (the `<session>` dir name under the project dir).
@@ -559,6 +559,11 @@ pub struct SessionRef {
     /// locate its project dir without it).
     #[serde(default)]
     pub cwd: Option<String>,
+    /// The session's agent backend (`claude` when absent). `copilot` sessions'
+    /// subagents are derived from the copilot session event log instead of the
+    /// Claude sidecars (`copilot-observability`).
+    #[serde(default)]
+    pub program: Option<String>,
 }
 
 /// Encode an absolute cwd the way Claude names its project dirs: every path
@@ -620,6 +625,21 @@ pub fn subagents_for_sessions(
 ) -> HashMap<String, Vec<Subagent>> {
     let mut map = HashMap::new();
     for ref_ in sessions {
+        // Copilot sessions: rows come from the session event log, not sidecars.
+        if ref_.program.as_deref() == Some("copilot") {
+            if let Some(base) = crate::copilot_events::session_state_base() {
+                if let Some(path) = crate::copilot_events::events_path(&base, &ref_.session_id) {
+                    let events = crate::copilot_events::read_session_events(&path);
+                    let subs =
+                        crate::copilot_events::subagents_from_events(&ref_.session_id, &events);
+                    map.insert(
+                        ref_.session_id.clone(),
+                        filter_pre_launch(subs, launch_time_ms),
+                    );
+                }
+            }
+            continue;
+        }
         let Some(dir) = session_dir(projects_base, ref_) else {
             continue;
         };
@@ -736,6 +756,14 @@ where
     watcher
         .watch(projects_base, RecursiveMode::Recursive)
         .map_err(|e| format!("watch {projects_base:?}: {e}"))?;
+
+    // Also watch the copilot session-state tree (best-effort) so copilot
+    // subagent events trigger the same recompute. A missing/unwatchable base
+    // (CLI never run) is fine — the `subagents_for` seed still covers it.
+    if let Some(copilot_base) = crate::copilot_events::session_state_base() {
+        let _ = std::fs::create_dir_all(&copilot_base);
+        let _ = watcher.watch(&copilot_base, RecursiveMode::Recursive);
+    }
 
     Ok(SubagentsWatcher {
         _watcher: watcher,
@@ -1207,15 +1235,18 @@ mod tests {
             SessionRef {
                 session_id: "sess-A".into(),
                 cwd: Some(cwd_a.into()),
+                ..Default::default()
             },
             SessionRef {
                 session_id: "sess-B".into(),
                 cwd: Some("/work/b".into()),
+                ..Default::default()
             },
             // No cwd -> skipped entirely (absent from the map).
             SessionRef {
                 session_id: "sess-C".into(),
                 cwd: None,
+                ..Default::default()
             },
         ];
         // launch_time 0: these fixtures carry no `startedAt`, so nothing is
@@ -1322,6 +1353,7 @@ mod tests {
         let sessions = vec![SessionRef {
             session_id: "sess-P".into(),
             cwd: Some(cwd.into()),
+            ..Default::default()
         }];
         let map = subagents_for_sessions(base, &sessions, 1_000);
         let ids: Vec<&str> = map["sess-P"].iter().map(|s| s.id.as_str()).collect();
@@ -1336,6 +1368,7 @@ mod tests {
         let sessions = vec![SessionRef {
             session_id: "../../etc".into(),
             cwd: Some("/work/a".into()),
+            ..Default::default()
         }];
         let map = subagents_for_sessions(tmp.path(), &sessions, 0);
         assert!(map.is_empty(), "unsafe id resolves to no dir -> skipped");
@@ -1356,6 +1389,7 @@ mod tests {
         let watched: WatchedSessions = Arc::new(Mutex::new(vec![SessionRef {
             session_id: "sess-W".into(),
             cwd: Some(cwd.into()),
+            ..Default::default()
         }]));
 
         let (tx, rx) = mpsc::channel::<HashMap<String, Vec<Subagent>>>();

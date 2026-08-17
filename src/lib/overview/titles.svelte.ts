@@ -161,7 +161,10 @@ export class TitleStore {
         cwd: pane.cwd,
         // Opt-in: allow the backend to fall back to `claude -p` (Haiku) when the
         // on-device title model is unavailable. Off by default (on-device only).
-        cloudFallback: titleSettings.prefs.cloudFallback
+        cloudFallback: titleSettings.prefs.cloudFallback,
+        // Per-backend transcript source (`session-titles`): copilot titles are
+        // generated from the copilot session event log.
+        program: pane.program ?? null
       });
       // Bail if the user gave this session a CUSTOM title while we were awaiting:
       // a manual title is sticky and must NEVER be clobbered by a now-stale

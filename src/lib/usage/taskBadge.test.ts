@@ -66,3 +66,18 @@ describe('task-detection — Surface Task Per Pane', () => {
     expect(taskBadge(snap({ task: 't', ts: now + 5 }), now)?.live).toBe(true);
   });
 });
+
+describe('copilot panes (task-detection: Claude-backend-scoped)', () => {
+  it('Copilot panes have no task badge', () => {
+    // A copilot snapshot never carries a `task` field (the tailer writes only
+    // pane/session/model), so the badge derivation yields null — the component
+    // renders NOTHING, not an empty pill.
+    const copilotSnap = {
+      pane_id: 'p-cop',
+      session_id: 's-cop',
+      model_id: 'gpt-5',
+      ts: 1_000
+    } as unknown as Parameters<typeof taskBadge>[0];
+    expect(taskBadge(copilotSnap, 1_000)).toBeNull();
+  });
+});

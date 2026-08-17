@@ -1,5 +1,6 @@
 pub mod activity;
 pub mod claude_title;
+pub mod copilot_events;
 pub mod events;
 pub mod git;
 pub mod ipc;
@@ -298,6 +299,31 @@ fn installed_apps(names: Vec<String>) -> Vec<String> {
 #[tauri::command]
 fn default_shell() -> String {
     crate::shell_path::default_shell()
+}
+
+/// Register a copilot pane with the events tailer (`copilot-observability`):
+/// its `~/.copilot/session-state/<session_id>/events.jsonl` is tailed into the
+/// shared activity-event pipeline and its model refreshes the pane snapshot.
+#[tauri::command]
+fn copilot_watch(
+    state: State<'_, Arc<copilot_events::CopilotWatchState>>,
+    pane_id: String,
+    session_id: String,
+) {
+    state.watch(pane_id, session_id);
+}
+
+/// Drop a copilot pane's tail registration (pane closed / component destroyed).
+#[tauri::command]
+fn copilot_unwatch(state: State<'_, Arc<copilot_events::CopilotWatchState>>, pane_id: String) {
+    state.unwatch(&pane_id);
+}
+
+/// Whether an agent CLI (`claude`, `copilot`) is discoverable on the seeded
+/// login-shell `PATH` (`agent-backends`: Settings install-detection hint).
+#[tauri::command]
+fn program_on_path(program: String) -> bool {
+    crate::shell_path::program_on_path(&program)
 }
 
 /// Build the argument vector passed to `open` (after the program name) for
@@ -626,26 +652,48 @@ async fn session_focus(
     session_id: String,
     cwd: Option<String>,
     cloud_fallback: bool,
+    program: Option<String>,
 ) -> Result<Option<String>, String> {
-    let projects_base =
-        activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
-    let pane = PaneRef {
-        pane_id: String::new(),
-        session_id: Some(session_id),
-        cwd,
+    // Per-backend transcript text (`session-titles`): a copilot session's user /
+    // assistant prose comes from its event log; claude reads its transcript.
+    let (msgs, asst_msgs): (Vec<String>, Vec<String>) = if program.as_deref() == Some("copilot")
+    {
+        let Some(base) = copilot_events::session_state_base() else {
+            return Ok(None);
+        };
+        let Some(path) = copilot_events::events_path(&base, &session_id) else {
+            return Ok(None);
+        };
+        let events = copilot_events::read_session_events(&path);
+        (
+            copilot_events::user_messages(&events),
+            copilot_events::assistant_messages(&events),
+        )
+    } else {
+        let projects_base =
+            activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
+        let pane = PaneRef {
+            pane_id: String::new(),
+            session_id: Some(session_id),
+            cwd,
+            program: None,
+        };
+        let Some(transcript) = activity::find_transcript(&projects_base, &pane) else {
+            return Ok(None);
+        };
+        // Title-specific view: drops skill/command/caveat scaffolding (isMeta
+        // preludes, slash-command markup, interrupt markers) that the small title
+        // model otherwise copies into the title. Distinct from `user_messages` so
+        // the auto-resume / empty-session gates reading `user_hash` /
+        // `user_message_count` are unaffected.
+        (
+            activity::title_user_messages(&transcript),
+            activity::assistant_messages(&transcript),
+        )
     };
-    let Some(transcript) = activity::find_transcript(&projects_base, &pane) else {
-        return Ok(None);
-    };
-    // Title-specific view: drops skill/command/caveat scaffolding (isMeta preludes,
-    // slash-command markup, interrupt markers) that the small title model otherwise
-    // copies into the title. Distinct from `user_messages` so the auto-resume /
-    // empty-session gates that read `user_hash`/`user_message_count` are unaffected.
-    let msgs = activity::title_user_messages(&transcript);
     if msgs.is_empty() {
         return Ok(None);
     }
-    let asst_msgs = activity::assistant_messages(&transcript);
     // Bound the prompt to fit the local model's modest context window (the sidecar
     // runs with a 4096-token context). Weight the EARLIEST messages so the session's
     // original request is always included even in a long session (head + tail
@@ -1176,9 +1224,30 @@ fn start_subagents_watcher(
 /// transcript is simply absent from the map.
 #[tauri::command]
 fn activity_for(panes: Vec<PaneRef>) -> Result<HashMap<String, Activity>, String> {
-    let projects_base =
-        activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
-    Ok(activity::activity_for_panes(&projects_base, &panes))
+    // Route per backend: copilot panes derive activity from their session event
+    // log (`copilot-observability`); everything else reads the Claude transcript.
+    let (copilot, claude): (Vec<PaneRef>, Vec<PaneRef>) = panes
+        .into_iter()
+        .partition(|p| p.program.as_deref() == Some("copilot"));
+    let mut out = if claude.is_empty() {
+        HashMap::new()
+    } else {
+        let projects_base =
+            activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
+        activity::activity_for_panes(&projects_base, &claude)
+    };
+    if let Some(base) = copilot_events::session_state_base() {
+        for pane in copilot {
+            let Some(sid) = pane.session_id.as_deref() else { continue };
+            let Some(path) = copilot_events::events_path(&base, sid) else { continue };
+            let events = copilot_events::read_session_events(&path);
+            if events.is_empty() {
+                continue;
+            }
+            out.insert(pane.pane_id, copilot_events::activity_from_events(&events));
+        }
+    }
+    Ok(out)
 }
 
 /// Return the `path -> GitStatus` map for the given project FOLDERS (branch +
@@ -1482,6 +1551,33 @@ pub fn run() {
                     Err(e) => log::warn!("start_event_server failed: {e}"),
                 }
             }
+            // Copilot events tailer (`copilot-observability`): translates each
+            // watched copilot pane's session events into the SAME event pipeline
+            // (ring + durable sink + `overview://event`) and refreshes the pane's
+            // usage snapshot on model changes. Watch registrations arrive via the
+            // `copilot_watch` command as panes spawn. Best-effort: a missing
+            // `~/.copilot` (CLI never run) just means no events until it exists.
+            let copilot_watch_state = Arc::new(copilot_events::CopilotWatchState::default());
+            app.manage(copilot_watch_state.clone());
+            if let Some(copilot_base) = copilot_events::session_state_base() {
+                if let Ok(base) = app_data_dir(app.handle()) {
+                    let snapshot_dir = base.join(SNAPSHOT_DIR);
+                    let handle = app.handle().clone();
+                    let event_state_for_copilot = app.state::<Arc<EventState>>().inner().clone();
+                    let tailer = copilot_events::start_copilot_tailer(
+                        copilot_base,
+                        copilot_watch_state,
+                        event_state_for_copilot,
+                        snapshot_dir,
+                        move |ev| {
+                            if let Err(e) = handle.emit(EVENT_EVENT, &ev) {
+                                log::warn!("emit {EVENT_EVENT} (copilot) failed: {e}");
+                            }
+                        },
+                    );
+                    app.manage(tailer);
+                }
+            }
             // Orchestration control socket: the transport the bundled MCP toolkit
             // adapter uses to round-trip toolkit ops through the frontend executor.
             // Each inbound request is emitted to the frontend over
@@ -1536,6 +1632,9 @@ pub fn run() {
             open_path,
             installed_apps,
             default_shell,
+            program_on_path,
+            copilot_watch,
+            copilot_unwatch,
             session_focus,
             layout_load,
             layout_save,
