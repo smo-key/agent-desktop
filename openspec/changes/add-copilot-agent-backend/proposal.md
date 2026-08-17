@@ -59,6 +59,12 @@ other agents) has not earned its complexity and is being removed.
   Claude-backend-specific requirement; Copilot panes show no task badge.
 - `agent-specialists`: specialists gain a Copilot launch mapping (custom agent
   translation) with declared degradation.
+- `agent-orchestration-runtime`: coordinator-specific scenarios (coordinator
+  exclusion from listing, coordinator-target rejection) removed; spawn is
+  backend-resolved; `request_user_input` is excluded from the toolkit.
+- `agent-roster-display`: coordinator attribution badge and archived-coordinator
+  label **removed**; bucket ordering / keyboard reveal lose their
+  pinned-coordinator carve-outs.
 - `agent-coordinator-workflows`: **removed**.
 - `coordinator-lifecycle`: **removed**.
 
