@@ -301,6 +301,15 @@ fn default_shell() -> String {
     crate::shell_path::default_shell()
 }
 
+/// Install an app-generated Copilot custom agent (`agent-specialists`): writes
+/// `~/.copilot/agents/<name>.agent.md` so a specialist launch can pass
+/// `--agent <name>`. Only app-prefixed safe names are accepted.
+#[tauri::command]
+fn copilot_install_agent(name: String, content: String) -> Result<(), String> {
+    let base = copilot_events::agents_base().ok_or("HOME unset; cannot locate ~/.copilot")?;
+    copilot_events::install_agent(&base, &name, &content)
+}
+
 /// Register a copilot pane with the events tailer (`copilot-observability`):
 /// its `~/.copilot/session-state/<session_id>/events.jsonl` is tailed into the
 /// shared activity-event pipeline and its model refreshes the pane snapshot.
@@ -1635,6 +1644,7 @@ pub fn run() {
             program_on_path,
             copilot_watch,
             copilot_unwatch,
+            copilot_install_agent,
             session_focus,
             layout_load,
             layout_save,

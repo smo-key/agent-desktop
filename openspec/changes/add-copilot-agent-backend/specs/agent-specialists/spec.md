@@ -8,10 +8,12 @@ present — and the spawned pane SHALL record the specialist it was launched as.
 
 For a `claude` pane this composition uses Claude CLI flags as today. For a
 `copilot` pane, WHEN the Copilot backend declares specialist support, the
-specialist SHALL be translated at launch into a Copilot custom agent (persona
-body carried in the generated agent definition, frontmatter `model` mapped to
-`--model`, frontmatter `tools` mapped to Copilot tool scoping) and launched via
-`--agent`. WHEN the Copilot backend does not declare specialist support, the
+specialist SHALL be translated at launch into an app-generated Copilot custom
+agent under `~/.copilot/agents/` (persona body carried in the generated agent
+definition, frontmatter `model` carried over) and launched via `--agent`.
+Specialist `tools` use CLAUDE tool names, which have no Copilot equivalents —
+tool scoping SHALL NOT be carried to Copilot launches (a declared narrowing;
+mistranslated tool names could silently disable the agent). WHEN the Copilot backend does not declare specialist support, the
 specialist launch surface SHALL present Copilot specialist launches as
 unavailable ("Claude only") rather than launching an unconfigured pane.
 
@@ -25,7 +27,7 @@ unavailable ("Claude only") rather than launching an unconfigured pane.
 
 #### Scenario: Copilot specialist launch via translated custom agent
 - **WHEN** a specialist is launched on the Copilot backend and Copilot declares specialist support
-- **THEN** a Copilot custom agent is generated from the specialist file and the pane launches with `--agent <name>` plus the mapped model and tool scoping, and the pane records its specialist
+- **THEN** a Copilot custom agent is generated from the specialist file (persona + model; tool scoping deliberately not carried) and the pane launches with `--agent <name>`, and the pane records its specialist
 
 #### Scenario: Declared degradation when translation is unsupported
 - **WHEN** a specialist launch is requested on the Copilot backend and Copilot does not declare specialist support

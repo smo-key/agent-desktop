@@ -24,8 +24,8 @@
 
 ## 4. Phase 3 — Specialists on Copilot
 
-- [ ] 4.1 Implement specialist → Copilot custom-agent translation and `--agent` launch mapping (or wire the declared "Claude only" degradation, per the 1.2 decision) + tests
-- [ ] 4.2 Update specialist launch surfaces (executor `spawn_agent`, specialists panel) to be backend-aware + tests
+- [x] 4.1 Implement specialist → Copilot custom-agent translation and `--agent` launch mapping (or wire the declared "Claude only" degradation, per the 1.2 decision) + tests
+- [x] 4.2 Update specialist launch surfaces (executor `spawn_agent`, specialists panel) to be backend-aware + tests
 
 ## 5. Phase 4 — Coordinator removal
 

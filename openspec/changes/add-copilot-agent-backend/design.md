@@ -196,10 +196,13 @@ Captured from real sessions into the checked-in fixture
 `description`, optional `model`, optional `tools`) and the persona as the
 markdown body is picked up by `copilot --agent <name>` — verified end-to-end
 (persona measurably applied). Specialists therefore translate cleanly:
-body → agent body, `model` → frontmatter `model`, `tools` → frontmatter
-`tools`. The app writes generated agents under `~/.copilot/agents/` with an
-app-owned name prefix so it never touches the user's repo or their own agents.
-`specialists` capability: **supported** for copilot.
+body → agent body, `model` → frontmatter `model`. Specialist `tools` use
+CLAUDE tool names (`Bash`, `Edit`, …) with no Copilot equivalents, so tool
+scoping is deliberately NOT carried (a mistranslated tool list could silently
+disable the agent). The app writes generated agents under `~/.copilot/agents/`
+with an app-owned name prefix (`agent-desktop-…`) so it never touches the
+user's repo or their own agents. `specialists` capability: **supported** for
+copilot.
 
 **S3 — Ask-user driving (task 1.3): NOT SUPPORTED.** The Copilot TUI cannot
 be exercised headlessly in this environment (it exits without a real

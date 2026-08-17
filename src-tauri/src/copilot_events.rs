@@ -509,6 +509,39 @@ pub fn read_session_events(path: &Path) -> Vec<Value> {
 }
 
 // ---------------------------------------------------------------------------
+// Generated custom agents (`agent-specialists` on copilot).
+// ---------------------------------------------------------------------------
+
+/// `~/.copilot/agents`, from the platform home. `None` when home is unset.
+pub fn agents_base() -> Option<PathBuf> {
+    let home = crate::shell_path::home_dir();
+    if home.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(home).join(".copilot").join("agents"))
+}
+
+/// Install (write/overwrite) an app-generated copilot custom agent as
+/// `<agents_base>/<name>.agent.md`, atomically (temp + rename). The name must be
+/// an app-prefixed safe slug — anything else is rejected so this command can
+/// never touch the user's own agents or escape the dir.
+pub fn install_agent(base: &Path, name: &str, content: &str) -> Result<(), String> {
+    let valid = name.starts_with("agent-desktop-")
+        && !name.trim_start_matches("agent-desktop-").is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !valid {
+        return Err(format!("invalid generated agent name: {name:?}"));
+    }
+    std::fs::create_dir_all(base).map_err(|e| format!("create_dir_all {base:?}: {e}"))?;
+    let tmp = base.join(format!("{name}.agent.md.tmp"));
+    let dst = base.join(format!("{name}.agent.md"));
+    std::fs::write(&tmp, content).map_err(|e| format!("write {tmp:?}: {e}"))?;
+    std::fs::rename(&tmp, &dst).map_err(|e| format!("rename {dst:?}: {e}"))
+}
+
+// ---------------------------------------------------------------------------
 // The tailer.
 // ---------------------------------------------------------------------------
 
@@ -881,6 +914,22 @@ mod tests {
         })];
         let rows = subagents_from_events("s1", &started_only);
         assert_eq!(rows[0].status.as_deref(), Some("running"));
+    }
+
+    #[test]
+    fn copilot_specialist_launch_via_translated_custom_agent() {
+        // The generated agent is installed under ~/.copilot/agents (here: a temp
+        // base) with the app prefix; unsafe names are rejected outright.
+        let tmp = tempdir("agents");
+        let base = tmp.0.join("agents");
+        install_agent(&base, "agent-desktop-reviewer", "---\nname: \"r\"\n---\nbody\n")
+            .unwrap();
+        let written =
+            std::fs::read_to_string(base.join("agent-desktop-reviewer.agent.md")).unwrap();
+        assert!(written.ends_with("body\n"));
+        assert!(install_agent(&base, "reviewer", "x").is_err());
+        assert!(install_agent(&base, "agent-desktop-../x", "x").is_err());
+        assert!(install_agent(&base, "agent-desktop-", "x").is_err());
     }
 
     #[test]

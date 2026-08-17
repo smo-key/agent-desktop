@@ -8,10 +8,12 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => '') }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
 
+import { invoke } from '@tauri-apps/api/core';
 import {
   OrchestrationExecutor,
   type ExecutorDeps
 } from './executor.svelte';
+import { setAgentPreference } from '$lib/agent/defaultAgent';
 import type { Specialist } from '../specialists/specialists';
 
 const PROJ = 'proj-1';
@@ -322,6 +324,30 @@ describe('OrchestrationExecutor — spawn_agent (4.2)', () => {
       'Grep'
     ]);
     expect(replies[0].outcome.result).toEqual({ paneId: 'pane-new', specialist: 'reviewer' });
+  });
+
+  it('translates a specialist to a copilot custom agent when the default backend is copilot', async () => {
+    // With the global agent set to copilot, spawn_agent installs the generated
+    // ~/.copilot/agents file (via copilot_install_agent) and launches with
+    // --agent — never claude's --append-system-prompt flags.
+    setAgentPreference('copilot');
+    try {
+      const { deps, replies, launched } = makeDeps({
+        loadSpecialist: async () =>
+          ({ name: 'reviewer', description: 'd', prompt: 'You review.', model: 'gpt-5', tools: ['Read'] }) as Specialist
+      });
+      const ex = new OrchestrationExecutor(deps);
+      await ex.onRequest({ id: 1, op: 'spawn_agent', args: { projectId: PROJ, prompt: 'review', specialist: 'reviewer' } });
+      expect(launched[0].program).toBe('copilot');
+      expect(launched[0].extraArgs).toEqual(['--agent', 'agent-desktop-reviewer']);
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('copilot_install_agent', {
+        name: 'agent-desktop-reviewer',
+        content: expect.stringContaining('You review.')
+      });
+      expect(replies[0].outcome.result).toEqual({ paneId: 'pane-new', specialist: 'reviewer' });
+    } finally {
+      setAgentPreference(null);
+    }
   });
 
   it('errors when the specialist cannot be loaded (no launch)', async () => {

@@ -42,6 +42,11 @@ import { projectForId } from '../projects/projects';
 import { specialists } from '../specialists/specialists.svelte';
 import { parseSpecialist } from '../specialists/specialists';
 import { specialistLaunchArgs } from './launchArgs';
+import {
+  copilotAgentFile,
+  copilotAgentName,
+  copilotSpecialistArgs
+} from '../specialists/copilotAgent';
 import { buildLaunchPlan } from '../launcher/plan';
 import { isAgentProgram } from '$lib/agent/backends';
 import { findCoordinatorPane, type CoordinatorPaneView } from './coordinator';
@@ -262,6 +267,12 @@ export class OrchestrationExecutor {
         ? args.specialist.trim()
         : undefined;
 
+    // Attribute the spawned agent to the project's coordinator (task 6.5) when one
+    // is driving the orchestration, so the roster shows it belongs to the coordinator.
+    const coordinatorPaneId = this.deps.coordinatorFor(projectId) ?? undefined;
+
+    const plan = buildLaunchPlan({ folder: cwdArg, prompt, placement: 'tab', projectId });
+
     let extraArgs: string[] | undefined;
     if (specialistName) {
       let spec: import('../specialists/specialists').Specialist;
@@ -272,14 +283,31 @@ export class OrchestrationExecutor {
           error: `could not load specialist "${specialistName}": ${err instanceof Error ? err.message : String(err)}`
         };
       }
-      extraArgs = specialistLaunchArgs(spec);
+      if (plan.program === 'copilot') {
+        // Copilot path (`agent-specialists` / design S2): translate the
+        // specialist into an app-generated custom agent under
+        // ~/.copilot/agents/ and launch with `--agent <name>`. Persona + model
+        // carry over; Claude tool names do not exist in Copilot's vocabulary,
+        // so tool scoping stays Claude-only (declared narrowing).
+        const agentName = copilotAgentName(spec.name);
+        if (!agentName) {
+          return { error: `specialist name unusable as a copilot agent: "${spec.name}"` };
+        }
+        try {
+          await invoke('copilot_install_agent', {
+            name: agentName,
+            content: copilotAgentFile(spec)
+          });
+        } catch (err) {
+          return {
+            error: `could not install copilot agent for "${specialistName}": ${err instanceof Error ? err.message : String(err)}`
+          };
+        }
+        extraArgs = copilotSpecialistArgs(agentName);
+      } else {
+        extraArgs = specialistLaunchArgs(spec);
+      }
     }
-
-    // Attribute the spawned agent to the project's coordinator (task 6.5) when one
-    // is driving the orchestration, so the roster shows it belongs to the coordinator.
-    const coordinatorPaneId = this.deps.coordinatorFor(projectId) ?? undefined;
-
-    const plan = buildLaunchPlan({ folder: cwdArg, prompt, placement: 'tab', projectId });
     const paneId = this.deps.launch({
       ...plan,
       specialist: specialistName,
