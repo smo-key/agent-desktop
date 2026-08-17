@@ -2,5 +2,5 @@
   "provider": "local",
   "taskRef": "fix-voice-error-recovery",
   "url": "",
-  "lastEvent": "started"
+  "lastEvent": "review"
 }
