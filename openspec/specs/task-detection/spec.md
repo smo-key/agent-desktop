@@ -42,7 +42,7 @@ The system SHALL read the per-pane task for app-launched sessions from the `task
 - **THEN** the pane card renders the model and context bar with no task label and no error
 
 ### Requirement: Direct-Watch Fallback For Foreign Sessions
-The system SHALL provide a fallback that directly watches `~/.claude/tasks/` and `$TMPDIR/claude-ctx-<session_id>.json` to derive task and context for Claude sessions that were not launched by the app and therefore have no app-managed snapshot.
+The system SHALL provide a CLAUDE-BACKEND-SPECIFIC fallback that directly watches `~/.claude/tasks/` and `$TMPDIR/claude-ctx-<session_id>.json` to derive task and context for Claude sessions that were not launched by the app and therefore have no app-managed snapshot. This fallback applies only to the Claude backend; backends without a tasks directory (e.g. Copilot) surface no task badge, and their panes render without a task area rather than with an empty one.
 
 #### Scenario: Foreign session task surfaced
 - **WHEN** a Claude session is running with no corresponding `snapshots/<pane_id>.json` file
@@ -55,6 +55,10 @@ The system SHALL provide a fallback that directly watches `~/.claude/tasks/` and
 #### Scenario: Missing todos directory is not required
 - **WHEN** the system runs on CC 2.1.158 where `~/.claude/todos/` is absent
 - **THEN** task derivation still succeeds using `~/.claude/tasks/` and never depends on `~/.claude/todos/`
+
+#### Scenario: Copilot panes have no task badge
+- **WHEN** a Copilot pane is running
+- **THEN** no task derivation is attempted for it and no task badge or empty task placeholder is rendered
 
 ### Requirement: Derive Live Versus Idle From Snapshot Heartbeat
 The system SHALL classify a session as live or idle by treating the snapshot `ts` (unix timestamp) as a heartbeat, marking the session idle/ended when `ts` is stale.
