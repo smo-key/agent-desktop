@@ -658,7 +658,12 @@
       // shared status/timeline/snapshot pipelines. Best-effort — a failure just
       // means no derived observability for the pane.
       if (program === 'copilot' && sessionId) {
-        void invoke('copilot_watch', { paneId, sessionId }).catch(() => {});
+        // `resume` tells the tailer to SKIP the session's pre-existing history
+        // (already in the durable sink from the prior run) so a restore never
+        // replays — and duplicates — the timeline.
+        void invoke('copilot_watch', { paneId, sessionId, resume: resume === true }).catch(
+          () => {}
+        );
       }
       // PTY wired: arm the readiness hard-cap backstop now. The quiet window only
       // starts once output is seen (handled in the data channel above), so a slow
@@ -763,7 +768,11 @@
         // "working". Record a synthetic turn-end (a no-op unless this pane is actually
         // working) so the row returns to "waiting". The keystroke still flows to the PTY
         // unchanged (return true) so claude performs the interrupt itself.
-        if (e.type === 'keydown' && e.key === 'Escape' && isAgentProgram(program)) {
+        // Claude only: Esc is a VERIFIED interrupt affordance for claude's TUI. It is
+        // not established that Esc cancels a copilot turn, and a wrong synthetic Stop
+        // would bounce a working copilot pane into Needs-you; copilot's status is
+        // corrected by its events tailer instead.
+        if (e.type === 'keydown' && e.key === 'Escape' && program === 'claude') {
           events.markInterrupt(paneId);
         }
         return true;

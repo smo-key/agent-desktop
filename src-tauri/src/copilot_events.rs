@@ -25,7 +25,8 @@
 //! Parsing is VERSION-TOLERANT throughout: unknown event types are skipped,
 //! every field is optional, and a malformed line never fails the batch — the
 //! same posture `task.rs` takes toward Claude Code versions. The tailer reads
-//! only appended bytes (offset per session) and re-reads from 0 on truncation.
+//! only appended bytes (offset per session) and re-reads from 0 when the file
+//! SHRINKS (the CLI's writer is append-only).
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -61,7 +62,7 @@ pub fn session_state_base() -> Option<PathBuf> {
 /// path component (separator/`..` smuggling never escapes the base dir).
 pub fn events_path(base: &Path, session_id: &str) -> Option<PathBuf> {
     if session_id.is_empty()
-        || session_id.contains(['/', '\\'])
+        || session_id.contains(['/', '\\', ':'])
         || session_id == "."
         || session_id == ".."
     {
@@ -239,15 +240,22 @@ impl Translator {
                 Some(ev)
             }
             "tool.execution_start" => {
-                let tool = str_field(d, "toolName")?.to_string();
-                if let Some(id) = str_field(d, "toolCallId") {
-                    self.tool_names.insert(id.to_string(), tool.clone());
-                }
+                let mut tool = str_field(d, "toolName")?.to_string();
                 let args = d.get("arguments");
                 let mut ev = base("PreToolUse");
                 ev.summary = Some(tool_summary(&tool, args));
-                if tool == "ask_user" {
+                // The frontend's status derivation keys pending questions on the
+                // CLAUDE tool name (`AskUserQuestion`) — translate copilot's
+                // `ask_user` so a copilot question reaches the Needs-you lane.
+                // A SUBAGENT-internal ask_user is answered by its parent, never
+                // by the user, so it must NOT surface as a pane question (it
+                // stays a plain tool event for the timeline).
+                if tool == "ask_user" && !is_subagent_context(d) {
                     ev.question = Some(ask_user_question(args));
+                    tool = "AskUserQuestion".to_string();
+                }
+                if let Some(id) = str_field(d, "toolCallId") {
+                    self.tool_names.insert(id.to_string(), tool.clone());
                 }
                 ev.tool_name = Some(tool);
                 Some(ev)
@@ -346,7 +354,9 @@ fn pending_question(events: &[Value]) -> Option<String> {
     for v in events {
         let Some(d) = data(v) else { continue };
         match str_field(v, "type") {
-            Some("tool.execution_start") if str_field(d, "toolName") == Some("ask_user") => {
+            Some("tool.execution_start")
+                if str_field(d, "toolName") == Some("ask_user") && !is_subagent_context(d) =>
+            {
                 let id = str_field(d, "toolCallId").unwrap_or("").to_string();
                 let q = ask_user_question(d.get("arguments"));
                 let text = q["questions"][0]["question"]
@@ -545,6 +555,11 @@ pub fn install_agent(base: &Path, name: &str, content: &str) -> Result<(), Strin
 // The tailer.
 // ---------------------------------------------------------------------------
 
+/// Sentinel offset: "initialize to the file's CURRENT length on the first
+/// drain" — i.e. skip the pre-existing history of a RESUMED session (already in
+/// the durable sink from the prior run) instead of replaying and duplicating it.
+const OFFSET_SKIP_HISTORY: u64 = u64::MAX;
+
 /// One watched copilot pane: its session id, the translator carrying tool-name
 /// state, and the byte offset already consumed from its events file.
 struct WatchedPane {
@@ -553,32 +568,59 @@ struct WatchedPane {
     offset: u64,
 }
 
-/// Shared registry of watched panes, keyed by pane id.
+/// Shared registry of watched panes, keyed by pane id, plus the per-SESSION
+/// consumed offsets remembered across unwatch/re-watch (a same-run pane remount
+/// must not replay events it already delivered).
 #[derive(Default)]
 pub struct CopilotWatchState {
     panes: Mutex<HashMap<String, WatchedPane>>,
+    consumed: Mutex<HashMap<String, u64>>,
+}
+
+/// Lock a mutex, recovering from poisoning: a prior panic on the drain thread
+/// must not permanently wedge the `copilot_watch`/`copilot_unwatch` commands.
+fn lock_recover<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    match m.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    }
 }
 
 impl CopilotWatchState {
-    /// Register (or re-register) a pane→session watch. The offset starts at 0 so
-    /// a resume replays the whole (bounded) log — the ring/sink de-dup by ts is
-    /// not needed because registration happens once per spawn and the durable
-    /// sink is keyed by session id (re-appends are tolerated by the timeline).
-    pub fn watch(&self, pane_id: String, session_id: String) {
-        let mut g = self.panes.lock().unwrap();
+    /// Register (or re-register) a pane→session watch.
+    ///
+    /// Offset rules (the anti-duplication contract):
+    ///  - a session this run has already consumed continues at its remembered
+    ///    offset (same-run remount: no replay);
+    ///  - otherwise a RESUMED session starts at the file's current length
+    ///    ([`OFFSET_SKIP_HISTORY`]) — its history is already in the durable
+    ///    sink from the prior run and is seeded to the frontend via
+    ///    `events_for`, so replaying it would double every timeline entry;
+    ///  - a FRESH session starts at 0 (its file does not exist yet).
+    pub fn watch(&self, pane_id: String, session_id: String, resume: bool) {
+        let offset = {
+            let consumed = lock_recover(&self.consumed);
+            match consumed.get(&session_id) {
+                Some(&off) => off,
+                None if resume => OFFSET_SKIP_HISTORY,
+                None => 0,
+            }
+        };
+        let mut g = lock_recover(&self.panes);
         g.insert(
             pane_id,
             WatchedPane {
                 session_id,
                 translator: Translator::default(),
-                offset: 0,
+                offset,
             },
         );
     }
 
-    /// Drop a pane's watch (pane closed / component destroyed).
+    /// Drop a pane's watch (pane closed / component destroyed). The session's
+    /// consumed offset stays remembered so a re-watch never replays.
     pub fn unwatch(&self, pane_id: &str) {
-        self.panes.lock().unwrap().remove(pane_id);
+        lock_recover(&self.panes).remove(pane_id);
     }
 }
 
@@ -586,6 +628,11 @@ impl CopilotWatchState {
 /// poll fallback. Dropping it stops the thread at the next tick.
 pub struct CopilotTailer {
     _watcher: Option<RecommendedWatcher>,
+    /// Kept alive so the drain thread's `recv_timeout` always has a live
+    /// sender: with all senders dropped (e.g. the notify watcher failed to
+    /// start) it would return `Disconnected` IMMEDIATELY and the poll loop
+    /// would busy-spin instead of sleeping.
+    _tx: std::sync::mpsc::Sender<()>,
     stop: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -605,7 +652,7 @@ fn drain<F: Fn(AgentEvent)>(
     on_event: &F,
 ) -> Vec<(String, String, Option<String>)> {
     let mut snapshots = Vec::new();
-    let mut g = watch.panes.lock().unwrap();
+    let mut g = lock_recover(&watch.panes);
     for (pane_id, wp) in g.iter_mut() {
         let Some(path) = events_path(base, &wp.session_id) else {
             continue;
@@ -614,8 +661,18 @@ fn drain<F: Fn(AgentEvent)>(
             continue;
         };
         let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+        if wp.offset == OFFSET_SKIP_HISTORY {
+            // Resumed session, first sight of its file: consume nothing — the
+            // history is already in the durable sink; only NEW events flow.
+            wp.offset = len;
+            lock_recover(&watch.consumed).insert(wp.session_id.clone(), len);
+            continue;
+        }
         if len < wp.offset {
-            // Truncated/rewritten: start over.
+            // Truncated/rewritten (shrunk): start over. NOTE: a rewrite that
+            // regrows past the old offset within one poll window is not
+            // detectable from length alone; the CLI's writer is append-only,
+            // so this is accepted.
             wp.offset = 0;
         }
         if len == wp.offset {
@@ -635,6 +692,7 @@ fn drain<F: Fn(AgentEvent)>(
             None => continue,
         };
         wp.offset += consumed as u64;
+        lock_recover(&watch.consumed).insert(wp.session_id.clone(), wp.offset);
         let values = parse_jsonl(&buf[..consumed]);
         let mut model: Option<String> = None;
         for v in &values {
@@ -720,8 +778,15 @@ where
     {
         let stop = stop.clone();
         std::thread::spawn(move || loop {
-            // Wake on a fs event or the poll interval, whichever first.
-            let _ = rx.recv_timeout(POLL_INTERVAL);
+            // Wake on a fs event or the poll interval, whichever first. On a
+            // disconnected channel (all senders gone — cannot happen while the
+            // tailer holds `_tx`, but belt-and-braces) SLEEP for the interval
+            // so the loop can never busy-spin.
+            if let Err(std::sync::mpsc::RecvTimeoutError::Disconnected) =
+                rx.recv_timeout(POLL_INTERVAL)
+            {
+                std::thread::sleep(POLL_INTERVAL);
+            }
             if stop.load(std::sync::atomic::Ordering::Relaxed) {
                 return;
             }
@@ -737,6 +802,7 @@ where
 
     CopilotTailer {
         _watcher: watcher,
+        _tx: tx,
         stop,
     }
 }
@@ -846,6 +912,8 @@ mod tests {
         let mut t = Translator::default();
         let ev = t.translate(&start, "p1", "s1").unwrap();
         assert_eq!(ev.hook_event_name, "PreToolUse");
+        // The frontend needs-input derivation keys on the CLAUDE tool name.
+        assert_eq!(ev.tool_name.as_deref(), Some("AskUserQuestion"));
         let q = ev.question.unwrap();
         assert_eq!(q["questions"][0]["question"], "Red or blue?");
         assert_eq!(q["questions"][0]["options"][0]["label"], "red");
@@ -959,6 +1027,89 @@ mod tests {
     }
 
     #[test]
+    fn rewatch_never_replays_consumed_events() {
+        // A same-run pane remount (unwatch + watch, resume or not) continues at
+        // the session's remembered offset — no duplicate ring/sink appends.
+        let tmp = tempdir("rewatch");
+        let base = tmp.0.clone();
+        let sdir = base.join("s1");
+        std::fs::create_dir_all(&sdir).unwrap();
+        let file = sdir.join("events.jsonl");
+        std::fs::write(
+            &file,
+            "{\"type\":\"user.message\",\"timestamp\":\"2026-08-17T22:40:37.000Z\",\"data\":{\"content\":\"hi\"}}\n",
+        )
+        .unwrap();
+
+        let watch = CopilotWatchState::default();
+        watch.watch("p1".into(), "s1".into(), false);
+        let events = EventState::new(tmp.0.join("sink"));
+        let seen = Mutex::new(0usize);
+        drain(&base, &watch, &events, &|_e| *seen.lock().unwrap() += 1);
+        assert_eq!(*seen.lock().unwrap(), 1);
+
+        // Remount: unwatch + re-watch (even with resume:false) must not replay.
+        watch.unwatch("p1");
+        watch.watch("p1".into(), "s1".into(), false);
+        drain(&base, &watch, &events, &|_e| *seen.lock().unwrap() += 1);
+        assert_eq!(*seen.lock().unwrap(), 1, "no replay after re-watch");
+        assert_eq!(events.sink_for("s1").len(), 1, "sink not duplicated");
+    }
+
+    #[test]
+    fn resumed_session_skips_preexisting_history() {
+        // A RESUMED pane (app restart) skips the history already in the durable
+        // sink from the prior run: only events appended AFTER registration flow.
+        let tmp = tempdir("resume");
+        let base = tmp.0.clone();
+        let sdir = base.join("s1");
+        std::fs::create_dir_all(&sdir).unwrap();
+        let file = sdir.join("events.jsonl");
+        std::fs::write(
+            &file,
+            "{\"type\":\"user.message\",\"timestamp\":\"2026-08-17T22:40:37.000Z\",\"data\":{\"content\":\"old\"}}\n",
+        )
+        .unwrap();
+
+        let watch = CopilotWatchState::default();
+        watch.watch("p1".into(), "s1".into(), true);
+        let events = EventState::new(tmp.0.join("sink"));
+        let seen = Mutex::new(Vec::<AgentEvent>::new());
+        drain(&base, &watch, &events, &|e| seen.lock().unwrap().push(e));
+        assert!(seen.lock().unwrap().is_empty(), "history skipped");
+
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().append(true).open(&file).unwrap();
+        f.write_all(b"{\"type\":\"assistant.turn_end\",\"timestamp\":\"2026-08-17T22:40:39.000Z\",\"data\":{}}\n")
+            .unwrap();
+        drop(f);
+        drain(&base, &watch, &events, &|e| seen.lock().unwrap().push(e));
+        let got = seen.lock().unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].hook_event_name, "Stop");
+    }
+
+    #[test]
+    fn subagent_ask_user_never_surfaces_a_pane_question() {
+        // A SUBAGENT-internal ask_user is answered by its parent, never the
+        // user: it must not carry a question payload or read as pending.
+        let nested = serde_json::json!({
+            "type": "tool.execution_start",
+            "timestamp": "2026-08-17T22:41:00.000Z",
+            "data": {
+                "toolCallId": "t-sub", "toolName": "ask_user",
+                "parentToolCallId": "t-parent",
+                "arguments": { "question": "internal?" }
+            }
+        });
+        let mut t = Translator::default();
+        let ev = t.translate(&nested, "p1", "s1").unwrap();
+        assert!(ev.question.is_none());
+        assert_eq!(ev.tool_name.as_deref(), Some("ask_user"));
+        assert!(activity_from_events(&[nested]).question.is_none());
+    }
+
+    #[test]
     fn tailer_drain_reads_only_appended_bytes() {
         let tmp = tempdir("drain");
         let base = tmp.0.clone();
@@ -967,7 +1118,7 @@ mod tests {
         let file = sdir.join("events.jsonl");
 
         let watch = CopilotWatchState::default();
-        watch.watch("p1".into(), "s1".into());
+        watch.watch("p1".into(), "s1".into(), false);
         let events = EventState::new(tmp.0.join("sink"));
         let seen = Mutex::new(Vec::<AgentEvent>::new());
 

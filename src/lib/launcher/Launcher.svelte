@@ -23,6 +23,7 @@
   import Dropdown, { type DropdownOption } from '../ui/Dropdown.svelte';
   import { AGENT_KINDS, backendFor, parseAgentKind, type AgentKind } from '$lib/agent/backends';
   import { defaultAgentKind } from '$lib/agent/defaultAgent';
+  import { agentSettings } from '$lib/settings/agent.svelte';
 
   // --- Local form state (the launcher store holds only open/close) ----------
   // The chosen project id (supplies the launch folder), null until picked/created.
@@ -30,8 +31,12 @@
 
   // Per-session agent choice, seeded from the GLOBAL setting each open
   // (agent-backends: Launcher Agent Selection). Changing it never writes the
-  // global preference.
+  // global preference. `agentTouched` marks an explicit user choice for THIS
+  // open, so a late settings load can no longer clobber it (and, conversely, a
+  // cold start whose settings resolve while the modal is already open still
+  // reseeds an untouched selector to the real default).
   let selectedAgent = $state<AgentKind>(defaultAgentKind());
+  let agentTouched = $state(false);
 
   /** Agent-backend choices for the launcher's agent dropdown. */
   const agentOptions: DropdownOption[] = AGENT_KINDS.map((k) => ({
@@ -50,6 +55,17 @@
     void projects.load();
   });
 
+  // Keep an UNTOUCHED selector in sync with the persisted default: on a cold
+  // start the `agent` settings slice loads asynchronously, and the modal may
+  // already be open (or `selectedAgent` already initialized) with the fallback
+  // value. An explicit user choice (`agentTouched`) always wins.
+  $effect(() => {
+    const kind = agentSettings.prefs.kind;
+    untrack(() => {
+      if (!agentTouched) selectedAgent = kind;
+    });
+  });
+
   // When the modal opens (the open transition only), reset the transient project
   // choice. The write is `untrack`ed so this effect depends ONLY on `launcher.open`
   // (it must not re-run when the user picks a project).
@@ -58,6 +74,7 @@
     untrack(() => {
       selectedProjectId = null;
       selectedAgent = defaultAgentKind();
+      agentTouched = false;
     });
   });
 
@@ -147,7 +164,10 @@
           ariaLabel="Agent for this session"
           options={agentOptions}
           value={selectedAgent}
-          onChange={(v: string) => (selectedAgent = parseAgentKind(v))}
+          onChange={(v: string) => {
+            selectedAgent = parseAgentKind(v);
+            agentTouched = true;
+          }}
         />
       </section>
 

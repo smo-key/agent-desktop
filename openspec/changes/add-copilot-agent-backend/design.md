@@ -219,3 +219,33 @@ always present and authoritative; no fallback marker strings are shipped
 rather than guessing unverified TUI text. (Copilot also emits OSC 9;4
 terminal-progress sequences — `terminalProgress` config — which a future
 change could consume; out of scope here.)
+
+## Adversarial Review Outcome (close-out amendment)
+
+Two independent reviewers examined the implementation diff. All CRITICAL
+findings were fixed with regression tests:
+
+- Copilot `ask_user` now translates to the tool name `AskUserQuestion` so the
+  frontend needs-input derivation surfaces the question (it previously stayed
+  "working" forever); subagent-internal `ask_user` is excluded from pane
+  questions.
+- The tailer no longer replays a session's pre-existing history: consumed
+  offsets are remembered per session across re-watches, and a resumed session
+  starts at the file's current length (the durable sink already holds its
+  history) — eliminating duplicated timelines and unbounded sink growth.
+- The tailer thread keeps a live channel sender and sleeps on disconnect, so a
+  failed notify watch can no longer turn the poll fallback into a busy-spin.
+
+Additional hardening from WARNINGs: poison-recovering mutex locks in the watch
+state; `:` rejected in session-id path components (Windows drive-relative
+defense); the launcher's agent selector re-syncs to the persisted default when
+settings load late (explicit user choice always wins); the Settings install
+probe is generation-guarded against rapid-switch races; Esc-as-interrupt stays
+Claude-only (unverified for Copilot's TUI — its events tailer corrects status
+instead).
+
+Consciously accepted: toolkit `spawn_agent` resolves the backend like any
+launch (global default) per the agent-backends resolution rule; a truncated
+events file that regrows past the old offset within one poll window is
+undetectable by length (the CLI's writer is append-only); copilot subagent rows
+derived from the bounded tail may lack `started_at` for very old rows.

@@ -318,8 +318,9 @@ fn copilot_watch(
     state: State<'_, Arc<copilot_events::CopilotWatchState>>,
     pane_id: String,
     session_id: String,
+    resume: bool,
 ) {
-    state.watch(pane_id, session_id);
+    state.watch(pane_id, session_id, resume);
 }
 
 /// Drop a copilot pane's tail registration (pane closed / component destroyed).

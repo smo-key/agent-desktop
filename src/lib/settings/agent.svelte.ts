@@ -44,6 +44,10 @@ export class AgentStore {
   /** True once `load()` has resolved. */
   loaded = $state(false);
 
+  /** Monotonic probe generation: a stale probe result (rapid kind switches)
+   *  must never overwrite the CURRENT selection's install state. */
+  #probeGen = 0;
+
   /** Load the persisted preference and probe the selected CLI. Never throws. */
   async load(): Promise<void> {
     try {
@@ -71,11 +75,13 @@ export class AgentStore {
    * `installed` at `null` (no hint shown) rather than a false negative.
    */
   private async probeInstalled(): Promise<void> {
+    const gen = ++this.#probeGen;
     try {
       const program = backendFor(this.prefs.kind).program;
-      this.installed = await invoke<boolean>('program_on_path', { program });
+      const found = await invoke<boolean>('program_on_path', { program });
+      if (gen === this.#probeGen) this.installed = found;
     } catch {
-      this.installed = null;
+      if (gen === this.#probeGen) this.installed = null;
     }
   }
 
