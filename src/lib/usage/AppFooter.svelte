@@ -30,6 +30,7 @@
   import BranchPicker from './BranchPicker.svelte';
   import ContextBar from './ContextBar.svelte';
   import { friendlyTime } from '$lib/overview/friendlyTime';
+  import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import { modelLabel, effortLabel } from './modelLabel';
 
@@ -239,6 +240,11 @@
   <div class="zone right">
     <ContextBar pct={view.context} />
     <span class="sep" aria-hidden="true"></span>
+    {#if view.worktree !== null}
+      <span class="pill worktree-pill" use:tooltip={'Git worktree of the focused session'}>
+        <Icon name="git-branch" size={11} />{view.worktree}
+      </span>
+    {/if}
     {#if view.model !== null || view.model_id !== null}
       <span class="pill model-pill" use:tooltip={'Model of the focused session'}>{modelLabel(view.model_id, view.model)}</span>
       {#if effortLabel(view.effort) !== null}
@@ -352,6 +358,16 @@
     background: var(--space-750);
     color: var(--fg-2);
     box-shadow: inset 0 0 0 1px var(--line-subtle);
+  }
+  /* Worktree pill: the linked git worktree the focused session runs in
+     (footer-actions). Sits left of the model pill; icon + name. */
+  .worktree-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .worktree-pill :global(svg) {
+    opacity: 0.8;
   }
   .effort-pill {
     color: var(--fg-3);

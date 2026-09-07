@@ -427,6 +427,11 @@ export interface AgentRow {
    *  Used alongside `model` to derive a versioned human-readable label via
    *  `modelLabel(modelId, model)`. */
   modelId: string | null;
+  /** The linked git worktree the session runs in (snapshot `git.worktree`), or
+   *  null outside a worktree / when unknown. Shown on the row's meta line left of
+   *  the time (agent-roster-display) in the slot the model label used to occupy.
+   *  Optional: `rowFor` always sets it, but roster fixtures may omit it. */
+  worktree?: string | null;
   /** The current in-progress task (`activeForm`), or null. */
   task: string | null;
   /** The agent's last assistant message (high-level "what it just said"), or null. */
@@ -623,6 +628,7 @@ function rowFor(
     cwd: pane.cwd,
     model: snapshot?.model ?? null,
     modelId: snapshot?.model_id ?? null,
+    worktree: snapshot?.git?.worktree || null,
     task: snapshot?.task ?? null,
     summary: activity?.summary ?? null,
     // The pending question is event-sourced (it rides the PreToolUse event); the

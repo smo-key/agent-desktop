@@ -903,3 +903,39 @@ describe('roster — modelId from snapshot', () => {
     expect(row.modelId).toBe('claude-opus-4-8');
   });
 });
+
+// agent-roster-display: "The agent card shows the model, not the cost" (MODIFIED —
+// the meta line's model slot now shows the linked git WORKTREE). `rowFor` sources
+// `worktree` from the snapshot's git status; the DOM placement (left of the time)
+// is confirmed live.
+describe('roster — worktree on the card', () => {
+  it('Card shows the worktree name', () => {
+    const map = mapOf(
+      snap('pane-a', {
+        model: 'Claude Opus 4.8',
+        git: { branch: 'feature-x', dirty: false, worktree: 'feature-x' }
+      })
+    );
+    const rows = buildRoster(map, [ws('ws-1', 'A', [{ paneId: 'pane-a', cwd: '/p' }])], {}, 1000);
+    expect(rows[0].worktree).toBe('feature-x');
+  });
+
+  it('Card omits the worktree slot outside a worktree', () => {
+    const noWorktree = mapOf(snap('pane-a', { git: { branch: 'main', dirty: false, worktree: null } }));
+    expect(
+      buildRoster(noWorktree, [ws('ws-1', 'A', [{ paneId: 'pane-a', cwd: '/p' }])], {}, 1000)[0].worktree
+    ).toBeNull();
+    // Older wrapper payload without the field, an empty name, no git, no snapshot.
+    const legacy = mapOf(snap('pane-b', { git: { branch: 'main', dirty: false } }));
+    expect(
+      buildRoster(legacy, [ws('ws-1', 'A', [{ paneId: 'pane-b', cwd: '/p' }])], {}, 1000)[0].worktree
+    ).toBeNull();
+    const empty = mapOf(snap('pane-c', { git: { branch: 'main', dirty: false, worktree: '' } }));
+    expect(
+      buildRoster(empty, [ws('ws-1', 'A', [{ paneId: 'pane-c', cwd: '/p' }])], {}, 1000)[0].worktree
+    ).toBeNull();
+    expect(
+      buildRoster({}, [ws('ws-1', 'A', [{ paneId: 'pane-d', cwd: '/p' }])], {}, 1000)[0].worktree
+    ).toBeNull();
+  });
+});

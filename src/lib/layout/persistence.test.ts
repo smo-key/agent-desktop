@@ -137,6 +137,31 @@ describe('Serialize Workspace Layout And Session Registry', () => {
     expect(recordedAny.args).toBeUndefined();
     expect(recordedAny.buffer).toBeUndefined();
   });
+
+  // session-launcher: "Launch A Session In A New Git Worktree" — the worktree flag
+  // is launch-time only. A pane whose registry entry carries `launchArgs` (the
+  // `--worktree` flag) serializes WITHOUT them, so the restored pane resumes with
+  // `--resume` alone and never creates a second worktree.
+  it('Worktree flag is not re-applied on restore', () => {
+    const ws = freshWorkspace('p1', ids('n'));
+    const registry = {
+      p1: {
+        program: 'claude',
+        cwd: '/proj',
+        sessionId: 'sess-1',
+        launchArgs: ['--worktree', 'feature-x']
+      }
+    } as unknown as Record<string, { program: string; cwd: string | null }>;
+    const state = serializeState([entry('ws-1', 'S', ws, registry)], 'ws-1');
+    const recorded = state.workspaces[0].registry.p1 as unknown as Record<string, unknown>;
+    expect(recorded.launchArgs).toBeUndefined();
+    expect(Object.keys(recorded).sort()).toEqual(['cwd', 'program', 'sessionId']);
+    // Round-trip: the restored registry entry has no worktree args either.
+    const restored = restoreState(JSON.stringify(state), ids('r'));
+    const back = restored.workspaces[0].registry.p1 as unknown as Record<string, unknown>;
+    expect(back.launchArgs).toBeUndefined();
+    expect(back.resume).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

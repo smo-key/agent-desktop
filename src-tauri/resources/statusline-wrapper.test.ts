@@ -22,7 +22,7 @@
 // is confirmed live in-app (MANUAL) and is asserted here only for the weaker
 // "delegation never crashes the wrapper" property.
 
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -123,6 +123,7 @@ describe('statusline-wrapper snapshot write', () => {
     expect(snap.git).toHaveProperty('modified');
     expect(snap.git).toHaveProperty('ahead');
     expect(snap.git).toHaveProperty('behind');
+    expect(snap.git).toHaveProperty('worktree');
     expect((snap.git as Record<string, unknown>).ahead).toBeNull();
     expect((snap.git as Record<string, unknown>).behind).toBeNull();
     // ts is a unix-SECONDS integer (not ms).
@@ -284,6 +285,77 @@ describe('statusline-wrapper snapshot write', () => {
       expect(readSnapshot().pane_id).toBe(PANE_ID);
     } finally {
       rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+});
+
+// usage-dashboard: "Snapshot git status names the session's worktree". Builds a
+// real throwaway repo with one linked worktree and runs the wrapper with each
+// directory as the workspace dir. Titles are the exact scenario names.
+describe('statusline-wrapper git worktree detection', () => {
+  let repo: string;
+  let linked: string;
+
+  function git(cwd: string, ...args: string[]): string {
+    return execFileSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 't',
+        GIT_AUTHOR_EMAIL: 't@example.com',
+        GIT_COMMITTER_NAME: 't',
+        GIT_COMMITTER_EMAIL: 't@example.com',
+      },
+    }).trim();
+  }
+
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), 'agent-desktop-wt-repo-'));
+    git(repo, 'init', '-q', '-b', 'main');
+    writeFileSync(join(repo, 'README.md'), 'hi\n');
+    git(repo, 'add', 'README.md');
+    git(repo, 'commit', '-q', '-m', 'init');
+    linked = join(repo, '.claude', 'worktrees', 'feature-x');
+    git(repo, 'worktree', 'add', '-q', '-b', 'feature-x', linked);
+  });
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  function payloadIn(dir: string): string {
+    const base = JSON.parse(basePayload()) as Record<string, unknown>;
+    base.workspace = { current_dir: dir, project_dir: dir };
+    return JSON.stringify(base);
+  }
+
+  it('Snapshot names a linked worktree', () => {
+    const res = runWrapper(payloadIn(linked));
+    expect(res.status).toBe(0);
+    const g = readSnapshot().git as Record<string, unknown>;
+    expect(g.worktree).toBe('feature-x');
+    expect(g.branch).toBe('feature-x');
+  });
+
+  it('Snapshot reports no worktree in a main checkout', () => {
+    const res = runWrapper(payloadIn(repo));
+    expect(res.status).toBe(0);
+    const g = readSnapshot().git as Record<string, unknown>;
+    expect(g.worktree).toBeNull();
+    expect(g.branch).toBe('main');
+  });
+
+  it('Snapshot reports no worktree off-repo', () => {
+    const off = mkdtempSync(join(tmpdir(), 'agent-desktop-wt-off-'));
+    try {
+      const res = runWrapper(payloadIn(off));
+      expect(res.status).toBe(0);
+      const g = readSnapshot().git as Record<string, unknown>;
+      expect(g.worktree).toBeNull();
+      expect(g.branch).toBeNull();
+    } finally {
+      rmSync(off, { recursive: true, force: true });
     }
   });
 });

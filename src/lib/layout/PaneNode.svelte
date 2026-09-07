@@ -142,7 +142,7 @@
         <TerminalPane
           paneId={node.paneId}
           program={resolveProgram(session?.program)}
-          args={session?.extraArgs ?? []}
+          args={[...(session?.launchArgs ?? []), ...(session?.extraArgs ?? [])]}
           cwd={session?.cwd ?? null}
           initialInput={session?.initialInput}
           sessionId={session?.sessionId}

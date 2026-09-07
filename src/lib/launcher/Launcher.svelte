@@ -1,9 +1,13 @@
 <script lang="ts">
-  // The session-launcher MODAL (session-launcher spec). Opened from three entry
+  // The session-launcher MODAL (session-launcher spec). Opened from the entry
   // points via the shared `launcher` store (SessionRail "+ new session" row, the
-  // pane context-menu "New Session" item, and the Cmd-N shortcut). It lets the
-  // user:
-  //   1. choose/create a project — its folder is the launch cwd.
+  // pane context-menu "New Session" item, the Cmd-N shortcut, and the
+  // new-worktree-session shortcut, which PRESETS the worktree option). It lets
+  // the user:
+  //   1. choose/create a project — its folder is the launch cwd;
+  //   2. pick the agent backend for this session;
+  //   3. optionally start the session in a NEW git worktree (`claude --worktree
+  //      [name]`, an optional name) — launch-time only, never re-applied on restore.
   // A session always opens as a new tab. On confirm it builds a PURE launch plan
   // (plan.ts, with an empty initial prompt — the agent starts at an idle prompt),
   // hands it to
@@ -24,6 +28,8 @@
   import { AGENT_KINDS, backendFor, parseAgentKind, type AgentKind } from '$lib/agent/backends';
   import { defaultAgentKind } from '$lib/agent/defaultAgent';
   import { agentSettings } from '$lib/settings/agent.svelte';
+  import { supportsWorktree } from './worktreeArgs';
+  import { tick } from 'svelte';
 
   // --- Local form state (the launcher store holds only open/close) ----------
   // The chosen project id (supplies the launch folder), null until picked/created.
@@ -37,6 +43,16 @@
   // reseeds an untouched selector to the real default).
   let selectedAgent = $state<AgentKind>(defaultAgentKind());
   let agentTouched = $state(false);
+
+  // Worktree option (session-launcher: Launch A Session In A New Git Worktree):
+  // checked → `--worktree [name]` on first spawn. Seeded from the store's preset
+  // on open (the ⌘⇧N path pre-checks it); the name is optional.
+  let worktree = $state(false);
+  let worktreeName = $state('');
+  let worktreeNameInput = $state<HTMLInputElement | null>(null);
+
+  // Only backends whose CLI accepts `--worktree` offer the option.
+  const worktreeAvailable = $derived(supportsWorktree(selectedAgent));
 
   /** Agent-backend choices for the launcher's agent dropdown. */
   const agentOptions: DropdownOption[] = AGENT_KINDS.map((k) => ({
@@ -66,15 +82,22 @@
     });
   });
 
-  // When the modal opens (the open transition only), reset the transient project
-  // choice. The write is `untrack`ed so this effect depends ONLY on `launcher.open`
-  // (it must not re-run when the user picks a project).
+  // When the modal opens (the open transition only), seed the transient form
+  // from the store's preset: the preselected project (the roster's filter, when a
+  // shortcut opened us) and the worktree option. The writes are `untrack`ed so
+  // this effect depends ONLY on `launcher.open` (it must not re-run when the user
+  // picks a project). A preset worktree open lands focus on the name field.
   $effect(() => {
     if (!launcher.open) return;
     untrack(() => {
-      selectedProjectId = null;
+      selectedProjectId = launcher.presetProjectId;
       selectedAgent = defaultAgentKind();
       agentTouched = false;
+      worktree = launcher.presetWorktree;
+      worktreeName = '';
+      if (worktree) {
+        void tick().then(() => worktreeNameInput?.focus());
+      }
     });
   });
 
@@ -94,7 +117,8 @@
       prompt: '',
       placement: 'tab',
       projectId: project.id,
-      agent: selectedAgent
+      agent: selectedAgent,
+      worktree: worktree && worktreeAvailable ? { name: worktreeName } : null
     });
 
     // Hand the plan to the store: it creates the tab/split and records the new
@@ -170,6 +194,29 @@
           }}
         />
       </section>
+
+      <!-- Worktree section (session-launcher: Launch A Session In A New Git
+           Worktree). Hidden for backends without a worktree flag. -->
+      {#if worktreeAvailable}
+        <section class="field">
+          <label class="check">
+            <input type="checkbox" bind:checked={worktree} />
+            <span>Start in a new git worktree</span>
+          </label>
+          {#if worktree}
+            <input
+              class="text"
+              type="text"
+              bind:this={worktreeNameInput}
+              bind:value={worktreeName}
+              placeholder="Worktree name (optional)"
+              aria-label="Worktree name"
+              spellcheck="false"
+              autocomplete="off"
+            />
+          {/if}
+        </section>
+      {/if}
 
       <footer class="actions">
         <button class="cancel" onclick={cancel}>Cancel</button>
@@ -253,6 +300,34 @@
     letter-spacing: 0.07em;
     text-transform: uppercase;
     color: var(--fg-3);
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--fg-1);
+    cursor: pointer;
+  }
+  .check input {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--blue-500);
+    cursor: pointer;
+  }
+  .text {
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--line-default);
+    border-radius: var(--r-sm);
+    background: var(--space-650);
+    color: var(--fg-1);
+    font-family: var(--font-sans);
+    font-size: 13px;
+  }
+  .text:focus {
+    outline: none;
+    border-color: var(--accent);
   }
   .actions {
     display: flex;

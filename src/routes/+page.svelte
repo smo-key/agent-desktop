@@ -27,7 +27,7 @@
   import { initVoiceActivation } from '$lib/voice/activation';
   import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
-  import { startNewSession } from '$lib/launcher/newSession';
+  import { startNewSession, startNewWorktreeSession } from '$lib/launcher/newSession';
   import { shortcuts } from '$lib/settings/shortcuts.svelte';
   import { workspace } from '$lib/layout/workspace.svelte';
   import { insertFilenameInto, focusedTerminalHandle } from '$lib/layout/insertFilename';
@@ -725,6 +725,14 @@
     if (shortcuts.matches(e, 'newSession')) {
       e.preventDefault();
       startNewSession();
+      return;
+    }
+
+    // newWorktreeSession (⌘⇧N) opens the launcher with "Start in a new git
+    // worktree" preset (+ the filtered project preselected) so a name can be typed.
+    if (shortcuts.matches(e, 'newWorktreeSession')) {
+      e.preventDefault();
+      startNewWorktreeSession();
       return;
     }
 

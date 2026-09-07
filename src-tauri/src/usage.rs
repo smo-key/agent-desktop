@@ -57,6 +57,11 @@ pub struct GitStatus {
     /// `null` when there is no upstream.
     #[serde(default)]
     pub behind: Option<i64>,
+    /// The linked git worktree's name when the workspace dir is inside one (its
+    /// `git-dir` differs from its `git-common-dir`), else `null` / absent
+    /// (older wrapper schema, main checkout, or off-repo).
+    #[serde(default)]
+    pub worktree: Option<String>,
 }
 
 /// A per-pane usage snapshot, mirroring the JSON the statusline wrapper writes.

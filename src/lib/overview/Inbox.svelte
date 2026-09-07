@@ -82,7 +82,6 @@
   import StatusBar from '$lib/usage/StatusBar.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import { friendlyTime } from './friendlyTime';
-  import { rowModelLabel } from './inbox';
   import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
   import TasksLauncher from '$lib/tasks/TasksLauncher.svelte';
   // import SpecialistsPanel from '$lib/specialists/SpecialistsPanel.svelte'; // temporarily hidden
@@ -1110,9 +1109,11 @@
               {ctxLabel(r.contextPct)}
             </span>
           {/if}
-          <span class="m" use:tooltip={'Model'}>
-            <Icon name="cpu" size={11} />{rowModelLabel(r)}
-          </span>
+          {#if r.worktree}
+            <span class="m" use:tooltip={'Git worktree this session runs in'}>
+              <Icon name="git-branch" size={11} />{r.worktree}
+            </span>
+          {/if}
           <span class="m" use:tooltip={'Time since last activity'}>
             <Icon name="clock" size={11} />{friendlyTime(r.lastTs, nowMs)}
           </span>

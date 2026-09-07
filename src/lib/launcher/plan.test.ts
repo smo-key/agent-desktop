@@ -177,3 +177,46 @@ describe('buildLaunchPlan — agent backend resolution (agent-backends)', () => 
     ).toBe('claude');
   });
 });
+
+// Worktree launch (session-launcher: "Launch A Session In A New Git Worktree").
+// The `it(...)` titles are the EXACT scenario names so the coverage gate maps
+// them here; the live launcher checkbox + spawn are confirmed in-app.
+describe('buildLaunchPlan — Launch A Session In A New Git Worktree', () => {
+  afterEach(() => setAgentPreference('claude'));
+
+  it('Worktree launch passes the worktree flag', () => {
+    const plan = buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'claude', worktree: {} });
+    expect(plan.launchArgs).toEqual(['--worktree']);
+    // A blank name is the same as no name.
+    expect(
+      buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'claude', worktree: { name: '   ' } })
+        .launchArgs
+    ).toEqual(['--worktree']);
+    // No worktree option → no launch args at all.
+    expect(buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'claude' }).launchArgs).toEqual([]);
+    expect(
+      buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'claude', worktree: null }).launchArgs
+    ).toEqual([]);
+  });
+
+  it('Worktree launch with a name passes the name', () => {
+    const plan = buildLaunchPlan({
+      folder: '/p',
+      placement: 'tab',
+      agent: 'claude',
+      worktree: { name: ' feature-x ' }
+    });
+    expect(plan.launchArgs).toEqual(['--worktree', 'feature-x']);
+  });
+
+  it('Worktree option is ignored for backends without worktree support', () => {
+    const plan = buildLaunchPlan({
+      folder: '/p',
+      placement: 'tab',
+      agent: 'copilot',
+      worktree: { name: 'feature-x' }
+    });
+    expect(plan.program).toBe('copilot');
+    expect(plan.launchArgs).toEqual([]);
+  });
+});

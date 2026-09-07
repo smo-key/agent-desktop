@@ -124,6 +124,15 @@ export interface PaneSession {
    * keeps its persona across a restart. Absent for panes spawned without a specialist.
    */
   extraArgs?: string[];
+  /**
+   * OPTIONAL LAUNCH-TIME-ONLY agent CLI args — today the worktree flag
+   * (`--worktree [name]`, session-launcher). Like `initialInput` it is NOT
+   * persisted (the serializer re-projects only the durable fields), so a restored
+   * pane resumes WITHOUT it and can never create a second worktree. Passed to
+   * `TerminalPane` ahead of `extraArgs`. Absent for every pane except one freshly
+   * launched with the option.
+   */
+  launchArgs?: string[];
 }
 
 /** A fresh APP-MINTED session id for an agent pane (claude or copilot — both
@@ -202,7 +211,8 @@ function makeEntry(
   initialInput?: string,
   projectId?: string,
   specialist?: string,
-  extraArgs?: string[]
+  extraArgs?: string[],
+  launchArgs?: string[]
 ): WorkspaceEntry {
   return {
     id: nextWorkspaceId(),
@@ -216,6 +226,7 @@ function makeEntry(
         projectId,
         specialist,
         extraArgs,
+        launchArgs,
         sessionId: agentSessionId(program)
       }
     }
@@ -336,7 +347,8 @@ export class WorkspaceStore {
     initialInput?: string,
     projectId?: string,
     specialist?: string,
-    extraArgs?: string[]
+    extraArgs?: string[],
+    launchArgs?: string[]
   ): string {
     const name = this.nextSessionName();
     const entry = makeEntry(
@@ -347,7 +359,8 @@ export class WorkspaceStore {
       initialInput,
       projectId,
       specialist,
-      extraArgs
+      extraArgs,
+      launchArgs
     );
     this.workspaces = [...this.workspaces, entry];
     this.activeWorkspaceId = entry.id;
@@ -407,7 +420,8 @@ export class WorkspaceStore {
     initialInput?: string,
     projectId?: string,
     specialist?: string,
-    extraArgs?: string[]
+    extraArgs?: string[],
+    launchArgs?: string[]
   ): string {
     const entry = this.requireActive();
     const id = nextPaneId();
@@ -420,6 +434,7 @@ export class WorkspaceStore {
         projectId,
         specialist,
         extraArgs,
+        launchArgs,
         sessionId: agentSessionId(program)
       }
     };
@@ -473,7 +488,8 @@ export class WorkspaceStore {
     where: SplitWhere = 'after',
     projectId?: string,
     specialist?: string,
-    extraArgs?: string[]
+    extraArgs?: string[],
+    launchArgs?: string[]
   ): string | null {
     const entry = this.active;
     if (!entry) return null;
@@ -484,7 +500,8 @@ export class WorkspaceStore {
       initialInput,
       projectId,
       specialist,
-      extraArgs
+      extraArgs,
+      launchArgs
     );
 
     const root = splitLeaf(
@@ -530,6 +547,8 @@ export class WorkspaceStore {
     specialist?: string;
     /** OPTIONAL extra agent CLI args (specialist persona/model/tool flags). */
     extraArgs?: string[];
+    /** OPTIONAL launch-time-only CLI args (the worktree flag); never persisted. */
+    launchArgs?: string[];
   }): string {
     const {
       program,
@@ -539,6 +558,8 @@ export class WorkspaceStore {
       specialist,
       extraArgs
     } = plan;
+    // Normalize: an empty list is the same as none (keeps the registry entry clean).
+    const launchArgs = plan.launchArgs && plan.launchArgs.length > 0 ? plan.launchArgs : undefined;
     // A split needs a focused leaf in the active workspace; otherwise open a tab.
     const canSplit = this.focusedPaneId !== null;
     const placement =
@@ -551,7 +572,8 @@ export class WorkspaceStore {
         initialInput,
         projectId,
         specialist,
-        extraArgs
+        extraArgs,
+        launchArgs
       );
       const id = this.focusedPaneId ?? '';
       this.lastLaunchedId = id || null;
@@ -567,7 +589,8 @@ export class WorkspaceStore {
       'after',
       projectId,
       specialist,
-      extraArgs
+      extraArgs,
+      launchArgs
     );
     this.lastLaunchedId = newPaneId ?? null;
     return newPaneId ?? '';

@@ -39,6 +39,13 @@ export interface GitStatus {
    * list (a clean tree, or git couldn't answer).
    */
   files?: string[] | null;
+  /**
+   * The linked git WORKTREE the session runs in — the basename of its per-worktree
+   * git dir — or `null`/absent for a main checkout, off-repo, or a payload that
+   * predates the field. Emitted by the statusline wrapper (usage-dashboard) and
+   * shown on the roster row's meta line and the footer's worktree pill.
+   */
+  worktree?: string | null;
 }
 
 /**

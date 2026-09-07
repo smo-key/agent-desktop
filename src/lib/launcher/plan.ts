@@ -11,6 +11,7 @@
 
 import { parseAgentKind, type AgentKind } from '$lib/agent/backends';
 import { defaultAgentKind } from '$lib/agent/defaultAgent';
+import { supportsWorktree, worktreeLaunchArgs } from './worktreeArgs';
 
 /** Where the launched session is placed relative to the current layout. */
 export type Placement = 'tab' | 'split-right' | 'split-down';
@@ -36,6 +37,12 @@ export interface LaunchRequest {
    * setting (`defaultAgentKind()`); an unknown value normalizes to claude.
    */
   agent?: AgentKind | null;
+  /**
+   * OPTIONAL: start the session in a NEW git worktree (`claude --worktree [name]`).
+   * `name` is the optional worktree name (blank → claude picks one). Ignored for
+   * backends whose CLI has no worktree flag.
+   */
+  worktree?: { name?: string | null } | null;
 }
 
 /**
@@ -64,6 +71,13 @@ export interface LaunchPlan {
    * the pane's registry entry; never inferred.
    */
   projectId: string | undefined;
+  /**
+   * LAUNCH-TIME-ONLY CLI args applied on the pane's FIRST spawn and never again —
+   * today the worktree flag (`--worktree [name]`). Empty when nothing applies.
+   * Recorded on the pane as `launchArgs` (not persisted), so a restored pane
+   * resumes without them.
+   */
+  launchArgs: string[];
 }
 
 /** Whether a placement splits the focused pane (vs. opening a fresh tab). */
@@ -120,11 +134,17 @@ export function buildLaunchPlan(
   // global setting. Unknown/blank values normalize to the safe default.
   const program: AgentKind = req.agent ? parseAgentKind(req.agent) : defaultAgentKind();
 
+  // Worktree launch: only for a backend whose CLI accepts `--worktree`; the
+  // option is otherwise dropped (no unknown flag reaches the other CLI).
+  const launchArgs =
+    req.worktree && supportsWorktree(program) ? worktreeLaunchArgs(req.worktree.name) : [];
+
   return {
     program,
     cwd,
     placement,
     initialInput,
-    projectId
+    projectId,
+    launchArgs
   };
 }
