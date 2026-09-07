@@ -17,6 +17,8 @@
 // parameters that are NOT part of the topology (program + cwd). Persistence
 // (task 4.x) serializes exactly `{ workspaces: [...], activeWorkspaceId }`.
 
+import { defaultShell } from '$lib/shell/defaultShell';
+import { isAgentProgram, type AgentKind } from '$lib/agent/backends';
 import {
   freshWorkspace,
   splitLeaf,
@@ -122,28 +124,13 @@ export interface PaneSession {
    * keeps its persona across a restart. Absent for panes spawned without a specialist.
    */
   extraArgs?: string[];
-  /**
-   * OPTIONAL role marker. `'coordinator'` marks the per-project COORDINATOR pane —
-   * a single `claude` session launched with the orchestration MCP toolkit + the
-   * orchestrator system prompt, so it can spawn/coordinate specialists and existing
-   * project sessions (task 6.x). PERSISTED so the coordinator is re-identified after
-   * navigation / restart (a project keeps at most one). Absent for ordinary agents.
-   */
-  role?: 'coordinator';
-  /**
-   * OPTIONAL paneId of the COORDINATOR that spawned/drives this agent (task 6.5):
-   * set on a pane spawned via the orchestration toolkit when the spawning project
-   * has a live coordinator, so the roster/overview can attribute the agent to its
-   * coordinator's orchestration. PERSISTED so the attribution survives a restart.
-   * Absent for user-started agents and coordinator panes themselves.
-   */
-  coordinatorPaneId?: string;
 }
 
-/** A fresh Claude session id for a `claude` pane (so the app owns it and can find
- *  the agent's exact transcript), else `undefined` for non-claude panes. */
-function claudeSessionId(program: string): string | undefined {
-  return program === 'claude' ? crypto.randomUUID() : undefined;
+/** A fresh APP-MINTED session id for an agent pane (claude or copilot — both
+ *  CLIs accept `--session-id <uuid>`, so the app owns the id and can locate the
+ *  session's transcript / event log), else `undefined` for shell panes. */
+function agentSessionId(program: string): string | undefined {
+  return isAgentProgram(program) ? crypto.randomUUID() : undefined;
 }
 
 /**
@@ -162,13 +149,18 @@ export interface WorkspaceEntry {
   registry: Record<string, PaneSession>;
 }
 
-/** The login shell for new (split) panes: honor $SHELL, else /bin/zsh. */
+/**
+ * The program for new (split) panes: the user's preference when set, else the
+ * platform default the backend resolved (`shell-selection`).
+ *
+ * This used to read `process.env.SHELL` and fall back to a hardcoded `/bin/zsh`.
+ * That was doubly wrong in the webview: `process` is normally undefined there, so
+ * it almost always took the `/bin/zsh` branch — which on Windows spawns a pane
+ * that dies instantly. `$SHELL` is now consulted in Rust, where it actually
+ * exists.
+ */
 function loginShell(): string {
-  // import.meta.env is statically replaced; process may be undefined in the
-  // webview, so read defensively. SHELL is the user's interactive shell.
-  const fromEnv =
-    typeof process !== 'undefined' && process.env && process.env.SHELL;
-  return fromEnv || '/bin/zsh';
+  return defaultShell();
 }
 
 /** A monotonic, process-local id factory for fresh paneIds. */
@@ -210,9 +202,7 @@ function makeEntry(
   initialInput?: string,
   projectId?: string,
   specialist?: string,
-  extraArgs?: string[],
-  role?: 'coordinator',
-  coordinatorPaneId?: string
+  extraArgs?: string[]
 ): WorkspaceEntry {
   return {
     id: nextWorkspaceId(),
@@ -226,9 +216,7 @@ function makeEntry(
         projectId,
         specialist,
         extraArgs,
-        role,
-        coordinatorPaneId,
-        sessionId: claudeSessionId(program)
+        sessionId: agentSessionId(program)
       }
     }
   };
@@ -348,9 +336,7 @@ export class WorkspaceStore {
     initialInput?: string,
     projectId?: string,
     specialist?: string,
-    extraArgs?: string[],
-    role?: 'coordinator',
-    coordinatorPaneId?: string
+    extraArgs?: string[]
   ): string {
     const name = this.nextSessionName();
     const entry = makeEntry(
@@ -361,9 +347,7 @@ export class WorkspaceStore {
       initialInput,
       projectId,
       specialist,
-      extraArgs,
-      role,
-      coordinatorPaneId
+      extraArgs
     );
     this.workspaces = [...this.workspaces, entry];
     this.activeWorkspaceId = entry.id;
@@ -423,9 +407,7 @@ export class WorkspaceStore {
     initialInput?: string,
     projectId?: string,
     specialist?: string,
-    extraArgs?: string[],
-    role?: 'coordinator',
-    coordinatorPaneId?: string
+    extraArgs?: string[]
   ): string {
     const entry = this.requireActive();
     const id = nextPaneId();
@@ -438,9 +420,7 @@ export class WorkspaceStore {
         projectId,
         specialist,
         extraArgs,
-        role,
-        coordinatorPaneId,
-        sessionId: claudeSessionId(program)
+        sessionId: agentSessionId(program)
       }
     };
     return id;
@@ -493,9 +473,7 @@ export class WorkspaceStore {
     where: SplitWhere = 'after',
     projectId?: string,
     specialist?: string,
-    extraArgs?: string[],
-    role?: 'coordinator',
-    coordinatorPaneId?: string
+    extraArgs?: string[]
   ): string | null {
     const entry = this.active;
     if (!entry) return null;
@@ -506,9 +484,7 @@ export class WorkspaceStore {
       initialInput,
       projectId,
       specialist,
-      extraArgs,
-      role,
-      coordinatorPaneId
+      extraArgs
     );
 
     const root = splitLeaf(
@@ -545,20 +521,15 @@ export class WorkspaceStore {
    * pane's mount spawn it. Returns the new pane's `paneId`.
    */
   launch(plan: {
-    program: 'claude';
+    program: AgentKind;
     cwd: string;
     placement: 'tab' | 'split-right' | 'split-down';
     initialInput?: string;
     projectId?: string;
     /** OPTIONAL specialist name this pane is spawned AS (orchestration spawn_agent). */
     specialist?: string;
-    /** OPTIONAL extra claude CLI args (specialist persona/model/tool flags, OR the
-     *  coordinator's `--append-system-prompt` + `--mcp-config`). */
+    /** OPTIONAL extra agent CLI args (specialist persona/model/tool flags). */
     extraArgs?: string[];
-    /** OPTIONAL role marker — `'coordinator'` for the per-project coordinator pane. */
-    role?: 'coordinator';
-    /** OPTIONAL paneId of the coordinator that spawned this agent (task 6.5). */
-    coordinatorPaneId?: string;
   }): string {
     const {
       program,
@@ -566,9 +537,7 @@ export class WorkspaceStore {
       initialInput,
       projectId,
       specialist,
-      extraArgs,
-      role,
-      coordinatorPaneId
+      extraArgs
     } = plan;
     // A split needs a focused leaf in the active workspace; otherwise open a tab.
     const canSplit = this.focusedPaneId !== null;
@@ -582,9 +551,7 @@ export class WorkspaceStore {
         initialInput,
         projectId,
         specialist,
-        extraArgs,
-        role,
-        coordinatorPaneId
+        extraArgs
       );
       const id = this.focusedPaneId ?? '';
       this.lastLaunchedId = id || null;
@@ -600,9 +567,7 @@ export class WorkspaceStore {
       'after',
       projectId,
       specialist,
-      extraArgs,
-      role,
-      coordinatorPaneId
+      extraArgs
     );
     this.lastLaunchedId = newPaneId ?? null;
     return newPaneId ?? '';
@@ -829,7 +794,7 @@ export class WorkspaceStore {
       if (!leafByPaneId(entry.ws.root, paneId)) continue;
       const cur = entry.registry[paneId];
       if (!cur) return;
-      const resume = cur.program === 'claude' && !!cur.sessionId;
+      const resume = isAgentProgram(cur.program) && !!cur.sessionId;
       entry.registry = { ...entry.registry, [paneId]: { ...cur, closed: false, resume } };
       return;
     }
@@ -850,7 +815,7 @@ export class WorkspaceStore {
       if (!cur) return;
       // Only a claude pane with a session id can resume a transcript; otherwise leave
       // it archived (the caller falls back to a plain select).
-      if (cur.program !== 'claude' || !cur.sessionId) return;
+      if (!isAgentProgram(cur.program) || !cur.sessionId) return;
       // Re-preview must NOT reset an already-established baseline (the auto-preview
       // effect re-runs on every focus tick): only seed `previewCount` when absent.
       const previewCount = cur.preview ? (cur.previewCount ?? userMsgCount) : userMsgCount;

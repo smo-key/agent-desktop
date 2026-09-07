@@ -21,6 +21,7 @@
   import { insertFilenameInto } from './insertFilename';
   import { leavesInOrder, type Node } from './tree';
   import { launcher } from '$lib/launcher/launcherStore.svelte';
+  import { resolveProgram } from '$lib/shell/defaultShell';
 
   let {
     node,
@@ -135,7 +136,7 @@
       {:else}
         <TerminalPane
           paneId={node.paneId}
-          program={session?.program ?? '/bin/zsh'}
+          program={resolveProgram(session?.program)}
           args={session?.extraArgs ?? []}
           cwd={session?.cwd ?? null}
           initialInput={session?.initialInput}

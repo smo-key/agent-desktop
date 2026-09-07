@@ -10,6 +10,7 @@
   import { footerView, footerGitProjectId } from './footerView';
   import { terminalLeftFraction } from './footerGeometry';
   import { workspace } from '$lib/layout/workspace.svelte';
+  import { isAgentProgram } from '$lib/agent/backends';
   import { projects } from '$lib/projects/projects.svelte';
   import { projectForId } from '$lib/projects/projects';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
@@ -191,7 +192,7 @@
     const reg = entry.registry;
     return terminalLeftFraction(
       entry.ws.root,
-      (pid) => reg[pid]?.program !== undefined && reg[pid].program !== 'claude'
+      (pid) => reg[pid]?.program !== undefined && !isAgentProgram(reg[pid].program)
     );
   });
 

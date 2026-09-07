@@ -1,6 +1,10 @@
 {
   "name": "agent-desktop",
+<<<<<<< HEAD
   "version": "0.2.5",
+=======
+  "version": "0.3.1",
+>>>>>>> 3e39033eb62d81dd32d750655dddf931e4d43793
   "private": true,
   "type": "module",
   "scripts": {

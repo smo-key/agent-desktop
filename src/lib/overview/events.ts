@@ -56,11 +56,10 @@ export interface EventActivity {
   /** Whether this session has begun its FIRST turn — true once a `UserPromptSubmit`
    *  has ever been observed (the user typed, or an escalation was injected). A session
    *  with NONE is sitting at the freshly-launched prompt awaiting its first instruction.
-   *  The roster reads this for the coordinator: a never-prompted coordinator is shown
-   *  `waiting` (awaiting you), not the default `working` suppression. Absent ≡ false.
+   *  Retained as a general "has this session ever started a turn" signal. Absent ≡ false.
    *  NOTE: deriving this from the bounded ring ALONE is unsafe — a single long turn can
    *  emit >`EVENT_RING_CAP` events and EVICT the original `UserPromptSubmit`, which would
-   *  wrongly flip a busy coordinator back to `waiting`. `EventStore` therefore keeps a
+   *  wrongly report a busy session as never-prompted. `EventStore` therefore keeps a
    *  durable per-pane latch and passes it as `stickyEverPrompted` to `deriveEventActivity`
    *  (see `events.svelte.ts` + `impliesEverPrompted`), so the signal survives eviction. */
   everPrompted?: boolean;
@@ -152,9 +151,8 @@ export function deriveEventActivity(
   }
 
   // Has this session ever started a turn? A `UserPromptSubmit` fires whenever a prompt
-  // is submitted — typed by the user OR injected (e.g. an escalation to a coordinator).
-  // Until one arrives the session is idle at the freshly-launched prompt (see the
-  // coordinator handling in `roster.ts`). `stickyEverPrompted` is the store's durable
+  // is submitted — typed by the user OR injected. Until one arrives the session is
+  // idle at the freshly-launched prompt. `stickyEverPrompted` is the store's durable
   // latch (events.svelte.ts): it survives the original prompt aging out of the bounded
   // ring during a long turn, so we OR it in rather than trusting the ring contents alone.
   const everPrompted =

@@ -30,6 +30,29 @@ later launch, independent of whether the required model files are present.
 - **WHEN** the app starts and every required model file is already on disk
 - **THEN** no onboarding gate is shown and the workspace loads directly
 
+### Requirement: The gate keeps the window movable via the titlebar
+
+The onboarding gate SHALL keep the app's titlebar visible and draggable the whole
+time it is shown, including for the entire duration of the one-time model download,
+so the window can always be moved (e.g. dragged to another monitor). The gate SHALL
+render below the titlebar rather than covering it. While the gate is shown the
+titlebar SHALL hide its right-side controls (settings, terminals, help, and the
+update pill) — which act on a workspace that is not yet ready — while keeping its
+drag region; the controls SHALL return once the gate is dismissed.
+
+#### Scenario: Window stays draggable via the titlebar during the download
+
+- **WHEN** the onboarding gate is shown (before, during, or after the model
+  download)
+- **THEN** the app titlebar remains visible above the gate and dragging it moves
+  the window
+
+#### Scenario: Titlebar hides its controls while the gate is shown
+
+- **WHEN** the onboarding gate is shown
+- **THEN** the titlebar's right-side controls (settings, terminals, help, update
+  pill) are not shown, and they return once the gate is dismissed
+
 ### Requirement: Download from the gate with live progress
 
 The gate SHALL offer a primary action to download the required models, driving the

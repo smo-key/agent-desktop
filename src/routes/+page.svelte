@@ -15,6 +15,9 @@
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { shellSettings } from '$lib/settings/shell.svelte';
+  import { agentSettings } from '$lib/settings/agent.svelte';
+  import { isAgentProgram } from '$lib/agent/backends';
   import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
   import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
@@ -27,6 +30,7 @@
   import { startNewSession } from '$lib/launcher/newSession';
   import { workspace } from '$lib/layout/workspace.svelte';
   import { insertFilenameInto, focusedTerminalHandle } from '$lib/layout/insertFilename';
+  import { initFileDrop } from '$lib/layout/fileDrop';
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
   import { restorePersistedLayout, watchAndPersist } from '$lib/layout/store-backend.svelte';
   import { snapshots } from '$lib/usage/snapshots.svelte';
@@ -75,7 +79,6 @@
   import { focusRequest } from '$lib/overview/focusRequest.svelte';
   import { listen } from '@tauri-apps/api/event';
   import { runtimeMap } from '$lib/overview/runtime';
-  import { coordinatorNeedsInput } from '$lib/orchestration/coordinatorNeedsInput.svelte';
   import { windowFocus } from '$lib/overview/windowFocus.svelte';
   import { focusAgent } from '$lib/overview/focusAgent.svelte';
   import { alerts } from '$lib/overview/alerts.svelte';
@@ -120,6 +123,15 @@
     void autoAdvance.load();
     // Load the compact-mode preference (opt-in; defaults OFF / full three-line rows).
     void compactMode.load();
+    // Resolve the platform default shell from the backend and load the user's
+    // shell preference. The layout restore below AWAITS this: until it resolves,
+    // `defaultShell()` still reports the Unix default, and restoring a Windows
+    // layout against it would rewrite every saved `pwsh` to `/bin/zsh` — spawning
+    // dead panes AND persisting the mangled value back over the good one.
+    const shellReady = shellSettings.load();
+    // Load the agent-backend preference (Claude / Copilot for new sessions) and
+    // probe whether the selected CLI is installed (agent-backends).
+    void agentSettings.load();
     // Load the subagents-visibility preference (defaults ON / subagents shown).
     void subagentsVisible.load();
     // Load the needs-input alert channel modes (opt-in; both default OFF / silent).
@@ -218,7 +230,9 @@
       })
       .catch(() => {});
     let stopWatching: (() => void) | undefined;
-    void restorePersistedLayout().then(() => {
+    // Gated on `shellReady` (never rejects) so pane programs resolve against the
+    // real platform default rather than the pre-hydration placeholder.
+    void shellReady.then(restorePersistedLayout).then(() => {
       restored = true;
       // Seed restored agents' titles from the durable cache synchronously, so the
       // cards render their real titles immediately rather than flashing their
@@ -263,7 +277,7 @@
     });
 
     // Start the ORCHESTRATION EXECUTOR: subscribe to `orchestration://request`
-    // (the Rust control socket round-trips a coordinator's toolkit ops here) and
+    // (the Rust control socket round-trips the MCP toolkit's ops here) and
     // perform each op against the pane/launcher/activity stores, replying via the
     // `orchestration_reply` command. Mirrors the other listeners' lifecycle.
     let unlistenExecutor: (() => void) | undefined;
@@ -300,6 +314,14 @@
       unlistenNotifyClick = un;
     });
 
+    // Drag-drop OS files onto a session (terminal-file-drop): native drag-drop
+    // hands us real paths + the cursor position; images paste as inline images,
+    // other files insert as quoted paths, drops elsewhere are inert.
+    let unlistenFileDrop: (() => void) | undefined;
+    void initFileDrop().then((un) => {
+      unlistenFileDrop = un;
+    });
+
     return () => {
       stopUpdatePolling();
       stopWatching?.();
@@ -310,6 +332,7 @@
       unlistenTermClose?.();
       unlistenVoice?.();
       unlistenNotifyClick?.();
+      unlistenFileDrop?.();
       events.onEvent = undefined;
     };
   });
@@ -317,7 +340,10 @@
   // The app's app-pane session refs ({sessionId, cwd}), joining each snapshot's
   // Claude session id with its pane cwd from the workspace registry (pure helper).
   function currentSessionRefs(): SessionRef[] {
-    return appSessionRefs(snapshots.byPane, (paneId) => workspace.session(paneId).cwd);
+    return appSessionRefs(snapshots.byPane, (paneId) => {
+      const sess = workspace.session(paneId);
+      return { cwd: sess.cwd, program: sess.program };
+    });
   }
 
   // The app's claude panes as {paneId, sessionId, cwd} — the input to the
@@ -328,8 +354,8 @@
     const refs: PaneRef[] = [];
     for (const ws of workspace.workspaces) {
       for (const [paneId, sess] of Object.entries(ws.registry)) {
-        if (sess.program === 'claude' && sess.sessionId) {
-          refs.push({ paneId, sessionId: sess.sessionId, cwd: sess.cwd });
+        if (isAgentProgram(sess.program) && sess.sessionId) {
+          refs.push({ paneId, sessionId: sess.sessionId, cwd: sess.cwd, program: sess.program });
         }
       }
     }
@@ -397,7 +423,7 @@
   //
   // This effect owns ONLY the recurring interval, and reads no rune synchronously,
   // so it mounts ONCE — unlike the local status poll above, an immediate re-fetch
-  // on every `projects.list` reassignment (coordinator start, drag-reorder, edit,
+  // on every `projects.list` reassignment (drag-reorder, edit,
   // reload) would be an off-schedule network fetch storm. The interval re-reads the
   // live list each tick, so a newly added project is picked up within one cycle (and
   // its LOCAL branch/status already shows at once via the fast 4s poll). The INITIAL
@@ -467,8 +493,7 @@
       alertNowMs,
       activity.bySession,
       undefined,
-      events.activityMap(),
-      new Set(Object.keys(coordinatorNeedsInput.all()))
+      events.activityMap()
     ).map((r) => {
       // Enrich the row for its desktop notification: the TITLE reads
       // "<Project Name>: <Agent Title>". The Agent Title is the GENERATED session
@@ -476,23 +501,14 @@
       // workspace/cwd `name` — so it reads "Fix login dialog" rather than the bare
       // "Session N". The Project Name is the agent's owning project's display name
       // (dropped when it has none). `notificationTitle`/`Body` read `name`/
-      // `projectName`; the focus/coordinator logic keys on `paneId`, so both
-      // overrides are alert-display only.
+      // `projectName`; the focus logic keys on `paneId`, so both overrides are
+      // alert-display only.
       const title = titles.titleFor(r.paneId);
       const proj = projectForId(projects.list, r.projectId);
       const projectName = proj ? projectLabel(proj) : null;
       return { ...r, name: title ?? r.name, projectName };
     })
   );
-  // Clear a coordinator's explicit needs-input flag once it resumes (status back to
-  // `working`). This mirror of the Inbox effect must ALSO run here on the always-
-  // mounted route, otherwise the flag would never clear while the user is in grid view
-  // (Inbox unmounted), pinning a coordinator in attention. Idempotent with the Inbox's.
-  $effect(() => {
-    for (const r of alertRows) {
-      if (r.role === 'coordinator') coordinatorNeedsInput.clearOnWorking(r.paneId, r.status);
-    }
-  });
   // The agent the user is "viewing": the focused grid PANE in grid view (focusedPaneId,
   // not the leaf id), else the inbox focus agent — used by the `agent-unfocused` mode.
   const viewedPaneId = $derived(view.isGrid ? workspace.focusedPaneId : focusAgent.paneId);
@@ -830,6 +846,11 @@
       <span class="title">Agent Mission Control</span>
     </div>
     <div class="tb-right" data-tauri-drag-region>
+      <!-- During the first-launch onboarding gate keep the titlebar (logo + drag
+           region) but hide these controls — they act on a workspace that isn't set
+           up yet. The empty cell still balances the centered title and stays a drag
+           region, so the window remains movable while the gate is up. -->
+      {#if !onboarding.visible}
       <!-- Opt back into pointer events (the bar is a drag region) so the buttons are
            clickable. Gear opens Settings; "?" opens the shortcuts modal (⌘/ and ?). -->
       <!-- Update pill (desktop-auto-update spec): leftmost of the right-side
@@ -907,6 +928,7 @@
         <Icon name="settings" size={14} />
       </button>
       <button class="help-btn" aria-label="Keyboard shortcuts" use:tooltip={{ text: 'Keyboard shortcuts (⌘/)', placement: 'bottom' }} onclick={() => help.show()}>?</button>
+      {/if}
     </div>
   </header>
 
@@ -1003,7 +1025,12 @@
 <HelpModal />
 <SettingsModal />
 <ConfirmModal />
-<VoicePanel />
+<!-- Voice input (the bottom-center mic FAB + the dictation panel) sits above the
+     onboarding gate's z-index, so hide it entirely while the first-launch gate is
+     up: the models it needs aren't downloaded yet and the takeover owns the screen. -->
+{#if !onboarding.visible}
+  <VoicePanel />
+{/if}
 <!-- First-launch model download gate: a full-screen takeover shown only while the
      on-device models the current voice selection needs are missing (and not skipped
      this session). Rendered last so it overlays the workspace. -->
@@ -1030,8 +1057,8 @@
     display: flex;
     align-items: center;
     gap: 9px;
-    height: 40px;
-    flex: 0 0 40px;
+    height: var(--titlebar-h);
+    flex: 0 0 var(--titlebar-h);
     padding: 0 14px 0 80px;
     background: var(--space-900);
     border-bottom: 1px solid var(--line-subtle);

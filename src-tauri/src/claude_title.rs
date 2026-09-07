@@ -17,6 +17,7 @@
 use std::process::Stdio;
 use std::time::Duration;
 
+use crate::no_window::NoConsoleWindow;
 use crate::polish::TITLE_SYSTEM_PROMPT;
 
 /// The Claude model alias for the cloud title fallback. `haiku` resolves to the
@@ -62,7 +63,8 @@ pub fn claude_title_args(model: &str) -> Vec<String> {
 /// so `claude` is found when launched from Finder with a stripped environment.
 fn seed_claude_env(cmd: &mut tokio::process::Command) {
     cmd.env("PATH", crate::shell_path::resolved_path());
-    if let Ok(home) = std::env::var("HOME") {
+    let home = crate::shell_path::home_dir();
+    if !home.is_empty() {
         cmd.env("HOME", home);
     }
 }
@@ -82,6 +84,7 @@ pub async fn claude_title(messages: &str) -> Result<String, String> {
 
     let args = claude_title_args(CLAUDE_TITLE_MODEL);
     let mut cmd = tokio::process::Command::new("claude");
+    cmd.no_console_window();
     cmd.args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

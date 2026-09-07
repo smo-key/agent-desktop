@@ -13,7 +13,8 @@
 //! command is a no-op (the frontend keeps using the plugin send path there).
 
 /// Event emitted to the frontend when a needs-input notification is clicked.
-/// Payload: `{ paneId }`.
+/// Payload: `{ paneId }`. macOS-only, like the send path that emits it.
+#[cfg(target_os = "macos")]
 const ACTIVATED_EVENT: &str = "agent-notification-activated";
 
 /// Payload for [`ACTIVATED_EVENT`]: the paneId of the agent whose notification

@@ -1,6 +1,9 @@
 # Superpowers brainstorm/visual-companion artifacts (local only)
 .superpowers/
 
+# Impeccable live-mode session journal (local durable state, not source)
+.impeccable/live/sessions/
+
 # OS
 .DS_Store
 

@@ -29,17 +29,6 @@ export interface Project {
   /** Optional logo image as a downscaled PNG data URL; renders instead of the
    *  icon glyph. Additive + optional — absent for projects created before logos. */
   logo?: string;
-  /**
-   * OPTIONAL paneId of this project's COORDINATOR pane (task 6.1). A project has at
-   * most one coordinator: a single `claude` session launched with the orchestration
-   * toolkit + orchestrator prompt. Recorded so the "Start coordinator" affordance
-   * can reuse/focus the existing coordinator instead of launching a second, and
-   * re-identify it after navigation. Additive + optional — absent until a coordinator
-   * is started. The AUTHORITATIVE re-identification is the pane's persisted
-   * `role:'coordinator'` marker (layout.json); this is a convenience back-reference,
-   * reconciled against the live panes (a stale id whose pane is gone is ignored).
-   */
-  coordinatorPaneId?: string;
 }
 
 /** The CREATE/EDIT form's draft: the project record fields, minus the id. */
@@ -239,8 +228,9 @@ function normalize(arr: ReadonlyArray<unknown>): Project[] {
     // Legacy cleanup: the removed auto-worktree feature once stored `autoWorktree`
     // on the record; strip any leftover value so it never round-trips back.
     delete (clean as unknown as Record<string, unknown>).autoWorktree;
-    if (typeof clean.coordinatorPaneId !== 'string' || clean.coordinatorPaneId === '')
-      delete clean.coordinatorPaneId; // additive optional back-reference
+    // Legacy coordinator back-reference: the feature is removed; strip any
+    // persisted value so it never round-trips back.
+    delete (clean as unknown as Record<string, unknown>).coordinatorPaneId;
     out.push(clean);
   }
   return out;

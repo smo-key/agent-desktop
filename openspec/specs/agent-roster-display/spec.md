@@ -3,38 +3,6 @@
 ## Purpose
 TBD - created by archiving change agent-session-ux-improvements. Update Purpose after archive.
 ## Requirements
-### Requirement: Coordinated agents show an icon-only badge
-
-An agent card for an agent spawned by the project coordinator SHALL display a
-single icon badge with NO text label. The icon SHALL be `compass` (NOT a branch
-icon) so the badge does not imply a git branch. Hovering the badge SHALL show the
-tooltip "Spawned by the project coordinator".
-
-#### Scenario: Coordinated agent shows an icon, not a text label
-- **WHEN** the roster renders an agent that was spawned by the coordinator
-- **THEN** its card shows a single `compass` icon badge with no "coordinated" text
-
-#### Scenario: Tooltip is preserved on hover
-- **WHEN** the user hovers the coordinated agent's badge
-- **THEN** the tooltip "Spawned by the project coordinator" is shown
-
-#### Scenario: The badge does not imply branching
-- **WHEN** the coordinated badge is rendered
-- **THEN** it uses the `compass` icon and never the `git-branch` (branching) icon
-
-### Requirement: Archived coordinator is labeled
-
-WHEN a coordinator session is archived (closed), its roster row SHALL display a
-badge with the `bot` icon and the text "Coordinator".
-
-#### Scenario: Archived coordinator shows the bot label
-- **WHEN** a coordinator session is archived and appears in the archived lane
-- **THEN** its row shows a badge with the `bot` icon and the text "Coordinator"
-
-#### Scenario: A live coordinator is unaffected
-- **WHEN** the coordinator is live (not archived)
-- **THEN** its existing role presentation is unchanged (no archived "Coordinator" label is added)
-
 ### Requirement: The status line always shows the last message or question
 
 The agent-card status sub-line SHALL show, in priority order: the agent's pending
@@ -108,9 +76,9 @@ discard it.
 
 The Needs-you and Paused buckets SHALL be manually reorderable by dragging a row
 onto another row in the SAME bucket, moving the dragged agent to the drop target's
-slot. The pinned coordinator row SHALL NOT be draggable. The manual order for these
-two buckets SHALL persist across restarts (keyed by pane id); the In-flight and
-Archived buckets are most-recently-added-first only (not hand-reorderable).
+slot. The manual order for these two buckets SHALL persist across restarts (keyed
+by pane id); the In-flight and Archived buckets are most-recently-added-first only
+(not hand-reorderable).
 
 As a consequence, the Needs-you queue is ordered newest-first; the auto-advance and
 queue-step behavior is unchanged (it follows the queue order — top is "next").
@@ -161,7 +129,7 @@ rows SHALL render all three lines as before.
 
 ### Requirement: Keyboard navigation reveals the selected session
 
-When keyboard navigation changes the selected session, the system SHALL scroll the selected row into view within the session list when it is not already fully visible, so the selection never moves out of sight. A selection that is already fully visible SHALL NOT be scrolled. The reveal SHALL apply to the selected row in any lane and to the pinned-coordinator / start-affordance slot when it is the selection.
+When keyboard navigation changes the selected session, the system SHALL scroll the selected row into view within the session list when it is not already fully visible, so the selection never moves out of sight. A selection that is already fully visible SHALL NOT be scrolled. The reveal SHALL apply to the selected row in any lane.
 
 #### Scenario: Stepping to an off-screen session scrolls it into view
 - **WHEN** the user steps the session selection with the keyboard to an agent whose row is below or above the visible portion of the list

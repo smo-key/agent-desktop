@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-15T00:00:00Z",
+  "title": "Design System: Agent Desktop",
+  "extensions": {
+    "colorMeta": {
+      "blue-500": {
+        "role": "primary",
+        "displayName": "NASA Blue",
+        "canonical": "#3d7bff",
+        "tonalRamp": ["#0b3d91", "#1e49b4", "#2c63e6", "#3d7bff", "#5e92ff", "#8fb4ff", "#bbd2ff", "#e2ecff"]
+      },
+      "orange-500": {
+        "role": "secondary",
+        "displayName": "Claude Clay-Orange",
+        "canonical": "#ee7e4d",
+        "tonalRamp": ["#7a3017", "#b44e2b", "#d9663a", "#ee7e4d", "#ff9a63", "#ffb78c", "#ffd2b3", "#ffe7d6"]
+      },
+      "space-850": {
+        "role": "neutral",
+        "displayName": "Deep Space",
+        "canonical": "#0d1017",
+        "tonalRamp": ["#06080c", "#090c12", "#0d1017", "#11151e", "#161b26", "#1c222f", "#232a39", "#2c3445"]
+      },
+      "fg-1": {
+        "role": "neutral",
+        "displayName": "Instrument White",
+        "canonical": "#eef1f6",
+        "tonalRamp": ["#515b71", "#7b8499", "#b2baca", "#eef1f6"]
+      },
+      "nominal-500": {
+        "role": "tertiary",
+        "displayName": "Nominal Green",
+        "canonical": "#3ccb7f",
+        "tonalRamp": ["#0f3d28", "#1c6a45", "#2ba066", "#3ccb7f", "#6fe0a6", "#a6eecb"]
+      },
+      "caution-500": {
+        "role": "tertiary",
+        "displayName": "Caution Amber",
+        "canonical": "#f0b341",
+        "tonalRamp": ["#5c3f0c", "#946618", "#cc8f28", "#f0b341", "#f7cd7e", "#fce3b5"]
+      },
+      "abort-500": {
+        "role": "tertiary",
+        "displayName": "Abort Red",
+        "canonical": "#f2564b",
+        "tonalRamp": ["#5e1611", "#94251d", "#cc3a30", "#f2564b", "#ff8077", "#ffb3ad"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Page and hero headings — Space Grotesk 600, tight tracking." },
+      "headline": { "displayName": "Headline", "purpose": "Page titles and the control-room header." },
+      "title": { "displayName": "Title", "purpose": "Lane headings, card names, modal titles." },
+      "body": { "displayName": "Body", "purpose": "All UI text and reading — Hanken Grotesk, 14px base." },
+      "label": { "displayName": "Mono Label", "purpose": "UPPERCASE letter-spaced metadata — IDs, status, paths, counts." }
+    },
+    "shadows": [
+      { "name": "shadow-sm", "value": "0 1px 2px rgba(0,0,0,0.4)", "purpose": "Faintest lift; small poppers." },
+      { "name": "shadow-md", "value": "0 4px 14px rgba(0,0,0,0.45)", "purpose": "Dropdowns and context menus." },
+      { "name": "shadow-lg", "value": "0 14px 38px rgba(0,0,0,0.55)", "purpose": "Modals / launch dialog." },
+      { "name": "shadow-pop", "value": "0 10px 34px rgba(0,0,0,0.62)", "purpose": "Project select menu." },
+      { "name": "glow-blue", "value": "0 0 0 1px rgba(61,123,255,0.45), 0 0 22px rgba(61,123,255,0.28)", "purpose": "Focus / active state." },
+      { "name": "glow-orange", "value": "0 0 0 1px rgba(238,126,77,0.42), 0 0 22px rgba(238,126,77,0.24)", "purpose": "An agent needs you." },
+      { "name": "glow-nominal", "value": "0 0 0 1px rgba(60,203,127,0.4), 0 0 18px rgba(60,203,127,0.22)", "purpose": "Healthy pulse." },
+      { "name": "focus-ring", "value": "0 0 0 3px rgba(61,123,255,0.38)", "purpose": "Visible focus halo on inputs and keyboard focus." }
+    ],
+    "motion": [
+      { "name": "dur-fast", "value": "120ms", "purpose": "Hover/press state changes on controls." },
+      { "name": "dur-base", "value": "200ms", "purpose": "Modal fade and rise, default transitions." },
+      { "name": "dur-slow", "value": "360ms", "purpose": "Progress-bar fills and longer slides." },
+      { "name": "ease-out", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Default easing — quick out, gentle settle. No bounce." },
+      { "name": "ease-in-out", "value": "cubic-bezier(0.65, 0, 0.35, 1)", "purpose": "Symmetric transitions." }
+    ],
+    "breakpoints": [
+      { "name": "agrid-collapse", "value": "840px", "purpose": "Two-up agent grid collapses to a single column." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one primary action per surface — launch, confirm, send.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Launch mission</button>",
+      "css": ".ds-btn { font-family: var(--font-sans); font-weight: 600; font-size: 13px; line-height: 1; border-radius: var(--r-md); padding: 9px 16px; border: 1px solid transparent; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; transition: background var(--dur-fast), border-color var(--dur-fast), transform var(--dur-fast); } .ds-btn:active { transform: translateY(1px); } .ds-btn-primary { background: var(--blue-500); color: #fff; box-shadow: 0 1px 0 rgba(255,255,255,.12) inset; } .ds-btn-primary:hover { background: var(--blue-600); } .ds-btn-primary:focus-visible { outline: none; box-shadow: var(--focus-ring); }"
+    },
+    {
+      "name": "Energy Button",
+      "kind": "button",
+      "refersTo": "button-energy",
+      "description": "The approve / 'needs you' moment. Clay-orange, used sparingly.",
+      "html": "<button class=\"ds-btn ds-btn-energy\">Approve &amp; continue</button>",
+      "css": ".ds-btn-energy { font-family: var(--font-sans); font-weight: 600; font-size: 13px; line-height: 1; border-radius: var(--r-md); padding: 9px 16px; border: 1px solid transparent; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; background: var(--orange-500); color: var(--fg-on-accent); transition: background var(--dur-fast), transform var(--dur-fast); } .ds-btn-energy:hover { background: var(--orange-600); } .ds-btn-energy:active { transform: translateY(1px); } .ds-btn-energy:focus-visible { outline: none; box-shadow: var(--glow-orange); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary, low-emphasis action — a hairline border, fills faintly on hover.",
+      "html": "<button class=\"ds-btn ds-btn-ghost\">Details</button>",
+      "css": ".ds-btn-ghost { font-family: var(--font-sans); font-weight: 600; font-size: 13px; line-height: 1; border-radius: var(--r-md); padding: 9px 16px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; background: transparent; color: var(--fg-2); border: 1px solid var(--line-default); transition: background var(--dur-fast), color var(--dur-fast); } .ds-btn-ghost:hover { background: rgba(255,255,255,.05); color: var(--fg-1); } .ds-btn-ghost:focus-visible { outline: none; box-shadow: var(--focus-ring); }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A labeled field — mono UPPERCASE label above, translucent fill, blue focus ring.",
+      "html": "<div class=\"ds-field\"><label class=\"ds-field-label\">Mission objective</label><input class=\"ds-input\" placeholder=\"What should the agent do?\" /></div>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 7px; } .ds-field-label { font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--fg-3); } .ds-input { font-family: var(--font-sans); font-size: 13.5px; color: var(--fg-1); background: rgba(56,65,85,.35); border: 1px solid var(--line-default); border-radius: var(--r-md); padding: 11px 13px; outline: none; width: 100%; transition: border-color var(--dur-fast), box-shadow var(--dur-fast); } .ds-input::placeholder { color: var(--fg-4); } .ds-input:focus { border-color: var(--blue-500); box-shadow: var(--focus-ring); }"
+    },
+    {
+      "name": "Agent Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A raised surface representing one agent's mission — name, callsign, task, mono telemetry footer. State shown by inset line/glow, not a color flood.",
+      "html": "<article class=\"ds-card\"><div class=\"ds-card-top\"><span class=\"ds-dot ds-dot-active\"></span><div class=\"ds-card-who\"><span class=\"ds-card-nm\">Orbiter</span><span class=\"ds-card-id\">AC-204</span></div><span class=\"ds-badge ds-badge-active\"><span class=\"ds-dot ds-dot-active\"></span>In flight</span></div><p class=\"ds-card-task\">Refactoring the <b>auth module</b>. Nothing needs you right now.</p><div class=\"ds-card-foot\"><span>main</span><span>4m 12s</span></div></article>",
+      "css": ".ds-card { background: var(--space-750); border: 1px solid var(--line-subtle); border-radius: var(--r-lg); padding: 16px 17px; display: flex; flex-direction: column; gap: 12px; box-shadow: inset 0 0 0 1px rgba(61,123,255,.16); transition: border-color var(--dur-fast), background var(--dur-fast); } .ds-card:hover { border-color: var(--line-default); background: var(--space-700); } .ds-card-top { display: flex; align-items: center; gap: 11px; } .ds-card-who { display: flex; flex-direction: column; gap: 2px; } .ds-card-nm { font-weight: 600; font-size: 14px; color: var(--fg-1); line-height: 1.1; } .ds-card-id { font-family: var(--font-mono); font-size: 10px; color: var(--fg-3); letter-spacing: .04em; } .ds-card-task { font-size: 13px; color: var(--fg-2); line-height: 1.45; margin: 0; } .ds-card-task b { color: var(--fg-1); font-weight: 600; } .ds-card-foot { display: flex; align-items: center; gap: 13px; font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-3); font-variant-numeric: tabular-nums; margin-left: auto; }"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "A mono UPPERCASE pill on a status tint, leading a status dot. Color is always paired with a word.",
+      "html": "<span class=\"ds-badge ds-badge-review\"><span class=\"ds-dot ds-dot-review\"></span>Awaiting review</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 10px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; padding: 4px 9px; border-radius: var(--r-full); white-space: nowrap; } .ds-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; } .ds-badge-active { background: var(--blue-tint); color: var(--blue-300); } .ds-dot-active { background: var(--blue-500); } .ds-badge-review { background: var(--orange-tint); color: var(--orange-300); } .ds-dot-review { background: var(--orange-500); } .ds-badge-nominal { background: var(--nominal-tint); color: #6fe0a6; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Mission Control Room",
+    "overview": "Agent Desktop looks like trustworthy instrumentation in a dimly-lit operations room. Surfaces are near-black with a faint cool tint, and depth is built almost entirely from surface lightness plus hairline borders, not from heavy shadow. The operator is supervising six agents at once across hours-long sessions; the interface stays quiet so the one thing that needs attention can speak with a single warm accent. The system rejects the generic SaaS dashboard, glassmorphism as a theme, and the neon-on-dark hacker-terminal cosplay. The aerospace metaphor is seasoning, never costume.",
+    "keyCharacteristics": [
+      "Deep-space dark theme; near-black #0d1017 app background with a cool tint.",
+      "Depth from tonal layering + hairlines, not drop shadows.",
+      "Blue is structure; clay-orange is 'needs you' and appears rarely.",
+      "Three type roles — geometric display, humanist body, mono telemetry.",
+      "Mono UPPERCASE micro-labels are a brand signature.",
+      "Motion and glow are reserved for state, never ornament."
+    ],
+    "rules": [
+      { "name": "The Signal-Flare Rule", "body": "Clay-orange covers a tiny fraction of any screen and only ever means 'this needs you' or 'this is live.' Its rarity is the point.", "section": "colors" },
+      { "name": "The Derive-Don't-Invent Rule", "body": "When a new hue is needed, derive it in OKLCH from the existing ramps with a readability floor on dark surfaces. Never hand-pick a new hex.", "section": "colors" },
+      { "name": "The Mono-Label Rule", "body": "Short metadata — section headers, status, callsigns, paths, counts — is set in JetBrains Mono, UPPERCASE, letter-spaced. Everywhere else is sentence case.", "section": "typography" },
+      { "name": "The Sentence-Case Rule", "body": "Buttons, menus, and headers are sentence case ('Launch mission', never 'Launch Mission'). The mono label is the only exception.", "section": "typography" },
+      { "name": "The Flat-At-Rest Rule", "body": "Surfaces are flat at rest; elevation comes from a lighter tonal step and a hairline. A drop shadow is a response to floating; a glow is a response to state. Never decoration.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do reference the tokens in src/lib/styles/tokens.css for every color, space, radius, and duration.",
+      "Do build depth from tonal surface steps and hairlines.",
+      "Do keep clay-orange to a tiny fraction of the screen, meaning only 'needs you' or 'live'.",
+      "Do set labels, IDs, paths, timestamps, and numbers in JetBrains Mono, UPPERCASE and letter-spaced for labels, tabular-nums for numbers.",
+      "Do show every status with an icon/label/shape alongside its color, and keep body text at WCAG AA contrast on its surface.",
+      "Do make focus always visible with --focus-ring, and provide a reduced-motion path: drop the pulses, show end-states."
+    ],
+    "donts": [
+      "Don't build a generic SaaS dashboard — no hero-metric template, no identical icon-card grids, no gradient washes.",
+      "Don't use glassmorphism as a theme; blur is for sticky bars and modal scrims only.",
+      "Don't drift toward neon-on-dark 'hacker terminal' — the deep-space theme is calm and inviting.",
+      "Don't flood a card with status color; express state with a 1px inset line, a glow, or a tint, plus a badge.",
+      "Don't put a drop shadow on a resting surface, use pill radii outside dots/avatars/toggles, or use border-left/right >1px as a colored accent stripe.",
+      "Don't invent a new hex; derive new hues in OKLCH from the existing ramps.",
+      "Don't title-case buttons, use emoji in product UI, or write fake aerospace countdowns."
+    ]
+  }
+}

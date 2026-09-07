@@ -41,7 +41,7 @@ describe('sessionRefs — app pane session refs', () => {
       'pane-a': '/Users/me/proj-a',
       'pane-b': '/Users/me/proj-b'
     };
-    const refs = appSessionRefs(map, (paneId) => cwds[paneId] ?? null);
+    const refs = appSessionRefs(map, (paneId) => ({ cwd: cwds[paneId] ?? null }));
     expect(refs).toEqual([
       { sessionId: 'sess-1', cwd: '/Users/me/proj-a' },
       { sessionId: 'sess-2', cwd: '/Users/me/proj-b' }
@@ -57,12 +57,26 @@ describe('sessionRefs — app pane session refs', () => {
       'pane-a': '/Users/me/first',
       'pane-z': '/Users/me/second'
     };
-    const refs = appSessionRefs(map, (paneId) => cwds[paneId] ?? null);
+    const refs = appSessionRefs(map, (paneId) => ({ cwd: cwds[paneId] ?? null }));
     // Sorted-pane-id order means pane-a is encountered first.
     expect(refs).toEqual([{ sessionId: 'sess-x', cwd: '/Users/me/first' }]);
   });
 
   it('an empty map yields no refs', () => {
     expect(appSessionRefs({}, () => null)).toEqual([]);
+  });
+});
+
+describe('sessionRefs — backend program carried per session (agent-backends)', () => {
+  it('a copilot pane session ref carries its program', () => {
+    const map = mapOf(snap('pane-a', { session_id: 'sess-cop' }));
+    const refs = appSessionRefs(map, () => ({ cwd: '/p', program: 'copilot' }));
+    expect(refs).toEqual([{ sessionId: 'sess-cop', cwd: '/p', program: 'copilot' }]);
+  });
+
+  it('claude sessions carry their program too (registry-driven, no special case)', () => {
+    const map = mapOf(snap('pane-a', { session_id: 'sess-c' }));
+    const refs = appSessionRefs(map, () => ({ cwd: '/p', program: 'claude' }));
+    expect(refs).toEqual([{ sessionId: 'sess-c', cwd: '/p', program: 'claude' }]);
   });
 });

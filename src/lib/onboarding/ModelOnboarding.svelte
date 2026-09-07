@@ -28,6 +28,14 @@
   const busy = $derived(starting || modelDownload.active);
   const error = $derived(modelDownload.error);
 
+  // Bytes received so far, summed across every in-flight model, for a concrete
+  // "X / Y" readout beside the percentage. Denominator is the known expected total
+  // (`list.totalBytes`) so it stays stable even before the first progress event
+  // populates per-model totals. Zero until streaming begins (the "Preparing…" window).
+  const received = $derived(
+    Object.values(modelDownload.perModel).reduce((n, m) => n + (m?.received ?? 0), 0),
+  );
+
   /** Download the required models, then re-check presence so a complete set hides
    *  the gate. `ensureModels` never throws (it records failures into the store), so
    *  this is safe to await; the re-check leaves the gate up on a partial/failed run.
@@ -53,12 +61,22 @@
   }
 </script>
 
+<!-- The gate takes over the BODY area only — it is offset from the top by the
+     titlebar height (see `.onboarding` below) so the app's persistent titlebar
+     stays visible above it. That titlebar is the window-drag region, so the
+     window remains movable (e.g. across monitors) for the whole gate, including
+     the one-time download; the gate itself needs no drag region. -->
 <div class="onboarding" role="dialog" aria-modal="true" aria-label="Set up on-device models">
   <div class="card">
-    <h1 class="title">Agent Desktop</h1>
-    <p class="subtitle">On-device voice &amp; smart titles need a one-time model download.</p>
+    <img class="logomark" src="/logomark.svg" alt="" aria-hidden="true" width="40" height="40" />
+    <p class="kicker">One-time setup</p>
+    <h1 class="title">Set up on-device models</h1>
+    <p class="subtitle">
+      Voice dictation and smart titles run entirely on your device — nothing leaves your
+      machine. They need a one-time model download to get started.
+    </p>
 
-    {#if list.rows.length > 0}
+    {#if list.rows.length > 0 && !busy}
       <ul class="models" aria-label="Models to download">
         {#each list.rows as row (row.filename)}
           <li class="model">
@@ -67,25 +85,38 @@
           </li>
         {/each}
       </ul>
-      <p class="total">Total to download: <strong>{formatBytes(list.totalBytes)}</strong></p>
+      <p class="total"><span>Total download</span><strong>{formatBytes(list.totalBytes)}</strong></p>
     {/if}
 
     {#if busy}
       <!-- Active download: a determinate strip driven by the shared progress store.
            Also covers the brief pre-stream window (`starting`) so the button can't be
-           re-triggered before progress begins. -->
+           re-triggered before progress begins. The byte readout makes a slow or
+           stalled connection legible — a bare percent looks identical whether it is
+           moving or wedged. -->
       <div class="progress" aria-live="polite">
         <div class="prog-row">
-          <span>Downloading…</span>
+          <span>{starting && received === 0 ? 'Preparing…' : 'Downloading…'}</span>
           <span class="prog-pct">{modelDownload.percent}%</span>
         </div>
         <div class="prog-track">
-          <div class="prog-fill" style:width={`${modelDownload.percent}%`}></div>
+          <div class="prog-fill" style:transform={`scaleX(${modelDownload.percent / 100})`}></div>
         </div>
+        {#if list.totalBytes > 0}
+          <p class="prog-bytes">{formatBytes(received)} / {formatBytes(list.totalBytes)}</p>
+        {/if}
       </div>
     {:else}
       {#if error}
-        <p class="error" role="alert">{error}</p>
+        <p class="error" role="alert">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+            <path d="M12 9v4" />
+            <path d="M12 17h.01" />
+          </svg>
+          <span>{error}</span>
+        </p>
       {/if}
       <div class="actions">
         <!-- Focus the primary CTA on open so Enter starts the (Retry) download. -->
@@ -94,20 +125,25 @@
         </button>
         <button type="button" class="secondary" onclick={skip}>Skip for now</button>
       </div>
+      <p class="hint">
+        You can do this later from Settings, or it happens automatically the first time you
+        use voice.
+      </p>
     {/if}
   </div>
 </div>
 
 <style>
-  /* Opaque full-window takeover above everything else. */
+  /* Opaque takeover of the body area. Offset from the top by the titlebar height
+     so the app's persistent, draggable titlebar stays visible above the gate. */
   .onboarding {
     position: fixed;
-    inset: 0;
+    inset: var(--titlebar-h, 40px) 0 0 0;
     z-index: 1000;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    padding: var(--s-6);
     background: var(--space-950);
     color: var(--fg-1);
     font-family: var(--font-sans);
@@ -117,84 +153,128 @@
     width: 100%;
     max-width: 420px;
     background: var(--bg-surface);
-    border: 1px solid var(--space-650);
-    border-radius: 14px;
+    border: 1px solid var(--line-subtle);
+    border-radius: var(--r-lg);
     box-shadow: var(--shadow-lg);
-    padding: 28px 28px 24px;
+    padding: var(--s-8) var(--s-8) var(--s-6);
     text-align: center;
+  }
+
+  .logomark {
+    display: block;
+    width: 40px;
+    height: 40px;
+    margin: 0 auto var(--s-4);
+  }
+
+  /* Mono micro-label — the app's signature "instrumented" voice (DESIGN.md). */
+  .kicker {
+    margin: 0 0 var(--s-2);
+    font-family: var(--font-mono);
+    font-size: var(--t-caption);
+    letter-spacing: var(--tracking-label);
+    text-transform: uppercase;
+    color: var(--fg-3);
   }
 
   .title {
     margin: 0;
     font-family: var(--font-display);
-    font-size: 22px;
+    font-size: var(--t-h2);
     font-weight: 600;
-    letter-spacing: 0.01em;
+    line-height: var(--lh-tight);
+    letter-spacing: var(--tracking-tight);
+    text-wrap: balance;
   }
 
   .subtitle {
-    margin: 8px 0 20px;
-    font-size: 13.5px;
-    line-height: 1.5;
-    color: var(--fg-3);
+    margin: var(--s-2) 0 var(--s-5);
+    font-size: var(--t-body-s);
+    line-height: var(--lh-normal);
+    color: var(--fg-2);
+    text-wrap: pretty;
   }
 
   .models {
     list-style: none;
-    margin: 0 0 14px;
+    margin: 0;
     padding: 0;
-    border-top: 1px solid var(--space-700);
+    border-top: 1px solid var(--line-subtle);
+    text-align: left;
   }
 
   .model {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 11px 4px;
-    border-bottom: 1px solid var(--space-700);
-    font-size: 13.5px;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-1);
+    border-bottom: 1px solid var(--line-subtle);
+    font-size: var(--t-body-s);
   }
 
   .model-label {
     color: var(--fg-2);
   }
 
+  /* Numerics are mono + tabular — the brand's telemetry signature. */
   .model-size {
     color: var(--fg-3);
+    font-family: var(--font-mono);
+    font-size: var(--t-label);
     font-variant-numeric: tabular-nums;
   }
 
   .total {
-    margin: 0 0 22px;
-    font-size: 13px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin: var(--s-3) 0 var(--s-5);
+    padding: 0 var(--s-1);
+    text-align: left;
+    font-size: var(--t-body-s);
     color: var(--fg-3);
   }
 
   .total strong {
     color: var(--fg-1);
     font-weight: 600;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
   }
 
   .actions {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--s-2);
   }
 
   button {
     font-family: inherit;
-    font-size: 14px;
-    border-radius: 9px;
+    font-size: var(--t-body);
+    font-weight: 600;
+    border-radius: var(--r-md);
     cursor: pointer;
-    padding: 11px 16px;
-    transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+    padding: var(--s-3) var(--s-4);
+    border: 1px solid transparent;
+    transition:
+      background var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out),
+      border-color var(--dur-fast) var(--ease-out),
+      transform var(--dur-fast) var(--ease-out);
   }
 
+  button:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  /* Matches the app's `.btn-primary`: white on NASA blue with a 1px top inset. */
   .primary {
     background: var(--accent);
-    color: var(--fg-on-accent);
-    border: 1px solid var(--accent);
-    font-weight: 600;
+    color: #fff;
+    border-color: var(--accent);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset;
   }
 
   .primary:hover {
@@ -202,10 +282,14 @@
     border-color: var(--accent-hover);
   }
 
+  .primary:active {
+    transform: translateY(1px);
+  }
+
   .secondary {
     background: transparent;
-    color: var(--fg-3);
-    border: 1px solid transparent;
+    color: var(--fg-2);
+    border-color: transparent;
   }
 
   .secondary:hover {
@@ -213,42 +297,94 @@
     background: var(--bg-hover);
   }
 
+  .hint {
+    margin: var(--s-3) 0 0;
+    font-size: var(--t-caption);
+    line-height: var(--lh-snug);
+    color: var(--fg-3);
+  }
+
+  /* Error: a tinted alert block led by an icon, so the failure never rests on
+     color alone (paired with role="alert" for assistive tech). */
   .error {
-    margin: 0 0 14px;
-    font-size: 12.5px;
-    line-height: 1.5;
-    color: #ff8a8d;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s-2);
+    margin: 0 0 var(--s-3);
+    padding: var(--s-3);
+    text-align: left;
+    background: var(--abort-tint);
+    border: 1px solid rgba(242, 86, 75, 0.25);
+    border-radius: var(--r-md);
+    font-size: var(--t-body-s);
+    line-height: var(--lh-normal);
+    color: var(--fg-1);
+  }
+
+  .error svg {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    color: var(--abort-500);
   }
 
   /* Determinate download strip (mirrors the VoicePanel "preparing" visual). */
   .progress {
-    margin-top: 4px;
+    margin-top: var(--s-1);
   }
 
   .prog-row {
     display: flex;
+    align-items: baseline;
     justify-content: space-between;
-    font-size: 12.5px;
-    color: var(--fg-3);
-    margin-bottom: 7px;
+    font-size: var(--t-body-s);
+    color: var(--fg-2);
+    margin-bottom: var(--s-2);
   }
 
   .prog-pct {
+    font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    color: var(--fg-2);
+    color: var(--fg-1);
   }
 
   .prog-track {
     height: 6px;
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: var(--space-700);
     overflow: hidden;
   }
 
+  /* Scale on the X axis instead of animating `width` (no layout thrash); the
+     track's clip + radius give the rounded ends. */
   .prog-fill {
     height: 100%;
+    width: 100%;
+    transform-origin: left;
     background: var(--accent);
-    border-radius: 999px;
-    transition: width 160ms ease;
+    transition: transform var(--dur-base) var(--ease-out);
+  }
+
+  .prog-bytes {
+    margin: var(--s-2) 0 0;
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: var(--t-caption);
+    font-variant-numeric: tabular-nums;
+    color: var(--fg-3);
+  }
+
+  /* Reduced motion: drop every transition and the press nudge; states still
+     update, just without animation (a committed accessibility rule). */
+  @media (prefers-reduced-motion: reduce) {
+    button,
+    .prog-fill {
+      transition: none;
+    }
+
+    .primary:active {
+      transform: none;
+    }
   }
 </style>

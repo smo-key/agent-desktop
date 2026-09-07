@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { defaultAgentKind, setAgentPreference } from '$lib/agent/defaultAgent';
 import { buildLaunchPlan, isSplitPlacement, type LaunchPlan } from './plan';
 
 // Tests for the PURE launch-plan builder that normalizes the launcher's raw form
@@ -138,5 +139,41 @@ describe('buildLaunchPlan — normalization', () => {
     expect(
       buildLaunchPlan({ folder: '/p', placement: 'tab', projectId: '  ' }).projectId
     ).toBeUndefined();
+  });
+});
+
+describe('buildLaunchPlan — agent backend resolution (agent-backends)', () => {
+  afterEach(() => setAgentPreference(null));
+
+  it('Launcher seeds from the global setting', () => {
+    // The global agent setting is Copilot; a launch with no per-session
+    // override spawns the copilot backend.
+    setAgentPreference('copilot');
+    const plan = buildLaunchPlan({ folder: '/p', placement: 'tab' });
+    expect(plan.program).toBe('copilot');
+  });
+
+  it('One-off override does not change the default', () => {
+    // Global default is claude; a single launch overrides to copilot. The
+    // override applies to THAT plan only — the global resolution is untouched.
+    setAgentPreference('claude');
+    const oneOff = buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'copilot' });
+    expect(oneOff.program).toBe('copilot');
+    expect(defaultAgentKind()).toBe('claude');
+    const next = buildLaunchPlan({ folder: '/p', placement: 'tab' });
+    expect(next.program).toBe('claude');
+  });
+
+  it('Per-session override wins', () => {
+    setAgentPreference('copilot');
+    expect(
+      buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'claude' }).program
+    ).toBe('claude');
+  });
+
+  it('unknown override values normalize to claude', () => {
+    expect(
+      buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'gemini' as never }).program
+    ).toBe('claude');
   });
 });

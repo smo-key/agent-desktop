@@ -16,6 +16,8 @@
 // `statusLine.command` (verified, appendix A.1) so the wrapper knows which
 // snapshot file to write and where.
 
+import { backendFor } from '$lib/agent/backends';
+
 /** Absolute paths resolved once from the `usage_paths` Tauri command. */
 export interface UsagePaths {
   /** Absolute path to the installed `statusline-wrapper.js`. */
@@ -28,18 +30,20 @@ export interface UsagePaths {
    */
   eventHookPath: string;
   /**
-   * Absolute path to the app-hosted Unix-domain socket the event hook delivers
-   * to (passed to the spawned process as `AGENT_DESKTOP_SOCKET_PATH`).
+   * ADDRESS of the app-hosted local socket the event hook delivers to (passed to
+   * the spawned process as `AGENT_DESKTOP_SOCKET_PATH`). A filesystem path on
+   * macOS/Linux, a `\\.\pipe\…` name on Windows — opaque to the hook, which
+   * passes it straight to `net.createConnection({ path })`.
    */
   socketPath: string;
   /**
    * Absolute path to the installed orchestration MCP adapter — `node <this>` is the
-   * coordinator launch's `--mcp-config` server command (see `buildMcpToolkitConfig`).
+   * MCP-toolkit launch's `--mcp-config` server command (see `buildMcpToolkitConfig`).
    */
   adapterPath: string;
   /**
    * Absolute path to the Rust orchestration CONTROL socket (sibling of `socketPath`)
-   * — goes into the coordinator's `--mcp-config` server env as
+   * — goes into the toolkit launch's `--mcp-config` server env as
    * `AGENT_DESKTOP_CONTROL_SOCKET` so the adapter can reach the executor.
    */
   controlSocketPath: string;
@@ -58,7 +62,7 @@ export interface SpawnOverrideInput {
    * Injected as `--session-id <id>` (fresh pane) or `--resume <id>` (restored
    * pane with resume:true) so the overview can locate THIS agent's exact
    * transcript (`~/.claude/projects/<cwd>/<id>.jsonl`) — matching by cwd alone is
-   * ambiguous when several sessions share a folder. Absent for non-claude panes.
+   * ambiguous when several sessions share a folder. Absent for shell panes.
    */
   sessionId?: string;
   /**
@@ -104,6 +108,39 @@ export function quoteCommand(path: string): string {
 }
 
 /**
+ * Build a claude `command` that runs one of our installed `.cjs` scripts.
+ *
+ * Explicitly invokes `node` rather than relying on the script's `#!/usr/bin/env
+ * node` shebang + executable bit. Windows honors NEITHER, so a bare path there
+ * never executes — and because a hook that fails to run is silent, that would
+ * disable the whole event pipeline (and with it every agent's derived status)
+ * with no visible error.
+ *
+ * Used on all platforms so there is one code path. This is not a regression on
+ * Unix: the shebang was `/usr/bin/env node`, so `node` already had to be on PATH.
+ */
+export function nodeCommand(scriptPath: string): string {
+  return `node ${quoteCommand(toNodePath(scriptPath))}`;
+}
+
+/**
+ * Normalize a WINDOWS-style path (`C:\…` or a `\\server\share` UNC) to forward
+ * slashes. Node accepts `/` on Windows, and this sidesteps a shell-escaping
+ * mismatch: `quoteCommand` escapes `\` because that is what POSIX shells require
+ * inside double quotes, but `cmd.exe` treats `\` literally — so an escaped
+ * Windows path would reach the interpreter with doubled separators. That happens
+ * to survive Win32 path normalization (repeated separators are collapsed), but
+ * relying on that quirk is needlessly fragile.
+ *
+ * Only paths that actually LOOK like Windows paths are touched, so a Unix path
+ * containing a literal backslash (legal, if pathological) is left alone.
+ */
+function toNodePath(scriptPath: string): string {
+  const isWindowsPath = /^[A-Za-z]:[\\/]/.test(scriptPath) || scriptPath.startsWith('\\\\');
+  return isWindowsPath ? scriptPath.replace(/\\/g, '/') : scriptPath;
+}
+
+/**
  * Build the spawn args/env for a pane.
  *
  *  - `program === 'claude'` →
@@ -141,7 +178,24 @@ export function quoteCommand(path: string): string {
 export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
   const { program, args, paneId, sessionId, resume, usagePaths } = input;
 
-  // Only `claude` panes are wrapped; everything else spawns verbatim.
+  // Copilot panes get their backend's declared args (`--session-id`/`--no-remote`
+  // fresh, `--resume` on restore) plus the pane env — and deliberately NO
+  // `--settings`/hooks/statusline, which are Claude-only surfaces (session-launcher:
+  // Copilot spawn is minimal and clean). Observability comes from the Rust
+  // events tailer keyed by the same app-minted session id.
+  if (program === 'copilot') {
+    const backend = backendFor('copilot');
+    const injected = sessionId
+      ? resume
+        ? backend.resumeArgs(sessionId)
+        : backend.freshArgs(sessionId)
+      : [];
+    const env: Array<[string, string]> = [['AGENT_DESKTOP_PANE', paneId]];
+    if (usagePaths) env.push(['AGENT_DESKTOP_SNAPSHOT_DIR', usagePaths.snapshotDir]);
+    return { args: [...injected, ...args], env };
+  }
+
+  // Only agent panes are wrapped; everything else (shells) spawns verbatim.
   if (program !== 'claude') {
     return { args: [...args] };
   }
@@ -177,20 +231,21 @@ export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
 
   let env: Array<[string, string]> | undefined;
   if (usagePaths) {
-    // Both command paths are shell-quoted (see quoteCommand): they live under a
-    // spaced app-data path, and claude runs them through a shell.
+    // Both commands run through `node` (see nodeCommand) with the script path
+    // shell-quoted: the scripts live under a SPACED app-data path, claude runs
+    // these through a shell, and Windows honors no shebang.
     settings.statusLine = {
       type: STATUS_LINE_TYPE,
-      command: quoteCommand(usagePaths.wrapperPath)
+      command: nodeCommand(usagePaths.wrapperPath)
     };
     // The single event hook is wired into the FULL lifecycle event set. Each
     // invocation normalizes its event and delivers one JSON line over the
-    // app-hosted Unix socket (AGENT_DESKTOP_SOCKET_PATH), feeding the overview's
+    // app-hosted local socket (AGENT_DESKTOP_SOCKET_PATH), feeding the overview's
     // event-sourced status + per-tool timeline. Pre/PostToolUse match ALL tools
     // (matcher '*') so every tool call produces a timeline entry; the pending
     // AskUserQuestion payload rides on its PreToolUse event (it is not in the
     // transcript until answered), replacing the old question.json sidecar.
-    const hookCmd = { type: 'command', command: quoteCommand(usagePaths.eventHookPath) };
+    const hookCmd = { type: 'command', command: nodeCommand(usagePaths.eventHookPath) };
     settings.hooks = {
       SessionStart: [{ hooks: [hookCmd] }],
       UserPromptSubmit: [{ hooks: [hookCmd] }],
@@ -214,7 +269,7 @@ export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
 
 /**
  * The `--mcp-config` JSON that attaches the bundled orchestration toolkit to a
- * launched coordinator session. A single stdio MCP server (`orchestration`) runs
+ * launched agent session. A single stdio MCP server (`orchestration`) runs
  * the bundled adapter via `node <adapterPath>` with the control-socket path in its
  * env, so the adapter forwards each tool call to the Rust control socket.
  *
@@ -228,9 +283,9 @@ export interface McpToolkitConfig {
       args: string[];
       env: {
         AGENT_DESKTOP_CONTROL_SOCKET: string;
-        /** The COORDINATOR's own project id — the adapter merges it into every
-         *  forwarded tool call's `args` so the executor can scope the op (it
-         *  rejects ops without `args.projectId`; the coordinator LLM can't be
+        /** The launching agent's own project id — the adapter merges it into
+         *  every forwarded tool call's `args` so the executor can scope the op
+         *  (it rejects ops without `args.projectId`; the agent LLM can't be
          *  relied on to pass it). See `orchestration-mcp.cjs` / `PROJECT_ID_ENV`. */
         AGENT_DESKTOP_PROJECT_ID: string;
       };
@@ -240,7 +295,7 @@ export interface McpToolkitConfig {
 
 /**
  * The MCP server name the toolkit is registered under. Tools therefore surface to
- * the coordinator as `mcp__orchestration__<tool>` (e.g. `mcp__orchestration__spawn_agent`).
+ * the agent as `mcp__orchestration__<tool>` (e.g. `mcp__orchestration__spawn_agent`).
  */
 export const ORCHESTRATION_MCP_SERVER = 'orchestration';
 
@@ -251,7 +306,7 @@ export const ORCHESTRATION_MCP_SERVER = 'orchestration';
 export const CONTROL_SOCKET_ENV = 'AGENT_DESKTOP_CONTROL_SOCKET';
 
 /**
- * The env var the bundled adapter reads for the COORDINATOR's own project id, which
+ * The env var the bundled adapter reads for the launching agent's own project id, which
  * it merges into every forwarded tool call's `args.projectId` — must match the
  * adapter's `PROJECT_ID_ENV` constant. The executor scopes every op on
  * `args.projectId` and rejects ops without it, so this is REQUIRED for the toolkit
@@ -261,18 +316,18 @@ export const PROJECT_ID_ENV = 'AGENT_DESKTOP_PROJECT_ID';
 
 /**
  * Build the per-session `--mcp-config` content (task 3.6) that attaches the
- * orchestration toolkit to a coordinator `claude` launch. The coordinator-launch
- * task (6.2) passes the returned object (typically `JSON.stringify`-ed, or written
- * to a temp file) as `--mcp-config`.
+ * orchestration toolkit to an agent launch. Callers pass the returned object
+ * (typically `JSON.stringify`-ed, or written to a temp file) via the backend's
+ * MCP-config flag.
  *
  *  - `adapterPath` — absolute path to the installed `orchestration-mcp.cjs`
  *    (resolved the same way as the wrapper / event-hook resources).
  *  - `socketPath`  — absolute path to the Rust control socket
  *    (`orchestration::CONTROL_SOCKET_ENV` value).
- *  - `projectId`   — the COORDINATOR's own project id. Placed in the server `env`
+ *  - `projectId`   — the launching agent's own project id. Placed in the server `env`
  *    as `AGENT_DESKTOP_PROJECT_ID` so the adapter merges it into every forwarded
  *    tool call's `args.projectId`; the executor scopes every op on it and rejects
- *    ops without it (the coordinator LLM can't be relied on to pass it).
+ *    ops without it (the agent LLM can't be relied on to pass it).
  *
  * Pure: depends only on its inputs.
  */

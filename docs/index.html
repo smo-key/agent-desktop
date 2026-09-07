@@ -74,12 +74,18 @@
         <pre>curl -fsSL https://smo-key.github.io/agent-desktop/install.sh | sh</pre>
       </div>
 
+      <div class="card">
+        <h2>Install on Windows</h2>
+        <pre>irm https://smo-key.github.io/agent-desktop/install.ps1 | iex</pre>
+      </div>
+
       <p>
-        Prefer to download by hand, or on Windows / Intel Mac?
+        Prefer to download by hand, or on an Intel Mac?
         <a href="https://github.com/smo-key/agent-desktop/releases/latest"
           >Grab an installer from the latest release</a
-        >. The script auto-detects macOS (Apple Silicon) and Linux (x86_64 /
-        arm64); Windows and Intel-Mac builds are coming soon.
+        >. The scripts auto-detect macOS (Apple Silicon), Linux (x86_64 / arm64),
+        and Windows (x64); Intel-Mac builds are coming soon. Both verify the
+        download's checksum before installing.
       </p>
 
       <footer>
@@ -87,6 +93,10 @@
         ·
         <a href="https://smo-key.github.io/agent-desktop/install.sh"
           >Read the install script</a
+        >
+        ·
+        <a href="https://smo-key.github.io/agent-desktop/install.ps1"
+          >Read the Windows script</a
         >
       </footer>
     </main>

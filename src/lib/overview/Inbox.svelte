@@ -24,7 +24,6 @@
     buildRoster,
     groupByLane,
     needsAttention,
-    isArchivedCoordinator,
     showContext,
     LANE_ORDER,
     laneForRow,
@@ -87,14 +86,6 @@
   import TasksLauncher from '$lib/tasks/TasksLauncher.svelte';
   // import SpecialistsPanel from '$lib/specialists/SpecialistsPanel.svelte'; // temporarily hidden
   import { ALL, UNASSIGNED } from '$lib/projects/projectRollup';
-  import {
-    resolveCoordinatorPin,
-    coordinatorStartId,
-    coordinatorStartProject,
-    coordinatorNavOrder
-  } from './coordinatorPin';
-  import CoordinatorStart from '$lib/orchestration/CoordinatorStart.svelte';
-  import { coordinatorNeedsInput } from '$lib/orchestration/coordinatorNeedsInput.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
   import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
@@ -143,10 +134,6 @@
   const rosterWorkspaces = $derived(toRosterWorkspaces(workspace.workspaces));
   const navWorkspaces = $derived(toNavWorkspaces(workspace.workspaces));
 
-  // The set of coordinator paneIds that explicitly called `request_user_input`
-  // (tasks 10.11–10.12). A coordinator in this set surfaces "needs you" even with no
-  // pending AskUserQuestion; the default keep-working heuristic never flags it.
-  const coordNeedsInputSet = $derived(new Set(Object.keys(coordinatorNeedsInput.all())));
   const allRows = $derived(
     buildRoster(
       snapshots.byPane,
@@ -155,19 +142,12 @@
       nowMs,
       activity.bySession,
       undefined,
-      events.activityMap(),
-      coordNeedsInputSet
+      events.activityMap()
     )
   );
 
-  // CLEAR the explicit coordinator needs-input flag once the coordinator RESUMES (its
-  // effective status is `working` again) — the documented clear trigger: the user
-  // delivered input and the coordinator is back to work. Runs off the same per-second
-  // roster recompute. `coordinatorNeedsInput` is the orchestration store (read above),
-  // not the roster's pure `coordinatorNeedsInput` helper.
   $effect(() => {
     for (const r of allRows) {
-      if (r.role === 'coordinator') coordinatorNeedsInput.clearOnWorking(r.paneId, r.status);
       // Record each row's FINAL (post-override) status as the hysteresis memory for the
       // next derivation: a pane shown `working` holds In flight through a brief silence
       // instead of bouncing to `waiting` (see deriveStatus / IDLE_GRACE_MS). The runtime
@@ -282,25 +262,10 @@
     attnSeeded = true;
   });
 
-  // The active project for the coordinator pin: the concrete project chosen in the
-  // project filter (null on All / Unassigned). Only with a concrete project does the
-  // roster pin a coordinator / show the Start affordance (tasks 10.2–10.4).
-  const activeCoordProjectId = $derived(
-    projectFilter.selected === ALL || projectFilter.selected === UNASSIGNED
-      ? null
-      : projectFilter.selected
-  );
-  const activeCoordProject = $derived(projectForId(projects.list, activeCoordProjectId));
-  // Pull the live coordinator out of the lanes (pinned atop the list) and decide
-  // whether to show the not-started "Start coordinator" affordance.
-  const pin = $derived(resolveCoordinatorPin(viewRows, activeCoordProjectId));
-  // Lanes rendered BELOW the rule exclude the pinned coordinator (it never renders
-  // twice). Keyboard nav uses `coordinatorNavOrder` (coordinator/affordance first),
-  // not these render lanes, so the pinned coordinator stays reachable. `pin.rest`
-  // is already lane-grouped + within-lane ordered (viewRows → orderRowsByLane), so
-  // groupByLane just re-partitions it — including the Archived (done) lane, already
-  // newest-first via `laneOrder` (no extra reverse needed).
-  const renderGrouped = $derived(groupByLane(pin.rest));
+  // Lanes render straight from the ordered view rows (viewRows → orderRowsByLane),
+  // so groupByLane just re-partitions them — including the Archived (done) lane,
+  // already newest-first via `laneOrder` (no extra reverse needed).
+  const renderGrouped = $derived(groupByLane(viewRows));
 
   // The Archived lane collapses to its latest 2 rows (newest-first via `laneOrder`
   // — see above; no reverse — so the first 2 ARE the most recent) with a "Show all /
@@ -432,10 +397,9 @@
   }
 
   /** Enter header edit mode for the focused session, seeding the draft with the
-   *  currently-shown title. The coordinator's title is pinned ("Coordinator") and
-   *  is not user-renamable, so editing is suppressed for it. */
+   *  currently-shown title. */
   async function startTitleEdit(target: AgentRow | null = focus) {
-    if (!target || isCoordinator(target)) return;
+    if (!target) return;
     titleDraft = focusTitle(target);
     editingPaneId = target.paneId;
     editingTitle = true;
@@ -491,14 +455,6 @@
     if (editingTitle && shownId !== editingPaneId) cancelTitleEdit();
   });
 
-  // When `shownId` is the coordinator-start SENTINEL (not a real pane), the main
-  // pane shows the Start empty-state for that project instead of a terminal (10.4).
-  // Resolved to a concrete project, else null (a stale sentinel falls through to the
-  // normal empty panel).
-  const startProject = $derived(
-    projectForId(projects.list, coordinatorStartProject(shownId))
-  );
-
   // Reconcile the SHOWN agent toward what attention wants (resolveFocus = pin >
   // attention queue, arrival-ordered). First focus / the shown agent being closed
   // switches immediately. While the shown agent ITSELF needs you, we never auto-
@@ -506,12 +462,6 @@
   // input). Once it stops needing you, focus advances to the earliest waiting agent
   // after the grace; if nobody else needs you, the current agent stays.
   $effect(() => {
-    // The coordinator-start sentinel is a deliberate, sticky main-pane selection
-    // (no underlying pane) — never auto-resolve it away to an attention agent.
-    if (coordinatorStartProject(shownId) !== null) {
-      clearAdvance();
-      return;
-    }
     const shownRow = viewRows.find((r) => r.paneId === shownId) ?? null;
     // The agent we're on just LEFT attention (handled / went Working)?
     const sameAgent = shownId !== null && shownId === lastShownId;
@@ -650,21 +600,6 @@
     focusNonce += 1;
   }
 
-  /** Focus the not-started coordinator affordance: select the start SENTINEL so the
-   *  main pane shows the Start empty-state for `projectId` (task 10.4). It isn't a
-   *  real pane, so we pin it like a selection but don't bump the terminal nonce. */
-  function selectCoordinatorStart(projectId: string) {
-    clearAdvance();
-    userSelected = null;
-    shownId = coordinatorStartId(projectId);
-  }
-
-  /** The coordinator was launched from the main-pane Start state — focus the now-real
-   *  coordinator pane (reuses the normal select path). */
-  function onCoordinatorStarted(paneId: string) {
-    selectAgent(paneId);
-  }
-
   /** PREVIEW an archived session: respawn `claude --resume` so its transcript shows
    *  live, but keep it presented as Archived (out of attention) until a message is
    *  sent. Captures the current user-message COUNT as the unarchive baseline, then
@@ -778,7 +713,7 @@
    *  Archived/done lane shown under the header) and returns null when nothing is
    *  archived; we just feed it the live deps and show the modal. */
   function deleteAllArchived() {
-    const req = deleteAllArchivedRequest(pin.rest, {
+    const req = deleteAllArchivedRequest(viewRows, {
       deleteAgent: (id) => workspace.deleteAgent(id),
       getSelected: () => userSelected,
       setSelected: (v) => (userSelected = v)
@@ -909,38 +844,21 @@
     previewTimers.clear();
   });
 
-  /** Whether a row is the project COORDINATOR. The coordinator follows the SAME
-   *  archive/delete rules as ordinary sessions (coordinator-lifecycle), so it is no
-   *  longer special-cased in the archive/pause paths. It IS still excluded from inline
-   *  rename (its title is pinned "Coordinator"), so the menu drops the Rename item for
-   *  it. Normal rows are unaffected. */
-  function isCoordinator(r: AgentRow | null): boolean {
-    return r?.role === 'coordinator';
-  }
-
   /** Right-click a roster row. An Archived agent — closed OR being previewed (it's
    *  still presented as archived until you reply) — offers only Delete (restore is the
    *  focus-header Resume / a row click); a paused agent offers Open / Resume / Archive;
    *  a live agent offers Open / Pause / Archive. An EMPTY live/paused session presents
-   *  its archive action as Delete instead. The COORDINATOR follows the SAME rules: a
-   *  LIVE/paused coordinator gets Open / Pause / Archive routed through `archiveAgent`
-   *  (so an empty coordinator DELETES and a non-empty one ARCHIVES); only Rename is
-   *  omitted (its title is pinned). An ARCHIVED coordinator offers Delete (and Restore
-   *  via the header), like any archived session. */
+   *  its archive action as Delete instead. */
   function openAgentMenu(e: MouseEvent, row: AgentRow, name: string) {
     e.preventDefault();
     // The archive action for a live/paused row: an empty session deletes (nothing to
-    // keep) and reads as "Delete"; a session with messages archives (restorable). This
-    // is the SAME decision for the coordinator — `archiveAgent` runs its userHash
-    // through `archiveDecision` just like any other row.
+    // keep) and reads as "Delete"; a session with messages archives (restorable).
     const archiveItem: MenuItem = isEmptySession(row.paneId)
       ? { label: 'Delete', icon: 'trash-2', danger: true, onClick: () => archiveAgent(row.paneId) }
       : { label: 'Archive session', icon: 'archive', danger: true, onClick: () => archiveAgent(row.paneId) };
-    // The coordinator's title is pinned ("Coordinator"), so inline rename is suppressed
-    // — drop the Rename item for it (it would be a no-op) while keeping everything else.
-    const renameItem: MenuItem[] = isCoordinator(row)
-      ? []
-      : [{ label: 'Rename', icon: 'pencil', onClick: () => renameAgent(row) }];
+    const renameItem: MenuItem[] = [
+      { label: 'Rename', icon: 'pencil', onClick: () => renameAgent(row) }
+    ];
     const items: MenuItem[] = row.closed || row.preview
       ? [
           { label: 'Delete', icon: 'trash-2', danger: true, onClick: () => deleteAgent(row.paneId, name) }
@@ -966,12 +884,10 @@
     return titles.titleFor(paneId) ?? fallback;
   }
 
-  /** Title shown in the focus-pane header. The coordinator always reads
-   *  "Coordinator" — matching its pinned row title — instead of its underlying
-   *  workspace name ("Session N"); everything else uses its generated session
-   *  title, falling back to its name. */
+  /** Title shown in the focus-pane header: the generated session title, falling
+   *  back to the row's name. */
   function focusTitle(r: AgentRow): string {
-    return isCoordinator(r) ? 'Coordinator' : displayName(r.paneId, r.name);
+    return displayName(r.paneId, r.name);
   }
 
   /** New session: when a project is already selected, launch straight into it (no
@@ -980,12 +896,8 @@
     startNewSession();
   }
 
-  // Flat ⌘↑/↓ cycling order: the project's COORDINATOR (its running row, or — when
-  // not started — its Start affordance, a `start` sentinel target) FIRST, then the
-  // rest in lane order. So the coordinator/affordance is always keyboard-reachable,
-  // including when it's the ONLY entry (task 10.8). Built from the same pin decision
-  // the render uses, so nav and render agree.
-  const navTargets = $derived(coordinatorNavOrder(viewRows, activeCoordProjectId));
+  // Flat ⌘↑/↓ cycling order: the lane-ordered rows.
+  const navTargets = $derived(viewRows.map((r) => ({ kind: 'row' as const, paneId: r.paneId })));
 
   // The scrollable session-list container; the reveal effect scrolls the selected
   // row into view within it on keyboard navigation.
@@ -1020,7 +932,7 @@
   // brings a hidden row into the DOM) changes, scroll the `.sel` row into view within
   // the list after the DOM updates. `block: 'nearest'` no-ops when the row is already
   // fully visible, so clicks / auto-advance to a visible row never jump the list. The
-  // `.sel` class covers lane rows AND the pinned-coordinator / start-affordance slot.
+  // `.sel` class covers the lane rows.
   $effect(() => {
     void shownId; // re-run when the selection changes
     void showAllArchived; // and after an auto-expand renders a newly-visible row
@@ -1031,21 +943,15 @@
     });
   });
 
-  /** Focus a nav target: a real pane selects normally (a closed/archived one is then
-   *  auto-previewed by the focus effect, as before); the not-started `start` sentinel
-   *  does exactly what clicking the affordance does (shows the Start empty-state). */
-  function focusNavTarget(t: { kind: 'pane'; paneId: string } | { kind: 'start'; projectId: string }) {
-    if (t.kind === 'start') selectCoordinatorStart(t.projectId);
-    else selectAgent(t.paneId);
+  /** Focus a nav target: select its pane (a closed/archived one is then
+   *  auto-previewed by the focus effect, as before). */
+  function focusNavTarget(t: { kind: 'row'; paneId: string }) {
+    selectAgent(t.paneId);
   }
 
-  /** The index of the currently-shown target within `navTargets`: a `start` sentinel
-   *  matches the shown start-project; a `pane` matches `shownId`. -1 when off-list. */
+  /** The index of the currently-shown target within `navTargets` (-1 off-list). */
   function currentNavIndex(): number {
-    const startProj = coordinatorStartProject(shownId);
-    return navTargets.findIndex((t) =>
-      t.kind === 'start' ? t.projectId === startProj : t.paneId === shownId
-    );
+    return navTargets.findIndex((t) => t.paneId === shownId);
   }
 
   /** Keyboard shortcuts on the inbox, all ⌘-modified so plain keys still reach the
@@ -1076,8 +982,7 @@
     if (!e.metaKey || e.altKey || e.ctrlKey || e.shiftKey) return;
 
     // ⌘W — archive (or delete-if-empty) the focused session. preventDefault also
-    // stops ⌘W from closing the app window via the webview. The COORDINATOR follows the
-    // SAME archive/delete rule (coordinator-lifecycle) — no longer excluded here.
+    // stops ⌘W from closing the app window via the webview.
     if (e.key === 'w' || e.key === 'W') {
       if (!focus || focus.closed) return;
       e.preventDefault();
@@ -1085,8 +990,7 @@
       return;
     }
 
-    // ⌘. — pause the focused session, or resume it if already paused. The COORDINATOR
-    // follows the SAME pause rule (coordinator-lifecycle) — no longer excluded here.
+    // ⌘. — pause the focused session, or resume it if already paused.
     if (e.key === '.') {
       if (!focus || focus.closed) return;
       e.preventDefault();
@@ -1152,13 +1056,8 @@
 
 <svelte:window onkeydown={onNavKey} />
 
-<!-- One roster row — shared by the pinned coordinator (top slot) and the lane lists
-     below the rule, so the markup never diverges. `lane` only drives the row's
-     selection accent class. `isCoordPin` marks the row as the project's OWN pinned
-     coordinator: its title is forced to "Coordinator" and its own coordinator badge
-     is suppressed (task 10.5) — only that single pinned row, not the agents it
-     spawned (which keep their "coordinated" attribution). -->
-{#snippet sessionRow(r: AgentRow, lane: AgentLane, isCoordPin = false)}
+<!-- One roster row. `lane` only drives the row's selection accent class. -->
+{#snippet sessionRow(r: AgentRow, lane: AgentLane)}
   <button
     type="button"
     class="row {lane}"
@@ -1170,34 +1069,7 @@
     <ProjectIcon {...projAvatar(r.projectId)} size={30} />
     <span class="nm">
       <span class="t">
-        {isCoordPin ? 'Coordinator' : (titles.titleFor(r.paneId) ?? r.name)}
-        {#if isCoordPin}
-          <!-- The pinned coordinator's own row carries no role badge (task 10.5). -->
-        {:else if isArchivedCoordinator(r)}
-          <!-- An ARCHIVED (closed) coordinator is labeled with the bot "Coordinator"
-               badge (agent-roster-display) so its archived roster row is identifiable.
-               A LIVE coordinator's presentation (below) is unchanged. -->
-          <span
-            class="spec-badge coord-badge"
-            use:tooltip={'Archived project coordinator'}
-          >
-            <Icon name="bot" size={9} />Coordinator
-          </span>
-        {:else if r.role === 'coordinator'}
-          <span
-            class="spec-badge coord-badge"
-            use:tooltip={'Project coordinator (orchestrates other agents)'}
-          >
-            <Icon name="bot" size={9} />coordinator
-          </span>
-        {:else if r.coordinatorPaneId}
-          <span
-            class="spec-badge coord-badge coord-badge-icon"
-            use:tooltip={'Spawned by the project coordinator'}
-          >
-            <Icon name="compass" size={9} />
-          </span>
-        {/if}
+        {titles.titleFor(r.paneId) ?? r.name}
         {#if r.specialist}
           <span class="spec-badge" use:tooltip={`Spawned as specialist “${r.specialist}”`}>
             <Icon name="bot" size={9} />{r.specialist}
@@ -1223,7 +1095,7 @@
       {/if}
     </span>
     <!-- Status dot: orange when it needs you, flashing blue while actively In flight.
-         An `idle` row (a quiet engaged coordinator, or a not-yet-wired pane) is in the
+         An `idle` row (a quiet pane, or a not-yet-wired pane) is in the
          flight lane but NOT running, so it shows no dot rather than a misleading flash. -->
     {#if needsAttention(r) || (lane === 'flight' && r.status !== 'idle')}
       <span class="badge {badgeClass(r)} dotonly"><span class="dot"></span></span>
@@ -1279,42 +1151,7 @@
            the space left between the header and the bottom Tasks launcher. -->
       <div class="agent-region">
         <div class="list-scroll" bind:this={listScrollEl}>
-          <!-- Coordinator TOP SLOT (tasks 10.2–10.3, 10.6): the project's live
-               coordinator pinned above all sessions, OR — when none is running —
-               a focusable "Start coordinator" affordance. A rule separates it from
-               the rest. This renders FIRST, even with no other sessions, so the
-               coordinator/affordance + rule always head the list and the "No sessions
-               yet" empty state sits BELOW them (task 10.6). -->
-          {#if pin.coordinator}
-            {@render sessionRow(pin.coordinator, laneForRow(pin.coordinator), true)}
-            {@render subagentBlock(pin.coordinator)}
-            <hr class="coord-rule" />
-          {:else if pin.showStart && activeCoordProject}
-            <button
-              type="button"
-              class="row coord-start"
-              class:sel={coordinatorStartProject(shownId) === activeCoordProjectId}
-              onclick={() => selectCoordinatorStart(activeCoordProject.id)}
-            >
-              <ProjectIcon {...projAvatar(activeCoordProject.id)} size={30} />
-              <span class="nm">
-                <!-- No "not started" badge on the affordance (task 10.5); the
-                     "Start to orchestrate" subline + play CTA convey the state. -->
-                <span class="t">Coordinator</span>
-                <span class="s">Start to orchestrate this project</span>
-              </span>
-              <span class="start-cta"><Icon name="play" size={13} /></span>
-            </button>
-            <hr class="coord-rule" />
-          {/if}
-
-          {#if pin.rest.length === 0}
-            <!-- No NON-coordinator sessions — shown BELOW the coordinator + rule
-                 (tasks 10.6, 10.10). Gated on `pin.rest` (the lane rows after the
-                 pinned coordinator is removed), NOT the total row count, so the box
-                 still appears when the only session is the pinned coordinator. With
-                 no concrete project (All / Unassigned) the coordinator isn't pinned,
-                 so `pin.rest` is just `rows` and this matches "zero rows" as before. -->
+          {#if viewRows.length === 0}
             <div class="empty-list">
               <p>No sessions yet.</p>
               <button type="button" class="btn-primary" onclick={newAgent}>＋ New session</button>
@@ -1372,14 +1209,7 @@
 
     <!-- RIGHT: focus pane (header + teleported live TUI / Archived / All clear) -->
     <div class="col-focus">
-      {#if startProject}
-        <!-- The not-started coordinator affordance is focused: the main pane invites
-             starting the orchestrator (task 10.4). On Start, the now-real coordinator
-             pane is focused via onStarted. -->
-        <CoordinatorStart project={startProject} onStarted={onCoordinatorStarted} />
-        <!-- Slot kept bound (hidden) so the teleport target survives this state. -->
-        <div class="focus-slot hidden" bind:this={focusSlot}></div>
-      {:else if focus && !focus.closed}
+      {#if focus && !focus.closed}
         {@const av = projAvatar(focus.projectId)}
         <div class="fhead">
           <ProjectIcon {...av} size={26} />
@@ -1394,8 +1224,6 @@
               aria-label="Rename session"
               autofocus
             />
-          {:else if isCoordinator(focus)}
-            <span class="ttl">{focusTitle(focus)}</span>
           {:else}
             <button
               type="button"
@@ -1421,8 +1249,7 @@
               use:tooltip={'Delete session'}
             >Delete</button>
           {:else}
-            <!-- The COORDINATOR follows the SAME archive/delete rules as ordinary
-                 sessions (coordinator-lifecycle): Pause + Archive (non-empty) / Delete
+            <!-- Pause + Archive (non-empty) / Delete
                  (empty), routed through the same handlers — no longer delete-only. -->
             {#if focus.paused}
               <button type="button" class="hbtn" onclick={() => resumeAgent(focus.paneId)} use:tooltip={'Resume (⌘.)'}>Resume</button>
@@ -1574,26 +1401,12 @@
   @media (prefers-reduced-motion: reduce) {
     .row.flash-attn::after { animation: none; opacity: 0; }
   }
-  /* The coordinator top slot: a rule separating the pinned coordinator / Start
-     affordance from the rest of the sessions (tasks 10.2–10.3). */
-  .coord-rule { margin: 4px 16px 2px; border: none; border-top: 1px solid var(--line-default); }
-  /* The not-started "Start coordinator" affordance reuses the row layout with a
-     play-cta on the right; its coordinator badge reads in the orange accent. */
-  .row.coord-start .start-cta { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: var(--r-sm); background: var(--orange-tint); color: var(--orange-200); }
-  .row.coord-start:hover .start-cta { color: var(--orange-300); }
   .row .nm { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .row .nm .t { font-weight: 600; font-size: 13px; color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
   /* Specialist attribution: a compact blue-tinted pill (icon + name) next to the
      agent's title, marking a pane spawned AS a specialist (task 5.4). */
   .row .nm .t .spec-badge { flex: none; display: inline-flex; align-items: center; gap: 3px; max-width: 120px; padding: 1px 6px 1px 5px; border-radius: var(--r-full); background: var(--blue-tint); color: var(--blue-200); font-family: var(--font-mono); font-size: 9.5px; font-weight: 500; letter-spacing: 0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row .nm .t .spec-badge :global(.mc-icon) { opacity: 0.85; }
-  /* Coordinator badges (the coordinator itself, and its coordinated agents) use a
-     distinct orange tint so an orchestration is visible at a glance (task 6.5). */
-  .row .nm .t .coord-badge { background: var(--orange-tint); color: var(--orange-200); max-width: 130px; }
-  /* The coordinated-agent badge is icon-only (a single compass glyph, no text), so
-     it collapses to a square chip: symmetric padding, no gap/max-width meant for a
-     trailing label (task 1.2). */
-  .row .nm .t .coord-badge-icon { gap: 0; max-width: none; padding: 2px; }
   .row .nm .s { font-size: 11px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
   .row .nm .s.q { color: var(--orange-300); }
   /* The tiny third row: context · cost · last activity, each an icon + value. */

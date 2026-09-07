@@ -20,10 +20,29 @@
   import { projects } from '../projects/projects.svelte';
   import { projectForId } from '../projects/projects';
   import ProjectSelect from '../projects/ProjectSelect.svelte';
+  import Dropdown, { type DropdownOption } from '../ui/Dropdown.svelte';
+  import { AGENT_KINDS, backendFor, parseAgentKind, type AgentKind } from '$lib/agent/backends';
+  import { defaultAgentKind } from '$lib/agent/defaultAgent';
+  import { agentSettings } from '$lib/settings/agent.svelte';
 
   // --- Local form state (the launcher store holds only open/close) ----------
   // The chosen project id (supplies the launch folder), null until picked/created.
   let selectedProjectId = $state<string | null>(null);
+
+  // Per-session agent choice, seeded from the GLOBAL setting each open
+  // (agent-backends: Launcher Agent Selection). Changing it never writes the
+  // global preference. `agentTouched` marks an explicit user choice for THIS
+  // open, so a late settings load can no longer clobber it (and, conversely, a
+  // cold start whose settings resolve while the modal is already open still
+  // reseeds an untouched selector to the real default).
+  let selectedAgent = $state<AgentKind>(defaultAgentKind());
+  let agentTouched = $state(false);
+
+  /** Agent-backend choices for the launcher's agent dropdown. */
+  const agentOptions: DropdownOption[] = AGENT_KINDS.map((k) => ({
+    value: k,
+    label: backendFor(k).displayName
+  }));
 
   // The resolved project (its folder is where the agent launches).
   const project = $derived(projectForId(projects.list, selectedProjectId));
@@ -36,6 +55,17 @@
     void projects.load();
   });
 
+  // Keep an UNTOUCHED selector in sync with the persisted default: on a cold
+  // start the `agent` settings slice loads asynchronously, and the modal may
+  // already be open (or `selectedAgent` already initialized) with the fallback
+  // value. An explicit user choice (`agentTouched`) always wins.
+  $effect(() => {
+    const kind = agentSettings.prefs.kind;
+    untrack(() => {
+      if (!agentTouched) selectedAgent = kind;
+    });
+  });
+
   // When the modal opens (the open transition only), reset the transient project
   // choice. The write is `untrack`ed so this effect depends ONLY on `launcher.open`
   // (it must not re-run when the user picks a project).
@@ -43,6 +73,8 @@
     if (!launcher.open) return;
     untrack(() => {
       selectedProjectId = null;
+      selectedAgent = defaultAgentKind();
+      agentTouched = false;
     });
   });
 
@@ -61,7 +93,8 @@
       folder: project.path,
       prompt: '',
       placement: 'tab',
-      projectId: project.id
+      projectId: project.id,
+      agent: selectedAgent
     });
 
     // Hand the plan to the store: it creates the tab/split and records the new
@@ -119,6 +152,22 @@
           autofocus
           value={selectedProjectId}
           onChange={(id) => (selectedProjectId = id)}
+        />
+      </section>
+
+      <!-- Agent section (agent-backends: Launcher Agent Selection). Seeded from
+           the global setting each time the modal opens; changing it here
+           overrides THIS session only — the global default is untouched. -->
+      <section class="field">
+        <span class="label">Agent</span>
+        <Dropdown
+          ariaLabel="Agent for this session"
+          options={agentOptions}
+          value={selectedAgent}
+          onChange={(v: string) => {
+            selectedAgent = parseAgentKind(v);
+            agentTouched = true;
+          }}
         />
       </section>
 

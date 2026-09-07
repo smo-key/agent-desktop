@@ -110,3 +110,21 @@ describe('snapshots reducer', () => {
     expect(store.byPane).toEqual({});
   });
 });
+
+describe('non-statusline backend snapshots (usage-dashboard)', () => {
+  it('Copilot snapshot joins the dashboard', () => {
+    // The copilot events tailer writes a minimal snapshot: pane/session/model id
+    // and a heartbeat ts — no context %, no rate limits, no effort. The reducer
+    // stores it like any other pane's snapshot; absent fields stay absent
+    // (rendered as omitted, never as zeros).
+    const map = apply(
+      {},
+      { pane_id: 'p-cop', session_id: 's-cop', model_id: 'gpt-5', ts: 123 }
+    );
+    const snap = map['p-cop'];
+    expect(snap.model_id).toBe('gpt-5');
+    expect(snap.context_pct).toBeUndefined();
+    expect(snap.rate_limits).toBeUndefined();
+    expect(snap.effort).toBeUndefined();
+  });
+});

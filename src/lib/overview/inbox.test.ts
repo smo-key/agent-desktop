@@ -307,13 +307,6 @@ describe('Archiving an empty session deletes it instead', () => {
   });
 });
 
-// NOTE: The coordinator follows the SAME archive/delete rule as ordinary sessions
-// (an EMPTY coordinator deletes, a NON-empty one archives, restorable). That generic
-// rule is already covered by `archiveDecision` above; the COORDINATOR-SPECIFIC store
-// wiring — archive → restore brings it back as the project's live coordinator — is
-// exercised at the store level in `layout/workspace.svelte.test.ts` (which involves a
-// real coordinator pane), so the former tautological `archiveDecision('coord-hash')`
-// re-assertions here were redundant illusory coverage and have been removed.
 
 describe('A new message resumes a paused session', () => {
   it('resumes only when the live user-message COUNT strictly exceeds the paused-at count', () => {

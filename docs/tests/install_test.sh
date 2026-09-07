@@ -85,10 +85,32 @@ assert_contains "$DEC" "Terminal=false" "desktop entry is not a terminal app"
 
 # --- unsupported_message OS ARCH -> friendly text ---
 
-UM=$(unsupported_message Windows x86_64)
-assert_contains "$UM" "Windows"     "unsupported names the OS"
+# A still-unsupported NON-Windows platform keeps the original message.
+UM=$(unsupported_message Darwin x86_64)
+assert_contains "$UM" "Darwin"      "unsupported names the OS"
 assert_contains "$UM" "coming soon" "unsupported says coming soon"
 assert_contains "$UM" "https://github.com/smo-key/agent-desktop/releases" "unsupported links releases page"
+
+# --- Windows is redirected to the PowerShell installer, not "coming soon" ---
+
+# Git Bash / MSYS / Cygwin DO have a POSIX shell, so this script runs there —
+# but the only asset it could install is a macOS/Linux one. Point at install.ps1.
+assert_ok "MINGW is a Windows uname"   -- is_windows_uname MINGW64_NT-10.0-22631
+assert_ok "MSYS is a Windows uname"    -- is_windows_uname MSYS_NT-10.0
+assert_ok "CYGWIN is a Windows uname"  -- is_windows_uname CYGWIN_NT-10.0
+assert_fail "Darwin is not Windows"    -- is_windows_uname Darwin
+assert_fail "Linux is not Windows"     -- is_windows_uname Linux
+
+WM=$(unsupported_message MINGW64_NT-10.0-22631 x86_64)
+assert_contains "$WM" "PowerShell" "Windows message names PowerShell"
+assert_contains "$WM" "https://smo-key.github.io/agent-desktop/install.ps1" "Windows message gives the ps1 URL"
+assert_contains "$WM" "irm" "Windows message shows the one-liner"
+# It must NOT tell a Windows user support is coming soon — it is here.
+case "$WM" in
+  *"coming soon"*) WM_SOON=yes ;;
+  *) WM_SOON=no ;;
+esac
+assert_eq "$WM_SOON" "no" "Windows message does not say coming soon"
 
 # --- main on an unsupported platform exits non-zero without installing ---
 

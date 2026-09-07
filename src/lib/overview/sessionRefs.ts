@@ -14,8 +14,8 @@
 import type { SnapshotMap } from '../usage/snapshots.svelte';
 import type { SessionRef } from './subagents.svelte';
 
-/** A pane-id -> cwd lookup (the workspace registry, projected). */
-export type CwdLookup = (paneId: string) => string | null;
+/** A pane-id -> {cwd, program} lookup (the workspace registry, projected). */
+export type CwdLookup = (paneId: string) => { cwd: string | null; program?: string } | null;
 
 /**
  * The sorted, de-duplicated app-pane session refs across all per-pane snapshots:
@@ -29,16 +29,18 @@ export type CwdLookup = (paneId: string) => string | null;
  * @param cwdFor  pane id -> cwd lookup (the workspace registry)
  */
 export function appSessionRefs(map: SnapshotMap, cwdFor: CwdLookup): SessionRef[] {
-  const bySession = new Map<string, string | null>();
+  const bySession = new Map<string, { cwd: string | null; program?: string }>();
   // Iterate pane ids in a stable (sorted) order so the "first wins" cwd choice
   // is deterministic regardless of map insertion order.
   for (const paneId of Object.keys(map).sort()) {
     const snap = map[paneId];
     const sessionId = snap?.session_id;
     if (typeof sessionId !== 'string' || sessionId.length === 0) continue;
-    if (!bySession.has(sessionId)) bySession.set(sessionId, cwdFor(paneId));
+    if (!bySession.has(sessionId)) {
+      bySession.set(sessionId, cwdFor(paneId) ?? { cwd: null });
+    }
   }
   return [...bySession.entries()]
-    .map(([sessionId, cwd]) => ({ sessionId, cwd }))
+    .map(([sessionId, s]) => ({ sessionId, cwd: s.cwd, ...(s.program ? { program: s.program } : {}) }))
     .sort((a, b) => a.sessionId.localeCompare(b.sessionId));
 }

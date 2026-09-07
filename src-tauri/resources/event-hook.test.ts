@@ -179,4 +179,33 @@ describe('event-hook delivery', () => {
     expect(res.status).toBe(0);
     expect(res.stdout).toBe('{}');
   });
+
+  it('An absent socket does not block a turn', () => {
+    // The no-block guarantee must hold on EVERY platform and for every way the
+    // address can be unusable — the address form differs by OS (socket file vs
+    // named pipe), and on Windows an unset/garbage value is a likelier failure
+    // mode than on Unix. A hook that hangs here would stall the agent's turn.
+    const unusable = [
+      ipcEndpoint('never-bound.sock'), // well-formed for this OS, nothing listening
+      '', // env var unset entirely
+      process.platform === 'win32'
+        ? 'C:\\does\\not\\exist\\events.sock' // a path, not a pipe: unbindable on Windows
+        : '/does/not/exist/events.sock'
+    ];
+
+    for (const socketPath of unusable) {
+      const started = Date.now();
+      const res = spawnSync(process.execPath, [HOOK], {
+        input: JSON.stringify({ session_id: 's', hook_event_name: 'Stop' }),
+        encoding: 'utf8',
+        timeout: 5000,
+        env: { ...process.env, AGENT_DESKTOP_PANE: PANE_ID, AGENT_DESKTOP_SOCKET_PATH: socketPath }
+      });
+      // Exits cleanly with the empty hook response, so claude proceeds.
+      expect(res.status, `address ${JSON.stringify(socketPath)} did not exit 0`).toBe(0);
+      expect(res.stdout).toBe('{}');
+      // And promptly — not merely eventually via the spawn timeout.
+      expect(Date.now() - started).toBeLessThan(5000);
+    }
+  });
 });

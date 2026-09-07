@@ -24,7 +24,20 @@ It needs no extra tooling, never runs `sudo`, and is short enough to
 [read first](https://smo-key.github.io/agent-desktop/install.sh) before you pipe
 it into a shell.
 
-**Windows or Intel Mac**: Coming soon
+**Windows (x64)** — the same thing from a PowerShell window:
+
+```powershell
+irm https://smo-key.github.io/agent-desktop/install.ps1 | iex
+```
+
+Windows gets its own script because stock Windows has no POSIX shell, so the
+`curl | sh` line above cannot run there. It uses only what ships with Windows —
+no winget, no admin rights — and is likewise short enough to
+[read first](https://smo-key.github.io/agent-desktop/install.ps1). Both scripts
+verify the download's sha256 against the digest GitHub publishes and refuse to
+install on a mismatch.
+
+**Intel Mac**: Coming soon
 
 ## Getting Started
 

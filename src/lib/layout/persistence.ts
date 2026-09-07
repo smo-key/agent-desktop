@@ -20,6 +20,8 @@
 // commands, and the window-close flush lives in `store-backend.svelte.ts`
 // (which imports this module) — kept separate so this stays pure + testable.
 
+import { defaultShell, resolveProgram } from '$lib/shell/defaultShell';
+import { isAgentProgram } from '$lib/agent/backends';
 import {
   closeLeaf,
   freshWorkspace,
@@ -98,22 +100,11 @@ export interface PersistedSession {
    */
   specialist?: string;
   /**
-   * OPTIONAL extra `claude` CLI args (specialist persona/model/tool flags, OR the
-   * coordinator's `--append-system-prompt` + `--mcp-config`). Persisted so a resumed
-   * pane re-applies them on restart. Absent for panes spawned without extra args.
+   * OPTIONAL extra agent CLI args (specialist persona/model/tool flags). Persisted
+   * so a resumed pane re-applies them on restart. Absent for panes spawned without
+   * extra args.
    */
   extraArgs?: string[];
-  /**
-   * OPTIONAL role marker (`'coordinator'`). Persisted so the per-project coordinator
-   * pane is re-identified after a restart. Absent for ordinary agents.
-   */
-  role?: 'coordinator';
-  /**
-   * OPTIONAL paneId of the coordinator that spawned/drives this agent (task 6.5).
-   * Persisted so the roster attribution survives a restart. Absent for user-started
-   * agents and coordinator panes themselves.
-   */
-  coordinatorPaneId?: string;
 }
 
 /** One serialized workspace: identity + name + its pane tree + its registry. */
@@ -199,7 +190,7 @@ function projectRegistry(
   for (const leafNode of leavesInOrder(root)) {
     const src = registry[leafNode.paneId];
     out[leafNode.paneId] = {
-      program: src?.program ?? '/bin/zsh',
+      program: src?.program ?? defaultShell(),
       cwd: src?.cwd ?? null,
       // Keep the project binding when present (omitted key serializes cleanly).
       ...(src?.projectId ? { projectId: src.projectId } : {}),
@@ -223,10 +214,7 @@ function projectRegistry(
       ...(Array.isArray(src?.extraArgs) && src.extraArgs.length > 0
         ? { extraArgs: src.extraArgs }
         : {}),
-      // Persist the coordinator role marker + (for spawned agents) the back-reference
-      // to the coordinator that drives them, so both survive a restart.
-      ...(src?.role === 'coordinator' ? { role: 'coordinator' as const } : {}),
-      ...(src?.coordinatorPaneId ? { coordinatorPaneId: src.coordinatorPaneId } : {})
+
     };
   }
   return out;
@@ -313,7 +301,16 @@ function sanitizeRegistry(
   for (const leafNode of leavesInOrder(root)) {
     const raw = src[leafNode.paneId];
     if (isRecord(raw)) {
-      const program = typeof raw.program === 'string' ? raw.program : '/bin/zsh';
+      // Keep the PERSISTED program verbatim; only supply a default when it is
+      // absent or the wrong type. The platform substitution happens at SPAWN
+      // time (see `respawnLeaves` / PaneNode) rather than here, because
+      // rewriting it here would be serialized straight back by the next
+      // autosave — a macOS user's `fish` opened once on Windows would become
+      // `pwsh` on disk and then `/bin/zsh` back on macOS, silently and forever.
+      const program =
+        typeof raw.program === 'string' && raw.program.trim()
+          ? raw.program.trim()
+          : defaultShell();
       // A persisted sessionId means we can resume the prior transcript on restart.
       // When present, carry it through and set resume:true so TerminalPane emits
       // `--resume <id>` instead of `--session-id <id>`.
@@ -322,21 +319,21 @@ function sanitizeRegistry(
       const persistedSessionId =
         typeof raw.sessionId === 'string' && raw.sessionId ? raw.sessionId : undefined;
       const sessionId =
-        program === 'claude' ? (persistedSessionId ?? crypto.randomUUID()) : undefined;
+        isAgentProgram(program) ? (persistedSessionId ?? crypto.randomUUID()) : undefined;
       // A closed (Archived) pane restores as closed: no spawn, no resume until the
       // user restores it (which sets resume:true then).
-      const closed = raw.closed === true && program === 'claude';
+      const closed = raw.closed === true && isAgentProgram(program);
       // A paused pane stays LIVE (it resumes), unlike closed — so the user can keep
       // messaging it. It keeps its baseline count so it doesn't auto-resume at once;
       // an absent/legacy count restores as null and is re-established lazily.
-      const paused = raw.paused === true && program === 'claude' && !closed;
+      const paused = raw.paused === true && isAgentProgram(program) && !closed;
       const pausedCount =
         paused && typeof raw.pausedCount === 'number' && Number.isFinite(raw.pausedCount)
           ? raw.pausedCount
           : paused
             ? null
             : undefined;
-      const resume = program === 'claude' && !closed && !!persistedSessionId;
+      const resume = isAgentProgram(program) && !closed && !!persistedSessionId;
       out[leafNode.paneId] = {
         program,
         cwd: typeof raw.cwd === 'string' ? raw.cwd : null,
@@ -357,15 +354,10 @@ function sanitizeRegistry(
         raw.extraArgs.length > 0
           ? { extraArgs: raw.extraArgs as string[] }
           : {}),
-        // Restore the coordinator role marker + the spawned-agent back-reference so
-        // the coordinator is re-identified and attribution is preserved on restart.
-        ...(raw.role === 'coordinator' ? { role: 'coordinator' as const } : {}),
-        ...(typeof raw.coordinatorPaneId === 'string' && raw.coordinatorPaneId
-          ? { coordinatorPaneId: raw.coordinatorPaneId }
-          : {})
+
       };
     } else {
-      out[leafNode.paneId] = { program: '/bin/zsh', cwd: null };
+      out[leafNode.paneId] = { program: defaultShell(), cwd: null };
     }
   }
   return out;
@@ -414,6 +406,9 @@ export function pruneEmptySessions(
       leaves
         .filter((leaf) => {
           const s = w.registry[leaf.paneId];
+          // Claude panes only: the history probe reads the CLAUDE transcript, so a
+          // copilot pane would always look history-less and be wrongly dropped.
+          // Copilot panes are never auto-pruned (safe default).
           return !!s && s.program === 'claude' && s.resume === true && !hasHistory(leaf.paneId);
         })
         .map((leaf) => leaf.id)
@@ -465,10 +460,13 @@ export function respawnLeaves(
 ): void {
   for (const w of workspaces) {
     for (const leafNode of leavesInOrder(w.ws.root)) {
-      const s = w.registry[leafNode.paneId] ?? { program: '/bin/zsh', cwd: null };
+      const s = w.registry[leafNode.paneId] ?? { program: defaultShell(), cwd: null };
       // Pass ONLY program + cwd (the leaf's saved session) — never any live
       // process state. The registry is already sanitized to those two keys.
-      spawn(leafNode.paneId, { program: s.program, cwd: s.cwd });
+      // `resolveProgram` substitutes a platform-appropriate shell when the saved
+      // one cannot run here (a `/bin/zsh` layout opened on Windows), WITHOUT
+      // touching the stored value, so returning to the original OS restores it.
+      spawn(leafNode.paneId, { program: resolveProgram(s.program), cwd: s.cwd });
     }
   }
 }

@@ -94,11 +94,33 @@ export interface TaskSpawnSpec {
 }
 
 /**
- * Resolve a terminal's spawn parameters. A command runs through the user's login
- * shell (`shell -lc "<command>"`) so PATH/profile (nvm, etc.) are loaded and the
- * full command line (pipes, env) works; when it exits the shell exits, surfacing
- * EOF so the terminal flips to stopped. A null/blank command is an interactive
- * shell. The cwd defaults to the project path unless the def pins its own.
+ * The flags that make `shell` run a single command string and then exit.
+ *
+ * POSIX shells take `-lc <cmd>` (login + command), which loads PATH/profile
+ * (nvm, etc.). PowerShell has no such flag — `-lc` matches no parameter and the
+ * task dies immediately — so it gets `-Command`, and `cmd.exe` gets `/C`.
+ *
+ * PURE and exported so the mapping is unit-tested per shell family rather than
+ * assumed.
+ */
+export function shellCommandFlags(shell: string): string[] {
+  const name = (shell.split(/[/\\]/).pop() || shell).toLowerCase();
+  if (name === 'cmd' || name === 'cmd.exe') return ['/C'];
+  if (name === 'pwsh' || name === 'pwsh.exe' || name === 'powershell' || name === 'powershell.exe') {
+    // -NoLogo keeps the banner out of the terminal; -Command must come last so
+    // the command string is its argument.
+    return ['-NoLogo', '-Command'];
+  }
+  return ['-lc'];
+}
+
+/**
+ * Resolve a terminal's spawn parameters. A command runs through the user's shell
+ * with that shell's run-a-command flags (see {@link shellCommandFlags}) so
+ * PATH/profile are loaded and the full command line (pipes, env) works; when it
+ * exits the shell exits, surfacing EOF so the terminal flips to stopped. A
+ * null/blank command is an interactive shell. The cwd defaults to the project
+ * path unless the def pins its own.
  */
 export function taskSpawnSpec(
   def: TaskDef,
@@ -108,7 +130,7 @@ export function taskSpawnSpec(
   const cwd = def.cwd ?? projectPath ?? null;
   const cmd = typeof def.command === 'string' ? def.command.trim() : '';
   if (cmd === '') return { program: shell, args: [], cwd };
-  return { program: shell, args: ['-lc', cmd], cwd };
+  return { program: shell, args: [...shellCommandFlags(shell), cmd], cwd };
 }
 
 /** The terminals for `projectId` (empty array when the project has none). */
