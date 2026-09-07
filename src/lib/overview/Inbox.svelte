@@ -29,6 +29,7 @@
     laneForRow,
     reorderLane,
     orderRowsByLane,
+    pinRowsToTop,
     type AgentLane,
     type AgentRow,
     type AgentStatus
@@ -227,7 +228,12 @@
     }
   });
 
-  const viewRows = $derived(orderRowsByLane(rows, laneOrder));
+  // Pinned sessions (durable `ui.pinned`, most recently pinned first) lift above
+  // every lane; the rest keep their lane-grouped order. Pinned rows lead the view
+  // order, so the attention queue and keyboard stepping visit them first too.
+  const viewRows = $derived(pinRowsToTop(orderRowsByLane(rows, laneOrder), uiPrefs.data.pinned));
+  const pinnedSet = $derived(new Set(uiPrefs.data.pinned));
+  const pinnedRows = $derived(viewRows.filter((r) => pinnedSet.has(r.paneId)));
 
   const queue = $derived(attentionQueue(viewRows));
 
@@ -265,7 +271,8 @@
   // Lanes render straight from the ordered view rows (viewRows → orderRowsByLane),
   // so groupByLane just re-partitions them — including the Archived (done) lane,
   // already newest-first via `laneOrder` (no extra reverse needed).
-  const renderGrouped = $derived(groupByLane(viewRows));
+  // Pinned rows render in their own group above the lanes, so they are left out here.
+  const renderGrouped = $derived(groupByLane(viewRows.filter((r) => !pinnedSet.has(r.paneId))));
 
   // The Archived lane collapses to its latest 2 rows (newest-first via `laneOrder`
   // — see above; no reverse — so the first 2 ARE the most recent) with a "Show all /
@@ -705,6 +712,7 @@
     if (!ok) return;
     advanceAfterDismiss(paneId);
     if (userSelected === paneId) userSelected = null;
+    uiPrefs.forgetPinned(paneId);
     workspace.deleteAgent(paneId);
   }
 
@@ -714,7 +722,10 @@
    *  archived; we just feed it the live deps and show the modal. */
   function deleteAllArchived() {
     const req = deleteAllArchivedRequest(viewRows, {
-      deleteAgent: (id) => workspace.deleteAgent(id),
+      deleteAgent: (id) => {
+        uiPrefs.forgetPinned(id);
+        workspace.deleteAgent(id);
+      },
       getSelected: () => userSelected,
       setSelected: (v) => (userSelected = v)
     });
@@ -732,7 +743,10 @@
   $effect(() => {
     for (const r of allRows) {
       const action = autoArchiveAction(r, activity.forPane(r.paneId).userHash);
-      if (action === 'delete') workspace.deleteAgent(r.paneId);
+      if (action === 'delete') {
+        uiPrefs.forgetPinned(r.paneId);
+        workspace.deleteAgent(r.paneId);
+      }
       else if (action === 'archive') workspace.closeAgent(r.paneId);
     }
   });
@@ -859,20 +873,28 @@
     const renameItem: MenuItem[] = [
       { label: 'Rename', icon: 'pencil', onClick: () => renameAgent(row) }
     ];
+    // Pin/unpin is offered on every row: a pinned session sits in the Pinned group
+    // above the lanes whatever its status.
+    const pinItem: MenuItem = uiPrefs.isPinned(row.paneId)
+      ? { label: 'Unpin', icon: 'pin-off', onClick: () => uiPrefs.togglePinned(row.paneId) }
+      : { label: 'Pin to top', icon: 'pin', onClick: () => uiPrefs.togglePinned(row.paneId) };
     const items: MenuItem[] = row.closed || row.preview
       ? [
+          pinItem,
           { label: 'Delete', icon: 'trash-2', danger: true, onClick: () => deleteAgent(row.paneId, name) }
         ]
       : row.paused
         ? [
             { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
             ...renameItem,
+            pinItem,
             { label: 'Resume', icon: 'play', onClick: () => resumeAgent(row.paneId) },
             archiveItem
           ]
         : [
             { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
             ...renameItem,
+            pinItem,
             { label: 'Pause', icon: 'pause', onClick: () => pauseAgent(row.paneId) },
             archiveItem
           ];
@@ -1070,6 +1092,9 @@
     <ProjectIcon {...projAvatar(r.projectId)} size={compactMode.minimal ? 20 : 30} />
     <span class="nm">
       <span class="t">
+        {#if pinnedSet.has(r.paneId)}
+          <span class="pin" use:tooltip={'Pinned to top'}><Icon name="pin" size={10} /></span>
+        {/if}
         {titles.titleFor(r.paneId) ?? r.name}
         {#if r.specialist}
           <span class="spec-badge" use:tooltip={`Spawned as specialist “${r.specialist}”`}>
@@ -1160,6 +1185,15 @@
               <button type="button" class="btn-primary" onclick={newAgent}>＋ New session</button>
             </div>
           {:else}
+            {#if pinnedRows.length > 0}
+              <div class="group-h pinned">
+                Pinned <span class="gn">· {pinnedRows.length}</span><span class="rule"></span>
+              </div>
+              {#each pinnedRows as r (r.paneId)}
+                {@render sessionRow(r, laneForRow(r))}
+                {@render subagentBlock(r)}
+              {/each}
+            {/if}
             {#each LANE_ORDER as lane (lane)}
               {@const items = renderGrouped[lane]}
               {@const collapsedArchive = lane === 'done' && !showAllArchived}
@@ -1340,6 +1374,7 @@
   .launch-pane.sp { border-top: 1px solid var(--line-subtle); }
 
   .group-h { display: flex; align-items: center; gap: 8px; padding: 14px 16px 6px; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tracking-label); }
+  .group-h.pinned { color: var(--fg-3); }
   .group-h.attn { color: var(--orange-300); }
   .group-h.flight { color: var(--blue-300); }
   .group-h.done { color: var(--fg-4); }
@@ -1413,6 +1448,8 @@
      agent's title, marking a pane spawned AS a specialist (task 5.4). */
   .row .nm .t .spec-badge { flex: none; display: inline-flex; align-items: center; gap: 3px; max-width: 120px; padding: 1px 6px 1px 5px; border-radius: var(--r-full); background: var(--blue-tint); color: var(--blue-200); font-family: var(--font-mono); font-size: 9.5px; font-weight: 500; letter-spacing: 0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row .nm .t .spec-badge :global(.mc-icon) { opacity: 0.85; }
+  /* Pinned marker: a small pin glyph leading the title. */
+  .row .nm .t .pin { flex: none; display: inline-flex; color: var(--fg-4); }
   .row .nm .s { font-size: 11px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
   .row .nm .s.q { color: var(--orange-300); }
   /* The tiny third row: context · cost · last activity, each an icon + value. */

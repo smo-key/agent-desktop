@@ -205,6 +205,24 @@ export function orderRowsByLane(
 }
 
 /**
+ * PURE: lift the pinned rows to the very top of the display order — above every
+ * lane, in the `pinned` list's order (most recently pinned first) — leaving the
+ * remaining rows in their incoming (lane-grouped) order. Pinned ids with no row
+ * are ignored. Returns a new array; never mutates inputs.
+ */
+export function pinRowsToTop(rows: AgentRow[], pinned: ReadonlyArray<string>): AgentRow[] {
+  if (pinned.length === 0) return [...rows];
+  const byId = new Map(rows.map((r) => [r.paneId, r]));
+  const top: AgentRow[] = [];
+  for (const id of pinned) {
+    const r = byId.get(id);
+    if (r) top.push(r);
+  }
+  const topSet = new Set(top.map((r) => r.paneId));
+  return [...top, ...rows.filter((r) => !topSet.has(r.paneId))];
+}
+
+/**
  * PURE: the paneIds of the ARCHIVED rows — those in the `done` lane (closed or
  * previewing-an-archived-session), in roster order. This is exactly the set shown
  * under the overview's "Archived" header, so it backs the "delete all archived"

@@ -11,6 +11,7 @@ import {
   reorderLane,
   moveId,
   orderRowsByLane,
+  pinRowsToTop,
   archivedPaneIds,
   LANE_ORDER,
   WORKING_WINDOW_MS,
@@ -664,6 +665,22 @@ describe('roster — per-lane display ordering', () => {
     // No-ops return a fresh copy: unknown id, or dropping onto itself.
     expect(moveId(['a', 'b'], 'a', 'a')).toEqual(['a', 'b']);
     expect(moveId(['a', 'b'], 'x', 'b')).toEqual(['a', 'b']);
+  });
+
+  it('Pinned sessions render above every lane in pin order', () => {
+    const rows = [
+      laneRow('w1', { status: 'waiting' }),
+      laneRow('f1', { status: 'working' }),
+      laneRow('p1', { status: 'working', paused: true }),
+      laneRow('d1', { status: 'working', closed: true })
+    ];
+    // Pinned ids lead, in the pinned list's order (most recently pinned first),
+    // regardless of lane; unpinned rows keep their incoming (lane) order.
+    expect(pinRowsToTop(rows, ['d1', 'f1']).map((r) => r.paneId)).toEqual(['d1', 'f1', 'w1', 'p1']);
+    // Unknown pinned ids are ignored; no pins ⇒ unchanged copy.
+    expect(pinRowsToTop(rows, ['zzz']).map((r) => r.paneId)).toEqual(['w1', 'f1', 'p1', 'd1']);
+    expect(pinRowsToTop(rows, []).map((r) => r.paneId)).toEqual(['w1', 'f1', 'p1', 'd1']);
+    expect(pinRowsToTop(rows, [])).not.toBe(rows);
   });
 
   it('orderRowsByLane groups rows by lane and orders within each by its lane order', () => {

@@ -50,6 +50,9 @@ export interface UiPrefs {
   tasksLauncherFrac: number;
   projectFilter: string;
   laneOrder: LaneOrderPrefs;
+  /** Sessions pinned to the top of the roster (pane ids, most recently pinned
+   *  first). A pinned session renders above every lane regardless of status. */
+  pinned: string[];
 }
 
 /** Defaults for a fresh install. */
@@ -58,7 +61,8 @@ export const DEFAULT_UI_PREFS: UiPrefs = {
   terminalsWidth: TERMINALS_WIDTH_DEFAULT,
   tasksLauncherFrac: TASKS_FRAC_DEFAULT,
   projectFilter: PROJECT_FILTER_DEFAULT,
-  laneOrder: { attn: [], paused: [] }
+  laneOrder: { attn: [], paused: [] },
+  pinned: []
 };
 
 /** Clamp a terminals-panel width into [MIN, MAX] (rounded). */
@@ -108,7 +112,8 @@ export function parseUiPrefs(raw: unknown): UiPrefs {
       typeof o.projectFilter === 'string' && o.projectFilter !== ''
         ? o.projectFilter
         : PROJECT_FILTER_DEFAULT,
-    laneOrder: { attn: stringIds(laneRaw.attn), paused: stringIds(laneRaw.paused) }
+    laneOrder: { attn: stringIds(laneRaw.attn), paused: stringIds(laneRaw.paused) },
+    pinned: stringIds(o.pinned)
   };
 }
 
@@ -169,6 +174,29 @@ export class UiPrefsStore {
   /** Set the manual lane order (attn + paused) and persist (best-effort). */
   setLaneOrder(order: LaneOrderPrefs): void {
     this.data = { ...this.data, laneOrder: { attn: [...order.attn], paused: [...order.paused] } };
+    void this.save();
+  }
+
+  /** Whether a session is pinned to the top of the roster. */
+  isPinned(paneId: string): boolean {
+    return this.data.pinned.includes(paneId);
+  }
+
+  /** Pin (to the front — most recently pinned on top) or unpin a session, and
+   *  persist (best-effort). */
+  togglePinned(paneId: string): void {
+    const pinned = this.isPinned(paneId)
+      ? this.data.pinned.filter((id) => id !== paneId)
+      : [paneId, ...this.data.pinned];
+    this.data = { ...this.data, pinned };
+    void this.save();
+  }
+
+  /** Drop a session from the pinned list when it is deleted for good. A no-op
+   *  (no write) when it was not pinned. */
+  forgetPinned(paneId: string): void {
+    if (!this.isPinned(paneId)) return;
+    this.data = { ...this.data, pinned: this.data.pinned.filter((id) => id !== paneId) };
     void this.save();
   }
 
