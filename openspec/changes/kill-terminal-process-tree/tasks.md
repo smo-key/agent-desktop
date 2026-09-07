@@ -29,3 +29,11 @@
       thread with an inline fallback; one `ps` per poll tick shared by all
       trees; finished killer threads pruned. Two more tests (orphans after an
       exited child, on close and on quit) and unit tests for the discovery rules.
+- [x] 2.3 Adversarial review round 3: a reaped root whose pid was recycled by
+      another child of the app (a `ps`/`git` helper, another pane's shell)
+      passed the parent check and could have signalled the app's own group at
+      quit — any live row for a reaped pid is now rejected, and the app's pid
+      and group are stripped from every tree; zombie descendants' group ids
+      are kept (double-forked daemons behind an unwaited launcher); grace
+      raised to 3s on close / 1.5s on quit so a `claude` session can run its
+      exit hooks. Unit tests for both discovery rules.

@@ -121,10 +121,12 @@ fn foreground_busy_of(_pane: &Pane) -> Option<bool> {
 const READER_JOIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How long a pane's process tree gets to exit after the graceful signals
-/// before survivors are force-killed (single-pane close; runs off-thread).
-const KILL_GRACE: Duration = Duration::from_millis(1000);
+/// before survivors are force-killed (single-pane close; runs off-thread, so
+/// generous: a `claude` session runs its SessionEnd hooks and MCP shutdown
+/// on the way out). Well-behaved trees are gone at the first 40ms poll.
+const KILL_GRACE: Duration = Duration::from_millis(3000);
 /// Same, for app quit (`kill_all`), which blocks the close handler — shorter.
-const KILL_ALL_GRACE: Duration = Duration::from_millis(500);
+const KILL_ALL_GRACE: Duration = Duration::from_millis(1500);
 
 /// Tauri-managed state: a registry of live panes plus a monotonic id counter.
 pub struct PtyManager {
@@ -696,8 +698,12 @@ pub mod process_tree {
     #[derive(Debug, Clone)]
     pub struct Tree {
         root: u32,
-        /// Every pid ever observed in the tree. Kept even after a member dies
-        /// (its descendants may still be alive, and `ps` no longer links them).
+        /// The root was alive (not a zombie) when discovered: it gets SIGHUP.
+        root_alive: bool,
+        /// Every pid ever observed in the tree, zombies included (a zombie's
+        /// group id can still lead us to its orphans). Kept even after a
+        /// member dies (its descendants may still be alive, and `ps` no
+        /// longer links them).
         tracked: HashSet<u32>,
         /// Every process-group id observed on a tracked member. A job under
         /// job control leads its own group; signalling the group reaches its
@@ -754,16 +760,22 @@ pub mod process_tree {
             let row = procs.iter().find(|q| q.pid == root.pid);
             let mut tree = Tree {
                 root: root.pid,
+                root_alive: false,
                 tracked: HashSet::new(),
                 groups: HashSet::from([root.pid]),
                 blind: false,
             };
             match row {
+                // Any process still holding a pid we already `wait()`ed is a
+                // recycled pid — even (especially) one whose parent is us,
+                // i.e. another pane's child or a helper like `ps`/`git`.
+                Some(_) if root.reaped => return None,
                 Some(r) if r.ppid != me => return None, // recycled pid
-                Some(r) if !r.zombie => {
+                Some(r) => {
+                    tree.root_alive = !r.zombie;
                     tree.tracked.insert(root.pid);
                 }
-                _ => {} // zombie or gone: group members only
+                None => {} // gone: group members only
             }
             let live = tree.absorb(procs);
             (!live.is_empty()).then_some(tree)
@@ -777,6 +789,7 @@ pub mod process_tree {
                 root: root.pid,
                 tracked: HashSet::from([root.pid]),
                 groups: HashSet::from([root.pid]),
+                root_alive: true,
                 blind: true,
             })
         }
@@ -786,24 +799,28 @@ pub mod process_tree {
         /// fixpoint (descendants reveal new groups, group members reveal new
         /// descendants). Returns the tracked pids alive right now.
         fn absorb(&mut self, procs: &[Proc]) -> Vec<u32> {
+            // Belt and braces: whatever the table says, this process and its
+            // own group are never targets.
+            let me = std::process::id();
+            let my_group = own_group();
             loop {
                 let before = (self.tracked.len(), self.groups.len());
-                // Zombies are never tracked: nothing to signal, and their
-                // children have already been reparented.
-                for q in procs.iter().filter(|q| !q.zombie && self.groups.contains(&q.pgid)) {
+                for q in procs.iter().filter(|q| self.groups.contains(&q.pgid)) {
                     self.tracked.insert(q.pid);
                 }
                 let mut frontier: Vec<u32> = self.tracked.iter().copied().collect();
                 while let Some(p) = frontier.pop() {
-                    for q in procs.iter().filter(|q| !q.zombie && q.ppid == p) {
+                    for q in procs.iter().filter(|q| q.ppid == p) {
                         if self.tracked.insert(q.pid) {
                             frontier.push(q.pid);
                         }
                     }
                 }
+                self.tracked.remove(&me);
                 for q in procs.iter().filter(|q| self.tracked.contains(&q.pid)) {
                     self.groups.insert(q.pgid);
                 }
+                self.groups.remove(&my_group);
                 if (self.tracked.len(), self.groups.len()) == before {
                     break;
                 }
@@ -816,10 +833,11 @@ pub mod process_tree {
         }
 
         /// SIGHUP to the leader if it is alive (what closing a real terminal
-        /// sends; shells forward it to their jobs) and SIGTERM to everyone
-        /// else, individually and by group.
+        /// sends; shells forward it to their jobs), SIGTERM to every other
+        /// tracked pid, and SIGTERM to every tracked group (which includes
+        /// the leader's own group, so the leader sees both signals).
         fn signal_graceful(&self) {
-            if self.tracked.contains(&self.root) {
+            if self.root_alive {
                 signal(self.root, libc::SIGHUP);
             }
             for &pid in self.tracked.iter().filter(|&&p| p != self.root) {
@@ -932,6 +950,13 @@ pub mod process_tree {
         }
     }
 
+    /// This process's own process-group id.
+    #[cfg(unix)]
+    fn own_group() -> u32 {
+        // SAFETY: getpgrp has no preconditions and cannot fail.
+        unsafe { libc::getpgrp() as u32 }
+    }
+
     /// Signal every process in the group whose id is `pgid`.
     #[cfg(unix)]
     fn signal_group(pgid: u32, sig: libc::c_int) {
@@ -984,6 +1009,36 @@ pub mod process_tree {
         }
 
         #[test]
+        fn discover_rejects_a_reaped_pid_that_our_own_helper_now_holds() {
+            let me = std::process::id();
+            let my_group = own_group();
+            // Our child 100 was reaped; the pid now belongs to a new child of
+            // ours (say `ps` or `git`) in the app's own process group.
+            let table = vec![row(me, 1, my_group), row(100, me, my_group), row(7, me, my_group)];
+            assert!(
+                Tree::discover(Root { pid: 100, reaped: true }, &table).is_none(),
+                "a live row for a reaped pid is a recycled pid"
+            );
+            // Even if discovery were fooled, the app and its group are never
+            // targets: an unreaped root sitting in our group yields nothing.
+            let t = Tree::discover(root(100), &table);
+            assert!(t.as_ref().map_or(true, |t| !t.tracked.contains(&me) && !t.groups.contains(&my_group)));
+        }
+
+        #[test]
+        fn discover_reaches_orphans_through_a_zombie_launchers_group() {
+            let me = std::process::id();
+            // root(100) → launcher D(200, own session/group) forked server(201,
+            // pgid 200) and exited; D is a zombie its parent never waited.
+            let mut d = row(200, 100, 200);
+            d.zombie = true;
+            let table = vec![row(100, me, 100), d, row(201, 1, 200)];
+            let tree = Tree::discover(root(100), &table).expect("root is our child");
+            assert!(tree.groups.contains(&200), "zombie's group id is still a lead");
+            assert!(tree.tracked.contains(&201), "double-forked server found via that group");
+        }
+
+        #[test]
         fn discover_uses_the_group_when_the_root_is_gone_or_a_zombie() {
             let me = std::process::id();
             // Reaped root, absent from the table; its orphan still leads a
@@ -996,7 +1051,8 @@ pub mod process_tree {
             let mut z = row(100, me, 100);
             z.zombie = true;
             let tree = Tree::discover(root(100), &[z, row(103, 1, 100)]).expect("zombie root's orphans found");
-            assert_eq!(tree.tracked, HashSet::from([103]));
+            assert!(!tree.root_alive, "a zombie root gets no SIGHUP");
+            assert!(tree.tracked.contains(&103));
             // Nothing left of the session → nothing to do.
             assert!(Tree::discover(Root { pid: 100, reaped: true }, &[row(999, 1, 999)]).is_none());
         }
