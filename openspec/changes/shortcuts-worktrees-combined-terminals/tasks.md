@@ -62,9 +62,10 @@
 - [x] 4.1 `yarn check`, `yarn test`, `cargo test`, `yarn coverage`,
       `yarn lint:storage` green; MANUAL allowlist entries for the DOM-bound
       scenarios with justifications.
-- [ ] 4.2 Adversarial code review; resolve CRITICAL findings — three rounds on
-      the terminal titles: the title source moved from typed keystrokes to the
-      shell's own reported window titles (rounds 1-3 each found another way a
-      secret or a never-run line reached the keystroke buffer), titles are
-      on-device only, plus the stale-response guard, failure backoff, cache
-      eviction, and a rename that pins only on Enter.
+- [x] 4.2 Adversarial code review — six rounds, all CRITICALs resolved. The
+      title source moved from typed keystrokes to the terminal's own reported
+      window titles (rounds 1-3 each found another way a secret or a never-run
+      line reached the keystroke buffer); titles are on-device only; plus the
+      stale-response guard, failure backoff, request cap, cache eviction,
+      secret redaction, and a rename that pins only on Enter, compares against
+      the seed it opened with, holds the keyboard, and never wedges focus.
