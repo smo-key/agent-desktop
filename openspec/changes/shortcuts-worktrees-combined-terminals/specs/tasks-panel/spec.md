@@ -62,3 +62,23 @@ When the terminals placement is `combined`, every active terminal — a terminal
 #### Scenario: New terminal shortcut adds and selects a row
 - **WHEN** the user presses the new-terminal shortcut in combined placement
 - **THEN** a bare shell row appears for the active project and becomes the focused row
+
+### Requirement: Terminal rows are titled like sessions
+
+A terminal row in the combined sessions list SHALL be renameable exactly like a session row: the focus-pane header title is an inline edit and the row's context menu offers **Rename**, both committing a CUSTOM title that is sticky (never re-generated) and shown in place of the terminal's name. The durable title key SHALL be the terminal's task id (`task:<defId>`), which survives a restart of that task; a bare shell's key is per-process and its custom title SHALL therefore live only for that process, matching the rule that terminal ids are never persisted. Renaming a terminal row SHALL NOT rename the underlying task definition, which keeps its name in the Tasks launcher.
+
+#### Scenario: A task terminal row carries a durable title key
+- **WHEN** the title key of a task terminal row and of a bare shell row is resolved
+- **THEN** the task row's key is its `task:<defId>` and the bare shell's key is null, so only the task title is persisted
+
+#### Scenario: A renamed terminal row keeps its custom title
+- **WHEN** a terminal row is renamed and a title generation for it later resolves
+- **THEN** the custom title is kept and the generated one is discarded
+
+#### Scenario: A restarted task terminal recovers its custom title
+- **WHEN** a task terminal with a custom title is restarted under a new pane id
+- **THEN** hydrating the new pane from the durable cache restores the custom title with no model call
+
+#### Scenario: Renaming a terminal row from the header or its menu
+- **WHEN** the user clicks the focused terminal's header title or picks Rename in its row menu
+- **THEN** an inline edit opens, and committing it shows the custom title on the row and header

@@ -199,3 +199,31 @@ export function persistedLaneOrder<L extends string>(
   }
   return same ? prev : out;
 }
+/**
+ * The DURABLE title key of a terminal row, or null when it has none
+ * (`tasks-panel`: "Terminal rows are titled like sessions"). A task terminal's
+ * `task:<defId>` is stable across restarts, so a custom title survives one; a bare
+ * shell's `bare:<id>` is per-process — persisting under it would strand the entry
+ * forever — so it gets null and its title lives only for that process. Pure.
+ */
+export function terminalTitleKey(row: Pick<AgentRow, 'terminalKind' | 'terminalKey'>): string | null {
+  return row.terminalKind === 'task' ? (row.terminalKey ?? null) : null;
+}
+
+/**
+ * The title refs for a set of terminal rows: the durable key plus the commands the
+ * user typed (from `commandsOf`, the live terminal handle). Only BARE shells carry
+ * commands — a task terminal's command already IS its name, and titling it would
+ * spend a model call restating it — so a task row's `commands` is always null and
+ * it is never sent to the model. Pure.
+ */
+export function terminalTitleRefs(
+  rows: ReadonlyArray<AgentRow>,
+  commandsOf: (paneId: string) => string | null
+): { paneId: string; key: string | null; commands: string | null }[] {
+  return rows.filter(isTerminalRow).map((r) => ({
+    paneId: r.paneId,
+    key: terminalTitleKey(r),
+    commands: r.terminalKind === 'bare' ? commandsOf(r.paneId) : null
+  }));
+}

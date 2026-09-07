@@ -6,6 +6,8 @@ import {
   isTerminalRow,
   persistedLaneOrder,
   terminalFocusActions,
+  terminalTitleKey,
+  terminalTitleRefs,
   type TerminalSource
 } from './terminalRows';
 import { IDLE_GRACE_MS, WORKING_WINDOW_MS, type PaneRuntime } from './roster';
@@ -197,5 +199,29 @@ describe('deriveTerminalStatus — Terminal rows derive status from the foregrou
     // Just spawned, no output yet → working; no runtime entry at all → idle.
     expect(deriveTerminalStatus(shell, rt(), now)).toBe('working');
     expect(deriveTerminalStatus(shell, undefined, now)).toBe('idle');
+  });
+});
+
+describe('terminal row titles', () => {
+  it('A task terminal row carries a durable title key', () => {
+    const task = { terminalKind: 'task' as const, terminalKey: 'task:t1' };
+    const bare = { terminalKind: 'bare' as const, terminalKey: 'bare:b1' };
+    expect(terminalTitleKey(task)).toBe('task:t1');
+    // A bare shell's id is per-process: no durable key, so nothing is persisted.
+    expect(terminalTitleKey(bare)).toBeNull();
+
+    const rows = buildTerminalRows(
+      [
+        { key: 'task:t1', paneId: 'p1', kind: 'task', projectId: 'a', name: 'Dev server', summary: 'yarn dev', cwd: null, running: true, exitCode: null },
+        { key: 'bare:b1', paneId: 'p2', kind: 'bare', projectId: 'a', name: 'Terminal', summary: null, cwd: null, running: true, exitCode: null }
+      ],
+      {},
+      1_000
+    );
+    const refs = terminalTitleRefs(rows, () => 'yarn test');
+    expect(refs).toEqual([
+      { paneId: 'p1', key: 'task:t1', commands: null }, // a task is never model-titled
+      { paneId: 'p2', key: null, commands: 'yarn test' }
+    ]);
   });
 });

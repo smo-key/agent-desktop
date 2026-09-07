@@ -43,9 +43,20 @@
 - [x] 3.6 `RunningTasksPanel` portals the selected entry's body; dock + toggle
       hidden and ⌘J inert in combined placement.
 
+- [x] 3.7 `terminalInput.ts` accumulator (Return flush, backspace, control keys,
+      ring cap) + `TerminalHandle.recentCommands`; `TerminalPane` collects typed
+      input only while the foreground probe reports an idle prompt.
+- [x] 3.8 Rust `TERMINAL_TITLE_SYSTEM_PROMPT` / `build_terminal_title_body` and
+      the `terminal_focus` command reusing the title cleaning + cloud fallback.
+- [x] 3.9 `TitleStore.hydrateKeys` / `refreshTerminals` keyed by the terminal's
+      title key (task id durable, bare shell per-process); Inbox drives it for
+      bare shells only in combined placement.
+- [x] 3.10 Inbox rename for terminal rows: `titleKeyOf`, editable focus header,
+      "Rename" in the terminal row menu, row shows the generated title.
+
 ## 4. Verification
 
 - [x] 4.1 `yarn check`, `yarn test`, `cargo test`, `yarn coverage`,
       `yarn lint:storage` green; MANUAL allowlist entries for the DOM-bound
       scenarios with justifications.
-- [x] 4.2 Adversarial code review; resolve CRITICAL findings.
+- [ ] 4.2 Adversarial code review; resolve CRITICAL findings.

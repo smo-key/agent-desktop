@@ -188,3 +188,80 @@ describe('TitleStore manual (custom) titles', () => {
     expect(saved.s1).toEqual({ title: 'Custom focus', hash: null, manual: true });
   });
 });
+
+// Terminal rows are titled by the same store, keyed by their TITLE KEY: a task
+// terminal's stable `task:<defId>` (persisted, so a restart recovers it) and a
+// bare shell's null (per-process, never written). Their change key is the list of
+// commands the user typed, not screen text.
+describe('TitleStore terminal titles', () => {
+  const ref = (over: Partial<{ paneId: string; key: string | null; commands: string | null }> = {}) => ({
+    paneId: 'tp1',
+    key: null as string | null,
+    commands: 'yarn test',
+    ...over
+  });
+
+  it('A bare shell is titled from its recent commands', async () => {
+    invokeMock.mockResolvedValue('Run the test suite');
+    const store = new TitleStore();
+    store.refreshTerminals([ref()], NOW);
+    await flush();
+
+    expect(invokeMock).toHaveBeenCalledWith('terminal_focus', {
+      commands: 'yarn test',
+      cloudFallback: false
+    });
+    expect(store.titleFor('tp1')).toBe('Run the test suite');
+    // A per-process bare shell is never written to the durable cache.
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+
+    // Unchanged commands do not re-request; a NEW command does.
+    invokeMock.mockClear();
+    store.refreshTerminals([ref()], NOW + 60_000);
+    await flush();
+    expect(invokeMock).not.toHaveBeenCalled();
+    invokeMock.mockResolvedValue('Inspect git history');
+    store.refreshTerminals([ref({ commands: 'yarn test\ngit log' })], NOW + 120_000);
+    await flush();
+    expect(store.titleFor('tp1')).toBe('Inspect git history');
+  });
+
+  it('An untouched shell is never titled', async () => {
+    invokeMock.mockResolvedValue('nope');
+    const store = new TitleStore();
+    // No typed commands (a fresh shell) and a task row (its command IS its name).
+    store.refreshTerminals([ref({ commands: null }), ref({ paneId: 'tp2', key: 'task:t1', commands: null })], NOW);
+    await flush();
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(store.titleFor('tp1')).toBeNull();
+  });
+
+  it('A renamed terminal row keeps its custom title', async () => {
+    let resolve!: (v: string) => void;
+    invokeMock.mockReturnValue(new Promise<string>((r) => (resolve = r)));
+    const store = new TitleStore();
+    store.refreshTerminals([ref()], NOW);
+    // The user renames the row while the generation is still in flight.
+    store.setManualTitle('tp1', null, 'Nightly smoke run');
+    resolve('Run the test suite');
+    await flush();
+    expect(store.titleFor('tp1')).toBe('Nightly smoke run');
+    // And it is sticky: a later command change does not re-generate.
+    invokeMock.mockClear();
+    store.refreshTerminals([ref({ commands: 'make build' })], NOW + 60_000);
+    await flush();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('A restarted task terminal recovers its custom title', async () => {
+    const store = new TitleStore();
+    store.setManualTitle('tp1', 'task:t1', 'Watch the dev server');
+    // Restart: same task def, a BRAND NEW pane id, and a fresh store (app restart).
+    const next = new TitleStore();
+    next.hydrateKeys([{ paneId: 'tp9', key: 'task:t1', commands: null }]);
+    expect(next.titleFor('tp9')).toBe('Watch the dev server');
+    expect(store.titleFor('tp1')).toBe('Watch the dev server');
+    await flush();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+});

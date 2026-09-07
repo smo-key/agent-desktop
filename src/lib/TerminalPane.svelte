@@ -20,6 +20,13 @@
   import { backendFor, backendForProgram, isAgentProgram } from './agent/backends';
   import { noteOutput, noteExit, noteBusy, noteResize, noteForeground, clearRuntime } from './overview/runtime';
   import { detectTerminalBusy } from './overview/terminalBusy';
+  import {
+    appendInput,
+    commandsText,
+    emptyInput,
+    shouldCollect,
+    type InputBuffer
+  } from './overview/terminalInput';
   import { events } from './overview/events.svelte';
 
   // PtyEvent — the exact wire shape the Rust backend streams over the per-pane
@@ -136,7 +143,10 @@
       if (id === undefined) return;
       void invoke<boolean | null>('pty_foreground_busy', { id })
         .then((busy) => {
-          if (live && ptyId === id) noteForeground(paneId, busy ?? null);
+          if (live && ptyId === id) {
+            foregroundBusy = busy ?? null;
+            noteForeground(paneId, busy ?? null);
+          }
         })
         .catch(() => {});
     };
@@ -145,9 +155,18 @@
     return () => {
       live = false;
       clearInterval(timer);
+      foregroundBusy = null;
       noteForeground(paneId, null);
     };
   });
+
+  // The probe's LAST answer for this pane (mirrors what the effect above records)
+  // and the commands the user has typed at an IDLE prompt. The buffer feeds the
+  // terminal row's generated title (`session-titles`); it is memory-only and never
+  // persisted, and `shouldCollect` keeps keystrokes typed INTO a running program
+  // (a password prompt, a REPL) out of it entirely.
+  let foregroundBusy: boolean | null = null;
+  let typedInput: InputBuffer = emptyInput();
 
   // Single-shot sender for the optional initial prompt. Constructed in onMount
   // from the LAUNCH-TIME prop value (an initial prompt is delivered once, at
@@ -751,13 +770,22 @@
         },
         scrollToBottom: () => {
           term?.scrollToBottom();
-        }
+        },
+        // Terminal-row titles (`session-titles`): the commands the user ran in this
+        // pane, newline-joined, or null when they have typed none. Deliberately NOT
+        // the rendered screen text — that changes on every output chunk and would
+        // re-trigger a title forever.
+        recentCommands: () => commandsText(typedInput)
       });
 
       // Input: forward raw encoded bytes to the PTY writer.
       const enc = new TextEncoder();
       onDataSub = term.onData((d) => {
         if (ptyId === undefined) return;
+        // Collect the command line only while the probe says the shell is idle.
+        if (probeForeground && shouldCollect(foregroundBusy)) {
+          typedInput = appendInput(typedInput, d);
+        }
         void invoke('pty_write', {
           id: ptyId,
           data: Array.from(enc.encode(d))

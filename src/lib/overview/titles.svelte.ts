@@ -80,6 +80,25 @@ export function shouldRequest(
   return true;
 }
 
+/** One terminal row to title / hydrate. */
+export interface TerminalTitleRef {
+  /** The live pane id (the runtime title key). */
+  paneId: string;
+  /**
+   * The DURABLE title key, or null when there is none. A task terminal passes
+   * `task:<defId>` (stable across restarts, so a custom title survives); a bare
+   * shell passes null — its id is per-process, exactly like the lane order that
+   * also omits terminal ids, so its title lives only for that process.
+   */
+  key: string | null;
+  /**
+   * The commands the user has typed in this terminal (newline-joined, oldest
+   * first), or null when nothing has been typed / the row should not be titled by
+   * the model (a task terminal). Doubles as the change key.
+   */
+  commands: string | null;
+}
+
 /** Reactive title store: paneId -> {title, hash}. */
 export class TitleStore {
   byPane = $state<Record<string, TitleEntry>>({});
@@ -182,6 +201,68 @@ export class TitleStore {
       console.warn('session_focus failed; keeping previous title:', err);
     } finally {
       if (this.#pending.get(pane.paneId) === hash) this.#pending.delete(pane.paneId);
+    }
+  }
+
+  /**
+   * Seed a TERMINAL row's title from the durable cache (`session-titles`: "Bare
+   * terminal rows are titled from the commands the user ran"). Same idea as
+   * `hydrate`, but keyed by the row's TITLE KEY rather than a session id: a task
+   * terminal's key (`task:<defId>`) is stable, so a restarted task terminal — a
+   * NEW pane id — shows its previous (usually custom) title with no model call. A
+   * bare shell passes `key: null` (its id is per-process and never persisted), so
+   * it is simply skipped here.
+   */
+  hydrateKeys(refs: ReadonlyArray<TerminalTitleRef>): void {
+    for (const r of refs) {
+      if (!this.byPane[r.paneId] && r.key) {
+        const saved = this.#bySession[r.key];
+        if (saved) this.byPane[r.paneId] = saved;
+      }
+    }
+  }
+
+  /**
+   * Request titles for TERMINAL rows whose typed-command list changed. The command
+   * text plays the role a session's `user_hash` plays: it changes only when the
+   * user actually runs something, so a noisy terminal (a build, `tail -f`) never
+   * re-triggers a title. A ref with `commands: null` (nothing typed yet, or a task
+   * terminal, whose command already IS its name) is skipped, and a manual title
+   * stays sticky through `shouldRequest`. Fire-and-forget.
+   */
+  refreshTerminals(refs: ReadonlyArray<TerminalTitleRef>, nowMs: number): void {
+    this.hydrateKeys(refs);
+    for (const r of refs) {
+      const entry = this.byPane[r.paneId];
+      const pending = this.#pending.get(r.paneId);
+      const last = this.#lastAttempt.get(r.paneId) ?? 0;
+      if (!shouldRequest(entry, pending, r.commands, last, nowMs)) continue;
+      this.#pending.set(r.paneId, r.commands as string);
+      this.#lastAttempt.set(r.paneId, nowMs);
+      void this.#fetchTerminal(r, r.commands as string);
+    }
+  }
+
+  async #fetchTerminal(ref: TerminalTitleRef, commands: string): Promise<void> {
+    try {
+      const title = await invoke<string | null>('terminal_focus', {
+        commands,
+        cloudFallback: titleSettings.prefs.cloudFallback
+      });
+      // A rename that landed while we were awaiting wins — a custom title is sticky.
+      if (this.byPane[ref.paneId]?.manual) return;
+      if (ref.key && this.#bySession[ref.key]?.manual) return;
+      const next: TitleEntry = { title: title ?? null, hash: commands };
+      this.byPane[ref.paneId] = next;
+      // Only a DURABLE key is persisted: a bare shell's id dies with its process.
+      if (ref.key && next.title) {
+        this.#bySession[ref.key] = next;
+        this.#persist();
+      }
+    } catch (err) {
+      console.warn('terminal_focus failed; keeping previous title:', err);
+    } finally {
+      if (this.#pending.get(ref.paneId) === commands) this.#pending.delete(ref.paneId);
     }
   }
 

@@ -27,7 +27,8 @@ function fakeHandle(opts: { alive?: boolean } = {}) {
     },
     sendKeys: (): boolean => alive,
     focus: () => {},
-    scrollToBottom: () => {}
+    scrollToBottom: () => {},
+    recentCommands: () => null
   };
   return { handle, sent };
 }

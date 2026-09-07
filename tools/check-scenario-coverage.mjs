@@ -397,6 +397,11 @@ const MANUAL_SCENARIOS = {
     // shell appearing + being selected as a row through `focusRequest`.
     'selecting_a_terminal_row_shows_its_live_terminal_without_respawn',
     'new_terminal_shortcut_adds_and_selects_a_row',
+    // Renaming a terminal row is the SAME inline-edit surface as a session rename
+    // (focus-header input + row context menu) — DOM-bound, so it is confirmed live;
+    // the store rules behind it (title key, sticky custom title, hydrate on
+    // restart) are unit-tested in terminalRows.test.ts / titles.svelte.test.ts.
+    'renaming_a_terminal_row_from_the_header_or_its_menu',
     'panel_position_and_default_size',
     'resizable_splitter',
     'active_project_scoping',

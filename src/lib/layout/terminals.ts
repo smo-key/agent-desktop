@@ -43,6 +43,13 @@ export interface TerminalHandle {
    * alongside focus() on entry so you land on the latest output.
    */
   scrollToBottom(): void;
+  /**
+   * The commands the user has typed into this pane at an IDLE prompt, newline-
+   * joined (oldest first), or null when none have been typed. Drives a terminal
+   * row's generated title (`session-titles`) and doubles as its change key —
+   * unlike screen text it changes only when the user actually runs something.
+   */
+  recentCommands(): string | null;
 }
 
 const handles = new Map<string, TerminalHandle>();

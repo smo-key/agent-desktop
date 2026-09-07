@@ -99,7 +99,8 @@ function fakeHandle(alive = true) {
       return alive;
     },
     focus: () => {},
-    scrollToBottom: () => {}
+    scrollToBottom: () => {},
+    recentCommands: () => null
   };
   return { handle, pastes, keys };
 }

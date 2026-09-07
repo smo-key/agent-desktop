@@ -11,7 +11,8 @@ function mockHandle(): TerminalHandle {
     send: vi.fn(() => true),
     sendKeys: vi.fn(() => true),
     focus: vi.fn(),
-    scrollToBottom: vi.fn()
+    scrollToBottom: vi.fn(),
+    recentCommands: vi.fn(() => null)
   };
 }
 

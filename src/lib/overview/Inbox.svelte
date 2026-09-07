@@ -19,7 +19,7 @@
   import { launcher } from '$lib/launcher/launcherStore.svelte';
   import { startNewSession } from '$lib/launcher/newSession';
   import { surfaceSlot } from '$lib/layout/surfaceSlot.svelte';
-  import { focusTerminal, scrollTerminalToBottom } from '$lib/layout/terminals';
+  import { focusTerminal, getTerminal, scrollTerminalToBottom } from '$lib/layout/terminals';
   import {
     buildRoster,
     needsAttention,
@@ -99,7 +99,9 @@
     collectTerminalRowInputs,
     isTerminalRow,
     persistedLaneOrder,
-    terminalFocusActions
+    terminalFocusActions,
+    terminalTitleKey,
+    terminalTitleRefs
   } from './terminalRows';
 
   // --- Sessions / Tasks split (Sessions roster on top / Tasks bottom) ----------
@@ -178,6 +180,19 @@
     return combinedTerminals ? [...agents, ...buildTerminalRows(terminalInputs, runtime, nowMs)] : agents;
   });
   const terminalIds = $derived(new Set(allRows.filter(isTerminalRow).map((r) => r.paneId)));
+
+  // Terminal-row titles (`session-titles`: "Bare terminal rows are titled from the
+  // commands the user ran"). Runs on the roster's own per-second clock: each bare
+  // shell's typed-command list (from its live terminal handle) is the change key,
+  // so a title is generated only when the user actually RAN something — never from
+  // streaming output. Task rows pass `commands: null` (their command is already the
+  // name) but still hydrate, so a restarted task terminal recovers its custom title.
+  // Skipped entirely outside the combined placement: nothing displays those titles.
+  $effect(() => {
+    if (!combinedTerminals) return;
+    const refs = terminalTitleRefs(allRows, (paneId) => getTerminal(paneId)?.recentCommands() ?? null);
+    if (refs.length) titles.refreshTerminals(refs, nowMs);
+  });
 
   $effect(() => {
     for (const r of allRows) {
@@ -419,6 +434,14 @@
     return workspace.sessionIn(r.workspaceId, r.paneId).sessionId ?? null;
   }
 
+  /** The DURABLE key a row's title cache is persisted under: a session's id, or a
+   *  terminal row's task id (a bare shell has none — per-process, like its lane
+   *  order entry). Distinct from `sessionIdOf`, which stays null for terminals
+   *  because subagents / summaries / costs are session-only. */
+  function titleKeyOf(r: AgentRow): string | null {
+    return isTerminalRow(r) ? terminalTitleKey(r) : sessionIdOf(r);
+  }
+
   /** The workflow → phase groups of LIVE subagents to nest under a row (every
    *  session/lane, not just the focused one), or [] when the user has hidden
    *  subagents (the Sessions-panel setting), the session has none, or all have
@@ -462,7 +485,7 @@
     editingTitle = false;
     const row = viewRows.find((r) => r.paneId === editingPaneId);
     if (row && titleDraft.trim() !== focusTitle(row)) {
-      titles.setManualTitle(row.paneId, sessionIdOf(row), titleDraft);
+      titles.setManualTitle(row.paneId, titleKeyOf(row), titleDraft);
     }
     editingPaneId = null;
     titleDraft = '';
@@ -952,6 +975,7 @@
       const acts = terminalFocusActions(row);
       const items: MenuItem[] = [
         { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
+        { label: 'Rename', icon: 'pencil', onClick: () => renameAgent(row) },
         ...(acts.restart
           ? [{ label: 'Restart', icon: 'rotate-ccw', onClick: () => restartTerminal(row) } as MenuItem]
           : []),
@@ -1357,7 +1381,25 @@
              into the terminal slot below — never respawned. -->
         <div class="fhead">
           <ProjectIcon {...av} size={26} />
-          <span class="ttl" use:tooltip={focus.summary ?? focus.name}>{focus.name}</span>
+          {#if editingTitle}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              class="ttl-edit"
+              bind:this={titleInput}
+              bind:value={titleDraft}
+              onkeydown={onTitleKey}
+              onblur={commitTitleEdit}
+              aria-label="Rename terminal"
+              autofocus
+            />
+          {:else}
+            <button
+              type="button"
+              class="ttl ttl-btn"
+              onclick={() => startTitleEdit()}
+              use:tooltip={focus.summary ?? 'Rename terminal'}
+            >{focusTitle(focus)}</button>
+          {/if}
           <span class="spc"></span>
           {#if acts.restart}
             <button type="button" class="hbtn" onclick={() => restartTerminal(focus)} use:tooltip={'Restart this task terminal'}>Restart</button>
