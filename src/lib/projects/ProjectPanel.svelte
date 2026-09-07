@@ -121,6 +121,21 @@
   const archivedCounts = $derived(projectCounts(rows, projects.archived));
   /** Whether the Archived section is expanded. Session-local (not persisted). */
   let showArchived = $state(false);
+  /** Whether the current filter selection is an archived project. */
+  const archivedSelected = $derived(projects.archived.some((p) => p.id === projectFilter.selected));
+  // Keep the section and the selection coherent: a selected archived project must
+  // stay visible (covers a persisted filter restored after a restart, before the
+  // user has touched the toggle), and an empty section never stays "expanded".
+  $effect(() => {
+    if (archivedSelected) showArchived = true;
+    else if (projects.archived.length === 0) showArchived = false;
+  });
+  /** Toggle the Archived section; hiding it while an archived project is the
+   *  filter falls back to All agents so the selection never goes invisible. */
+  function toggleArchived() {
+    if (showArchived && archivedSelected) projectFilter.select(ALL);
+    showArchived = !showArchived;
+  }
   const unassigned = $derived(unassignedCount(rows));
   const allAgents = $derived(allAgentsCount(rows));
 
@@ -320,7 +335,7 @@
       type="button"
       class="pp-item pp-new pp-archived-toggle"
       aria-expanded={showArchived}
-      onclick={() => (showArchived = !showArchived)}
+      onclick={toggleArchived}
     >
       <Icon name="archive" size={16} color="var(--fg-4)" />
       <span class="pp-name">

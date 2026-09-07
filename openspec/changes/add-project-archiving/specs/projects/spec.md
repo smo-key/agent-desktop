@@ -22,7 +22,7 @@ A project SHALL carry an optional `archived` boolean, persisted with the project
 
 ### Requirement: Archived Projects Are Hidden From Active Surfaces
 
-Archived projects SHALL be omitted from the project pane's project rows and collapsed icon rail, from the launcher's project picker, from the ⌘⇧↑/↓ project-filter cycle, and from the project git status poll and background remote fetch. Agents bound to an archived project SHALL keep their project id, avatar, and count under "All agents", and SHALL NOT be counted in the "No project" bucket. The expanded project pane SHALL render a **Show archived (N)** button directly below **New project** whenever at least one project is archived; toggling it reveals an "Archived" section listing the archived projects (in list order, visually muted), and the button reads **Hide archived** while shown. An archived row can still be selected as the filter. Its context menu offers **Unarchive** and **Delete project** only.
+Archived projects SHALL be omitted from the project pane's project rows and collapsed icon rail, from the launcher's project picker, from the ⌘⇧↑/↓ project-filter cycle, from the project git status poll and background remote fetch, from the app footer's folder-git indicator (and its Push/Pull/branch controls), and from the direct-launch path of the new-session shortcut (⌘N) and voice spawn — a filter pointing at an archived project falls through to the launcher dialog. Agents bound to an archived project SHALL keep their project id, avatar, and count under "All agents", and SHALL NOT be counted in the "No project" bucket. The expanded project pane SHALL render a **Show archived (N)** button directly below **New project** whenever at least one project is archived; toggling it reveals an "Archived" section listing the archived projects (in list order, visually muted), and the button reads **Hide archived** while shown. An archived row can still be selected as the filter; while an archived project is the selected filter the Archived section SHALL stay expanded (including after a restart restores that selection), and hiding the section while one is selected SHALL fall the filter back to "All agents", so the selection is never invisible. Its context menu offers **Unarchive** and **Delete project** only.
 
 #### Scenario: Archived projects are omitted from the active list
 - **WHEN** the project list holds active and archived projects
@@ -39,6 +39,14 @@ Archived projects SHALL be omitted from the project pane's project rows and coll
 #### Scenario: Show archived reveals archived projects below New project
 - **WHEN** at least one project is archived and the user clicks **Show archived (N)** below **New project**
 - **THEN** an "Archived" section lists the archived projects, the button reads **Hide archived**, and no button is rendered at all when nothing is archived
+
+#### Scenario: A selected archived project never goes invisible
+- **WHEN** an archived project is the selected filter (selected from the Archived section, or restored from the persisted filter after a restart)
+- **THEN** the Archived section is expanded so its row shows as active, and clicking **Hide archived** first resets the filter to "All agents"
+
+#### Scenario: Archived projects are excluded from new-session shortcuts and footer git
+- **WHEN** the selected filter is an archived project and the user presses ⌘N (or starts a voice session), or the footer would show that project's folder git
+- **THEN** the launcher dialog opens instead of launching into the archived folder, and the footer shows no folder git indicator or Push/Pull/branch controls for it
 
 #### Scenario: Archived projects are absent from the launcher picker
 - **WHEN** the launcher's project picker opens while some projects are archived

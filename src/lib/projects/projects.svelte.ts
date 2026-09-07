@@ -120,13 +120,25 @@ export class ProjectsStore {
     await this.save();
   }
 
-  /** Persist the current list via the Rust `projects_save` command (best-effort). */
-  private async save(): Promise<void> {
-    try {
-      await invoke('projects_save', { json: serializeProjects(this.list) });
-    } catch (err) {
-      console.error('projects_save failed', err);
-    }
+  /** The tail of the save chain: every save waits for the previous one. */
+  private pendingSave: Promise<void> = Promise.resolve();
+
+  /**
+   * Persist the current list via the Rust `projects_save` command (best-effort).
+   * Saves are CHAINED so two rapid mutations (archive → unarchive, edit → reorder)
+   * can never complete out of order and leave `projects.json` holding the older
+   * state; each save serializes the list as it stands when its turn comes.
+   */
+  private save(): Promise<void> {
+    const run = async () => {
+      try {
+        await invoke('projects_save', { json: serializeProjects(this.list) });
+      } catch (err) {
+        console.error('projects_save failed', err);
+      }
+    };
+    this.pendingSave = this.pendingSave.then(run, run);
+    return this.pendingSave;
   }
 }
 

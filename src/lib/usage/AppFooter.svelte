@@ -58,10 +58,12 @@
   // selecting a project updates the footer git even in the overview, where the agent
   // panes are hidden but a pane is still focused underneath). Folder-based via
   // `projectGit`, so it shows a project's branch + ahead/behind/modified even with
-  // no agent running.
+  // no agent running. Resolved over the ACTIVE projects only: an archived project's
+  // folder is not polled, so rather than show (and flicker) null data with live
+  // Push/Pull/branch controls, the footer shows no folder git for it.
   const gitProject = $derived(
     projectForId(
-      projects.list,
+      projects.active,
       footerGitProjectId(projectId, projectFilter.selected, topView.isGrid)
     )
   );

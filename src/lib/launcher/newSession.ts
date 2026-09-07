@@ -21,10 +21,12 @@ import { launcher } from './launcherStore.svelte';
  * Start a new agent session. Launches directly into the currently-filtered project
  * when one is selected (no popup); otherwise opens the launcher dialog.
  *
- * The session always runs in the project's own folder.
+ * The session always runs in the project's own folder. An ARCHIVED project is never
+ * launched into directly (it is hidden from the launcher's picker too), so a filter
+ * that points at one falls through to the dialog.
  */
 export function startNewSession(): void {
-  const proj = projectForId(projects.list, projectFilter.selected);
+  const proj = projectForId(projects.active, projectFilter.selected);
   if (!proj) {
     launcher.show();
     return;

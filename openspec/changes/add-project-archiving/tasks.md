@@ -21,3 +21,8 @@
 - [x] 3.1 Add the DOM/route scenarios to the `projects` MANUAL allowlist in
       `tools/check-scenario-coverage.mjs`; `yarn coverage` green.
 - [x] 3.2 `yarn check`, `yarn test`, and `cargo test` green.
+- [x] 4.1 Review follow-ups: keep a selected archived project visible (auto-expand /
+      fall back to All agents on hide), reset the toggle when nothing is archived,
+      exclude archived projects from ⌘N / voice direct launch and the footer folder
+      git, and chain `projects_save` calls so rapid toggles persist in order (with
+      a store test).

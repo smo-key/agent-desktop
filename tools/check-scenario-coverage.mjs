@@ -381,7 +381,9 @@ const MANUAL_SCENARIOS = {
     // launcher's ProjectSelect listing `projects.active`, and the +page.svelte git
     // poll / background fetch iterating `projects.active` — confirmed live in-app.
     'show_archived_reveals_archived_projects_below_new_project',
+    'a_selected_archived_project_never_goes_invisible',
     'archived_projects_are_absent_from_the_launcher_picker',
+    'archived_projects_are_excluded_from_new_session_shortcuts_and_footer_git',
     'git_polling_skips_archived_project_folders',
   ]),
   // tasks-panel: every scenario is a rendered-component / live-PTY behavior with no
