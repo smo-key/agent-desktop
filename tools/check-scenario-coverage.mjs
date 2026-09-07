@@ -402,6 +402,10 @@ const MANUAL_SCENARIOS = {
     // the store rules behind it (title key, sticky custom title, hydrate on
     // restart) are unit-tested in terminalRows.test.ts / titles.svelte.test.ts.
     'renaming_a_terminal_row_from_the_header_or_its_menu',
+    // The focus-reconciliation effect holding still while a rename editor is open
+    // is a live-DOM interaction (an inline input's lifetime vs. the auto-advance
+    // effect); the commit RULE it protects is unit-tested in titles.svelte.test.ts.
+    'a_rename_in_progress_holds_the_focus',
     'panel_position_and_default_size',
     'resizable_splitter',
     'active_project_scoping',

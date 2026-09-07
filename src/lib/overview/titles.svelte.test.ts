@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
-import { TitleStore, shouldCommitRename } from './titles.svelte';
+import { TERMINAL_MAX_REQUESTS, TitleStore, shouldCommitRename } from './titles.svelte';
 import type { PaneRef } from './activity.svelte';
 
 const STORAGE_KEY = 'agent-desktop:session-titles';
@@ -305,6 +305,20 @@ describe('TitleStore terminal titles', () => {
     expect(invokeMock).toHaveBeenCalledTimes(1);
   });
 
+  it('A terminal whose title never settles stops costing model calls', async () => {
+    // A prompt carrying a clock / history number, or a chat client's unread count,
+    // reports a NEW title forever — without a cap that is one on-device model call
+    // every throttle window for the life of the app.
+    invokeMock.mockResolvedValue('Do a thing');
+    const store = new TitleStore();
+    for (let i = 0; i < TERMINAL_MAX_REQUESTS + 5; i++) {
+      store.refreshTerminals([ref({ activity: `a\ncmd${i}` })], NOW + i * 60_000);
+      await flush();
+    }
+    expect(invokeMock).toHaveBeenCalledTimes(TERMINAL_MAX_REQUESTS);
+    expect(store.titleFor('tp1')).toBe('Do a thing'); // it keeps its last title
+  });
+
   it("A closed terminal's title state is reclaimed", async () => {
     invokeMock.mockResolvedValue('Run the test suite');
     const store = new TitleStore();
@@ -342,5 +356,11 @@ describe('rename commit rule', () => {
     // would otherwise freeze a session's generated title forever.
     expect(shouldCommitRename('Improve dialog handling', 'Improve dialog handling', false, false)).toBe(false);
     expect(shouldCommitRename('Session 3', 'Session 3', false, false)).toBe(false);
+    // The comparison is against the SEED the editor opened with. A title that
+    // resolved (or a task terminal's live OSC title that moved) while the editor
+    // sat open must not make an untouched draft look like a rename on blur — the
+    // seed is what the caller passes, so an untouched draft still equals it.
+    const seed = 'Terminal';
+    expect(shouldCommitRename(seed, seed, false, false)).toBe(false);
   });
 });

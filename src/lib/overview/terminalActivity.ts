@@ -1,21 +1,33 @@
-// PURE collector for the ACTIVITY a bare shell reports about itself — the signal
+// PURE collector for the ACTIVITY a terminal reports about itself — the signal
 // that titles a terminal row (`session-titles`: "Bare terminal rows are titled
-// from the activity the shell reports").
+// from the activity the terminal reports").
 //
-// The source is the terminal's own OSC 0/2 window title, which the shell sets:
-// on a configured shell that is the command being run, and otherwise the working
-// directory. Deliberately NOT the user's keystrokes and NOT the rendered output:
+// The source is the terminal's window title (the OSC 0/2 sequences a shell emits,
+// plus a title-stack pop). On a configured shell that is the command it just
+// dispatched; otherwise it is the working directory. Deliberately NOT the user's
+// keystrokes and NOT the rendered output:
 //
-//  - Keystrokes carry secrets that no gate can reliably separate from commands.
-//    A hidden prompt is not always visible to us (a shell BUILTIN like `read`
-//    never changes the foreground process group), a sourced script can prompt
-//    with echo left ON, a heredoc body and a token piped to `gh auth login
-//    --with-token` are typed exactly like commands. Every one of those reaches
-//    the input stream; NONE of them reaches the window title, because a shell
-//    sets the title when it DISPATCHES a command, never while a program reads
-//    stdin.
-//  - Rendered output changes on every chunk (a build, `tail -f`), so it can never
-//    settle into a stable change key, and it carries whatever programs print.
+//  - Keystrokes carry what PROGRAMS READ FROM STDIN, and no gate we control can
+//    reliably separate that from commands: a hidden prompt is not always visible
+//    to us (a shell BUILTIN like `read` never changes the foreground process
+//    group), a sourced script can prompt with echo left ON, and a heredoc body or
+//    a token piped to a CLI is typed exactly like a command. None of that reaches
+//    the window title, because a title is set when a command is DISPATCHED, not
+//    while a program reads input.
+//  - Rendered output changes on every chunk (a build, `tail -f`), so it never
+//    settles into a stable change key, and it carries everything programs print.
+//
+// What this source DOES carry, stated plainly rather than assumed away:
+//  - a secret passed as an ARGUMENT (`mysql -pS3cret`, `export TOKEN=…`) is part
+//    of the dispatched command line, so a shell that titles from the command line
+//    puts it in the title. `redactSecrets` strips the obvious shapes before an
+//    entry is stored; treat the rest as best-effort, which is why terminal titles
+//    are generated ON-DEVICE ONLY and the ring is never persisted.
+//  - the title is set by BYTES ON THE OUTPUT STREAM, so a remote host over `ssh`,
+//    or a file dumped to the terminal, can write it. Entries are therefore
+//    untrusted text: they are clipped, stripped of controls, and framed as DATA
+//    in the model prompt — the same footing as any other terminal content the app
+//    already shows (the row sub-line renders the raw title today).
 //
 // The joined activity list IS the change key: the caller compares it for
 // equality, so no hashing is needed. It lives in memory only, never persisted.
@@ -46,7 +58,10 @@ export function emptyActivity(): ActivityRing {
  * Pure: never mutates `ring`.
  */
 export function noteActivity(ring: ActivityRing, title: string): ActivityRing {
-  const t = title.trim().slice(0, MAX_ENTRY);
+  // Strip C0/C1 controls first (the title arrives as arbitrary output bytes) and
+  // collapse the resulting whitespace, so one entry is always a single line.
+  const clean = title.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ');
+  const t = redactSecrets(clean).trim().slice(0, MAX_ENTRY);
   if (!t || ring.entries.includes(t)) return ring;
   const entries = [...ring.entries, t];
   return { entries: entries.length > MAX_ACTIVITY ? entries.slice(entries.length - MAX_ACTIVITY) : entries };
@@ -60,4 +75,28 @@ export function noteActivity(ring: ActivityRing, title: string): ActivityRing {
  */
 export function activityText(ring: ActivityRing): string | null {
   return ring.entries.length > 1 ? ring.entries.join('\n') : null;
+}
+
+/**
+ * Replace the obvious SECRET shapes in a reported title with `…`, before it is
+ * stored or shown to the model: an assignment to a key/token/password/secret
+ * variable, a `-p`/`--password=`/`--token=` argument, credentials embedded in a
+ * URL, and the well-known provider token prefixes. Best-effort by nature — a
+ * secret can be an arbitrary string in an arbitrary flag — which is exactly why
+ * the on-device-only rule and the memory-only ring carry the real weight. Pure.
+ */
+export function redactSecrets(title: string): string {
+  return title
+    // https://user:pass@host
+    .replace(/(:\/\/[^\s:/@]+):[^\s@/]+@/g, '$1:…@')
+    // KEY=value / --token=value / -p value, when the name looks secret-bearing
+    .replace(
+      /(\b[A-Za-z_][\w-]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|CREDENTIAL)S?\b\s*=\s*)\S+/gi,
+      '$1…'
+    )
+    .replace(/(--(?:password|token|secret|api-key|apikey)[= ])\S+/gi, '$1…')
+    // `-pSecret` (mysql-style) and `-p Secret`
+    .replace(/(\s-p)\s?\S+/g, '$1…')
+    // Bare provider tokens wherever they appear
+    .replace(/\b(sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{8,}|xox[abprs]-[A-Za-z0-9-]{8,})/g, '…');
 }

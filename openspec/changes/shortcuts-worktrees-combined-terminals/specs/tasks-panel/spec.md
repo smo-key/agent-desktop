@@ -80,8 +80,12 @@ A terminal row in the combined sessions list SHALL be renameable exactly like a 
 - **THEN** the name becomes the row's custom title, so the generator never replaces it
 
 #### Scenario: Opening the rename editor and clicking away changes nothing
-- **WHEN** the rename editor loses focus with its text untouched
+- **WHEN** the rename editor loses focus with its text untouched, even after the row's title changed while it was open
 - **THEN** no custom title is written and the row keeps generating its title
+
+#### Scenario: A rename in progress holds the focus
+- **WHEN** another session starts needing attention while a rename editor is open
+- **THEN** focus does not auto-advance, so the typed name is not discarded
 
 #### Scenario: A restarted task terminal recovers its custom title
 - **WHEN** a task terminal with a custom title is restarted under a new pane id

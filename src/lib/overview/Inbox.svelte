@@ -424,6 +424,8 @@
   // STICKY — auto-generation stops for that session and it persists across restart.
   let editingTitle = $state(false);
   let titleDraft = $state('');
+  // The title the editor was OPENED with — the baseline a commit compares against.
+  let titleSeed = '';
   let titleInput = $state<HTMLInputElement | null>(null);
   // The paneId the header edit belongs to, so switching to a DIFFERENT agent
   // abandons the rename (but selecting THIS agent — e.g. the menu "Rename" path —
@@ -469,10 +471,14 @@
   }
 
   /** Enter header edit mode for the focused session, seeding the draft with the
-   *  currently-shown title. */
+   *  currently-shown title. The seed is REMEMBERED (`titleSeed`): the shown title
+   *  can move while the editor is open — a generated title resolving, or a task
+   *  terminal's live OSC title changing — and the commit must compare against what
+   *  the user was given, not against whatever the row says a few seconds later. */
   async function startTitleEdit(target: AgentRow | null = focus) {
     if (!target) return;
     titleDraft = focusTitle(target);
+    titleSeed = titleDraft;
     editingPaneId = target.paneId;
     editingTitle = true;
     await tick();
@@ -491,15 +497,15 @@
     if (!editingTitle) return;
     editingTitle = false;
     const row = viewRows.find((r) => r.paneId === editingPaneId);
-    // Commit whenever the draft differs from the shown title OR the shown title is
-    // not yet the user's own: typing a row's current name is how you PIN it (a bare
-    // shell is called "Terminal", the very name a user would retype to stop the
-    // auto-titler from renaming it out from under them).
-    if (row && shouldCommitRename(titleDraft, focusTitle(row), titles.isManual(row.paneId), explicit)) {
+    // Compared against the SEED (what the editor was opened with), never against
+    // the row's live title: a title that resolved while the editor sat open must
+    // not turn an untouched draft into a rename on blur.
+    if (row && shouldCommitRename(titleDraft, titleSeed, titles.isManual(row.paneId), explicit)) {
       titles.setManualTitle(row.paneId, titleKeyOf(row), titleDraft);
     }
     editingPaneId = null;
     titleDraft = '';
+    titleSeed = '';
   }
 
   /** Cancel the header edit (Esc): discard the draft, keep the prior title. */
@@ -507,6 +513,7 @@
     editingTitle = false;
     editingPaneId = null;
     titleDraft = '';
+    titleSeed = '';
   }
 
   function onTitleKey(e: KeyboardEvent) {
@@ -542,6 +549,9 @@
   // input). Once it stops needing you, focus advances to the earliest waiting agent
   // after the grace; if nobody else needs you, the current agent stays.
   $effect(() => {
+    // A rename in progress holds the focus: auto-advancing would flip `shownId`,
+    // and the cancel-on-switch effect would silently discard what the user typed.
+    if (editingTitle) return;
     const shownRow = viewRows.find((r) => r.paneId === shownId) ?? null;
     // The agent we're on just LEFT attention (handled / went Working)?
     const sameAgent = shownId !== null && shownId === lastShownId;

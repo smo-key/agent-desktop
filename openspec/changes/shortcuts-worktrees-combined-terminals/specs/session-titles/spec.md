@@ -1,10 +1,12 @@
 ## ADDED Requirements
 
-### Requirement: Bare terminal rows are titled from the activity the shell reports
+### Requirement: Bare terminal rows are titled from the activity the terminal reports
 
-A bare shell listed in the combined sessions list SHALL be given a generated title summarizing what the user was doing in it, derived from the activity the SHELL reports about itself — the window titles it sets (OSC 0/2), which are typically the command it dispatched or its working directory. The user's keystrokes SHALL NOT be a title source: the input stream carries whatever a program reads from stdin — a password at a prompt a shell builtin owns, a heredoc body, a token piped to a CLI — which cannot be reliably separated from commands, whereas a shell sets its window title only when it dispatches a command. Rendered output SHALL NOT be a source either: it changes on every chunk and carries what programs print.
+A bare shell listed in the combined sessions list SHALL be given a generated title summarizing what the user was doing in it, derived from the terminal's reported window title — which a configured shell sets to the command it dispatched, and otherwise to the working directory. The user's keystrokes SHALL NOT be a title source: the input stream carries whatever a program reads from stdin — a password at a prompt a shell builtin owns, a heredoc body, a token piped to a CLI — which cannot be reliably separated from commands, whereas a title is reported when a command is dispatched, not while a program reads input. Rendered output SHALL NOT be a source either: it changes on every chunk and carries what programs print.
 
-Repeat and blank reports SHALL be collapsed, the list SHALL be bounded and memory-only (never persisted), and a shell that has reported nothing beyond a single unchanging title SHALL be left untitled rather than titled from noise. The title SHALL be (re)generated only when the reported list changes, SHALL be generated ON-DEVICE ONLY (the session-transcript cloud fallback does not extend to terminal activity, so with no local model the row keeps its name), and a terminal-kind TASK row SHALL NOT be titled by the model: its command is already its name.
+A reported title is UNTRUSTED text — it is set by bytes on the output stream, so a remote host or a dumped file can write it, and a secret passed as a command-line argument appears in it. Control bytes SHALL be stripped, the obvious secret shapes (assignments to key/token/password variables, password/token flags, credentials in a URL, known token prefixes) SHALL be redacted before an entry is stored, and entries SHALL be framed as data in the model prompt.
+
+Repeat and blank reports SHALL be collapsed, the list SHALL be bounded and memory-only (never persisted), and a shell that has reported nothing beyond a single unchanging title SHALL be left untitled rather than titled from noise. The title SHALL be (re)generated only when the reported list changes, subject to a throttle and a per-terminal cap so a title that never repeats cannot generate indefinitely; it SHALL be generated ON-DEVICE ONLY (the session-transcript cloud fallback does not extend to terminal activity, so with no local model the row keeps its name); and a terminal-kind TASK row SHALL NOT be titled by the model: its command is already its name.
 
 #### Scenario: The shell reported activity accumulates
 - **WHEN** a shell reports a sequence of window titles as the user works
@@ -21,6 +23,14 @@ Repeat and blank reports SHALL be collapsed, the list SHALL be bounded and memor
 #### Scenario: An untouched shell is never titled
 - **WHEN** a bare shell has reported no activity, or a row is a task terminal
 - **THEN** no title request is made for it
+
+#### Scenario: A secret on the command line is redacted before it is stored
+- **WHEN** a reported title contains a password argument, a token assignment, or credentials in a URL
+- **THEN** the secret is replaced before the entry is stored or sent to the model
+
+#### Scenario: A terminal whose title never settles stops costing model calls
+- **WHEN** a terminal keeps reporting titles that never repeat (a clock in the prompt, an unread count)
+- **THEN** it stops requesting new titles once its per-terminal cap is reached and keeps its last title
 
 #### Scenario: A stale title response never replaces a newer one
 - **WHEN** a title request resolves after a later request for the same terminal has already taken over

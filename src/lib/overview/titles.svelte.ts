@@ -43,6 +43,16 @@ export const TERMINAL_THROTTLE_MS = 30_000;
  */
 export const TERMINAL_RETRY_MS = 300_000;
 
+/**
+ * Most titles to generate for ONE terminal in a session. A terminal's change key
+ * is a title the shell reports, and some terminals report a title that never
+ * repeats — a clock or history number in the prompt, a chat client's unread
+ * count — which would otherwise satisfy the throttle forever and run a
+ * several-second on-device model call every 30 s for the life of the app. After
+ * the cap the row keeps its last title (and can still be renamed).
+ */
+export const TERMINAL_MAX_REQUESTS = 12;
+
 /** localStorage key for the persisted, sessionId-keyed title cache. */
 const STORAGE_KEY = 'agent-desktop:session-titles';
 
@@ -118,8 +128,12 @@ export interface TerminalTitleRef {
 /**
  * PURE: whether committing a rename should WRITE a custom title.
  *
- * A draft that DIFFERS from the shown name always commits. A draft that MATCHES
- * it commits only when the user pressed Enter (`explicit`) on a name that is not
+ * `shown` is the title the editor was OPENED with, not the row's live title: a
+ * generated title resolving mid-edit (or a task terminal's OSC title changing)
+ * must not make an untouched draft look like a rename.
+ *
+ * A draft that DIFFERS from that seed always commits. A draft that MATCHES it
+ * commits only when the user pressed Enter (`explicit`) on a name that is not
  * already their own — deliberately retyping a row's current name is how you PIN
  * it against the generator (a bare shell is literally called "Terminal", the very
  * name a user would retype to stop it being renamed out from under them).
@@ -131,6 +145,7 @@ export interface TerminalTitleRef {
  */
 export function shouldCommitRename(
   draft: string,
+  /** The title the rename editor was seeded with. */
   shown: string,
   isManual: boolean,
   explicit: boolean
@@ -154,6 +169,7 @@ export class TitleStore {
   // reclaimed when the terminal goes away) and a per-pane failure backoff.
   #terminalPanes = new Set<string>();
   #retryAfter = new Map<string, number>();
+  #terminalRequests = new Map<string, number>();
 
   /** Whether a pane's shown title is the user's own (a rename), rather than
    *  generated or absent. Lets a caller tell "already pinned by the user" from
@@ -295,7 +311,11 @@ export class TitleStore {
       // parked until its backoff expires: without this the 3 s floor alone would
       // retry — and lazily re-spawn the sidecar — every few seconds, forever.
       if (nowMs < (this.#retryAfter.get(r.paneId) ?? 0)) continue;
+      // A terminal whose reported title never repeats would keep qualifying
+      // forever; cap how many titles one terminal can cost.
+      if ((this.#terminalRequests.get(r.paneId) ?? 0) >= TERMINAL_MAX_REQUESTS) continue;
       if (!shouldRequest(entry, pending, r.activity, last, nowMs, TERMINAL_THROTTLE_MS)) continue;
+      this.#terminalRequests.set(r.paneId, (this.#terminalRequests.get(r.paneId) ?? 0) + 1);
       this.#pending.set(r.paneId, r.activity as string);
       this.#lastAttempt.set(r.paneId, nowMs);
       void this.#fetchTerminal(r, r.activity as string);
@@ -315,6 +335,7 @@ export class TitleStore {
       this.#pending.delete(paneId);
       this.#lastAttempt.delete(paneId);
       this.#retryAfter.delete(paneId);
+      this.#terminalRequests.delete(paneId);
     }
     for (const paneId of live) this.#terminalPanes.add(paneId);
   }

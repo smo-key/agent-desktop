@@ -37,3 +37,29 @@ describe('terminal activity ring', () => {
     expect(ring.entries[0]).toHaveLength(MAX_ENTRY);
   });
 });
+
+describe('reported-title redaction', () => {
+  it('A secret on the command line is redacted before it is stored', () => {
+    // A shell that titles from the command line puts an argument secret in the
+    // title, so the obvious shapes are stripped on the way into the ring.
+    expect(noteActivity(emptyActivity(), 'mysql -h db -u root -pS3cret!').entries[0]).toBe('mysql -h db -u root -p…');
+    expect(noteActivity(emptyActivity(), 'export ANTHROPIC_API_KEY=sk-ant-api03-abcdefgh').entries[0]).toBe(
+      'export ANTHROPIC_API_KEY=…'
+    );
+    expect(noteActivity(emptyActivity(), 'git clone https://me:ghp_abcdefghij@github.com/o/r').entries[0]).toBe(
+      'git clone https://me:…@github.com/o/r'
+    );
+    expect(noteActivity(emptyActivity(), 'curl -H auth --token=abcdefghijkl x').entries[0]).toBe(
+      'curl -H auth --token=… x'
+    );
+    // A plain command is untouched.
+    expect(noteActivity(emptyActivity(), 'yarn test --watch').entries[0]).toBe('yarn test --watch');
+  });
+
+  it('strips control bytes from a title written by program output', () => {
+    // The title arrives as output bytes — a remote host or a dumped file can set
+    // it — so it is treated as untrusted text.
+    const ring = noteActivity(emptyActivity(), 'weird\u0007\u001b[31mtitle');
+    expect(ring.entries[0]).toBe('weird [31mtitle');
+  });
+});
