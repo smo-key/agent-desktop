@@ -114,18 +114,29 @@ export interface TerminalTitleRef {
 }
 
 /**
- * PURE: whether committing a rename should WRITE a custom title. A draft that
- * differs from the shown name always does; a draft that MATCHES it does too
- * unless the shown name is already the user's own — typing a row's current name
- * is how you PIN it against the generator (a bare shell is literally called
- * "Terminal", the very name a user would retype to stop it from being renamed
- * out from under them). An empty draft never commits (`setManualTitle` also
- * ignores it) so a rename can't blank a name.
+ * PURE: whether committing a rename should WRITE a custom title.
+ *
+ * A draft that DIFFERS from the shown name always commits. A draft that MATCHES
+ * it commits only when the user pressed Enter (`explicit`) on a name that is not
+ * already their own — deliberately retyping a row's current name is how you PIN
+ * it against the generator (a bare shell is literally called "Terminal", the very
+ * name a user would retype to stop it being renamed out from under them).
+ *
+ * `explicit` is what keeps a stray click from pinning a title: the editor also
+ * commits on BLUR, so opening it and clicking away must be a no-op rather than
+ * silently freezing a generated title forever (a manual title never
+ * re-generates). An empty draft never commits, so a rename can't blank a name.
  */
-export function shouldCommitRename(draft: string, shown: string, isManual: boolean): boolean {
+export function shouldCommitRename(
+  draft: string,
+  shown: string,
+  isManual: boolean,
+  explicit: boolean
+): boolean {
   const trimmed = draft.trim();
   if (!trimmed) return false;
-  return trimmed !== shown || !isManual;
+  if (trimmed !== shown) return true;
+  return explicit && !isManual;
 }
 
 /** Reactive title store: paneId -> {title, hash}. */

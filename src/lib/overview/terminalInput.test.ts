@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_COMMANDS,
+  SUSPEND_MS,
   appendInput,
   commandsText,
   echoedIn,
   emptyInput,
   noteProbe,
+  opensInputContext,
   recordCommand
 } from './terminalInput';
 
@@ -70,24 +72,69 @@ describe('terminal typed-input accumulator', () => {
     expect(buf.commands).toEqual(['sudo -k true']);
     buf = noteProbe(buf, true); // the probe finally reports the running job
     expect(buf.line).toBe('');
-    buf = type(noteProbe(buf, false), 'ls\r'); // back at the prompt
-    // No fragment of the password survived into the next command.
-    expect(buf.commands).toEqual(['sudo -k true']);
-    expect(commandsText(buf)).toBe('sudo -k true');
+    buf = type(noteProbe(buf, false), 'ls -la\r'); // back at the prompt
+    // No fragment of the password survived, and the next real command still lands:
+    // keystrokes eaten by a running program must not cost the command after them.
+    expect(buf.commands).toEqual(['sudo -k true', 'ls -la']);
+  });
+
+  it('keeps collecting after a program eats keystrokes, but distrusts type-ahead', () => {
+    // Leaving a pager: `q` goes to `less`, and the NEXT command is still collected.
+    let buf = type(idle(), 'less big.log\r');
+    buf = noteProbe(buf, true);
+    buf = type(buf, 'q');
+    buf = type(noteProbe(buf, false), 'git status\r');
+    expect(buf.commands).toEqual(['less big.log', 'git status']);
+
+    // Type-ahead in the window between a submit and the next probe answer MAY be
+    // the start of the next line, so that line is dropped rather than truncated.
+    let ahead = type(idle(), 'sleep 2\r');
+    ahead = type(ahead, 'ma');
+    ahead = type(noteProbe(ahead, false), 'ke build\r');
+    expect(ahead.commands).toEqual(['sleep 2']);
+  });
+
+  it('does not record the lines a command reads as data', () => {
+    // A heredoc body / an answer to `read` is echoed exactly like a command, so the
+    // echo check cannot tell them apart — the input-context rule is what does.
+    expect(opensInputContext('cat > ~/.netrc <<EOF')).toBe(true);
+    expect(opensInputContext('read -s TOKEN')).toBe(true);
+    expect(opensInputContext('echo "unterminated')).toBe(true);
+    expect(opensInputContext('make build \\')).toBe(true);
+    expect(opensInputContext('grep <<<"here string" x')).toBe(false);
+    expect(opensInputContext('yarn test')).toBe(false);
+
+    let buf = type(idle(), 'cat > ~/.netrc <<EOF\r');
+    buf = type(noteProbe(buf, false), 'machine api.example.com password s3cr3t\r');
+    buf = type(noteProbe(buf, false), 'EOF\r');
+    expect(buf.commands).toEqual(['cat > ~/.netrc <<EOF']);
+    // The child finally runs: the input context is over and collection resumes.
+    buf = type(noteProbe(noteProbe(buf, true), false), 'ls -la\r');
+    expect(buf.commands).toEqual(['cat > ~/.netrc <<EOF', 'ls -la']);
+
+    // A builtin never forks, so nothing ever reports busy — the suspension expires.
+    let read = type(idle(), 'read -s TOKEN\r');
+    read = type(noteProbe(read, false), 'ghp_realtokenvalue\r');
+    expect(read.commands).toEqual(['read -s TOKEN']);
+    read = type(noteProbe(read, false, Date.now() + SUSPEND_MS + 1), 'ls -la\r');
+    expect(read.commands).toEqual(['read -s TOKEN', 'ls -la']);
   });
 
   it('An unechoed line is never recorded', () => {
-    // A shell BUILTIN like `read -s` never changes the foreground process group,
-    // so the probe still reports an idle prompt — the echo check is what keeps the
-    // secret out.
+    // A password at a hidden prompt is never drawn, so it is never confirmed.
     const buf = type(idle(), 'secret-value\r', () => false);
     expect(buf.commands).toEqual([]);
-    expect(echoedIn('$ ls -la\nfile.txt\n$ ', 'ls -la')).toBe(true);
+    // The tail is the text UP TO THE CURSOR: prompt + the line being submitted.
+    expect(echoedIn('~/git/app $ ls -la', 'ls -la')).toBe(true);
     // A line that WRAPPED across rows still matches (whitespace is ignored).
     expect(echoedIn('$ git commit -m "a very long\nmessage here"', 'git commit -m "a very long message here"')).toBe(true);
-    expect(echoedIn('$ ls -la\nfile.txt\n$ ', 'hunter2')).toBe(false);
+    expect(echoedIn('$ ', 'hunter2')).toBe(false);
+    // A SUFFIX match, not a substring: a reconstruction that lost characters
+    // mid-line (a shell rewrite we failed to follow) is rejected, not recorded.
+    expect(echoedIn('$ echo prod', 'echo')).toBe(false);
+    expect(echoedIn('$ ls -la\nfile.txt\n$ ', 'ls -la')).toBe(false);
     // Too short to confirm: a single character could match anything on screen.
-    expect(echoedIn('$ q\n', 'q')).toBe(false);
+    expect(echoedIn('$ q', 'q')).toBe(false);
   });
 
   it('caps the remembered commands at the ring size', () => {

@@ -483,8 +483,11 @@
   /** Commit the header edit: a non-empty draft becomes the session's custom title
    *  (sticky + persisted); an empty/whitespace draft is dropped (keeps the prior
    *  title). Idempotent — safe to call from both Enter and blur. Commits against the
-   *  pane the edit was started on (not whatever is shown now). */
-  function commitTitleEdit() {
+   *  pane the edit was started on (not whatever is shown now). `explicit` is set
+   *  only by Enter: an UNCHANGED draft pins the shown name (see
+   *  `shouldCommitRename`), which must not happen when the editor merely lost
+   *  focus. */
+  function commitTitleEdit(explicit = false) {
     if (!editingTitle) return;
     editingTitle = false;
     const row = viewRows.find((r) => r.paneId === editingPaneId);
@@ -492,7 +495,7 @@
     // not yet the user's own: typing a row's current name is how you PIN it (a bare
     // shell is called "Terminal", the very name a user would retype to stop the
     // auto-titler from renaming it out from under them).
-    if (row && shouldCommitRename(titleDraft, focusTitle(row), titles.isManual(row.paneId))) {
+    if (row && shouldCommitRename(titleDraft, focusTitle(row), titles.isManual(row.paneId), explicit)) {
       titles.setManualTitle(row.paneId, titleKeyOf(row), titleDraft);
     }
     editingPaneId = null;
@@ -509,7 +512,8 @@
   function onTitleKey(e: KeyboardEvent) {
     if (e.key === 'Enter') {
       e.preventDefault();
-      commitTitleEdit();
+      // Enter is the DELIBERATE commit: it may pin a name that is already shown.
+      commitTitleEdit(true);
     } else if (e.key === 'Escape') {
       e.preventDefault();
       cancelTitleEdit();
@@ -1396,7 +1400,7 @@
               bind:this={titleInput}
               bind:value={titleDraft}
               onkeydown={onTitleKey}
-              onblur={commitTitleEdit}
+              onblur={() => commitTitleEdit()}
               aria-label="Rename terminal"
               autofocus
             />
@@ -1435,7 +1439,7 @@
               bind:this={titleInput}
               bind:value={titleDraft}
               onkeydown={onTitleKey}
-              onblur={commitTitleEdit}
+              onblur={() => commitTitleEdit()}
               aria-label="Rename session"
               autofocus
             />

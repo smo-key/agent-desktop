@@ -324,15 +324,23 @@ describe('TitleStore terminal titles', () => {
 
 describe('rename commit rule', () => {
   it('Renaming a row to its current name pins that name', () => {
-    // A bare shell shows "Terminal"; retyping it is how the user pins the row so
-    // the auto-titler stops renaming it.
-    expect(shouldCommitRename('Terminal', 'Terminal', false)).toBe(true);
+    // A bare shell shows "Terminal"; pressing Enter on it is how the user pins the
+    // row so the auto-titler stops renaming it.
+    expect(shouldCommitRename('Terminal', 'Terminal', false, true)).toBe(true);
     // Already pinned and unchanged: nothing to write.
-    expect(shouldCommitRename('Terminal', 'Terminal', true)).toBe(false);
-    // A changed draft always commits, pinned or not.
-    expect(shouldCommitRename('Build logs', 'Terminal', true)).toBe(true);
-    expect(shouldCommitRename('Build logs', 'Terminal', false)).toBe(true);
+    expect(shouldCommitRename('Terminal', 'Terminal', true, true)).toBe(false);
+    // A changed draft always commits, pinned or not, however it was committed.
+    expect(shouldCommitRename('Build logs', 'Terminal', true, false)).toBe(true);
+    expect(shouldCommitRename('Build logs', 'Terminal', false, false)).toBe(true);
     // An empty draft never commits (it must not blank the shown name).
-    expect(shouldCommitRename('   ', 'Terminal', false)).toBe(false);
+    expect(shouldCommitRename('   ', 'Terminal', false, true)).toBe(false);
+  });
+
+  it('Opening the rename editor and clicking away changes nothing', () => {
+    // The editor also commits on BLUR. An untouched draft committed that way must
+    // NOT pin the shown title: a manual title never re-generates, so a stray click
+    // would otherwise freeze a session's generated title forever.
+    expect(shouldCommitRename('Improve dialog handling', 'Improve dialog handling', false, false)).toBe(false);
+    expect(shouldCommitRename('Session 3', 'Session 3', false, false)).toBe(false);
   });
 });

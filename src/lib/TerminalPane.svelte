@@ -141,12 +141,18 @@
       return;
     }
     let live = true;
+    // `probeNow()` fires an extra probe alongside the 1 Hz one, so two answers can
+    // be in flight at once. Only the LATEST issued probe may be applied: a reply
+    // measured BEFORE a submit must never re-arm collection after a newer reply
+    // already reported the command's process running.
+    let issued = 0;
     const tick = () => {
       const id = ptyId;
       if (id === undefined) return;
+      const seq = ++issued;
       void invoke<boolean | null>('pty_foreground_busy', { id })
         .then((busy) => {
-          if (live && ptyId === id) {
+          if (live && ptyId === id && seq === issued) {
             noteForeground(paneId, busy ?? null);
             // Arms / disarms typed-command collection. A `true` answer also drops
             // the in-progress line, so keystrokes typed into a program that had
@@ -384,6 +390,29 @@
     for (let i = start; i < end; i++) {
       const line = buf.getLine(i)?.translateToString(true);
       if (line) lines.push(line);
+    }
+    return lines.join('\n');
+  }
+
+  /**
+   * The rendered text UP TO THE CURSOR: the last `maxLines` rows ending at the
+   * cursor's row, clipped at the cursor column. This is the line the user is
+   * submitting (plus its prompt), which is what the echo check must match —
+   * `recentTerminalText` is anchored to the VIEWPORT BOTTOM, which on a fresh
+   * shell (cursor near the top, nothing scrolled yet) contains only blank rows.
+   */
+  function cursorTailText(maxLines: number): string {
+    if (!term) return '';
+    const buf = term.buffer.active;
+    const end = buf.baseY + buf.cursorY; // the cursor's row
+    const start = Math.max(0, end - maxLines + 1);
+    const lines: string[] = [];
+    for (let i = start; i <= end; i++) {
+      const raw = buf.getLine(i)?.translateToString(true);
+      if (raw === undefined) continue;
+      // On the cursor's own row, ignore anything to the RIGHT of the cursor so a
+      // suffix match can't be defeated by leftover text from a longer earlier line.
+      lines.push(i === end ? raw.slice(0, buf.cursorX) : raw);
     }
     return lines.join('\n');
   }
@@ -801,7 +830,7 @@
             // Confirm the shell echoed it before recording: an unechoed line was
             // typed at a hidden prompt, and a line that doesn't match the screen
             // was rewritten by the shell (tab completion, history recall).
-            if (echoedIn(recentTerminalText(ECHO_SCAN_LINES), cmd)) {
+            if (echoedIn(cursorTailText(ECHO_SCAN_LINES), cmd)) {
               typedInput = recordCommand(typedInput, cmd);
             }
           }

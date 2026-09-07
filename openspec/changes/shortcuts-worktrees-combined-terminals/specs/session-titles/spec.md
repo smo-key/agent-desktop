@@ -2,7 +2,7 @@
 
 ### Requirement: Bare terminal rows are titled from the commands the user ran
 
-A bare shell listed in the combined sessions list SHALL be given a generated title summarizing what the user was doing in it, derived only from the commands the user ran at a normal shell prompt. A typed line SHALL be treated as a CANDIDATE and recorded only when the terminal ECHOED it, so a secret typed at a hidden prompt — including at a shell BUILTIN such as `read -s`, which never changes the foreground process group and is therefore invisible to the foreground probe — is never collected, and a line the shell rewrote (tab completion, history recall, search, paste) is dropped rather than recorded as a command that was never run. Collection SHALL stop the moment a line is submitted and resume only when the foreground probe re-confirms an idle prompt, and the buffer SHALL be memory-only and never persisted. The title SHALL be (re)generated only when the confirmed command list changes, SHALL be generated ON-DEVICE ONLY (the session-transcript cloud fallback does not extend to shell command lines, so with no local model the row keeps its name), and SHALL be skipped entirely for a shell the user has run nothing in. A terminal-kind TASK row SHALL NOT be titled by the model: its command is already its name.
+A bare shell listed in the combined sessions list SHALL be given a generated title summarizing what the user was doing in it, derived only from the commands the user ran at a normal shell prompt. A typed line SHALL be treated as a CANDIDATE and recorded only when it matches the END of what the terminal shows up to the cursor — proving the shell ECHOED it, so a secret typed at a hidden prompt (including at a shell BUILTIN such as `read -s`, which never changes the foreground process group and is therefore invisible to the foreground probe) is never collected, and a line the shell rewrote (tab completion, history recall, search, paste) is dropped rather than recorded as a command that was never run. Lines a command reads as DATA — a heredoc body, an answer to `read`/`select`, a continuation line — are echoed like commands and SHALL likewise not be recorded. Collection SHALL stop the moment a line is submitted and resume only when the foreground probe re-confirms an idle prompt, and the buffer SHALL be memory-only and never persisted. The title SHALL be (re)generated only when the confirmed command list changes, SHALL be generated ON-DEVICE ONLY (the session-transcript cloud fallback does not extend to shell command lines, so with no local model the row keeps its name), and SHALL be skipped entirely for a shell the user has run nothing in. A terminal-kind TASK row SHALL NOT be titled by the model: its command is already its name.
 
 #### Scenario: Typed commands accumulate at an idle prompt
 - **WHEN** the user types a command and presses Return at an idle prompt that echoes it
@@ -11,6 +11,10 @@ A bare shell listed in the combined sessions list SHALL be given a generated tit
 #### Scenario: Input to a running job is not collected
 - **WHEN** a submitted command hands the terminal to a program that prompts for input, and the user types at that prompt
 - **THEN** nothing is added to the recent-command list and no fragment of it is carried into the next command
+
+#### Scenario: Lines a command reads as data are not recorded
+- **WHEN** a recorded command opens an input context (a heredoc, a continuation, `read`) and the user types the lines it consumes
+- **THEN** those lines are not recorded, and recording resumes once the context ends
 
 #### Scenario: An unechoed line is never recorded
 - **WHEN** a line is submitted that the terminal never echoed, or that does not match what the screen shows

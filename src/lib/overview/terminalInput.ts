@@ -42,6 +42,23 @@ export interface InputBuffer {
    * about to prompt for input) until the probe re-confirms idle.
    */
   armed: boolean;
+  /**
+   * Set between a SUBMIT and the next probe answer. Input arriving in that window
+   * may be the start of the next command (type-ahead), so the line that follows it
+   * is distrusted. Input arriving while disarmed by the PROBE instead belongs to
+   * the running program, and the line typed after it starts fresh — so that case
+   * does NOT poison the next command.
+   */
+  pendingSubmit: boolean;
+  /**
+   * When the last recorded command opens an INPUT context — a heredoc, a
+   * continuation line, `read`/`select` — the lines that follow are the shell's own
+   * data, not commands, and are echoed like anything else. Recording is suspended
+   * from this timestamp until a child process runs (the context is over) or
+   * `SUSPEND_MS` elapses, so file content and answers to a prompt never enter the
+   * command list. Null when not suspended.
+   */
+  suspendedAt: number | null;
 }
 
 /** How many confirmed commands to remember (bounds the model prompt). */
@@ -51,8 +68,15 @@ export const MAX_LINE = 200;
 
 /** An empty buffer: nothing typed, not yet armed (the probe arms it). */
 export function emptyInput(): InputBuffer {
-  return { line: '', commands: [], dirty: false, armed: false };
+  return { line: '', commands: [], dirty: false, armed: false, pendingSubmit: false, suspendedAt: null };
 }
+
+/**
+ * How long recording stays suspended after a command that opens an input context,
+ * when no child process ever runs to close it (`read`, `select` — shell builtins).
+ * Long enough to cover answering a prompt, short enough that a shell recovers.
+ */
+export const SUSPEND_MS = 30_000;
 
 /** What `appendInput` produced: the new buffer plus any submitted CANDIDATE lines
  *  (in order) for the caller to confirm with `recordCommand`. */
@@ -77,12 +101,18 @@ export interface InputResult {
 export function appendInput(buf: InputBuffer, data: string): InputResult {
   if (!buf.armed) {
     // Typed into a foreground program (or before the first probe answer): record
-    // NOTHING, and mark the next line untrusted since we may have missed its start.
-    return { buf: data ? { ...buf, line: '', dirty: true } : buf, candidates: [] };
+    // NOTHING. Only input in the window between a SUBMIT and the next probe answer
+    // distrusts the following line — it may be that line's missing first
+    // characters. Keystrokes consumed by a running program (`q` to leave a pager,
+    // a REPL line) do not, so the next command typed at the prompt is collected
+    // normally.
+    if (!data) return { buf, candidates: [] };
+    return { buf: { ...buf, line: '', dirty: buf.pendingSubmit || buf.dirty }, candidates: [] };
   }
   let { line, commands } = buf;
   let dirty: boolean = buf.dirty;
   let armed: boolean = buf.armed;
+  let pendingSubmit: boolean = buf.pendingSubmit;
   const candidates: string[] = [];
   let i = 0;
   while (i < data.length && armed) {
@@ -112,6 +142,7 @@ export function appendInput(buf: InputBuffer, data: string): InputResult {
       // A submitted command may hand the terminal to a program that prompts for
       // input (a password, a REPL). Stop collecting until the probe says idle.
       armed = false;
+      pendingSubmit = true;
       continue;
     }
     if (ch === '\x7f' || ch === '\b') {
@@ -134,7 +165,7 @@ export function appendInput(buf: InputBuffer, data: string): InputResult {
   // Input that arrived after the submit that disarmed us belongs to the next
   // program, exactly like the disarmed branch above.
   if (i < data.length) dirty = true;
-  return { buf: { line, commands, dirty, armed }, candidates };
+  return { buf: { ...buf, line, commands, dirty, armed, pendingSubmit }, candidates };
 }
 
 /** Drop one whole code point (so a backspace over an emoji can't leave a lone
@@ -152,14 +183,43 @@ function dropLastCodePoint(line: string): string {
  * hidden prompt, and a candidate that doesn't match the screen was rewritten by
  * the shell — neither is recorded. Oldest entries drop past `MAX_COMMANDS`. Pure.
  */
-export function recordCommand(buf: InputBuffer, command: string): InputBuffer {
+export function recordCommand(buf: InputBuffer, command: string, nowMs: number = Date.now()): InputBuffer {
   const cmd = command.trim();
   if (!cmd) return buf;
+  // Suspended: these lines are the shell reading DATA (a heredoc body, an answer
+  // to `read`), not commands the user ran. They are echoed like any other input,
+  // so the echo check alone cannot tell them apart — this is what does.
+  if (buf.suspendedAt != null) return buf;
   const commands = [...buf.commands, cmd];
   return {
     ...buf,
-    commands: commands.length > MAX_COMMANDS ? commands.slice(commands.length - MAX_COMMANDS) : commands
+    commands: commands.length > MAX_COMMANDS ? commands.slice(commands.length - MAX_COMMANDS) : commands,
+    suspendedAt: opensInputContext(cmd) ? nowMs : null
   };
+}
+
+/**
+ * Whether `command` makes the shell read further lines as DATA rather than as
+ * commands: a heredoc, an explicit continuation, an unbalanced quote, or a
+ * builtin that prompts (`read`, `select`, `vared` — builtins never fork, so the
+ * foreground probe cannot see them). Deliberately generous: a false positive only
+ * costs a few uncollected commands, a false negative records file content or a
+ * typed secret as a "command". Pure.
+ */
+export function opensInputContext(command: string): boolean {
+  const cmd = command.trim();
+  if (cmd.endsWith('\\')) return true; // line continuation
+  if (/(^|[^<])<<(?!<)/.test(cmd)) return true; // heredoc `<<`, but not a `<<<` here-string
+  if (unbalanced(cmd, "'") || unbalanced(cmd, '"')) return true;
+  const head = cmd.split(/\s+/)[0];
+  return head === 'read' || head === 'select' || head === 'vared';
+}
+
+/** Whether `quote` appears an odd number of times in `text`. */
+function unbalanced(text: string, quote: string): boolean {
+  let n = 0;
+  for (const ch of text) if (ch === quote) n++;
+  return n % 2 === 1;
 }
 
 /**
@@ -169,12 +229,32 @@ export function recordCommand(buf: InputBuffer, command: string): InputBuffer {
  * the next command. An unknown answer (`null`/`undefined`, e.g. a non-Unix
  * platform) is treated as "not idle" — the conservative side. Pure.
  */
-export function noteProbe(buf: InputBuffer, foregroundBusy: boolean | null | undefined): InputBuffer {
+export function noteProbe(
+  buf: InputBuffer,
+  foregroundBusy: boolean | null | undefined,
+  nowMs: number = Date.now()
+): InputBuffer {
   if (foregroundBusy === false) {
-    return buf.armed ? buf : { ...buf, armed: true };
+    // An input context with no child to end it (`read`) expires on a timer.
+    const suspendedAt =
+      buf.suspendedAt != null && nowMs - buf.suspendedAt > SUSPEND_MS ? null : buf.suspendedAt;
+    if (buf.armed && !buf.pendingSubmit && suspendedAt === buf.suspendedAt) return buf;
+    return { ...buf, armed: true, pendingSubmit: false, suspendedAt };
   }
-  if (!buf.armed && !buf.line) return buf;
-  return { ...buf, armed: false, line: '', dirty: true };
+  // A child process is running: whatever is half-typed belongs to it, and any
+  // input context the previous command opened is over. The line is dropped but the
+  // buffer is NOT marked dirty — the next line is typed fresh at the prompt once
+  // the program exits, and poisoning it would cost the command after every pager,
+  // REPL or interactive prompt. (A probe that reports busy while the user is
+  // mid-line — a prompt hook forking a subprocess — can therefore clip that one
+  // line's start; the result is a slightly shortened command in a title, never a
+  // secret, since anything typed while disarmed is dropped outright.)
+  // Dirty is CLEARED here for the same reason: a `true` answer proves the
+  // keystrokes we ignored went to that program, so they were not the missing start
+  // of the next command. (An `idle` answer proves the opposite — nothing was
+  // running, so the typing really was type-ahead into the shell's line — and there
+  // the dirty flag stands and the next line is dropped.)
+  return { ...buf, armed: false, pendingSubmit: false, line: '', dirty: false, suspendedAt: null };
 }
 
 /**
@@ -198,14 +278,19 @@ export const ECHO_SCAN_LINES = 3;
 const MIN_ECHO_LEN = 2;
 
 /**
- * Whether `command` appears in the terminal's rendered tail — i.e. the shell
- * ECHOED it, so it was typed at a normal (visible) prompt and our reconstruction
- * matches the screen. Whitespace is ignored on both sides so a command that
- * WRAPPED across rows still matches. A password at an echo-off prompt never
- * appears and is therefore never confirmed. Pure.
+ * Whether `command` is what the terminal shows at the END of the input line — i.e.
+ * the shell ECHOED it, so it was typed at a normal (visible) prompt and our
+ * reconstruction matches the screen. `tailText` must be the text UP TO the cursor
+ * (the prompt plus the line being submitted); whitespace is ignored on both sides
+ * so a command that WRAPPED across rows still matches.
+ *
+ * The match is a SUFFIX, not a substring: a substring test confirms a
+ * reconstruction that lost characters mid-line (a shell rewrite we failed to
+ * track), recording a command that was never run. A password at an echo-off
+ * prompt never appears at all and is therefore never confirmed. Pure.
  */
 export function echoedIn(tailText: string, command: string): boolean {
   const cmd = command.replace(/\s+/g, '');
   if (cmd.length < MIN_ECHO_LEN) return false;
-  return tailText.replace(/\s+/g, '').includes(cmd);
+  return tailText.replace(/\s+/g, '').endsWith(cmd);
 }
