@@ -21,8 +21,9 @@
 //  - a secret passed as an ARGUMENT (`mysql -pS3cret`, `export TOKEN=…`) is part
 //    of the dispatched command line, so a shell that titles from the command line
 //    puts it in the title. `redactSecrets` strips the obvious shapes before an
-//    entry is stored; treat the rest as best-effort, which is why terminal titles
-//    are generated ON-DEVICE ONLY and the ring is never persisted.
+//    entry is stored, but it is a COURTESY layer with known gaps (see its doc),
+//    not a boundary: what makes this acceptable is that terminal titles are
+//    generated ON-DEVICE ONLY and the ring is never persisted.
 //  - the title is set by BYTES ON THE OUTPUT STREAM, so a remote host over `ssh`,
 //    or a file dumped to the terminal, can write it. Entries are therefore
 //    untrusted text: they are clipped, stripped of controls, and framed as DATA
@@ -94,18 +95,28 @@ export function redactSecrets(title: string): string {
       /(\b(?:[A-Za-z_][\w-]*)?(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)S?\b\s*=\s*)\S+/gi,
       '$1…'
     )
-    // `PWD`/`PASSWD` only with a prefix: a bare `PWD=/home/me` is the working
-    // directory a shell reports, not a secret, and redacting it loses real signal.
-    .replace(/(\b[A-Za-z_][\w-]*_(?:PWD|PASSWD)\b\s*=\s*)\S+/gi, '$1…')
+    // `PWD`/`PASSWD` anywhere EXCEPT as the bare shell variables `PWD`/`OLDPWD`,
+    // whose value is a working directory a shell reports, not a secret. So
+    // `db-pwd=`, `MYSQLPWD=` and `DB_PASSWD=` redact while `PWD=/home/me` and
+    // `OLDPWD=/tmp` stay readable.
+    .replace(/(\b[A-Za-z_][\w-]*(?:PWD|PASSWD)\b\s*=\s*)\S+/gi, (m, head: string) =>
+      /^(?:OLD)?PWD\s*=/i.test(head) ? m : `${head}…`
+    )
     .replace(/(--(?:password|token|secret|api-key|apikey)[= ])\S+/gi, '$1…')
     // `-pSecret` — the mysql/mariadb form, where the value is ATTACHED to the
     // flag. Only that shape: a space-separated `-p` is far more often a port or a
     // pid (`docker run -p 8080:80`, `ps -p 123`, `git log -p`), and mangling those
     // both loses real signal and can collide two distinct titles into one.
-    // A value that looks like a port, path, host:port — or a plain word, which is
-    // how the common alpha flags read (`find -print`, `tar -pxvf`, `gcc -pipe`) —
-    // is left alone. Redacting those would both lose signal and collide two
-    // distinct titles into one, which stalls the change key.
+    // A value that looks like a port, path, host:port — or a plain lowercase word,
+    // which is how the common alpha flags read (`find -print`, `tar -pxvf`, `gcc
+    // -pipe`) — is left alone. Redacting those would both lose signal and collide
+    // two distinct titles into one, which stalls the change key.
+    //
+    // KNOWN GAP, stated rather than papered over: an all-lowercase attached
+    // password (`-psecret`) is kept for exactly that reason — it is the same shape
+    // and length as `-prune`, `-passin`, `-pretty`, and no regex separates them.
+    // Redaction is a courtesy layer; the guarantees that matter are that terminal
+    // titles are generated ON-DEVICE ONLY and the ring is never persisted.
     .replace(/(\s-p)(?![\s\d])(?!\S*[:/])(?![a-z]+\b)(\S+)/g, '$1…')
     // Bare provider tokens wherever they appear
     .replace(/\b(sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{8,}|xox[abprs]-[A-Za-z0-9-]{8,})/g, '…');

@@ -544,8 +544,19 @@
   // Switching to a DIFFERENT agent (or the edited one going away) abandons an
   // in-progress rename rather than committing it to the wrong agent. Selecting the
   // edited agent itself — the menu "Rename" path — leaves the edit intact.
+  //
+  // It also ends when the edited row's header stops OFFERING an editor: an
+  // archived (closed, non-preview) row renders a plain title, so its input
+  // unmounts while `editingTitle` would otherwise stay true — which would freeze
+  // focus reconciliation on the guard below with no editor on screen.
   $effect(() => {
-    if (editingTitle && shownId !== editingPaneId) cancelTitleEdit();
+    if (!editingTitle) return;
+    if (shownId !== editingPaneId) {
+      cancelTitleEdit();
+      return;
+    }
+    const row = allRows.find((r) => r.paneId === editingPaneId) ?? null;
+    if (row && row.closed && !row.preview) cancelTitleEdit();
   });
 
   // Reconcile the SHOWN agent toward what attention wants (resolveFocus = pin >
@@ -1149,6 +1160,10 @@
    *  (⌘↑/↓) step the roster. */
   function onNavKey(e: KeyboardEvent) {
     if (launcher.open) return;
+    // The rename input owns the keyboard while it is open: cycling the project
+    // filter (or stepping rows) from under it would unmount the editor and
+    // discard what the user typed. Esc / Enter still reach it via its own handler.
+    if (editingTitle) return;
 
     // Project-filter cycling. Checked BEFORE the agent stepping since the default
     // chords differ only by ⇧ (an exact chord match keeps them apart either way).

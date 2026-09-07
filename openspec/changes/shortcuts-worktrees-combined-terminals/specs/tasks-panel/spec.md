@@ -85,7 +85,7 @@ A terminal row in the combined sessions list SHALL be renameable exactly like a 
 
 #### Scenario: A rename in progress holds the focus
 - **WHEN** another session starts needing attention while a rename editor is open
-- **THEN** focus does not auto-advance, so the typed name is not discarded, but a focused row that disappears still hands focus on and abandons the edit
+- **THEN** focus does not auto-advance and roster navigation is inert, so the typed name is not discarded — but a focused row that disappears, or whose header stops offering an editor, still hands focus on and abandons the edit
 
 #### Scenario: A restarted task terminal recovers its custom title
 - **WHEN** a task terminal with a custom title is restarted under a new pane id

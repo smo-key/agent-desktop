@@ -96,3 +96,14 @@ describe('redaction precision', () => {
     expect(noteActivity(emptyActivity(), 'mysql -uroot -pHunter2').entries[0]).toBe('mysql -uroot -p…');
   });
 });
+
+describe('redaction of directory-shaped variables', () => {
+  it('keeps the shell PWD variables but redacts a prefixed password one', () => {
+    for (const cmd of ['PWD=/home/me', 'OLDPWD=/tmp']) {
+      expect(noteActivity(emptyActivity(), cmd).entries[0]).toBe(cmd);
+    }
+    expect(noteActivity(emptyActivity(), 'db-pwd=hunter2 ./run').entries[0]).toBe('db-pwd=… ./run');
+    expect(noteActivity(emptyActivity(), 'MYSQLPWD=hunter2').entries[0]).toBe('MYSQLPWD=…');
+    expect(noteActivity(emptyActivity(), 'DB_PASSWD=hunter2').entries[0]).toBe('DB_PASSWD=…');
+  });
+});
