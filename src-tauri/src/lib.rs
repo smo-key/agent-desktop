@@ -780,6 +780,18 @@ fn pty_kill(manager: State<'_, Arc<PtyManager>>, id: PaneId) -> Result<(), Strin
     manager.kill(id)
 }
 
+/// Whether a live pane's terminal is owned by a foreground job (`Some(true)`),
+/// sits at the shell prompt (`Some(false)`), or cannot be determined (`None`).
+/// Polled by a plain-terminal pane in the combined terminals placement so its
+/// roster row reads In flight / Needs input (terminal-core: Foreground Job Query).
+#[tauri::command]
+fn pty_foreground_busy(
+    manager: State<'_, Arc<PtyManager>>,
+    id: PaneId,
+) -> Result<Option<bool>, String> {
+    manager.foreground_busy(id)
+}
+
 /// Resolve the absolute path to an app-data file named `file`, creating the
 /// app-data dir if needed. Errors are stringified for the frontend (which falls
 /// back gracefully on any failure).
@@ -1614,6 +1626,7 @@ pub fn run() {
             pty_write,
             pty_resize,
             pty_kill,
+            pty_foreground_busy,
             open_in_editor,
             resolve_path,
             open_path,

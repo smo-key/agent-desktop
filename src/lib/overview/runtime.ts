@@ -91,6 +91,19 @@ export function noteBusy(paneId: string, busy: boolean, nowMs: number): void {
 }
 
 /**
+ * Record the latest FOREGROUND-JOB probe result for a plain terminal pane (see
+ * `PaneRuntime.foregroundBusy`): `true` (a job owns the terminal), `false` (idle
+ * prompt), or `null` (unknown — the probe is unavailable / stopped). Records ONLY
+ * when a runtime entry already exists (a pane that never produced output derives
+ * `working` regardless, and `deriveTerminalStatus` treats a missing entry as
+ * unknown). Cheap: a single field write per probe tick.
+ */
+export function noteForeground(paneId: string, busy: boolean | null): void {
+  const r = runtimes.get(paneId);
+  if (r) r.foregroundBusy = busy;
+}
+
+/**
  * Record a pane's most recent DERIVED (final) status — the hysteresis memory for the
  * silence-based demotion. The Overview calls this for each row after every roster
  * rebuild; `deriveStatus` reads it back (via `runtime.lastStatus`, as `prevStatus`) so a

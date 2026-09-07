@@ -30,6 +30,7 @@
   import { tooltip } from '$lib/ui/tooltip';
   import { startNewSession, startNewWorktreeSession } from '$lib/launcher/newSession';
   import { shortcuts } from '$lib/settings/shortcuts.svelte';
+  import { showTerminalsDock, terminalsCombined } from '$lib/tasks/placement';
   import { workspace } from '$lib/layout/workspace.svelte';
   import { insertFilenameInto, focusedTerminalHandle } from '$lib/layout/insertFilename';
   import { initFileDrop } from '$lib/layout/fileDrop';
@@ -614,6 +615,13 @@
 
   // Cmd-Y: open a new bare interactive shell in the active project (no command)
   // and focus it. Opens the Terminals panel first so the new terminal is visible.
+  // Terminals placement (tasks-panel / ui-preferences): in the COMBINED placement
+  // terminals are rows in the sessions list, the right dock + its toggle are hidden
+  // (the dock stays mounted, hidden, as the PTY home), ⌘J is inert, and a new
+  // terminal is SELECTED as a row (via `focusRequest`) rather than focused in the dock.
+  const combinedTerminals = $derived(terminalsCombined(uiPrefs.data.terminalsPlacement));
+  const dockShown = $derived(showTerminalsDock(uiPrefs.data.terminalsPlacement, tasksPanel.open));
+
   function newTerminal() {
     tasksPanel.open = true;
     const pid = terminalsActiveProjectId;
@@ -622,6 +630,9 @@
     const pane = projectTasks.bareForProject(pid).find((b) => b.id === id)?.paneId;
     if (pane) {
       lastCycledPaneId = pane;
+      if (combinedTerminals) {
+        focusRequest.request(pane); // the inbox selects the new terminal row
+      }
       focusTerminal(pane); // registry parks the request until the pane mounts
     }
   }
@@ -659,6 +670,13 @@
     const cur = list.indexOf(anchor);
     const next = list[(cur + 1 + list.length) % list.length];
     lastCycledPaneId = next;
+    // Combined placement: a terminal is visible only as the SELECTED row, so cycling
+    // onto one selects its row (the inbox then focuses + scrolls it); cycling back
+    // onto the agent selects the agent row the same way.
+    if (combinedTerminals) {
+      focusRequest.request(next);
+      return;
+    }
     focusTerminal(next);
     scrollTerminalToBottom(next);
   }
@@ -743,7 +761,7 @@
     // never kills a running terminal). Works in every view, like Cmd-N.
     if (shortcuts.matches(e, 'toggleTerminals')) {
       e.preventDefault();
-      tasksPanel.toggle();
+      if (!combinedTerminals) tasksPanel.toggle(); // inert when terminals are rows
       return;
     }
 
@@ -927,6 +945,7 @@
           </span>
         </button>
       {/if}
+      {#if !combinedTerminals}
       <button
         class="tb-btn"
         class:active={tasksPanel.open}
@@ -942,6 +961,7 @@
           </span>
         {/if}
       </button>
+      {/if}
       <button class="tb-btn" aria-label="Settings" use:tooltip={{ text: 'Settings', placement: 'bottom' }} onclick={() => settingsModal.show()}>
         <Icon name="settings" size={14} />
       </button>
@@ -1000,7 +1020,7 @@
        (terminals-panel spec). Takes zero width when closed. -->
   <aside
     class="terminals-dock"
-    class:hidden={!tasksPanel.open}
+    class:hidden={!dockShown}
     style="flex-basis: {tasksPanel.width}px;"
   >
     <!-- Drag the left edge to resize the panel width (persisted). -->

@@ -322,7 +322,8 @@ mod tests {
                 dirty: Some(true),
                 modified: None,
                 ahead: Some(2),
-                behind: Some(0)
+                behind: Some(0),
+                worktree: None
             })
         );
         assert_eq!(snap.ts, 1_717_200_000);
@@ -356,7 +357,8 @@ mod tests {
                 dirty: None,
                 modified: None,
                 ahead: None,
-                behind: None
+                behind: None,
+                worktree: None
             })
         );
     }

@@ -24,6 +24,7 @@
   import ShortcutRecorder from './ShortcutRecorder.svelte';
   import { compactMode, type Density } from '$lib/settings/compactMode.svelte';
   import { sessionGrouping, type GroupingMode } from '$lib/settings/sessionGrouping.svelte';
+  import { uiPrefs, type TerminalsPlacement } from '$lib/settings/uiPrefs.svelte';
   import { shellSettings } from '$lib/settings/shell.svelte';
   import { agentSettings } from '$lib/settings/agent.svelte';
   import { AGENT_KINDS, backendFor, type AgentKind } from '$lib/agent/backends';
@@ -123,6 +124,10 @@
     { value: 'default', label: 'Default' },
     { value: 'compact', label: 'Compact' },
     { value: 'minimal', label: 'Minimal' }
+  ];
+  const TERMINALS_PLACEMENT_OPTIONS: DropdownOption[] = [
+    { value: 'panel', label: 'Separate right panel' },
+    { value: 'combined', label: 'In the sessions list' }
   ];
   const GROUPING_OPTIONS: DropdownOption[] = [
     { value: 'status', label: 'Status' },
@@ -237,6 +242,19 @@
                 onChange={(v) => compactMode.setDensity(v as Density)}
                 ariaLabel="Density"
                 autofocusTrigger
+              />
+            </div>
+          </li>
+          <li class="row">
+            <span class="desc">Terminals</span>
+            <div class="control">
+              <!-- Where plain terminals (task runs + ⌘Y shells) live: the right-docked
+                   panel, or listed with the sessions and statused like them. -->
+              <Dropdown
+                value={uiPrefs.data.terminalsPlacement}
+                options={TERMINALS_PLACEMENT_OPTIONS}
+                onChange={(v) => uiPrefs.setTerminalsPlacement(v as TerminalsPlacement)}
+                ariaLabel="Terminals placement"
               />
             </div>
           </li>

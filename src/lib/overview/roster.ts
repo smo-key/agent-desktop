@@ -262,6 +262,14 @@ export interface PaneRuntime {
    */
   resizeAt?: number | null;
   /**
+   * The latest FOREGROUND-JOB probe result for a plain terminal (combined
+   * placement): `true` when a job owns the terminal (the shell is running a
+   * command), `false` when the shell sits at its prompt, `null`/absent when unknown
+   * (never probed, or a platform without the probe). Set by `noteForeground`; read
+   * by `deriveTerminalStatus` (terminalRows.ts). Never set for agent panes.
+   */
+  foregroundBusy?: boolean | null;
+  /**
    * The pane's PREVIOUSLY-derived (final) status — the hysteresis memory for the
    * silence-based demotion. The Overview records each row's final status here after
    * every roster rebuild (`noteStatus`); `deriveStatus` reads it as `prevStatus` so a
@@ -459,6 +467,19 @@ export interface AgentRow {
    *  alert callsite (parallel to the `name` title override), not by `rowFor`; roster
    *  fixtures and non-alert consumers may omit it. Null/undefined → no project prefix. */
   projectName?: string | null;
+  /**
+   * `'terminal'` for a PLAIN-TERMINAL row (a task run or bare shell listed with the
+   * sessions in the combined placement — terminalRows.ts); absent/`'session'` for an
+   * agent row. Terminal rows have no workspace, transcript, or events: the inbox's
+   * session-only effects (auto-archive / resume / preview / summaries) skip them.
+   */
+  kind?: 'session' | 'terminal';
+  /** Terminal rows: `'task'` (a terminal-kind task def) or `'bare'` (a ⌘Y shell). */
+  terminalKind?: 'task' | 'bare';
+  /** Terminal rows: the store key (`task:<defId>` / `bare:<bareId>`) behind the row. */
+  terminalKey?: string;
+  /** Terminal rows: whether the process is up (drives Kill vs Close / Restart). */
+  running?: boolean;
   /** The SPECIALIST this pane was spawned AS (registry `specialist`), or null if
    *  it was not spawned as a specialist. Surfaced as a roster badge so a
    *  specialist-spawned agent is visibly attributed (task 5.4).

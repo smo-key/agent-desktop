@@ -389,6 +389,14 @@ const MANUAL_SCENARIOS = {
   // tasks-panel: every scenario is a rendered-component / live-PTY behavior with no
   // pure surface to assert headless — confirmed live in-app.
   'tasks-panel': new Set([
+    // Combined terminals placement (shortcuts-worktrees-combined-terminals): the
+    // row model, status derivation, project filtering, focus actions, and the
+    // dock-visibility rule are pure unit tests (terminalRows.test.ts /
+    // placement.test.ts). These two are DOM-bound — the live `portal` teleport of a
+    // dock terminal body into the inbox focus slot (no respawn), and ⌘Y's new bare
+    // shell appearing + being selected as a row through `focusRequest`.
+    'selecting_a_terminal_row_shows_its_live_terminal_without_respawn',
+    'new_terminal_shortcut_adds_and_selects_a_row',
     'panel_position_and_default_size',
     'resizable_splitter',
     'active_project_scoping',

@@ -15,6 +15,7 @@ import {
   TERMINALS_WIDTH_MAX,
   TERMINALS_WIDTH_MIN,
   UiPrefsStore,
+  parseTerminalsPlacement,
   parseUiPrefs
 } from './uiPrefs.svelte';
 import { ALL } from '../projects/projectRollup';
@@ -38,7 +39,8 @@ describe('parseUiPrefs', () => {
       tasksLauncherFrac: 0.4,
       projectFilter: 'proj-123',
       laneOrder: { attn: ['a', 'b'], paused: ['c'] },
-      pinned: ['p1', 'p2']
+      pinned: ['p1', 'p2'],
+      terminalsPlacement: 'combined'
     };
     expect(parseUiPrefs(raw)).toEqual(raw);
   });
@@ -80,6 +82,35 @@ describe('parseUiPrefs', () => {
     expect(parseUiPrefs({ pinned: ['a', 3, null, 'b'] }).pinned).toEqual(['a', 'b']);
     expect(parseUiPrefs({ pinned: 'nope' }).pinned).toEqual([]);
     expect(parseUiPrefs({}).pinned).toEqual([]);
+  });
+});
+
+// ui-preferences: "Terminals placement preference" — the `ui` slice carries where
+// plain terminals live; anything but the two known values falls back to the panel.
+describe('parseUiPrefs — terminals placement', () => {
+  it('Terminals placement defaults to the separate panel', () => {
+    expect(DEFAULT_UI_PREFS.terminalsPlacement).toBe('panel');
+    expect(parseUiPrefs({}).terminalsPlacement).toBe('panel');
+    expect(parseUiPrefs({ terminalsPlacement: 'combined' }).terminalsPlacement).toBe('combined');
+    expect(parseUiPrefs({ terminalsPlacement: 'panel' }).terminalsPlacement).toBe('panel');
+  });
+
+  it('An unknown placement value falls back to the default', () => {
+    expect(parseUiPrefs({ terminalsPlacement: 'sidebar' }).terminalsPlacement).toBe('panel');
+    expect(parseUiPrefs({ terminalsPlacement: 42 }).terminalsPlacement).toBe('panel');
+    expect(parseUiPrefs({ terminalsPlacement: null }).terminalsPlacement).toBe('panel');
+    expect(parseTerminalsPlacement('')).toBe('panel');
+  });
+
+  it('setTerminalsPlacement persists the placement in the ui slice', async () => {
+    const store = new UiPrefsStore();
+    store.setTerminalsPlacement('combined');
+    expect(store.data.terminalsPlacement).toBe('combined');
+    await new Promise((r) => setTimeout(r, 0));
+    const call = invokeMock.mock.calls.find((c) => c[0] === 'settings_save');
+    expect(call).toBeDefined();
+    const saved = JSON.parse((call![1] as { json: string }).json) as { ui: { terminalsPlacement: string } };
+    expect(saved.ui.terminalsPlacement).toBe('combined');
   });
 });
 

@@ -91,6 +91,15 @@
   import { compactMode } from '$lib/settings/compactMode.svelte';
   import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
   import { shortcuts } from '$lib/settings/shortcuts.svelte';
+  import { projectTasks } from '$lib/tasks/projectTasks.svelte';
+  import { terminalsCombined } from '$lib/tasks/placement';
+  import { terminalSlot } from '$lib/layout/terminalSlot.svelte';
+  import {
+    buildTerminalRows,
+    collectTerminalRowInputs,
+    isTerminalRow,
+    terminalFocusActions
+  } from './terminalRows';
 
   // --- Sessions / Tasks split (Sessions roster on top / Tasks bottom) ----------
   // The `.col-list` column splits into the Sessions roster (top, resizable) and
@@ -136,17 +145,38 @@
   const rosterWorkspaces = $derived(toRosterWorkspaces(workspace.workspaces));
   const navWorkspaces = $derived(toNavWorkspaces(workspace.workspaces));
 
-  const allRows = $derived(
-    buildRoster(
+  // Combined terminals placement (tasks-panel: "Terminals can be combined into the
+  // sessions list"): every active plain terminal (task run / bare shell) becomes a
+  // roster row after the agents, statused like them (terminalRows.ts). Terminal
+  // rows have no workspace/transcript/events, so the session-only effects below
+  // skip them (`isTerminalRow`), and their per-process ids are never persisted
+  // (lane order / pins).
+  const combinedTerminals = $derived(terminalsCombined(uiPrefs.data.terminalsPlacement));
+  const terminalInputs = $derived(
+    combinedTerminals
+      ? collectTerminalRowInputs({
+          byProject: projectTasks.byProject,
+          runtime: projectTasks.runtime,
+          bareByProject: projectTasks.bareByProject,
+          projectPaths: Object.fromEntries(projects.list.map((p) => [p.id, p.path]))
+        })
+      : []
+  );
+
+  const allRows = $derived.by(() => {
+    const runtime = runtimeMap();
+    const agents = buildRoster(
       snapshots.byPane,
       rosterWorkspaces,
-      runtimeMap(),
+      runtime,
       nowMs,
       activity.bySession,
       undefined,
       events.activityMap()
-    )
-  );
+    );
+    return combinedTerminals ? [...agents, ...buildTerminalRows(terminalInputs, runtime, nowMs)] : agents;
+  });
+  const terminalIds = $derived(new Set(allRows.filter(isTerminalRow).map((r) => r.paneId)));
 
   $effect(() => {
     for (const r of allRows) {
@@ -196,7 +226,12 @@
   /** Persist ONLY the manually-reorderable lanes (attn + paused); flight/done are
    *  re-derived newest-first each session, so they are never stored. */
   function saveLaneOrder() {
-    uiPrefs.setLaneOrder({ attn: laneOrder.attn, paused: laneOrder.paused });
+    // Terminal rows are per-process (their pane ids never survive a restart), so
+    // they keep their in-session slot but are never written to the durable order.
+    uiPrefs.setLaneOrder({
+      attn: laneOrder.attn.filter((id) => !terminalIds.has(id)),
+      paused: laneOrder.paused.filter((id) => !terminalIds.has(id))
+    });
   }
 
   // Reconcile every lane's order against the live roster. Computed over `allRows`
@@ -378,6 +413,7 @@
    *  resolved against the row's OWN workspace so it's correct even when the focused
    *  agent lives in a non-active workspace. Null for a non-claude/shell pane. */
   function sessionIdOf(r: AgentRow): string | null {
+    if (isTerminalRow(r)) return null;
     return workspace.sessionIn(r.workspaceId, r.paneId).sessionId ?? null;
   }
 
@@ -553,6 +589,9 @@
   // entry. With no shown agent, clear the target so the surface goes home (hidden)
   // and the empty panel shows.
   let focusSlot = $state<HTMLDivElement | null>(null);
+  // The teleport target for a focused TERMINAL row (combined placement): the dock
+  // relocates that terminal's body in here via `terminalSlot` + the portal action.
+  let terminalFocusSlot = $state<HTMLDivElement | null>(null);
   let lastFocusId: string | null = null;
   // Bumped on every explicit switch (click / keyboard / queue-nav) so the effect
   // re-focuses the terminal even when re-selecting the same agent.
@@ -566,16 +605,25 @@
     // closed panel, so send the surface home rather than teleporting it.
     if (!f || f.closed || !focusSlot) {
       surfaceSlot.clear();
+      terminalSlot.clear();
       lastFocusId = null;
       lastFocusNonce = nonce;
       return;
     }
-    const target = navigateTarget(navWorkspaces, f.paneId);
-    if (target) {
-      workspace.setActiveWorkspace(target.workspaceId);
-      workspace.setFocusIn(target.workspaceId, target.leafId);
+    if (isTerminalRow(f)) {
+      // A plain terminal: send the agent surface home and teleport the terminal's
+      // dock body into the terminal slot instead (never respawned).
+      surfaceSlot.clear();
+      if (terminalFocusSlot) terminalSlot.set(f.paneId, terminalFocusSlot);
+    } else {
+      terminalSlot.clear();
+      const target = navigateTarget(navWorkspaces, f.paneId);
+      if (target) {
+        workspace.setActiveWorkspace(target.workspaceId);
+        workspace.setFocusIn(target.workspaceId, target.leafId);
+      }
+      surfaceSlot.set(focusSlot);
     }
-    surfaceSlot.set(focusSlot);
 
     // Focus the terminal + pin to the bottom whenever we SWITCH to a Claude window
     // (the shown agent changed, or the user re-selected it) — after the display
@@ -597,6 +645,7 @@
   $effect(() => () => {
     clearAdvance();
     surfaceSlot.clear();
+    terminalSlot.clear();
   });
 
   /** Select (watch) an agent: show it immediately, pin it, and focus its terminal. */
@@ -621,8 +670,31 @@
   /** A roster row was clicked: an archived (closed) session resumes for preview;
    *  everything else (live / paused / already-previewing) is just selected. */
   function onRowClick(r: AgentRow) {
-    if (r.closed) startPreview(r.paneId);
+    if (r.closed && !isTerminalRow(r)) startPreview(r.paneId);
     else selectAgent(r.paneId);
+  }
+
+  // --- Terminal rows (combined placement) ------------------------------------
+  /** Kill (running) / Close (stopped) a terminal row: drops its dock entry, whose
+   *  TerminalPane teardown kills + reaps a live process. Advances focus like an
+   *  archive would, and forgets any pin (its id is per-process). */
+  function dismissTerminal(r: AgentRow) {
+    advanceAfterDismiss(r.paneId);
+    if (userSelected === r.paneId) userSelected = null;
+    uiPrefs.forgetPinned(r.paneId);
+    const key = r.terminalKey ?? '';
+    if (key.startsWith('task:')) projectTasks.dismiss(key.slice('task:'.length));
+    else if (key.startsWith('bare:')) projectTasks.removeBareTerminal(key.slice('bare:'.length));
+  }
+
+  /** Restart a task terminal row (a fresh pane id → the new row is selected). */
+  function restartTerminal(r: AgentRow) {
+    const key = r.terminalKey ?? '';
+    if (!key.startsWith('task:')) return;
+    const id = key.slice('task:'.length);
+    projectTasks.restart(id);
+    const next = projectTasks.runtime[id]?.paneId;
+    if (next) selectAgent(next);
   }
 
   /** Step through the attention queue from the header ↑/↓ controls (immediate). */
@@ -742,6 +814,7 @@
   // matching the manual "Archive session" decision.
   $effect(() => {
     for (const r of allRows) {
+      if (isTerminalRow(r)) continue; // a terminal row is never archived/deleted here
       const action = autoArchiveAction(r, activity.forPane(r.paneId).userHash);
       if (action === 'delete') {
         uiPrefs.forgetPinned(r.paneId);
@@ -783,6 +856,7 @@
   // as "the user replied".
   $effect(() => {
     for (const r of allRows) {
+      if (isTerminalRow(r)) continue;
       const liveCount = activity.forPane(r.paneId).userMsgCount;
       if (r.paused) {
         if (r.pausedCount == null && typeof liveCount === 'number') {
@@ -809,6 +883,7 @@
   // overwrites the message it had while live. Runs off the same ~1s roster re-derive.
   $effect(() => {
     for (const r of allRows) {
+      if (isTerminalRow(r)) continue; // no transcript to cache
       if (r.closed || r.preview) continue; // a closed/previewing pane has no fresh live message
       if (r.summary) summaries.record(sessionIdOf(r), r.summary);
       costs.record(sessionIdOf(r), r.cost); // freeze cost before snapshot resets on reopen
@@ -865,6 +940,23 @@
    *  its archive action as Delete instead. */
   function openAgentMenu(e: MouseEvent, row: AgentRow, name: string) {
     e.preventDefault();
+    if (isTerminalRow(row)) {
+      const acts = terminalFocusActions(row);
+      const items: MenuItem[] = [
+        { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
+        ...(acts.restart
+          ? [{ label: 'Restart', icon: 'rotate-ccw', onClick: () => restartTerminal(row) } as MenuItem]
+          : []),
+        {
+          label: acts.primary === 'Kill' ? 'Kill terminal' : 'Close terminal',
+          icon: 'trash-2',
+          danger: true,
+          onClick: () => dismissTerminal(row)
+        }
+      ];
+      menu = { open: true, x: e.clientX, y: e.clientY, items };
+      return;
+    }
     // The archive action for a live/paused row: an empty session deletes (nothing to
     // keep) and reads as "Delete"; a session with messages archives (restorable).
     const archiveItem: MenuItem = isEmptySession(row.paneId)
@@ -1004,13 +1096,14 @@
     if (shortcuts.matches(e, 'archiveSession')) {
       if (!focus || focus.closed) return;
       e.preventDefault();
-      archiveAgent(focus.paneId);
+      if (isTerminalRow(focus)) dismissTerminal(focus); // Kill / Close the terminal row
+      else archiveAgent(focus.paneId);
       return;
     }
 
-    // Pause the focused session, or resume it if already paused.
+    // Pause the focused session, or resume it if already paused (no-op for a terminal row).
     if (shortcuts.matches(e, 'pauseSession')) {
-      if (!focus || focus.closed) return;
+      if (!focus || focus.closed || isTerminalRow(focus)) return;
       e.preventDefault();
       if (focus.paused) resumeAgent(focus.paneId);
       else pauseAgent(focus.paneId);
@@ -1090,6 +1183,9 @@
       <span class="t">
         {#if pinnedSet.has(r.paneId)}
           <span class="pin" use:tooltip={'Pinned to top'}><Icon name="pin" size={10} /></span>
+        {/if}
+        {#if isTerminalRow(r)}
+          <span class="term-glyph" use:tooltip={'Terminal'}><Icon name="terminal" size={11} /></span>
         {/if}
         {titles.titleFor(r.paneId) ?? r.name}
         {#if r.specialist}
@@ -1239,7 +1335,31 @@
 
     <!-- RIGHT: focus pane (header + teleported live TUI / Archived / All clear) -->
     <div class="col-focus">
-      {#if focus && !focus.closed}
+      {#if focus && isTerminalRow(focus)}
+        {@const av = projAvatar(focus.projectId)}
+        {@const acts = terminalFocusActions(focus)}
+        <!-- A plain-terminal row (combined placement): its dock body is teleported
+             into the terminal slot below — never respawned. -->
+        <div class="fhead">
+          <ProjectIcon {...av} size={26} />
+          <span class="ttl" use:tooltip={focus.summary ?? focus.name}>{focus.name}</span>
+          <span class="spc"></span>
+          {#if acts.restart}
+            <button type="button" class="hbtn" onclick={() => restartTerminal(focus)} use:tooltip={'Restart this task terminal'}>Restart</button>
+          {/if}
+          <button
+            type="button"
+            class="hbtn danger"
+            onclick={() => dismissTerminal(focus)}
+            use:tooltip={acts.primary === 'Kill'
+              ? `Kill terminal and close (${shortcuts.text('archiveSession')})`
+              : `Close terminal (${shortcuts.text('archiveSession')})`}
+          >{acts.primary}</button>
+        </div>
+        <div class="focus-slot term-slot" class:attn={needsAttention(focus)} bind:this={terminalFocusSlot}></div>
+        <!-- Agent slot stays bound (hidden) so the agent surface can teleport back without a remount. -->
+        <div class="focus-slot hidden" bind:this={focusSlot}></div>
+      {:else if focus && !focus.closed}
         {@const av = projAvatar(focus.projectId)}
         <div class="fhead">
           <ProjectIcon {...av} size={26} />
@@ -1295,6 +1415,7 @@
         </div>
         <!-- The single mounted workspace surface is teleported in here. -->
         <div class="focus-slot" class:attn={needsAttention(focus)} bind:this={focusSlot}></div>
+        <div class="focus-slot hidden" bind:this={terminalFocusSlot}></div>
       {:else if focus && focus.closed}
         {@const av = projAvatar(focus.projectId)}
         <div class="fhead">
@@ -1316,6 +1437,7 @@
         </div>
         <!-- Slot stays bound (hidden) so the teleport target survives this state. -->
         <div class="focus-slot hidden" bind:this={focusSlot}></div>
+        <div class="focus-slot hidden" bind:this={terminalFocusSlot}></div>
       {:else}
         <div class="empty">
           <div class="ring">✓</div>
@@ -1324,6 +1446,7 @@
         </div>
         <!-- Slot still bound so a fresh attention agent can teleport in without a remount. -->
         <div class="focus-slot hidden" bind:this={focusSlot}></div>
+        <div class="focus-slot hidden" bind:this={terminalFocusSlot}></div>
       {/if}
     </div>
   </section>
@@ -1444,6 +1567,7 @@
   .row .nm .t .spec-badge :global(.mc-icon) { opacity: 0.85; }
   /* Pinned marker: a small pin glyph leading the title. */
   .row .nm .t .pin { flex: none; display: inline-flex; color: var(--fg-4); }
+  .row .nm .t .term-glyph { flex: none; display: inline-flex; color: var(--fg-3); }
   .row .nm .s { font-size: 11px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
   .row .nm .s.q { color: var(--orange-300); }
   /* The tiny third row: context · cost · last activity, each an icon + value. */
@@ -1504,6 +1628,8 @@
   /* The teleported surface fills the slot. */
   .focus-slot :global(.surface),
   .focus-slot :global(.workspace) { flex: 1 1 auto; min-width: 0; min-height: 0; }
+  /* A teleported dock terminal body (combined placement) fills the slot the same way. */
+  .focus-slot :global(.tp-term-body) { flex: 1 1 auto; min-width: 0; min-height: 0; }
   .focus-slot.attn { box-shadow: inset 0 0 0 1px rgba(238,126,77,0.18); border-radius: var(--r-md); }
   .focus-slot.hidden { display: none; }
 

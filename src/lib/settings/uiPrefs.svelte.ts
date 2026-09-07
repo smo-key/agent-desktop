@@ -36,6 +36,13 @@ const TASKS_FRAC_DEFAULT = 0.33;
  *  as a literal so this settings module stays free of a projects dependency). */
 const PROJECT_FILTER_DEFAULT = 'all';
 
+/** Where plain terminals (task runs + bare shells) live: the separate right-docked
+ *  panel (default) or combined into the sessions list (ui-preferences:
+ *  "Terminals placement preference"). */
+export type TerminalsPlacement = 'panel' | 'combined';
+export const TERMINALS_PLACEMENTS: ReadonlyArray<TerminalsPlacement> = ['panel', 'combined'];
+const TERMINALS_PLACEMENT_DEFAULT: TerminalsPlacement = 'panel';
+
 /** Persisted order of the two manually-reorderable lanes. The non-draggable
  *  lanes (flight/done) re-derive newest-first each session and are never stored. */
 export interface LaneOrderPrefs {
@@ -53,6 +60,8 @@ export interface UiPrefs {
   /** Sessions pinned to the top of the roster (pane ids, most recently pinned
    *  first). A pinned session renders above every lane regardless of status. */
   pinned: string[];
+  /** Terminals placement: separate right panel (default) or combined with sessions. */
+  terminalsPlacement: TerminalsPlacement;
 }
 
 /** Defaults for a fresh install. */
@@ -62,8 +71,14 @@ export const DEFAULT_UI_PREFS: UiPrefs = {
   tasksLauncherFrac: TASKS_FRAC_DEFAULT,
   projectFilter: PROJECT_FILTER_DEFAULT,
   laneOrder: { attn: [], paused: [] },
-  pinned: []
+  pinned: [],
+  terminalsPlacement: TERMINALS_PLACEMENT_DEFAULT
 };
+
+/** PURE: a valid placement, else the default. */
+export function parseTerminalsPlacement(v: unknown): TerminalsPlacement {
+  return v === 'panel' || v === 'combined' ? v : TERMINALS_PLACEMENT_DEFAULT;
+}
 
 /** Clamp a terminals-panel width into [MIN, MAX] (rounded). */
 export function clampTerminalsWidth(px: number): number {
@@ -113,7 +128,8 @@ export function parseUiPrefs(raw: unknown): UiPrefs {
         ? o.projectFilter
         : PROJECT_FILTER_DEFAULT,
     laneOrder: { attn: stringIds(laneRaw.attn), paused: stringIds(laneRaw.paused) },
-    pinned: stringIds(o.pinned)
+    pinned: stringIds(o.pinned),
+    terminalsPlacement: parseTerminalsPlacement(o.terminalsPlacement)
   };
 }
 
@@ -174,6 +190,12 @@ export class UiPrefsStore {
   /** Set the manual lane order (attn + paused) and persist (best-effort). */
   setLaneOrder(order: LaneOrderPrefs): void {
     this.data = { ...this.data, laneOrder: { attn: [...order.attn], paused: [...order.paused] } };
+    void this.save();
+  }
+
+  /** Set where terminals live (separate panel / combined) and persist. */
+  setTerminalsPlacement(placement: TerminalsPlacement): void {
+    this.data = { ...this.data, terminalsPlacement: parseTerminalsPlacement(placement) };
     void this.save();
   }
 

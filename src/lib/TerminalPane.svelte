@@ -18,7 +18,7 @@
   } from './launcher/initialInput';
   import { LaunchSpinner, spinnerLabel } from './launcher/spinner';
   import { backendFor, backendForProgram, isAgentProgram } from './agent/backends';
-  import { noteOutput, noteExit, noteBusy, noteResize, clearRuntime } from './overview/runtime';
+  import { noteOutput, noteExit, noteBusy, noteResize, noteForeground, clearRuntime } from './overview/runtime';
   import { detectTerminalBusy } from './overview/terminalBusy';
   import { events } from './overview/events.svelte';
 
@@ -95,7 +95,15 @@
      * `onTitleChange`, i.e. an OSC 0/2 sequence). Used by the Terminals panel to
      * label a terminal with the actively running command. Agent panes pass none.
      */
-    onTitle = undefined as ((title: string) => void) | undefined
+    onTitle = undefined as ((title: string) => void) | undefined,
+    /**
+     * OPTIONAL: poll the backend's foreground-job probe (`pty_foreground_busy`)
+     * once a second and record it via `noteForeground`, so a plain shell listed
+     * with the sessions (combined terminals placement) reads In flight while a
+     * command runs and Needs input at an idle prompt. Off for agent panes and for
+     * the separate-panel placement (no probe, no IPC).
+     */
+    probeForeground = false
   }: {
     paneId: string;
     program?: string;
@@ -109,7 +117,37 @@
     resume?: boolean;
     onExit?: (code: number) => void;
     onTitle?: (title: string) => void;
+    probeForeground?: boolean;
   } = $props();
+
+  // Foreground-job probe (combined terminals placement). Reads the pane's backend
+  // pty id on each tick (it is set asynchronously after spawn and cleared on exit)
+  // and records the answer for THAT id only, so a reply that lands after a respawn
+  // or teardown is dropped. Turning the prop off clears the recorded value so the
+  // roster falls back to output activity rather than a stale probe.
+  $effect(() => {
+    if (!probeForeground) {
+      noteForeground(paneId, null);
+      return;
+    }
+    let live = true;
+    const tick = () => {
+      const id = ptyId;
+      if (id === undefined) return;
+      void invoke<boolean | null>('pty_foreground_busy', { id })
+        .then((busy) => {
+          if (live && ptyId === id) noteForeground(paneId, busy ?? null);
+        })
+        .catch(() => {});
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+      noteForeground(paneId, null);
+    };
+  });
 
   // Single-shot sender for the optional initial prompt. Constructed in onMount
   // from the LAUNCH-TIME prop value (an initial prompt is delivered once, at

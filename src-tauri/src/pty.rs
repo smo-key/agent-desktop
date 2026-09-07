@@ -92,6 +92,29 @@ struct Pane {
     reader: Option<JoinHandle<()>>,
 }
 
+/// The foreground-job answer for a pane (see [`PtyManager::foreground_busy`]).
+/// Unix only: the PTY's foreground process group vs the direct child's pid (the
+/// child is the session leader portable-pty spawned, so its pgid is its pid). A
+/// reaped child has no meaningful answer (`None`).
+#[cfg(unix)]
+fn foreground_busy_of(pane: &Pane) -> Option<bool> {
+    if pane.reaped.load(Ordering::SeqCst) {
+        return None;
+    }
+    let pid = pane.pid?;
+    let fg = pane.master.process_group_leader()?;
+    if fg <= 0 {
+        return None;
+    }
+    Some(fg as u32 != pid)
+}
+
+/// Windows has no process-group ownership of a console to inspect.
+#[cfg(not(unix))]
+fn foreground_busy_of(_pane: &Pane) -> Option<bool> {
+    None
+}
+
 /// Upper bound on waiting for a pane's reader thread during `kill_all`. The
 /// thread ends on EOF from the slave, which a straggler we could not see (a
 /// double-forked daemon) might still hold open; the app must quit regardless.
@@ -267,6 +290,23 @@ impl PtyManager {
         pane.master
             .get_size()
             .map_err(|e| format!("get_size failed: {e}"))
+    }
+
+    /// Whether a live pane's terminal is currently OWNED BY A FOREGROUND JOB
+    /// (terminal-core: "Foreground Job Query"). On Unix the kernel's foreground
+    /// process group for the PTY (`tcgetpgrp` via the master) is compared with
+    /// the pane's direct child — the shell, which is its own session/group
+    /// leader: a different group means a job the shell launched holds the
+    /// terminal (`Some(true)`); the shell's own group means it sits at its prompt
+    /// (`Some(false)`). `None` when the platform (Windows) or the child handle
+    /// cannot answer, so the caller falls back rather than guessing. An unknown
+    /// pane id is an error.
+    pub fn foreground_busy(&self, id: PaneId) -> Result<Option<bool>, String> {
+        let panes = self.panes.lock().unwrap();
+        let pane = panes
+            .get(&id)
+            .ok_or_else(|| format!("no live pane with id {id}"))?;
+        Ok(foreground_busy_of(pane))
     }
 
     /// Kill a pane's ENTIRE process tree — the direct child plus everything it
