@@ -21,10 +21,13 @@
   import { noteOutput, noteExit, noteBusy, noteResize, noteForeground, clearRuntime } from './overview/runtime';
   import { detectTerminalBusy } from './overview/terminalBusy';
   import {
+    ECHO_SCAN_LINES,
     appendInput,
     commandsText,
+    echoedIn,
     emptyInput,
-    shouldCollect,
+    noteProbe,
+    recordCommand,
     type InputBuffer
   } from './overview/terminalInput';
   import { events } from './overview/events.svelte';
@@ -144,29 +147,37 @@
       void invoke<boolean | null>('pty_foreground_busy', { id })
         .then((busy) => {
           if (live && ptyId === id) {
-            foregroundBusy = busy ?? null;
             noteForeground(paneId, busy ?? null);
+            // Arms / disarms typed-command collection. A `true` answer also drops
+            // the in-progress line, so keystrokes typed into a program that had
+            // already taken the foreground are never carried into a later command.
+            typedInput = noteProbe(typedInput, busy ?? null);
           }
         })
         .catch(() => {});
     };
+    probeNow = tick;
     tick();
     const timer = setInterval(tick, 1000);
     return () => {
       live = false;
+      probeNow = null;
       clearInterval(timer);
-      foregroundBusy = null;
       noteForeground(paneId, null);
+      typedInput = noteProbe(typedInput, null);
     };
   });
 
-  // The probe's LAST answer for this pane (mirrors what the effect above records)
-  // and the commands the user has typed at an IDLE prompt. The buffer feeds the
-  // terminal row's generated title (`session-titles`); it is memory-only and never
-  // persisted, and `shouldCollect` keeps keystrokes typed INTO a running program
-  // (a password prompt, a REPL) out of it entirely.
-  let foregroundBusy: boolean | null = null;
+  // The commands the user ran in this pane, feeding the terminal row's generated
+  // title (`session-titles`). Memory-only, never persisted. A typed line is only
+  // ever a CANDIDATE: it is recorded solely when the shell ECHOED it, which keeps
+  // anything typed at a hidden prompt — including a shell BUILTIN like `read -s`,
+  // which never changes the foreground process group and so is invisible to the
+  // probe — out of the buffer entirely. `probeNow` re-checks the foreground the
+  // instant a line is submitted, so the disarmed window around a command that
+  // prompts for input starts immediately rather than at the next 1 Hz tick.
   let typedInput: InputBuffer = emptyInput();
+  let probeNow: (() => void) | null = null;
 
   // Single-shot sender for the optional initial prompt. Constructed in onMount
   // from the LAUNCH-TIME prop value (an initial prompt is delivered once, at
@@ -363,12 +374,12 @@
    * `getLine().translateToString()` path the file-link hit-test uses. Returns ''
    * when the terminal isn't ready. Used ONLY to feed `detectTerminalBusy`.
    */
-  function recentTerminalText(): string {
+  function recentTerminalText(maxLines: number = BUSY_SCAN_LINES): string {
     if (!term) return '';
     const buf = term.buffer.active;
     // `baseY + rows` is one past the last viewport row; scan the tail up to there.
     const end = buf.baseY + term.rows;
-    const start = Math.max(0, end - BUSY_SCAN_LINES);
+    const start = Math.max(0, end - maxLines);
     const lines: string[] = [];
     for (let i = start; i < end; i++) {
       const line = buf.getLine(i)?.translateToString(true);
@@ -782,9 +793,21 @@
       const enc = new TextEncoder();
       onDataSub = term.onData((d) => {
         if (ptyId === undefined) return;
-        // Collect the command line only while the probe says the shell is idle.
-        if (probeForeground && shouldCollect(foregroundBusy)) {
-          typedInput = appendInput(typedInput, d);
+        if (probeForeground) {
+          const wasArmed = typedInput.armed;
+          const { buf, candidates } = appendInput(typedInput, d);
+          typedInput = buf;
+          for (const cmd of candidates) {
+            // Confirm the shell echoed it before recording: an unechoed line was
+            // typed at a hidden prompt, and a line that doesn't match the screen
+            // was rewritten by the shell (tab completion, history recall).
+            if (echoedIn(recentTerminalText(ECHO_SCAN_LINES), cmd)) {
+              typedInput = recordCommand(typedInput, cmd);
+            }
+          }
+          // A submitted line disarms collection; re-check the foreground once, now,
+          // so a fast builtin re-arms in milliseconds instead of at the next tick.
+          if (wasArmed && !typedInput.armed) probeNow?.();
         }
         void invoke('pty_write', {
           id: ptyId,

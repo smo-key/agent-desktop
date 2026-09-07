@@ -59,4 +59,8 @@
 - [x] 4.1 `yarn check`, `yarn test`, `cargo test`, `yarn coverage`,
       `yarn lint:storage` green; MANUAL allowlist entries for the DOM-bound
       scenarios with justifications.
-- [ ] 4.2 Adversarial code review; resolve CRITICAL findings.
+- [ ] 4.2 Adversarial code review; resolve CRITICAL findings — terminal titles:
+      echo-confirmed commands + disarm at submit (no secret capture, no
+      fabricated commands), on-device only (no cloud fallback for command
+      lines), stale-response guard, failure backoff, cache eviction, and a
+      rename that pins the shown name.

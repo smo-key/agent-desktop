@@ -56,7 +56,7 @@
   import { focusRequest } from './focusRequest.svelte';
   import { activity } from './activity.svelte';
   import { events } from './events.svelte';
-  import { titles } from './titles.svelte';
+  import { shouldCommitRename, titles } from './titles.svelte';
   import { summaries } from './summaries.svelte';
   import { costs } from './costs.svelte';
   import { subagents } from './subagents.svelte';
@@ -190,8 +190,12 @@
   // Skipped entirely outside the combined placement: nothing displays those titles.
   $effect(() => {
     if (!combinedTerminals) return;
-    const refs = terminalTitleRefs(allRows, (paneId) => getTerminal(paneId)?.recentCommands() ?? null);
-    if (refs.length) titles.refreshTerminals(refs, nowMs);
+    // Called even with no terminals: the store reclaims the entries of terminals
+    // that have gone away (a bare shell's pane id dies with its process).
+    titles.refreshTerminals(
+      terminalTitleRefs(allRows, (paneId) => getTerminal(paneId)?.recentCommands() ?? null),
+      nowMs
+    );
   });
 
   $effect(() => {
@@ -484,7 +488,11 @@
     if (!editingTitle) return;
     editingTitle = false;
     const row = viewRows.find((r) => r.paneId === editingPaneId);
-    if (row && titleDraft.trim() !== focusTitle(row)) {
+    // Commit whenever the draft differs from the shown title OR the shown title is
+    // not yet the user's own: typing a row's current name is how you PIN it (a bare
+    // shell is called "Terminal", the very name a user would retype to stop the
+    // auto-titler from renaming it out from under them).
+    if (row && shouldCommitRename(titleDraft, focusTitle(row), titles.isManual(row.paneId))) {
       titles.setManualTitle(row.paneId, titleKeyOf(row), titleDraft);
     }
     editingPaneId = null;

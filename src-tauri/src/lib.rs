@@ -765,10 +765,16 @@ async fn session_focus(
 
 /// Generate a short title for a plain TERMINAL row from the COMMANDS the user ran
 /// in it (`session-titles`: "Bare terminal rows are titled from the commands the
-/// user ran"). Same model path as [`session_focus`] — on-device `llama-server`
-/// first, the opt-in `claude -p` cloud fallback second, then the shared
-/// [`clean_title`] post-processing — but the input is the frontend-collected
-/// command list rather than a transcript on disk, since a bare shell has none.
+/// user ran"). Reuses [`session_focus`]'s on-device path — the `llama-server`
+/// sidecar plus the shared [`clean_title`] post-processing — but the input is the
+/// frontend-collected command list rather than a transcript on disk, since a bare
+/// shell has none.
+///
+/// ON-DEVICE ONLY, deliberately: there is no `claude -p` fallback here. The
+/// `titles.cloudFallback` opt-in covers sending a SESSION TRANSCRIPT off-device;
+/// shell command lines are different data (tokens, connection strings, hosts) and
+/// are not covered by that consent, so with no local model the row simply keeps
+/// its name.
 ///
 /// `commands` is newline-separated, oldest first; empty input yields `None` (an
 /// untouched shell is never titled). `async` for the same reason as `session_focus`.
@@ -777,34 +783,13 @@ async fn terminal_focus(
     app: AppHandle,
     state: State<'_, Arc<polish::LlamaServer>>,
     commands: String,
-    cloud_fallback: bool,
 ) -> Result<Option<String>, String> {
     let joined = commands.trim();
     if joined.is_empty() {
         return Ok(None);
     }
     let body = polish::build_terminal_title_body(joined, models::POLISH.id);
-    let raw = match polish::chat_complete(&app, &state, body).await {
-        Ok(raw) => raw,
-        Err(on_device_err) => {
-            if !cloud_fallback {
-                return Err(on_device_err);
-            }
-            // The cloud path takes a single prompt string; label the commands so the
-            // model reads them as DATA (the same framing as the on-device system
-            // prompt), never as instructions to carry out.
-            let prompt = format!(
-                "{}\n\nCommands run:\n- {}",
-                polish::TERMINAL_TITLE_SYSTEM_PROMPT,
-                joined.replace('\n', "\n- ")
-            );
-            claude_title::claude_title(&prompt).await.map_err(|cloud_err| {
-                format!(
-                    "on-device terminal title failed ({on_device_err}); cloud fallback failed ({cloud_err})"
-                )
-            })?
-        }
-    };
+    let raw = polish::chat_complete(&app, &state, body).await?;
     let title = clean_title(&raw, joined);
     Ok((!title.is_empty()).then_some(title))
 }

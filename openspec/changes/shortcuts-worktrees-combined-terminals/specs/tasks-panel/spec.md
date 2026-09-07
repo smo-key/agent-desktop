@@ -75,6 +75,10 @@ A terminal row in the combined sessions list SHALL be renameable exactly like a 
 - **WHEN** a terminal row is renamed and a title generation for it later resolves
 - **THEN** the custom title is kept and the generated one is discarded
 
+#### Scenario: Renaming a row to its current name pins that name
+- **WHEN** the user commits a rename whose text equals the name already shown
+- **THEN** the name becomes the row's custom title, so the generator never replaces it
+
 #### Scenario: A restarted task terminal recovers its custom title
 - **WHEN** a task terminal with a custom title is restarted under a new pane id
 - **THEN** hydrating the new pane from the durable cache restores the custom title with no model call
