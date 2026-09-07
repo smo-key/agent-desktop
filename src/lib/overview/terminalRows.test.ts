@@ -4,6 +4,7 @@ import {
   collectTerminalRowInputs,
   deriveTerminalStatus,
   isTerminalRow,
+  persistedLaneOrder,
   terminalFocusActions,
   type TerminalSource
 } from './terminalRows';
@@ -64,8 +65,13 @@ describe('terminal rows — Terminals can be combined into the sessions list', (
     expect(rows[2].terminalKey).toBe('task:t2');
     expect(rows[2].running).toBe(false);
     expect(rows.every((r) => isTerminalRow(r) && r.workspaceId === '' && !r.closed)).toBe(true);
-    // A live title relabels a task row; lastTs comes from the pane's last output.
-    const titled = buildTerminalRows(inputs, { 'tpane-1': rt({ lastOutputAt: 5_000 }) }, 6_000);
+    // A live title relabels a task row; lastTs is the pane's START time (stable
+    // across output chunks, so date-ordered rosters don't churn), not its last output.
+    const titled = buildTerminalRows(
+      inputs,
+      { 'tpane-1': rt({ spawnedAt: 5_000, lastOutputAt: 5_900 }) },
+      6_000
+    );
     expect(titled[0].lastTs).toBe(5);
     expect(rows[0].lastTs).toBeNull();
     const withTitle = collectTerminalRowInputs(
@@ -81,6 +87,19 @@ describe('terminal rows — Terminals can be combined into the sessions list', (
     expect(filterRowsByProject(rows, 'all')).toHaveLength(3);
     // A terminal always belongs to a project, so none is "unassigned".
     expect(filterRowsByProject(rows, 'unassigned')).toHaveLength(0);
+  });
+
+  it('Terminal ids are never written to the persisted lane order', () => {
+    const lanes = ['attn', 'paused'] as const;
+    const prev = { attn: ['pane-a'], paused: [] as string[] };
+    const order = { attn: ['tpane-1', 'pane-a'], paused: ['tpane-2'] };
+    const ids = new Set(['tpane-1', 'tpane-2']);
+    // Identical after filtering → the previous object is returned (no write).
+    expect(persistedLaneOrder(order, ids, lanes, prev)).toBe(prev);
+    // A real change is written without the terminal ids.
+    const next = persistedLaneOrder({ attn: ['pane-b', 'tpane-1', 'pane-a'], paused: [] }, ids, lanes, prev);
+    expect(next).toEqual({ attn: ['pane-b', 'pane-a'], paused: [] });
+    expect(next).not.toBe(prev);
   });
 
   it('Terminal row focus actions track its state', () => {

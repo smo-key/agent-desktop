@@ -48,4 +48,4 @@
 - [x] 4.1 `yarn check`, `yarn test`, `cargo test`, `yarn coverage`,
       `yarn lint:storage` green; MANUAL allowlist entries for the DOM-bound
       scenarios with justifications.
-- [ ] 4.2 Adversarial code review; resolve CRITICAL findings.
+- [x] 4.2 Adversarial code review; resolve CRITICAL findings.

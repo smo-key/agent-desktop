@@ -236,6 +236,11 @@ export function archivedPaneIds(rows: AgentRow[]): string[] {
 export interface PaneRuntime {
   /** Epoch ms of the most recent PTY output, or null if none seen yet. */
   lastOutputAt: number | null;
+  /** Epoch ms when this runtime entry was first created (the pane's first
+   *  output / exit) — a STABLE "started" time for ordering plain-terminal rows,
+   *  which would otherwise re-sort on every output chunk. Optional (older
+   *  fixtures omit it). */
+  spawnedAt?: number;
   /** Whether the pane's process has exited. */
   exited: boolean;
   /** The process exit code once exited, else null (and null for an unknown code). */

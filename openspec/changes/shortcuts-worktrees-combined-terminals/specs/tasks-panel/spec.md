@@ -33,7 +33,7 @@ killing processes — SHALL be preserved. In the combined placement the dock and
 
 ### Requirement: Terminals can be combined into the sessions list
 
-When the terminals placement is `combined`, every active terminal — a terminal-kind task with a runtime (running, failed, or kept open) and every bare shell — SHALL appear as a row in the sessions roster of its project, subject to the roster's project filter, with a status derived like an agent's (see agent-status-derivation). Selecting a terminal row SHALL show that terminal's live surface in the focus pane WITHOUT respawning it, with a header offering Restart (tasks) and Kill (running) / Close (stopped). The new-terminal shortcut SHALL still create a bare shell for the active project and select its row, and the cycle-focus shortcut SHALL step the selection across the agent and its project's terminal rows (a terminal is visible only as the selected row). Terminal rows are per-process and SHALL NOT be written into the persisted lane order or pinned list.
+When the terminals placement is `combined`, every active terminal — a terminal-kind task with a runtime (running, failed, or kept open) and every bare shell — SHALL appear as a row in the sessions roster of its project, subject to the roster's project filter, with a status derived like an agent's (see agent-status-derivation). Selecting a terminal row SHALL show that terminal's live surface in the focus pane WITHOUT respawning it, with a header offering Restart (tasks) and Kill (running) / Close (stopped). The new-terminal shortcut SHALL still create a bare shell for the active project and select its row, and the cycle-focus shortcut SHALL step the selection across the agent and its project's terminal rows (a terminal is visible only as the selected row). Terminal rows are per-process and SHALL NOT be written into the persisted lane order or pinned list, and the Archived lane's "Delete all" SHALL neither count nor act on a stopped terminal row (closing it is the row's own Kill / Close action). A terminal row's timestamp is the terminal's start time, so date-ordered rosters do not re-sort on every output chunk.
 
 #### Scenario: Combined placement lists terminals as rows
 - **WHEN** a project has a running task terminal and a bare shell and the placement is `combined`
@@ -46,6 +46,14 @@ When the terminals placement is `combined`, every active terminal — a terminal
 #### Scenario: Terminal row focus actions track its state
 - **WHEN** a terminal row is focused
 - **THEN** a running row offers Kill, a stopped row offers Close, and a task row additionally offers Restart
+
+#### Scenario: Delete all archived leaves terminal rows alone
+- **WHEN** the Archived lane holds an archived session and a stopped terminal row and the user confirms "Delete all"
+- **THEN** only the archived session is deleted; the terminal row and its selection are untouched
+
+#### Scenario: Terminal ids are never written to the persisted lane order
+- **WHEN** terminal rows sit in the Needs-you or Paused lane order
+- **THEN** the persisted order omits their ids, and an order that is unchanged after omitting them is not written again
 
 #### Scenario: Selecting a terminal row shows its live terminal without respawn
 - **WHEN** the user selects a terminal row

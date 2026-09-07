@@ -784,7 +784,7 @@ fn pty_kill(manager: State<'_, Arc<PtyManager>>, id: PaneId) -> Result<(), Strin
 /// sits at the shell prompt (`Some(false)`), or cannot be determined (`None`).
 /// Polled by a plain-terminal pane in the combined terminals placement so its
 /// roster row reads In flight / Needs input (terminal-core: Foreground Job Query).
-#[tauri::command]
+#[tauri::command(async)]
 fn pty_foreground_busy(
     manager: State<'_, Arc<PtyManager>>,
     id: PaneId,

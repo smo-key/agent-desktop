@@ -24,7 +24,7 @@ const runtimes = new Map<string, PaneRuntime>();
 function entryFor(paneId: string): PaneRuntime {
   let r = runtimes.get(paneId);
   if (!r) {
-    r = { lastOutputAt: null, exited: false, exitCode: null };
+    r = { lastOutputAt: null, exited: false, exitCode: null, spawnedAt: Date.now() };
     runtimes.set(paneId, r);
   }
   return r;

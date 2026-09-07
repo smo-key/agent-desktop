@@ -33,7 +33,7 @@
   );
   const activeId = $derived(
     activeProjectId({
-      focusedId: workspace.active ? workspace.focusedId : '',
+      focusedId: workspace.focusedPaneId ?? '', // the PANE id (registry key), not the leaf id
       projectIdOf: (id) => workspace.session(id).projectId,
       selectedProjectId
     })

@@ -144,7 +144,9 @@ export function buildTerminalRows(
       currentAction: null,
       contextPct: null,
       cost: null,
-      lastTs: rt?.lastOutputAt != null ? Math.floor(rt.lastOutputAt / 1000) : null,
+      // The row's timestamp is the terminal's START time, not its last output chunk:
+      // date-ordered rosters would otherwise re-sort a streaming terminal every tick.
+      lastTs: rt?.spawnedAt != null ? Math.floor(rt.spawnedAt / 1000) : null,
       status: deriveTerminalStatus(t, rt, nowMs),
       projectId: t.projectId,
       specialist: null,
@@ -173,4 +175,27 @@ export function terminalFocusActions(
   row: Pick<AgentRow, 'running' | 'terminalKind'>
 ): { primary: 'Kill' | 'Close'; restart: boolean } {
   return { primary: row.running ? 'Kill' : 'Close', restart: row.terminalKind === 'task' };
+}
+
+/**
+ * The lane order to PERSIST: `order` with every terminal row id removed. Terminal
+ * ids are per-process (they never survive a restart) so they keep their
+ * in-session slot but are never written. Returns `prev` itself when the result is
+ * identical to it, so a caller can skip a redundant settings write. Pure.
+ */
+export function persistedLaneOrder<L extends string>(
+  order: Record<L, string[]>,
+  terminalIds: ReadonlySet<string>,
+  lanes: ReadonlyArray<L>,
+  prev: Record<L, string[]>
+): Record<L, string[]> {
+  const out = {} as Record<L, string[]>;
+  let same = true;
+  for (const lane of lanes) {
+    const ids = order[lane].filter((id) => !terminalIds.has(id));
+    out[lane] = ids;
+    const p = prev[lane] ?? [];
+    if (ids.length !== p.length || ids.some((id, i) => id !== p[i])) same = false;
+  }
+  return same ? prev : out;
 }

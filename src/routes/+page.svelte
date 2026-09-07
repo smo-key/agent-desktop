@@ -587,7 +587,7 @@
   // Used by Cmd-T (new-task dialog), Cmd-Y (new terminal) and Cmd-Tab (focus cycle).
   const terminalsActiveProjectId = $derived(
     activeProjectId({
-      focusedId: workspace.active ? workspace.focusedId : '',
+      focusedId: workspace.focusedPaneId ?? '', // the PANE id (registry key), not the leaf id
       projectIdOf: (id) => workspace.session(id).projectId,
       selectedProjectId:
         projectFilter.selected === ALL || projectFilter.selected === UNASSIGNED
@@ -643,7 +643,10 @@
   let lastCycledPaneId: string | null = null;
   function focusCycleList(): string[] {
     const list: string[] = [];
-    if (workspace.active && workspace.focusedId) list.push(workspace.focusedId);
+    // The focused agent by PANE id (what focusTerminal / the roster key on) — the
+    // tree leaf id (`workspace.focusedId`) is not a terminal handle.
+    const agent = workspace.focusedPaneId;
+    if (agent) list.push(agent);
     const pid = terminalsActiveProjectId;
     if (pid) {
       for (const t of projectTasks.forProject(pid)) {
@@ -666,7 +669,7 @@
     tasksPanel.open = true; // terminals must be mounted/visible to take focus
     const anchor = lastCycledPaneId && list.includes(lastCycledPaneId)
       ? lastCycledPaneId
-      : workspace.focusedId;
+      : (workspace.focusedPaneId ?? '');
     const cur = list.indexOf(anchor);
     const next = list[(cur + 1 + list.length) % list.length];
     lastCycledPaneId = next;

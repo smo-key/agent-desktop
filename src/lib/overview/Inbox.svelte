@@ -98,6 +98,7 @@
     buildTerminalRows,
     collectTerminalRowInputs,
     isTerminalRow,
+    persistedLaneOrder,
     terminalFocusActions
   } from './terminalRows';
 
@@ -227,11 +228,12 @@
    *  re-derived newest-first each session, so they are never stored. */
   function saveLaneOrder() {
     // Terminal rows are per-process (their pane ids never survive a restart), so
-    // they keep their in-session slot but are never written to the durable order.
-    uiPrefs.setLaneOrder({
-      attn: laneOrder.attn.filter((id) => !terminalIds.has(id)),
-      paused: laneOrder.paused.filter((id) => !terminalIds.has(id))
-    });
+    // they keep their in-session slot but are never written to the durable order —
+    // and a bare shell flipping lanes on every command must not cost a settings
+    // write when the persisted (agent-only) order is unchanged.
+    const prev = uiPrefs.data.laneOrder;
+    const next = persistedLaneOrder(laneOrder, terminalIds, ['attn', 'paused'] as const, prev);
+    if (next !== prev) uiPrefs.setLaneOrder(next);
   }
 
   // Reconcile every lane's order against the live roster. Computed over `allRows`

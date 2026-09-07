@@ -849,7 +849,19 @@
       // NB: the OPTIONAL initial prompt is delivered by `deliverInitial()` once
       // claude's startup output goes quiet (TUI ready), with the text and the
       // submitting Enter sent as two separate writes — not here.
-    })();
+    })().catch((err: unknown) => {
+      // A spawn that never happened (bad shell path, PTY failure) must not leave the
+      // pane "running" forever: surface the error in the pane and report it as an
+      // exit (127, the shell's command-not-found code) so the overview / dock slot
+      // read it as failed rather than In flight.
+      if (disposed) return;
+      exited = true;
+      noteExit(paneId, 127);
+      spinner?.onExit();
+      loading = spinner?.loading ?? false;
+      note(`[failed to start ${program}: ${String(err)}]`);
+      onExit?.(127);
+    });
 
     // onMount's returned cleanup runs synchronously on destroy; we set the flag so
     // any still-pending async setup above bails out. The heavy disposal lives in
