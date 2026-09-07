@@ -768,7 +768,7 @@ fn app_quit_kills_descendants_that_ignore_hangup() {
     manager.kill_all();
 
     assert!(
-        !pid_alive(grandchild),
+        wait_pid_gone(grandchild, Duration::from_secs(1)),
         "grandchild {grandchild} still alive after kill_all returned"
     );
     let (_data, code) = drain_until_exit(&rx, Duration::from_secs(10));
@@ -850,4 +850,96 @@ fn closing_a_pane_kills_an_interactive_shells_background_jobs() {
         wait_pid_gone(job, Duration::from_secs(5)),
         "interactive shell's background job {job} outlived its pane"
     );
+}
+
+/// Spawn a shell whose script publishes "<job pid> <shell pid>" and then
+/// EXITS, leaving the job orphaned. Returns once the shell is gone (exited,
+/// or a zombie on Linux where the orphan keeps the tty open).
+#[cfg(unix)]
+fn spawn_shell_that_exits_leaving_a_job(
+    manager: &PtyManager,
+) -> (u64, mpsc::Receiver<PtyEvent>, u32) {
+    static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let pidfile = std::env::temp_dir().join(format!(
+        "agent-desktop-pty-orphan-{}-{n}.pid",
+        std::process::id()
+    ));
+    let ready = pidfile.with_extension("ready");
+    let _ = std::fs::remove_file(&pidfile);
+    let _ = std::fs::remove_file(&ready);
+    let (tx, rx) = mpsc::channel();
+    let cfg = SpawnConfig {
+        program: "/bin/sh".into(),
+        args: vec![
+            "-c".into(),
+            format!(
+                // A long-running job that already ignores HUP (a dev server),
+                // in the shell's own process group; the shell exits only once
+                // the trap is installed (else the exit's hangup kills the job).
+                "(trap '' HUP; echo >{ready}; exec sleep 300) >/dev/null 2>&1 & \
+                 while [ ! -f {ready} ]; do sleep 0.02; done; rm -f {ready}; \
+                 echo $! $$ > {pidfile}; exit 0",
+                ready = ready.to_str().unwrap(),
+                pidfile = pidfile.to_str().unwrap()
+            ),
+        ],
+        cwd: None,
+        cols: 80,
+        rows: 24,
+        ..Default::default()
+    };
+    let id = manager
+        .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))
+        .expect("spawn should succeed");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let (job, shell) = loop {
+        if let Ok(s) = std::fs::read_to_string(&pidfile) {
+            let mut it = s.split_whitespace().filter_map(|w| w.parse::<u32>().ok());
+            if let (Some(job), Some(shell)) = (it.next(), it.next()) {
+                break (job, shell);
+            }
+        }
+        assert!(Instant::now() < deadline, "pids never published");
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    let _ = std::fs::remove_file(&pidfile);
+    assert!(wait_pid_gone(shell, Duration::from_secs(5)), "shell should have exited");
+    assert!(pid_alive(job), "orphaned job should still be running");
+    (id, rx, job)
+}
+
+/// #### Scenario: Closing a pane kills orphans left by an exited child
+#[cfg(unix)]
+#[test]
+fn closing_a_pane_kills_orphans_left_by_an_exited_child() {
+    let manager = PtyManager::new();
+    let (id, rx, job) = spawn_shell_that_exits_leaving_a_job(&manager);
+
+    manager.kill(id).expect("kill should succeed");
+
+    assert!(
+        wait_pid_gone(job, Duration::from_secs(5)),
+        "orphaned job {job} outlived its pane"
+    );
+    let (_data, code) = drain_until_exit(&rx, Duration::from_secs(10));
+    assert!(code.is_some(), "exited shell was not reaped / no Exit emitted");
+}
+
+/// #### Scenario: App quit kills orphans left by an exited child
+#[cfg(unix)]
+#[test]
+fn app_quit_kills_orphans_left_by_an_exited_child() {
+    let manager = PtyManager::new();
+    let (_id, rx, job) = spawn_shell_that_exits_leaving_a_job(&manager);
+
+    manager.kill_all();
+
+    assert!(
+        wait_pid_gone(job, Duration::from_secs(1)),
+        "orphaned job {job} still alive after kill_all returned"
+    );
+    let (_data, code) = drain_until_exit(&rx, Duration::from_secs(10));
+    assert!(code.is_some(), "exited shell was not reaped / no Exit emitted");
+    assert_eq!(manager.live_count(), 0, "panes remain after kill_all");
 }

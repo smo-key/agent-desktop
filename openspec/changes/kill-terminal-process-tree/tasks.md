@@ -20,3 +20,12 @@
       back to leader + group instead of "tree is dead". Two more failing tests
       (job in own pgrp ignoring TERM/HUP; interactive bash background job) and
       unit tests for the discovery guards.
+- [x] 2.2 Adversarial review round 2: a child that exited on its own but left
+      HUP-ignoring jobs behind was skipped entirely — discovery now seeds from
+      the child's process group when the root is gone or a zombie (a pid cannot
+      be recycled while its group exists), rejects a live root that is not our
+      child, and never tracks zombies; all kill work (snapshot, signals, grace,
+      forced kill, then the possibly-blocking PTY drop) runs on the killer
+      thread with an inline fallback; one `ps` per poll tick shared by all
+      trees; finished killer threads pruned. Two more tests (orphans after an
+      exited child, on close and on quit) and unit tests for the discovery rules.
