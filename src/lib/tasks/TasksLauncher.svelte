@@ -13,6 +13,7 @@
   // right-panel panes — design D5), so agent rows show a best-effort idle dot.
   import Icon from '../icons/Icon.svelte';
   import { tooltip } from '../ui/tooltip';
+  import { pointerReorder } from '../ui/pointerReorder';
   import ContextMenu, { type MenuItem } from '../ui/ContextMenu.svelte';
   import { workspace } from '../layout/workspace.svelte';
   import { projectFilter } from '../projects/projectFilter.svelte';
@@ -76,38 +77,21 @@
   }
 
   // --- Drag-to-reorder the task list ------------------------------------------
-  // Dropping one row onto another reorders the active project's task list
+  // Dragging one row onto another reorders the active project's task list
   // (projectTasks.reorder → reorderTask + per-project save), so the manual order
-  // survives restart. `dragId` is the row being dragged; `dragOverId` is the
-  // current drop target (for the highlight). The draggable element is a <div>,
-  // not a <button>: WKWebView (Tauri/macOS) won't start a native drag from a form
-  // control.
+  // survives restart. The drag is POINTER-based (`pointerReorder`), not HTML5 DnD:
+  // Tauri's native drag-drop (enabled for file drops onto sessions) swallows every
+  // in-page `dragstart`. `dragId` is the row being dragged; `dragOverId` is the
+  // current drop target (for the highlight).
   let dragId = $state<string | null>(null);
   let dragOverId = $state<string | null>(null);
 
-  function onDragStart(e: DragEvent, id: string) {
-    dragId = id;
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move';
-      // Some browsers refuse to start a drag unless data is set.
-      e.dataTransfer.setData('text/plain', id);
-    }
+  function onReorderChange(drag: string | null, over: string | null) {
+    dragId = drag;
+    dragOverId = over;
   }
-  function onDragOver(e: DragEvent, id: string) {
-    if (!dragId || dragId === id) return;
-    e.preventDefault(); // allow the drop
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    dragOverId = id;
-  }
-  function onDrop(e: DragEvent, id: string) {
-    e.preventDefault();
-    if (dragId && dragId !== id) void projectTasks.reorder(dragId, id);
-    dragId = null;
-    dragOverId = null;
-  }
-  function onDragEnd() {
-    dragId = null;
-    dragOverId = null;
+  function onReorderDrop(from: string, to: string) {
+    void projectTasks.reorder(from, to);
   }
 
   // --- Right-click context menu (edit / delete, plus stop / dismiss) ----------
@@ -164,26 +148,21 @@
         <p class="sub">Add one to run a command or a Claude prompt.</p>
       </div>
     {:else}
-      <ul class="rows">
+      <ul class="rows" use:pointerReorder={{ onChange: onReorderChange, onDrop: onReorderDrop }}>
         {#each tasks as def (def.id)}
           {@const dot = dotKind(def)}
           {@const running = dot === 'running'}
           {@const failed = dot === 'failed'}
           <li class="row">
-            <!-- A div (not a <button>): WKWebView (Tauri/macOS) refuses to start a
-                 native HTML5 drag from a form control, so the draggable row must be
-                 a plain element. role/tabindex/onkeydown restore button semantics. -->
+            <!-- A div with button semantics (role/tabindex/onkeydown) rather than
+                 a <button>, so the row is a plain element for the pointer drag. -->
             <div
               class="rowbtn"
               class:dragging={dragId === def.id}
               class:dragover={dragOverId === def.id}
               role="button"
               tabindex="0"
-              draggable="true"
-              ondragstart={(e) => onDragStart(e, def.id)}
-              ondragover={(e) => onDragOver(e, def.id)}
-              ondrop={(e) => onDrop(e, def.id)}
-              ondragend={onDragEnd}
+              data-reorder-id={def.id}
               onclick={() => rowClick(def)}
               onkeydown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
@@ -317,13 +296,12 @@
   .rowbtn:hover {
     background: rgba(255, 255, 255, 0.025);
   }
-  /* Drag-to-reorder: the lifted row dims; the drop target shows a neutral ring (the
-     move lands AT the target's slot). `-webkit-user-drag: element` is required for
-     WebKit (WKWebView) to honor the drag — the `draggable` attribute alone is
-     unreliable there. */
-  .rowbtn[draggable='true'] {
+  /* Drag-to-reorder (pointer-based): the lifted row dims; the drop target shows a
+     neutral ring (the move lands AT the target's slot). `touch-action: none` hands
+     the gesture to the pointer handlers. */
+  .rowbtn {
     cursor: grab;
-    -webkit-user-drag: element;
+    touch-action: none;
   }
   .rowbtn.dragging {
     opacity: 0.45;

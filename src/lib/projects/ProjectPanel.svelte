@@ -28,6 +28,7 @@
   import WorktreeDialog from './WorktreeDialog.svelte';
   import ContextMenu, { type MenuItem } from '../ui/ContextMenu.svelte';
   import { tooltip } from '../ui/tooltip';
+  import { pointerReorder } from '../ui/pointerReorder';
   import { pushProject, pullProject } from './projectGitActions';
 
   let {
@@ -119,37 +120,22 @@
   });
 
   // --- Drag-to-reorder the project list -------------------------------------
-  // The expanded project rows are draggable: dropping one onto another reorders
+  // The expanded project rows are reorderable: dragging one onto another reorders
   // the persisted `projects` list (projects.reorder → reorderProjects + save), so
   // the panel order — and the collapsed rail, which mirrors it — is user-arranged
-  // and survives restart. `dragId` is the row being dragged; `dragOverId` is the
-  // current drop target (for the insertion-highlight).
+  // and survives restart. The drag is POINTER-based (`pointerReorder`), not HTML5
+  // DnD: Tauri's native drag-drop (enabled for file drops onto sessions) swallows
+  // every in-page `dragstart`. `dragId` is the row being dragged; `dragOverId` is
+  // the current drop target (for the highlight).
   let dragId = $state<string | null>(null);
   let dragOverId = $state<string | null>(null);
 
-  function onProjDragStart(e: DragEvent, id: string) {
-    dragId = id;
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move';
-      // Some browsers refuse to start a drag unless data is set.
-      e.dataTransfer.setData('text/plain', id);
-    }
+  function onReorderChange(drag: string | null, over: string | null) {
+    dragId = drag;
+    dragOverId = over;
   }
-  function onProjDragOver(e: DragEvent, id: string) {
-    if (!dragId || dragId === id) return;
-    e.preventDefault(); // allow the drop
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    dragOverId = id;
-  }
-  function onProjDrop(e: DragEvent, id: string) {
-    e.preventDefault();
-    if (dragId && dragId !== id) void projects.reorder(dragId, id);
-    dragId = null;
-    dragOverId = null;
-  }
-  function onProjDragEnd() {
-    dragId = null;
-    dragOverId = null;
+  function onReorderDrop(from: string, to: string) {
+    void projects.reorder(from, to);
   }
 
   // --- Create / edit dialog state (the shared ProjectForm drives both) ------
@@ -233,7 +219,12 @@
     {/if}
   </aside>
 {:else}
-<aside class="ppanel" aria-label="Projects" bind:this={panelEl}>
+<aside
+  class="ppanel"
+  aria-label="Projects"
+  bind:this={panelEl}
+  use:pointerReorder={{ onChange: onReorderChange, onDrop: onReorderDrop }}
+>
   <div class="pp-head">
     <span class="pp-title">Workspace</span>
     <button
@@ -258,21 +249,16 @@
   <div class="pp-label">Projects</div>
 
   {#each counts as c (c.project.id)}
-    <!-- A div (not a <button>): WKWebView (Tauri/macOS) refuses to start a native
-         HTML5 drag from a form control, so the draggable row must be a plain
-         element. role/tabindex/onkeydown restore the button semantics. -->
+    <!-- A div with button semantics (role/tabindex/onkeydown) rather than a
+         <button>, so the row is a plain element for the pointer drag. -->
     <div
-      class="pp-item"
+      class="pp-item reorderable"
       class:active={projectFilter.selected === c.project.id}
       class:dragging={dragId === c.project.id}
       class:dragover={dragOverId === c.project.id}
       role="button"
       tabindex="0"
-      draggable="true"
-      ondragstart={(e) => onProjDragStart(e, c.project.id)}
-      ondragover={(e) => onProjDragOver(e, c.project.id)}
-      ondrop={(e) => onProjDrop(e, c.project.id)}
-      ondragend={onProjDragEnd}
+      data-reorder-id={c.project.id}
       onclick={() => projectFilter.select(c.project.id)}
       onkeydown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -496,12 +482,11 @@
     background: var(--blue-tint);
     color: var(--blue-200);
   }
-  /* Drag-to-reorder: the lifted row dims; the drop target shows an insertion line.
-     `-webkit-user-drag: element` is required for WebKit (WKWebView) to honor the
-     native drag — the `draggable` attribute alone is unreliable there. */
-  .pp-item[draggable='true'] {
+  /* Drag-to-reorder (pointer-based): the lifted row dims; the drop target shows a
+     ring. `touch-action: none` hands the gesture to the pointer handlers. */
+  .pp-item.reorderable {
     cursor: grab;
-    -webkit-user-drag: element;
+    touch-action: none;
   }
   .pp-item.dragging {
     opacity: 0.45;
