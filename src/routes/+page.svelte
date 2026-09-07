@@ -121,7 +121,7 @@
     void titleSettings.load();
     // Load the auto-advance focus preference (opt-in; defaults OFF).
     void autoAdvance.load();
-    // Load the compact-mode preference (opt-in; defaults OFF / full three-line rows).
+    // Load the sessions-panel density preference (defaults to full three-line rows).
     void compactMode.load();
     // Resolve the platform default shell from the backend and load the user's
     // shell preference. The layout restore below AWAITS this: until it resolves,

@@ -1061,12 +1061,13 @@
   <button
     type="button"
     class="row {lane}"
+    class:minimal={compactMode.minimal}
     class:sel={focus?.paneId === r.paneId}
     class:flash-attn={flashPanes.has(r.paneId)}
     onclick={() => onRowClick(r)}
     oncontextmenu={(e) => openAgentMenu(e, r, displayName(r.paneId, r.name))}
   >
-    <ProjectIcon {...projAvatar(r.projectId)} size={30} />
+    <ProjectIcon {...projAvatar(r.projectId)} size={compactMode.minimal ? 20 : 30} />
     <span class="nm">
       <span class="t">
         {titles.titleFor(r.paneId) ?? r.name}
@@ -1076,8 +1077,10 @@
           </span>
         {/if}
       </span>
-      <span class="s" class:q={needsAttention(r)} use:tooltip={rowSub(r)}>{rowSub(r)}</span>
-      {#if !compactMode.prefs.enabled}
+      {#if !compactMode.minimal}
+        <span class="s" class:q={needsAttention(r)} use:tooltip={rowSub(r)}>{rowSub(r)}</span>
+      {/if}
+      {#if !compactMode.enabled}
         <span class="meta">
           {#if showContext(r)}
             <span class="m ctx" use:tooltip={'Context window used by this agent'}>
@@ -1379,6 +1382,9 @@
 
   .row { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 10px 16px; cursor: pointer; border: none; border-left: 2px solid transparent; background: none; transition: background var(--dur-fast); }
   .row:hover { background: rgba(255,255,255,0.025); }
+  /* Minimal density: a single title line beside a smaller icon, tighter padding. */
+  .row.minimal { padding: 6px 16px; gap: 9px; }
+  .row.minimal .nm .t { font-size: 12.5px; }
   .row.sel { background: rgba(61,123,255,0.10); border-left-color: var(--blue-500); }
   .row.attn.sel { background: var(--orange-tint); border-left-color: var(--orange-500); }
   /* When an agent JUST enters "needs you", flash its card from 50% of the orange

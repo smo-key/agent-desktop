@@ -19,7 +19,7 @@
   } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
-  import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { compactMode, type Density } from '$lib/settings/compactMode.svelte';
   import { shellSettings } from '$lib/settings/shell.svelte';
   import { agentSettings } from '$lib/settings/agent.svelte';
   import { AGENT_KINDS, backendFor, type AgentKind } from '$lib/agent/backends';
@@ -117,7 +117,8 @@
   // Static option lists for the non-app dropdowns (no icons).
   const DENSITY_OPTIONS: DropdownOption[] = [
     { value: 'default', label: 'Default' },
-    { value: 'compact', label: 'Compact' }
+    { value: 'compact', label: 'Compact' },
+    { value: 'minimal', label: 'Minimal' }
   ];
   const QUALITY_OPTIONS: DropdownOption[] = [
     { value: 'accurate', label: 'Accurate (large-v3-turbo)' },
@@ -222,9 +223,9 @@
             <div class="control">
               <!-- Focus the first setting control on open (skips the header ×). -->
               <Dropdown
-                value={compactMode.prefs.enabled ? 'compact' : 'default'}
+                value={compactMode.prefs.density}
                 options={DENSITY_OPTIONS}
-                onChange={(v) => compactMode.setEnabled(v === 'compact')}
+                onChange={(v) => compactMode.setDensity(v as Density)}
                 ariaLabel="Density"
                 autofocusTrigger
               />
