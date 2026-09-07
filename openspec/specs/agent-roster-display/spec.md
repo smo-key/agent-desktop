@@ -108,8 +108,9 @@ selected grouping mode, in most-recently-pinned-first order. A pinned row SHALL
 keep its lane accent and status dot and SHALL show a pin glyph before its title.
 Every row's context menu SHALL offer "Pin to top" when the session is unpinned
 and "Unpin" when it is pinned. Pinned rows SHALL lead the roster's view order, so
-the attention queue and keyboard stepping visit them first. Deleting a session
-for good SHALL drop it from the pinned list.
+the attention queue and keyboard stepping visit them first. Archiving a session
+(the row or header Archive action, the archive shortcut, or auto-archive) SHALL
+drop it from the pinned list, as SHALL deleting a session for good.
 
 #### Scenario: Pinned sessions render above every lane in pin order
 
@@ -123,11 +124,19 @@ for good SHALL drop it from the pinned list.
 - **THEN** the menu offers "Pin to top" for an unpinned session and "Unpin" for
   a pinned one, and choosing it toggles the session's pinned state
 
+#### Scenario: Archiving a pinned session unpins it
+
+- **WHEN** a pinned session is archived (row/header Archive, the archive
+  shortcut, or auto-archive of a finished session)
+- **THEN** its id is removed from the pinned list and it renders under
+  "Archived", not "Pinned"
+
 #### Scenario: A deleted session is unpinned
 
 - **WHEN** a pinned session is deleted for good (row Delete, Delete all
   archived, or auto-delete of an empty finished session)
 - **THEN** its id is removed from the pinned list
+
 
 ### Requirement: Compact mode hides the roster row's meta line
 
@@ -214,11 +223,12 @@ the Needs-you / In-flight / Paused lanes exactly as before. WHEN "Date" is
 selected, the live sessions SHALL be grouped by their last-activity time into
 "Today", "Yesterday", "Last 7 days", and "Older" sections on local calendar days,
 newest first within each section, with a session whose activity time is unknown
-counted as newest (Today). WHEN "None" is selected, the live sessions SHALL render
-as one flat list with no section headers, newest activity first (a bare divider,
-with no title, MAY separate it from a preceding "Pinned" section). In EVERY mode,
-pinned sessions SHALL render first in their own "Pinned" section and archived
-sessions SHALL render last under the "Archived" header with its existing
+counted as OLDEST (the "Older" section, after every timestamped session). WHEN
+"None" is selected, the live sessions SHALL render as one flat list with no
+section headers, newest activity first (unknown activity time last; a bare
+divider, with no title, MAY separate it from a preceding "Pinned" section). In
+EVERY mode, pinned sessions SHALL render first in their own "Pinned" section and
+archived sessions SHALL render last under the "Archived" header with its existing
 collapse / "Show all" toggle and "Delete all" action. The roster's view order
 (followed by the attention queue, auto-advance, and keyboard stepping) SHALL
 match the rendered order in every mode. A malformed or missing stored preference
@@ -237,11 +247,12 @@ SHALL resolve to "Status".
 - **THEN** they render under "Today", "Yesterday", "Last 7 days", and "Older"
   respectively, in that section order, newest first within each section
 
-#### Scenario: A session with no activity time groups as newest
+#### Scenario: A session with no activity time groups as oldest
 
-- **WHEN** the grouping is "Date" and a live session has no known last-activity
-  time
-- **THEN** it renders in the "Today" section ahead of the timestamped sessions
+- **WHEN** the grouping is "Date" or "None" and a live session has no known
+  last-activity time
+- **THEN** it ranks after every timestamped session — in the "Older" section
+  under "Date", and at the end of the flat list under "None"
 
 #### Scenario: None renders a flat list without headers
 

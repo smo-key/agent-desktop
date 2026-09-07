@@ -64,11 +64,13 @@ function localDayStart(ms: number): number {
  * PURE: the date bucket for a last-activity timestamp (`tsSeconds`, unix SECONDS)
  * relative to `nowMs`, on LOCAL calendar days: same day → `today`, the previous
  * day → `yesterday`, 2..6 days back → `week`, older → `older`. A null /
- * non-finite / future timestamp is treated as `today` — a live session with no
- * activity time yet was just launched, so it is the newest thing on the list.
+ * non-finite timestamp is treated as `older` — a session with no activity time
+ * has never produced a statusline snapshot (it was opened and never used), so it
+ * ranks OLDEST rather than sitting on top of the genuinely active sessions. A
+ * future timestamp (clock skew) is `today`.
  */
 export function dateBucketFor(tsSeconds: number | null, nowMs: number): DateBucket {
-  if (tsSeconds === null || !Number.isFinite(tsSeconds)) return 'today';
+  if (tsSeconds === null || !Number.isFinite(tsSeconds)) return 'older';
   const tsMs = tsSeconds * 1000;
   if (tsMs >= nowMs) return 'today';
   const dayMs = 86_400_000;
@@ -79,9 +81,10 @@ export function dateBucketFor(tsSeconds: number | null, nowMs: number): DateBuck
   return 'older';
 }
 
-/** Sort key: newest activity first; an unknown timestamp counts as newest. */
+/** Sort key: newest activity first; an unknown timestamp counts as OLDEST (see
+ *  `dateBucketFor`). */
 function recencyOf(r: AgentRow): number {
-  return r.lastTs === null || !Number.isFinite(r.lastTs) ? Number.POSITIVE_INFINITY : r.lastTs;
+  return r.lastTs === null || !Number.isFinite(r.lastTs) ? Number.NEGATIVE_INFINITY : r.lastTs;
 }
 
 /** PURE: a stable newest-first copy of `rows` by last activity. */
@@ -91,7 +94,7 @@ function newestFirst(rows: AgentRow[]): AgentRow[] {
     .sort((a, b) => {
       const ka = recencyOf(a.r);
       const kb = recencyOf(b.r);
-      if (ka !== kb) return ka > kb ? -1 : 1; // newer (or unknown = newest) first
+      if (ka !== kb) return ka > kb ? -1 : 1; // newer first; unknown (= oldest) last
       return a.idx - b.idx; // stable: equal-keyed rows keep their incoming order
     })
     .map((x) => x.r);

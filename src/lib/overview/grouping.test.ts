@@ -48,9 +48,9 @@ describe('dateBucketFor', () => {
     expect(dateBucketFor(daysAgo(20), NOW)).toBe('older');
   });
 
-  it('treats an unknown, non-finite, or future timestamp as today', () => {
-    expect(dateBucketFor(null, NOW)).toBe('today');
-    expect(dateBucketFor(Number.NaN, NOW)).toBe('today');
+  it('treats an unknown or non-finite timestamp as older, and a future one as today', () => {
+    expect(dateBucketFor(null, NOW)).toBe('older');
+    expect(dateBucketFor(Number.NaN, NOW)).toBe('older');
     expect(dateBucketFor(secs(NOW) + 3600, NOW)).toBe('today');
   });
 });
@@ -94,11 +94,17 @@ describe('buildRosterGroups', () => {
     expect(ids(groups[3])).toEqual(['old']);
   });
 
-  it('a session with no activity time groups as newest', () => {
-    const rows = [row('t', { lastTs: daysAgo(0, 12) }), row('fresh', { lastTs: null })];
+  it('a session with no activity time groups as oldest', () => {
+    const rows = [
+      row('unused', { lastTs: null }),
+      row('t', { lastTs: daysAgo(0, 12) }),
+      row('old', { lastTs: daysAgo(20) })
+    ];
     const groups = buildRosterGroups(rows, 'date', [], NOW);
-    expect(keys(groups)).toEqual(['date:today']);
-    expect(ids(groups[0])).toEqual(['fresh', 't']);
+    expect(keys(groups)).toEqual(['date:today', 'date:older']);
+    expect(ids(groups[0])).toEqual(['t']);
+    // Unknown sorts after every timestamped row, even a 20-day-old one.
+    expect(ids(groups[1])).toEqual(['old', 'unused']);
   });
 
   it('none renders a flat list without headers', () => {
@@ -112,7 +118,7 @@ describe('buildRosterGroups', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].kind).toBe('flat');
     expect(groups[0].title).toBe('');
-    expect(ids(groups[0])).toEqual(['c', 'b', 'd', 'a']);
+    expect(ids(groups[0])).toEqual(['b', 'd', 'a', 'c']); // unknown lastTs (c) last
   });
 
   it('pinned stay on top and archived at the bottom in every mode', () => {

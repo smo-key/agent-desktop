@@ -745,6 +745,9 @@
     if (archiveDecision(activity.forPane(paneId).userHash) === 'delete') {
       workspace.deleteAgent(paneId);
     } else {
+      // Archiving UNPINS: a pinned row belongs to the live top of the list, and an
+      // archived session must land under "Archived" like every other one.
+      uiPrefs.forgetPinned(paneId);
       workspace.closeAgent(paneId);
     }
   }
@@ -820,7 +823,10 @@
         uiPrefs.forgetPinned(r.paneId);
         workspace.deleteAgent(r.paneId);
       }
-      else if (action === 'archive') workspace.closeAgent(r.paneId);
+      else if (action === 'archive') {
+        uiPrefs.forgetPinned(r.paneId); // archiving unpins (see performArchive)
+        workspace.closeAgent(r.paneId);
+      }
     }
   });
 
