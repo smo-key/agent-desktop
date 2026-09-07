@@ -11,3 +11,12 @@
       readers.
 - [x] 1.4 `cargo test` (all 308 + 19 PTY integration) green; no new clippy
       warnings in touched files.
+- [x] 2.1 Adversarial review round 1: signal BEFORE dropping the PTY (writer
+      drop sends `^D`, an interactive shell then exits without HUP-ing jobs);
+      track pids + process groups across the grace period so reparented jobs
+      are still force-killed; never re-signal a reaped child (`reaped` flag,
+      root must be our live child per `ps`); never signal pid ≤ 1; `kill_all`
+      joins pending killer threads and bounds reader joins; `ps` failure falls
+      back to leader + group instead of "tree is dead". Two more failing tests
+      (job in own pgrp ignoring TERM/HUP; interactive bash background job) and
+      unit tests for the discovery guards.

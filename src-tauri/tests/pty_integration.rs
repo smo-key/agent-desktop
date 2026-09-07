@@ -658,6 +658,24 @@ fn spawn_sh_with_pidfile(
     manager: &PtyManager,
     script_for_pidfile: impl Fn(&str) -> String,
 ) -> (u64, mpsc::Receiver<PtyEvent>, u32) {
+    spawn_shell_with_pidfile(manager, "/bin/sh", script_for_pidfile)
+}
+
+/// Same as [`spawn_sh_with_pidfile`] but under `/bin/bash` (for `set -m`).
+#[cfg(unix)]
+fn spawn_bash_with_pidfile(
+    manager: &PtyManager,
+    script_for_pidfile: impl Fn(&str) -> String,
+) -> (u64, mpsc::Receiver<PtyEvent>, u32) {
+    spawn_shell_with_pidfile(manager, "/bin/bash", script_for_pidfile)
+}
+
+#[cfg(unix)]
+fn spawn_shell_with_pidfile(
+    manager: &PtyManager,
+    shell: &str,
+    script_for_pidfile: impl Fn(&str) -> String,
+) -> (u64, mpsc::Receiver<PtyEvent>, u32) {
     static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let pidfile = std::env::temp_dir().join(format!(
@@ -669,7 +687,7 @@ fn spawn_sh_with_pidfile(
 
     let (tx, rx) = mpsc::channel();
     let cfg = SpawnConfig {
-        program: "/bin/sh".into(),
+        program: shell.into(),
         args: vec!["-c".into(), script],
         cwd: None,
         cols: 80,
@@ -756,4 +774,80 @@ fn app_quit_kills_descendants_that_ignore_hangup() {
     let (_data, code) = drain_until_exit(&rx, Duration::from_secs(10));
     assert!(code.is_some(), "direct child was not reaped / no Exit emitted");
     assert_eq!(manager.live_count(), 0, "panes remain after kill_all");
+}
+
+/// #### Scenario: Closing a pane force-kills a job in its own process group
+#[cfg(unix)]
+#[test]
+fn closing_a_pane_force_kills_a_job_in_its_own_process_group() {
+    let manager = PtyManager::new();
+    // Job control (`set -m`) puts the job in its own process group, and the
+    // job ignores both TERM and HUP — like a dev server with its own signal
+    // handling. Once the shell dies the job is reparented to init, so only
+    // tracking it from the initial snapshot can still find it.
+    let (id, rx, job) = spawn_bash_with_pidfile(&manager, |pidfile| {
+        format!("set -m; (trap '' TERM HUP; exec sleep 300) & echo $! > {pidfile}; wait")
+    });
+
+    manager.kill(id).expect("kill should succeed");
+
+    let (_data, code) = drain_until_exit(&rx, Duration::from_secs(10));
+    assert!(code.is_some(), "shell was not reaped / no Exit emitted");
+    assert!(
+        wait_pid_gone(job, Duration::from_secs(5)),
+        "job {job} in its own process group outlived its pane"
+    );
+}
+
+/// #### Scenario: Closing a pane kills an interactive shell's background jobs
+#[cfg(unix)]
+#[test]
+fn closing_a_pane_kills_an_interactive_shells_background_jobs() {
+    let manager = PtyManager::new();
+    let pidfile = std::env::temp_dir().join(format!(
+        "agent-desktop-pty-interactive-{}.pid",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&pidfile);
+
+    let (tx, rx) = mpsc::channel();
+    let cfg = SpawnConfig {
+        program: "/bin/bash".into(),
+        args: vec!["--norc".into(), "--noprofile".into(), "-i".into()],
+        cwd: None,
+        cols: 80,
+        rows: 24,
+        ..Default::default()
+    };
+    let id = manager
+        .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))
+        .expect("spawn should succeed");
+    // Type a background job at the interactive prompt, as a user would.
+    manager
+        .write(
+            id,
+            format!("sleep 300 & echo $! > {}\n", pidfile.to_str().unwrap()).into_bytes(),
+        )
+        .expect("write should succeed");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let job = loop {
+        if let Ok(s) = std::fs::read_to_string(&pidfile) {
+            if let Ok(pid) = s.trim().parse::<u32>() {
+                break pid;
+            }
+        }
+        assert!(Instant::now() < deadline, "job pid never published");
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    let _ = std::fs::remove_file(&pidfile);
+    assert!(pid_alive(job), "job should be running before kill");
+
+    manager.kill(id).expect("kill should succeed");
+
+    let (_data, code) = drain_until_exit(&rx, Duration::from_secs(10));
+    assert!(code.is_some(), "interactive shell was not reaped / no Exit emitted");
+    assert!(
+        wait_pid_gone(job, Duration::from_secs(5)),
+        "interactive shell's background job {job} outlived its pane"
+    );
 }
