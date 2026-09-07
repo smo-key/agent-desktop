@@ -763,28 +763,28 @@ async fn session_focus(
     Ok((!title.is_empty()).then_some(title))
 }
 
-/// Generate a short title for a plain TERMINAL row from the COMMANDS the user ran
-/// in it (`session-titles`: "Bare terminal rows are titled from the commands the
-/// user ran"). Reuses [`session_focus`]'s on-device path — the `llama-server`
-/// sidecar plus the shared [`clean_title`] post-processing — but the input is the
-/// frontend-collected command list rather than a transcript on disk, since a bare
-/// shell has none.
+/// Generate a short title for a plain TERMINAL row from the activity its shell
+/// REPORTED (`session-titles`: "Bare terminal rows are titled from the activity
+/// the shell reports"). Reuses [`session_focus`]'s on-device path — the
+/// `llama-server` sidecar plus the shared [`clean_title`] post-processing — but
+/// the input is the frontend-collected list of window titles the shell set,
+/// since a bare shell has no transcript on disk.
 ///
 /// ON-DEVICE ONLY, deliberately: there is no `claude -p` fallback here. The
 /// `titles.cloudFallback` opt-in covers sending a SESSION TRANSCRIPT off-device;
-/// shell command lines are different data (tokens, connection strings, hosts) and
-/// are not covered by that consent, so with no local model the row simply keeps
-/// its name.
+/// a shell's reported activity is different data and is not covered by that
+/// consent, so with no local model the row simply keeps its name.
 ///
-/// `commands` is newline-separated, oldest first; empty input yields `None` (an
-/// untouched shell is never titled). `async` for the same reason as `session_focus`.
+/// `activity` is newline-separated, oldest first; empty input yields `None` (a
+/// shell that reported nothing is never titled). `async` for the same reason as
+/// `session_focus`.
 #[tauri::command]
 async fn terminal_focus(
     app: AppHandle,
     state: State<'_, Arc<polish::LlamaServer>>,
-    commands: String,
+    activity: String,
 ) -> Result<Option<String>, String> {
-    let joined = commands.trim();
+    let joined = activity.trim();
     if joined.is_empty() {
         return Ok(None);
     }

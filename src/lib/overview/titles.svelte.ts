@@ -106,11 +106,12 @@ export interface TerminalTitleRef {
    */
   key: string | null;
   /**
-   * The commands the user has typed in this terminal (newline-joined, oldest
-   * first), or null when nothing has been typed / the row should not be titled by
-   * the model (a task terminal). Doubles as the change key.
+   * What the shell has REPORTED doing in this terminal (its window titles,
+   * newline-joined, oldest first), or null when it has reported nothing
+   * meaningful / the row should not be titled by the model (a task terminal).
+   * Doubles as the change key.
    */
-  commands: string | null;
+  activity: string | null;
 }
 
 /**
@@ -257,7 +258,7 @@ export class TitleStore {
 
   /**
    * Seed a TERMINAL row's title from the durable cache (`session-titles`: "Bare
-   * terminal rows are titled from the commands the user ran"). Same idea as
+   * terminal rows are titled from the activity the shell reports"). Same idea as
    * `hydrate`, but keyed by the row's TITLE KEY rather than a session id: a task
    * terminal's key (`task:<defId>`) is stable, so a restarted task terminal — a
    * NEW pane id — shows its previous (usually custom) title with no model call. A
@@ -274,12 +275,13 @@ export class TitleStore {
   }
 
   /**
-   * Request titles for TERMINAL rows whose typed-command list changed. The command
-   * text plays the role a session's `user_hash` plays: it changes only when the
-   * user actually runs something, so a noisy terminal (a build, `tail -f`) never
-   * re-triggers a title. A ref with `commands: null` (nothing typed yet, or a task
-   * terminal, whose command already IS its name) is skipped, and a manual title
-   * stays sticky through `shouldRequest`. Fire-and-forget.
+   * Request titles for TERMINAL rows whose reported activity changed. That text
+   * plays the role a session's `user_hash` plays: a shell sets its window title
+   * when it dispatches a command, so it changes per command rather than per output
+   * chunk — a noisy terminal (a build, `tail -f`) never re-triggers a title. A ref
+   * with `activity: null` (nothing reported yet, or a task terminal, whose command
+   * already IS its name) is skipped, and a manual title stays sticky through
+   * `shouldRequest`. Fire-and-forget.
    */
   refreshTerminals(refs: ReadonlyArray<TerminalTitleRef>, nowMs: number): void {
     this.hydrateKeys(refs);
@@ -292,10 +294,10 @@ export class TitleStore {
       // parked until its backoff expires: without this the 3 s floor alone would
       // retry — and lazily re-spawn the sidecar — every few seconds, forever.
       if (nowMs < (this.#retryAfter.get(r.paneId) ?? 0)) continue;
-      if (!shouldRequest(entry, pending, r.commands, last, nowMs, TERMINAL_THROTTLE_MS)) continue;
-      this.#pending.set(r.paneId, r.commands as string);
+      if (!shouldRequest(entry, pending, r.activity, last, nowMs, TERMINAL_THROTTLE_MS)) continue;
+      this.#pending.set(r.paneId, r.activity as string);
       this.#lastAttempt.set(r.paneId, nowMs);
-      void this.#fetchTerminal(r, r.commands as string);
+      void this.#fetchTerminal(r, r.activity as string);
     }
   }
 
@@ -316,23 +318,23 @@ export class TitleStore {
     for (const paneId of live) this.#terminalPanes.add(paneId);
   }
 
-  async #fetchTerminal(ref: TerminalTitleRef, commands: string): Promise<void> {
+  async #fetchTerminal(ref: TerminalTitleRef, activity: string): Promise<void> {
     try {
       // ON-DEVICE ONLY — deliberately no cloud fallback. `titles.cloudFallback` is
-      // the user's opt-in for sending their SESSION transcript off-device; shell
-      // command lines are a different kind of data (tokens, connection strings)
-      // and are not covered by that consent, so a terminal title is simply skipped
-      // when the local model is unavailable.
-      const title = await invoke<string | null>('terminal_focus', { commands });
+      // the user's opt-in for sending their SESSION transcript off-device; a
+      // shell's reported activity is different data (it can carry a command line's
+      // arguments) and is not covered by that consent, so a terminal title is
+      // simply skipped when the local model is unavailable.
+      const title = await invoke<string | null>('terminal_focus', { activity });
       // A rename that landed while we were awaiting wins — a custom title is sticky.
       if (this.byPane[ref.paneId]?.manual) return;
       if (ref.key && this.#bySession[ref.key]?.manual) return;
-      // Drop a STALE response: the user ran more commands while this was in
+      // Drop a STALE response: the shell reported more activity while this was in
       // flight, a newer request took over `#pending`, and it may already have
       // resolved — writing now would revert the row to an older title and leave
       // the hash mismatched, re-firing on the next tick.
-      if (this.#pending.get(ref.paneId) !== commands) return;
-      const next: TitleEntry = { title: title ?? null, hash: commands };
+      if (this.#pending.get(ref.paneId) !== activity) return;
+      const next: TitleEntry = { title: title ?? null, hash: activity };
       this.byPane[ref.paneId] = next;
       // Only a DURABLE key is persisted: a bare shell's id dies with its process.
       if (ref.key && next.title) {
@@ -343,7 +345,7 @@ export class TitleStore {
       this.#retryAfter.set(ref.paneId, Date.now() + TERMINAL_RETRY_MS);
       console.warn('terminal_focus failed; keeping previous title:', err);
     } finally {
-      if (this.#pending.get(ref.paneId) === commands) this.#pending.delete(ref.paneId);
+      if (this.#pending.get(ref.paneId) === activity) this.#pending.delete(ref.paneId);
     }
   }
 

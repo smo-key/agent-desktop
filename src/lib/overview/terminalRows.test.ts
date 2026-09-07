@@ -218,10 +218,10 @@ describe('terminal row titles', () => {
       {},
       1_000
     );
-    const refs = terminalTitleRefs(rows, () => 'yarn test');
+    const refs = terminalTitleRefs(rows, () => '~/git/app\nyarn test');
     expect(refs).toEqual([
-      { paneId: 'p1', key: 'task:t1', commands: null }, // a task is never model-titled
-      { paneId: 'p2', key: null, commands: 'yarn test' }
+      { paneId: 'p1', key: 'task:t1', activity: null }, // a task is never model-titled
+      { paneId: 'p2', key: null, activity: '~/git/app\nyarn test' }
     ]);
   });
 });

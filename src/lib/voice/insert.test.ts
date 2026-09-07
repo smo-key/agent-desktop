@@ -46,7 +46,7 @@ function fakeHandle(opts: { alive?: boolean } = {}) {
     },
     focus: () => {},
     scrollToBottom: () => {},
-    recentCommands: () => null
+    recentActivity: () => null
   };
   return { handle, sentKeys, sent };
 }

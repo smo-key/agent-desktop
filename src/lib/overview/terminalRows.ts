@@ -211,19 +211,19 @@ export function terminalTitleKey(row: Pick<AgentRow, 'terminalKind' | 'terminalK
 }
 
 /**
- * The title refs for a set of terminal rows: the durable key plus the commands the
- * user typed (from `commandsOf`, the live terminal handle). Only BARE shells carry
- * commands — a task terminal's command already IS its name, and titling it would
- * spend a model call restating it — so a task row's `commands` is always null and
- * it is never sent to the model. Pure.
+ * The title refs for a set of terminal rows: the durable key plus what the shell
+ * has reported doing (from `activityOf`, the live terminal handle). Only BARE
+ * shells carry activity — a task terminal's command already IS its name, and
+ * titling it would spend a model call restating it — so a task row's `activity`
+ * is always null and it is never sent to the model. Pure.
  */
 export function terminalTitleRefs(
   rows: ReadonlyArray<AgentRow>,
-  commandsOf: (paneId: string) => string | null
-): { paneId: string; key: string | null; commands: string | null }[] {
+  activityOf: (paneId: string) => string | null
+): { paneId: string; key: string | null; activity: string | null }[] {
   return rows.filter(isTerminalRow).map((r) => ({
     paneId: r.paneId,
     key: terminalTitleKey(r),
-    commands: r.terminalKind === 'bare' ? commandsOf(r.paneId) : null
+    activity: r.terminalKind === 'bare' ? activityOf(r.paneId) : null
   }));
 }

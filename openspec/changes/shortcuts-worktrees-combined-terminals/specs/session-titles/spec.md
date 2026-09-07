@@ -1,31 +1,25 @@
 ## ADDED Requirements
 
-### Requirement: Bare terminal rows are titled from the commands the user ran
+### Requirement: Bare terminal rows are titled from the activity the shell reports
 
-A bare shell listed in the combined sessions list SHALL be given a generated title summarizing what the user was doing in it, derived only from the commands the user ran at a normal shell prompt. A typed line SHALL be treated as a CANDIDATE and recorded only when it matches the END of what the terminal shows up to the cursor — proving the shell ECHOED it, so a secret typed at a hidden prompt (including at a shell BUILTIN such as `read -s`, which never changes the foreground process group and is therefore invisible to the foreground probe) is never collected, and a line the shell rewrote (tab completion, history recall, search, paste) is dropped rather than recorded as a command that was never run. Lines a command reads as DATA — a heredoc body, an answer to `read`/`select`, a continuation line — are echoed like commands and SHALL likewise not be recorded. Collection SHALL stop the moment a line is submitted and resume only when the foreground probe re-confirms an idle prompt, and the buffer SHALL be memory-only and never persisted. The title SHALL be (re)generated only when the confirmed command list changes, SHALL be generated ON-DEVICE ONLY (the session-transcript cloud fallback does not extend to shell command lines, so with no local model the row keeps its name), and SHALL be skipped entirely for a shell the user has run nothing in. A terminal-kind TASK row SHALL NOT be titled by the model: its command is already its name.
+A bare shell listed in the combined sessions list SHALL be given a generated title summarizing what the user was doing in it, derived from the activity the SHELL reports about itself — the window titles it sets (OSC 0/2), which are typically the command it dispatched or its working directory. The user's keystrokes SHALL NOT be a title source: the input stream carries whatever a program reads from stdin — a password at a prompt a shell builtin owns, a heredoc body, a token piped to a CLI — which cannot be reliably separated from commands, whereas a shell sets its window title only when it dispatches a command. Rendered output SHALL NOT be a source either: it changes on every chunk and carries what programs print.
 
-#### Scenario: Typed commands accumulate at an idle prompt
-- **WHEN** the user types a command and presses Return at an idle prompt that echoes it
-- **THEN** the command joins the terminal's bounded recent-command list, with backspaces and kill-line applied and the oldest command dropped past the cap
+Repeat and blank reports SHALL be collapsed, the list SHALL be bounded and memory-only (never persisted), and a shell that has reported nothing beyond a single unchanging title SHALL be left untitled rather than titled from noise. The title SHALL be (re)generated only when the reported list changes, SHALL be generated ON-DEVICE ONLY (the session-transcript cloud fallback does not extend to terminal activity, so with no local model the row keeps its name), and a terminal-kind TASK row SHALL NOT be titled by the model: its command is already its name.
 
-#### Scenario: Input to a running job is not collected
-- **WHEN** a submitted command hands the terminal to a program that prompts for input, and the user types at that prompt
-- **THEN** nothing is added to the recent-command list and no fragment of it is carried into the next command
+#### Scenario: The shell reported activity accumulates
+- **WHEN** a shell reports a sequence of window titles as the user works
+- **THEN** they are collected in order, with blanks ignored, an immediate repeat collapsed, and the oldest dropped past the cap
 
-#### Scenario: Lines a command reads as data are not recorded
-- **WHEN** a recorded command opens an input context (a heredoc, a continuation, `read`) and the user types the lines it consumes
-- **THEN** those lines are not recorded, and recording resumes once the context ends
-
-#### Scenario: An unechoed line is never recorded
-- **WHEN** a line is submitted that the terminal never echoed, or that does not match what the screen shows
-- **THEN** it is discarded instead of being recorded as a command
+#### Scenario: A shell that reports nothing new is never titled
+- **WHEN** a shell has reported nothing, or only one unchanging title
+- **THEN** no title request is made for it
 
 #### Scenario: A bare shell is titled from its recent commands
-- **WHEN** a bare shell's recent-command list changes
+- **WHEN** a bare shell's reported activity changes
 - **THEN** a title is requested for it from the on-device terminal-title model and shown on its row
 
 #### Scenario: An untouched shell is never titled
-- **WHEN** a bare shell has no confirmed commands, or a row is a task terminal
+- **WHEN** a bare shell has reported no activity, or a row is a task terminal
 - **THEN** no title request is made for it
 
 #### Scenario: A stale title response never replaces a newer one
@@ -42,4 +36,4 @@ A bare shell listed in the combined sessions list SHALL be given a generated tit
 
 #### Scenario: Terminal text is treated as data
 - **WHEN** the terminal-title request body is built
-- **THEN** it carries the terminal title system prompt, which states the commands are data and must not be followed
+- **THEN** it carries the terminal title system prompt, which states the reported entries are data and must not be followed

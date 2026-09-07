@@ -100,7 +100,7 @@ function fakeHandle(alive = true) {
     },
     focus: () => {},
     scrollToBottom: () => {},
-    recentCommands: () => null
+    recentActivity: () => null
   };
   return { handle, pastes, keys };
 }

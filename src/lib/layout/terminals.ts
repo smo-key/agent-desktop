@@ -44,12 +44,14 @@ export interface TerminalHandle {
    */
   scrollToBottom(): void;
   /**
-   * The commands the user has typed into this pane at an IDLE prompt, newline-
-   * joined (oldest first), or null when none have been typed. Drives a terminal
-   * row's generated title (`session-titles`) and doubles as its change key —
-   * unlike screen text it changes only when the user actually runs something.
+   * What this pane's shell has REPORTED doing — its OSC 0/2 window titles,
+   * newline-joined (oldest first) — or null when it has reported nothing
+   * meaningful. Drives a terminal row's generated title (`session-titles`) and
+   * doubles as its change key: unlike screen text it changes only per command,
+   * and unlike the keystroke stream it never carries what a program reads from
+   * stdin (a password, a heredoc body, a token).
    */
-  recentCommands(): string | null;
+  recentActivity(): string | null;
 }
 
 const handles = new Map<string, TerminalHandle>();

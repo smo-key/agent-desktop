@@ -194,10 +194,10 @@ describe('TitleStore manual (custom) titles', () => {
 // bare shell's null (per-process, never written). Their change key is the list of
 // commands the user confirmed running, not screen text.
 describe('TitleStore terminal titles', () => {
-  const ref = (over: Partial<{ paneId: string; key: string | null; commands: string | null }> = {}) => ({
+  const ref = (over: Partial<{ paneId: string; key: string | null; activity: string | null }> = {}) => ({
     paneId: 'tp1',
     key: null as string | null,
-    commands: 'yarn test',
+    activity: '~/git/app\nyarn test',
     ...over
   });
 
@@ -208,18 +208,18 @@ describe('TitleStore terminal titles', () => {
     await flush();
 
     // ON-DEVICE ONLY: no cloudFallback argument is sent for a terminal title.
-    expect(invokeMock).toHaveBeenCalledWith('terminal_focus', { commands: 'yarn test' });
+    expect(invokeMock).toHaveBeenCalledWith('terminal_focus', { activity: '~/git/app\nyarn test' });
     expect(store.titleFor('tp1')).toBe('Run the test suite');
     // A per-process bare shell is never written to the durable cache.
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
 
-    // Unchanged commands do not re-request; a NEW command does.
+    // Unchanged activity does not re-request; NEW activity does.
     invokeMock.mockClear();
     store.refreshTerminals([ref()], NOW + 60_000);
     await flush();
     expect(invokeMock).not.toHaveBeenCalled();
     invokeMock.mockResolvedValue('Inspect git history');
-    store.refreshTerminals([ref({ commands: 'yarn test\ngit log' })], NOW + 120_000);
+    store.refreshTerminals([ref({ activity: '~/git/app\nyarn test\ngit log' })], NOW + 120_000);
     await flush();
     expect(store.titleFor('tp1')).toBe('Inspect git history');
   });
@@ -227,8 +227,8 @@ describe('TitleStore terminal titles', () => {
   it('An untouched shell is never titled', async () => {
     invokeMock.mockResolvedValue('nope');
     const store = new TitleStore();
-    // No confirmed commands (a fresh shell) and a task row (its command IS its name).
-    store.refreshTerminals([ref({ commands: null }), ref({ paneId: 'tp2', key: 'task:t1', commands: null })], NOW);
+    // Nothing reported yet (a fresh shell) and a task row (its command IS its name).
+    store.refreshTerminals([ref({ activity: null }), ref({ paneId: 'tp2', key: 'task:t1', activity: null })], NOW);
     await flush();
     expect(invokeMock).not.toHaveBeenCalled();
     expect(store.titleFor('tp1')).toBeNull();
@@ -245,9 +245,9 @@ describe('TitleStore terminal titles', () => {
     await flush();
     expect(store.titleFor('tp1')).toBe('Nightly smoke run');
     expect(store.isManual('tp1')).toBe(true);
-    // And it is sticky: a later command change does not re-generate.
+    // And it is sticky: later activity does not re-generate.
     invokeMock.mockClear();
-    store.refreshTerminals([ref({ commands: 'make build' })], NOW + 60_000);
+    store.refreshTerminals([ref({ activity: '~/git/app\nmake build' })], NOW + 60_000);
     await flush();
     expect(invokeMock).not.toHaveBeenCalled();
   });
@@ -257,7 +257,7 @@ describe('TitleStore terminal titles', () => {
     store.setManualTitle('tp1', 'task:t1', 'Watch the dev server');
     // Restart: same task def, a BRAND NEW pane id, and a fresh store (app restart).
     const next = new TitleStore();
-    next.hydrateKeys([{ paneId: 'tp9', key: 'task:t1', commands: null }]);
+    next.hydrateKeys([{ paneId: 'tp9', key: 'task:t1', activity: null }]);
     expect(next.titleFor('tp9')).toBe('Watch the dev server');
     expect(store.titleFor('tp1')).toBe('Watch the dev server');
     await flush();
@@ -265,13 +265,13 @@ describe('TitleStore terminal titles', () => {
   });
 
   it('A stale title response never replaces a newer one', async () => {
-    // Request A (slow) is overtaken by request B for a longer command list.
+    // Request A (slow) is overtaken by request B for a longer activity list.
     let resolveA!: (v: string) => void;
     invokeMock.mockReturnValueOnce(new Promise<string>((r) => (resolveA = r)));
     const store = new TitleStore();
-    store.refreshTerminals([ref({ commands: 'cmd1' })], NOW);
+    store.refreshTerminals([ref({ activity: 'a\ncmd1' })], NOW);
     invokeMock.mockResolvedValueOnce('Do the newer thing');
-    store.refreshTerminals([ref({ commands: 'cmd1\ncmd2' })], NOW + 20_000);
+    store.refreshTerminals([ref({ activity: 'a\ncmd1\ncmd2' })], NOW + 20_000);
     await flush();
     expect(store.titleFor('tp1')).toBe('Do the newer thing');
 
@@ -280,7 +280,7 @@ describe('TitleStore terminal titles', () => {
     expect(store.titleFor('tp1')).toBe('Do the newer thing');
     // …and the newer hash still stands, so the next tick does not re-fire.
     invokeMock.mockClear();
-    store.refreshTerminals([ref({ commands: 'cmd1\ncmd2' })], NOW + 40_000);
+    store.refreshTerminals([ref({ activity: 'a\ncmd1\ncmd2' })], NOW + 40_000);
     await flush();
     expect(invokeMock).not.toHaveBeenCalled();
   });

@@ -43,14 +43,17 @@
 - [x] 3.6 `RunningTasksPanel` portals the selected entry's body; dock + toggle
       hidden and ⌘J inert in combined placement.
 
-- [x] 3.7 `terminalInput.ts` accumulator (Return flush, backspace, control keys,
-      ring cap) + `TerminalHandle.recentCommands`; `TerminalPane` collects typed
-      input only while the foreground probe reports an idle prompt.
+- [x] 3.7 `terminalActivity.ts` ring over the shell's reported window titles
+      (dedupe, blanks, cap) + `TerminalHandle.recentActivity`; `TerminalPane`
+      collects OSC 0/2 titles. NOT the keystroke stream: three adversarial
+      review rounds showed input can't be separated from what programs read
+      from stdin (a builtin's `read`, a heredoc body, a piped token).
 - [x] 3.8 Rust `TERMINAL_TITLE_SYSTEM_PROMPT` / `build_terminal_title_body` and
-      the `terminal_focus` command reusing the title cleaning + cloud fallback.
+      the on-device-only `terminal_focus` command reusing the title cleaning.
 - [x] 3.9 `TitleStore.hydrateKeys` / `refreshTerminals` keyed by the terminal's
-      title key (task id durable, bare shell per-process); Inbox drives it for
-      bare shells only in combined placement.
+      title key (task id durable, bare shell per-process), with a stale-response
+      guard, failure backoff and eviction; Inbox drives it for bare shells only
+      in combined placement.
 - [x] 3.10 Inbox rename for terminal rows: `titleKeyOf`, editable focus header,
       "Rename" in the terminal row menu, row shows the generated title.
 
@@ -59,8 +62,9 @@
 - [x] 4.1 `yarn check`, `yarn test`, `cargo test`, `yarn coverage`,
       `yarn lint:storage` green; MANUAL allowlist entries for the DOM-bound
       scenarios with justifications.
-- [ ] 4.2 Adversarial code review; resolve CRITICAL findings — terminal titles:
-      echo-confirmed commands + disarm at submit (no secret capture, no
-      fabricated commands), on-device only (no cloud fallback for command
-      lines), stale-response guard, failure backoff, cache eviction, and a
-      rename that pins the shown name.
+- [ ] 4.2 Adversarial code review; resolve CRITICAL findings — three rounds on
+      the terminal titles: the title source moved from typed keystrokes to the
+      shell's own reported window titles (rounds 1-3 each found another way a
+      secret or a never-run line reached the keystroke buffer), titles are
+      on-device only, plus the stale-response guard, failure backoff, cache
+      eviction, and a rename that pins only on Enter.

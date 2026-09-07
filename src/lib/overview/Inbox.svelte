@@ -182,18 +182,18 @@
   const terminalIds = $derived(new Set(allRows.filter(isTerminalRow).map((r) => r.paneId)));
 
   // Terminal-row titles (`session-titles`: "Bare terminal rows are titled from the
-  // commands the user ran"). Runs on the roster's own per-second clock: each bare
-  // shell's typed-command list (from its live terminal handle) is the change key,
-  // so a title is generated only when the user actually RAN something — never from
-  // streaming output. Task rows pass `commands: null` (their command is already the
-  // name) but still hydrate, so a restarted task terminal recovers its custom title.
-  // Skipped entirely outside the combined placement: nothing displays those titles.
+  // activity the shell reports"). Runs on the roster's own per-second clock: each
+  // bare shell's reported-title list (from its live terminal handle) is the change
+  // key, so a title is generated only when the shell reports something NEW — never
+  // from streaming output. Task rows pass `activity: null` (their command is
+  // already the name) but still hydrate, so a restarted task terminal recovers its
+  // custom title. Skipped outside the combined placement: nothing displays them.
   $effect(() => {
     if (!combinedTerminals) return;
     // Called even with no terminals: the store reclaims the entries of terminals
     // that have gone away (a bare shell's pane id dies with its process).
     titles.refreshTerminals(
-      terminalTitleRefs(allRows, (paneId) => getTerminal(paneId)?.recentCommands() ?? null),
+      terminalTitleRefs(allRows, (paneId) => getTerminal(paneId)?.recentActivity() ?? null),
       nowMs
     );
   });
