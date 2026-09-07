@@ -11,7 +11,8 @@ selected, the live sessions SHALL be grouped by their last-activity time into
 "Today", "Yesterday", "Last 7 days", and "Older" sections on local calendar days,
 newest first within each section, with a session whose activity time is unknown
 counted as newest (Today). WHEN "None" is selected, the live sessions SHALL render
-as one flat list with no section headers, newest activity first. In EVERY mode,
+as one flat list with no section headers, newest activity first (a bare divider,
+with no title, MAY separate it from a preceding "Pinned" section). In EVERY mode,
 pinned sessions SHALL render first in their own "Pinned" section and archived
 sessions SHALL render last under the "Archived" header with its existing
 collapse / "Show all" toggle and "Delete all" action. The roster's view order

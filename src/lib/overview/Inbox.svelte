@@ -1282,12 +1282,19 @@
             <!-- Sections come pre-ordered from buildRosterGroups: Pinned first, then
                  the grouping-mode body (status lanes / date buckets / a headerless
                  flat list), then Archived last. Empty sections are already dropped. -->
-            {#each groups as g (g.key)}
+            {#each groups as g, gi (g.key)}
               {@const items = g.rows}
               {@const isArchive = g.kind === 'archived'}
               {@const collapsedArchive = isArchive && !showAllArchived}
               {@const visible = collapsedArchive ? items.slice(0, ARCHIVED_PREVIEW) : items}
-              {#if g.kind !== 'flat'}
+              {#if g.kind === 'flat'}
+                {#if gi > 0}
+                  <!-- The headerless flat list (Group by: None) still needs a visual
+                       break from a preceding Pinned section, or its rows read as
+                       part of "Pinned · N". A bare rule, no title. -->
+                  <div class="group-h flat" aria-hidden="true"><span class="rule"></span></div>
+                {/if}
+              {:else}
                 <div class="group-h {g.lane ?? g.kind}">
                   {g.title} <span class="gn">· {items.length}</span><span class="rule"></span>
                   {#if isArchive}
@@ -1492,6 +1499,7 @@
   .group-h { display: flex; align-items: center; gap: 8px; padding: 14px 16px 6px; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tracking-label); }
   .group-h.pinned { color: var(--fg-3); }
   .group-h.date { color: var(--fg-3); }
+  .group-h.flat { padding-bottom: 2px; }
   .group-h.attn { color: var(--orange-300); }
   .group-h.flight { color: var(--blue-300); }
   .group-h.done { color: var(--fg-4); }
