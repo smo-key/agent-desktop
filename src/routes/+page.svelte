@@ -28,6 +28,7 @@
   import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import { startNewSession } from '$lib/launcher/newSession';
+  import { shortcuts } from '$lib/settings/shortcuts.svelte';
   import { workspace } from '$lib/layout/workspace.svelte';
   import { insertFilenameInto, focusedTerminalHandle } from '$lib/layout/insertFilename';
   import { initFileDrop } from '$lib/layout/fileDrop';
@@ -134,6 +135,8 @@
     void agentSettings.load();
     // Load the subagents-visibility preference (defaults ON / subagents shown).
     void subagentsVisible.load();
+    // Load the user's custom keyboard-shortcut bindings (defaults until loaded).
+    void shortcuts.load();
     // Load the needs-input alert channel modes (opt-in; both default OFF / silent).
     void notifications.load();
     // Load the persisted one-time onboarding flag FIRST so a returning user who has
@@ -657,17 +660,19 @@
     scrollTerminalToBottom(next);
   }
 
-  // Keyboard shortcuts (macOS):
-  //   Cmd-N            open the session LAUNCHER (folder picker + recents +
-  //                    optional prompt + placement). The deliberate, full-flow
-  //                    "new session" entry point.
-  //   Cmd-T            open the create-task dialog for the active project.
-  //   Cmd-Y            open a new bare interactive terminal in the Terminals panel.
-  //   Cmd-Tab          cycle focus across the active agent + its project's terminals.
-  //   Cmd-W            close the focused pane
-  //   Cmd-]            focus next (cyclic, DFS +1)
-  //   Cmd-[            focus prev (cyclic, DFS -1)
-  //   Alt-Arrow        directional focus (spatial neighbor)
+  // Keyboard shortcuts. The app-level bindings are USER-CUSTOMIZABLE (Settings →
+  // Keyboard shortcuts): each check below asks the `shortcuts` store whether the
+  // keydown is that action's CURRENT chord (default in parentheses), so a rebound
+  // shortcut fires on its new chord and never on the old one.
+  //   newSession (⌘N)          open the session LAUNCHER / launch into the project
+  //   newWorktreeSession (⌘⇧N) open the launcher with the worktree option preset
+  //   createTask (⌘T)          open the create-task dialog for the active project
+  //   toggleTerminals (⌘J)     toggle the right-docked Terminals panel
+  //   newTerminal (⌘Y)         open a new bare interactive terminal
+  //   cycleFocus (⌘Tab)        cycle focus across the active agent + its terminals
+  //   showShortcuts (⌘/)       toggle the help modal
+  //   insertFilePath (⌘O)      insert a picked file's path into the focused terminal
+  // Fixed (not rebindable): Esc, bare `?`. Grid-only (inert): ⌘W / ⌘] / ⌘[ / ⌥-Arrow.
   function onKeydown(e: KeyboardEvent) {
     const meta = e.metaKey;
     const alt = e.altKey;
@@ -690,7 +695,7 @@
     // and the xterm terminal (Cmd-/ is the always-safe path). Handled before the
     // per-view guards so help works in every view; `help.open` below then blocks the
     // pane shortcuts beneath the modal (the modal owns its own Esc).
-    if (meta && key === '/') {
+    if (shortcuts.matches(e, 'showShortcuts')) {
       e.preventDefault();
       help.toggle();
       return;
@@ -717,7 +722,7 @@
 
     // Cmd-N starts a new session: straight into the selected project (no popup), or
     // the launcher when no single project is in focus. Same path as the inbox "+".
-    if (meta && (key === 'n' || key === 'N')) {
+    if (shortcuts.matches(e, 'newSession')) {
       e.preventDefault();
       startNewSession();
       return;
@@ -725,21 +730,21 @@
 
     // Cmd-J toggles the right-docked Terminals panel (process-independent: hiding
     // never kills a running terminal). Works in every view, like Cmd-N.
-    if (meta && (key === 'j' || key === 'J')) {
+    if (shortcuts.matches(e, 'toggleTerminals')) {
       e.preventDefault();
       tasksPanel.toggle();
       return;
     }
 
     // Cmd-T opens the create-task dialog for the active project (every view).
-    if (meta && (key === 't' || key === 'T')) {
+    if (shortcuts.matches(e, 'createTask')) {
       e.preventDefault();
       taskDialog.showCreate(terminalsActiveProjectId);
       return;
     }
 
     // Cmd-Y opens a new bare interactive terminal in the Terminals panel.
-    if (meta && (key === 'y' || key === 'Y')) {
+    if (shortcuts.matches(e, 'newTerminal')) {
       e.preventDefault();
       newTerminal();
       return;
@@ -748,21 +753,21 @@
     // Cmd-Tab cycles focus across the active agent and its project's terminals.
     // NOTE: macOS reserves Cmd-Tab for the app switcher at the system level, so this
     // may not reach the webview on macOS; it works where the OS lets the key through.
-    if (meta && key === 'Tab') {
+    if (shortcuts.matches(e, 'cycleFocus')) {
       e.preventDefault();
       cycleFocus();
       return;
     }
 
-    // Cmd-O inserts a picked file's quoted path into the FOCUSED terminal at the
-    // cursor. A global shortcut (works in every view, incl. while xterm holds
-    // focus) — placed BEFORE the grid-only gate below so it isn't made inert.
-    // Exclude Alt/Ctrl so only the bare Cmd-O combo fires (stray Cmd-Opt-O /
-    // Cmd-Ctrl-O fall through). `insertFilenameInto` checks the focused
-    // handle BEFORE opening the picker, so this is a clean no-op (no dialog) when
-    // no terminal is focused; preventDefault keeps the keystroke off the PTY and
-    // suppresses the webview's native "Open file" accelerator.
-    if (meta && !alt && !e.ctrlKey && (key === 'o' || key === 'O')) {
+    // insertFilePath (⌘O) inserts a picked file's quoted path into the FOCUSED
+    // terminal at the cursor. A global shortcut (works in every view, incl. while
+    // xterm holds focus) — placed BEFORE the grid-only gate below so it isn't made
+    // inert. The chord match is EXACT (a stray ⌘⌥O / ⌘⌃O falls through).
+    // `insertFilenameInto` checks the focused handle BEFORE opening the picker, so
+    // this is a clean no-op (no dialog) when no terminal is focused; preventDefault
+    // keeps the keystroke off the PTY and suppresses the webview's native "Open
+    // file" accelerator.
+    if (shortcuts.matches(e, 'insertFilePath')) {
       e.preventDefault();
       void insertFilenameInto(focusedTerminalHandle());
       return;
@@ -916,7 +921,7 @@
         class:active={tasksPanel.open}
         aria-label="Toggle terminals panel"
         aria-pressed={tasksPanel.open}
-        use:tooltip={{ text: 'Terminals (⌘J)', placement: 'bottom' }}
+        use:tooltip={{ text: `Terminals (${shortcuts.text('toggleTerminals')})`, placement: 'bottom' }}
         onclick={() => tasksPanel.toggle()}
       >
         <Icon name="panel-right" size={14} />
@@ -929,7 +934,7 @@
       <button class="tb-btn" aria-label="Settings" use:tooltip={{ text: 'Settings', placement: 'bottom' }} onclick={() => settingsModal.show()}>
         <Icon name="settings" size={14} />
       </button>
-      <button class="help-btn" aria-label="Keyboard shortcuts" use:tooltip={{ text: 'Keyboard shortcuts (⌘/)', placement: 'bottom' }} onclick={() => help.show()}>?</button>
+      <button class="help-btn" aria-label="Keyboard shortcuts" use:tooltip={{ text: `Keyboard shortcuts (${shortcuts.text('showShortcuts')})`, placement: 'bottom' }} onclick={() => help.show()}>?</button>
       {/if}
     </div>
   </header>

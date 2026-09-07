@@ -19,6 +19,9 @@
   } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
+  import { shortcuts } from '$lib/settings/shortcuts.svelte';
+  import { SHORTCUT_DEFS } from './keybindings';
+  import ShortcutRecorder from './ShortcutRecorder.svelte';
   import { compactMode, type Density } from '$lib/settings/compactMode.svelte';
   import { shellSettings } from '$lib/settings/shell.svelte';
   import { agentSettings } from '$lib/settings/agent.svelte';
@@ -413,6 +416,28 @@
       </section>
 
       <section class="group">
+        <span class="label labelrow">
+          Keyboard shortcuts
+          {#if Object.keys(shortcuts.prefs.overrides).length > 0}
+            <button type="button" class="linkbtn" onclick={() => shortcuts.resetAll()}>Reset all</button>
+          {/if}
+        </span>
+        <ul class="rows">
+          {#each SHORTCUT_DEFS as def (def.id)}
+            <li class="row">
+              <span class="desc">{def.label}</span>
+              <div class="control">
+                <ShortcutRecorder id={def.id} />
+              </div>
+            </li>
+          {/each}
+          <li class="row hint-row">
+            <span class="desc hint">Click a shortcut and press the new keys. Esc cancels.</span>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group">
         <span class="label">Notifications</span>
         <ul class="rows">
           <li class="row">
@@ -578,6 +603,25 @@
     letter-spacing: 0.07em;
     text-transform: uppercase;
     color: var(--fg-3);
+  }
+
+  .labelrow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .linkbtn {
+    border: none;
+    background: transparent;
+    padding: 0;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    color: var(--fg-3);
+    cursor: pointer;
+  }
+  .linkbtn:hover {
+    color: var(--fg-1);
   }
 
   .rows {

@@ -6,8 +6,12 @@
   // the close button. Follows the Launcher modal's backdrop/dialog pattern.
 
   import { help } from './helpStore.svelte';
-  import { SHORTCUTS } from './shortcuts';
+  import { shortcutGroups } from './shortcuts';
+  import { shortcuts } from '$lib/settings/shortcuts.svelte';
   import { autofocus } from './autofocus';
+
+  // The registry at the live bindings, so a rebound shortcut shows its new chord.
+  const groups = $derived(shortcutGroups(shortcuts.bindings));
 
   function close() {
     help.close();
@@ -44,7 +48,7 @@
       </header>
 
       <div class="groups">
-        {#each SHORTCUTS as group (group.title)}
+        {#each groups as group (group.title)}
           <section class="group">
             <span class="label">{group.title}</span>
             <ul class="rows">

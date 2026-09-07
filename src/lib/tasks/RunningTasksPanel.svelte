@@ -22,6 +22,7 @@
   import TerminalPane from '../TerminalPane.svelte';
   import Icon from '../icons/Icon.svelte';
   import { tooltip } from '../ui/tooltip';
+  import { shortcuts } from '$lib/settings/shortcuts.svelte';
   import { workspace } from '../layout/workspace.svelte';
   import { projects } from '../projects/projects.svelte';
   import { projectForId, projectLabel } from '../projects/projects';
@@ -191,7 +192,7 @@
         if (activeId) projectTasks.launchBareTerminal(activeId);
       }}
       disabled={!activeId}
-      use:tooltip={'New terminal (⌘Y)'}
+      use:tooltip={`New terminal (${shortcuts.text('newTerminal')})`}
       aria-label="New terminal"
     >＋</button>
   </header>

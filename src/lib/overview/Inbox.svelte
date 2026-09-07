@@ -90,6 +90,7 @@
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
   import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
+  import { shortcuts } from '$lib/settings/shortcuts.svelte';
 
   // --- Sessions / Tasks split (Sessions roster on top / Tasks bottom) ----------
   // The `.col-list` column splits into the Sessions roster (top, resizable) and
@@ -976,44 +977,40 @@
     return navTargets.findIndex((t) => t.paneId === shownId);
   }
 
-  /** Keyboard shortcuts on the inbox, all ⌘-modified so plain keys still reach the
-   *  PTY: ⌘↑/↓ step the roster; ⌘W archives the focused session (delete-if-empty);
-   *  ⌘. pauses/resumes it. */
+  /** Keyboard shortcuts on the inbox. Every binding is user-customizable (the
+   *  `shortcuts` store; defaults in parentheses) and defaults to a ⌘-modified chord
+   *  so plain keys still reach the PTY: prevProject/nextProject (⌘⇧↑/↓) cycle the
+   *  project filter; archiveSession (⌘W) archives the focused session
+   *  (delete-if-empty); pauseSession (⌘.) pauses/resumes it; prevAgent/nextAgent
+   *  (⌘↑/↓) step the roster. */
   function onNavKey(e: KeyboardEvent) {
     if (launcher.open) return;
 
-    // ⌘⇧↑/↓ — cycle the project filter up/down the panel's order. Handled before
-    // the ⌘-only guard below since this one intentionally uses Shift; ⌘↑/↓ (no
-    // shift) still steps the agent roster.
-    if (
-      e.metaKey &&
-      e.shiftKey &&
-      !e.altKey &&
-      !e.ctrlKey &&
-      (e.key === 'ArrowUp' || e.key === 'ArrowDown')
-    ) {
+    // Project-filter cycling. Checked BEFORE the agent stepping since the default
+    // chords differ only by ⇧ (an exact chord match keeps them apart either way).
+    const projectStep = shortcuts.matches(e, 'nextProject')
+      ? 1
+      : shortcuts.matches(e, 'prevProject')
+        ? -1
+        : 0;
+    if (projectStep !== 0) {
       e.preventDefault();
       const order = filterOrder(projects.list, unassignedCount(allRows) > 0);
-      const dir = e.key === 'ArrowDown' ? 1 : -1;
-      projectFilter.select(stepFilter(order, projectFilter.selected, dir));
+      projectFilter.select(stepFilter(order, projectFilter.selected, projectStep));
       return;
     }
 
-    // All remaining inbox shortcuts use ⌘ alone (no alt/ctrl/shift), so a literal
-    // key still reaches the terminal.
-    if (!e.metaKey || e.altKey || e.ctrlKey || e.shiftKey) return;
-
-    // ⌘W — archive (or delete-if-empty) the focused session. preventDefault also
-    // stops ⌘W from closing the app window via the webview.
-    if (e.key === 'w' || e.key === 'W') {
+    // Archive (or delete-if-empty) the focused session. preventDefault also stops
+    // the default ⌘W from closing the app window via the webview.
+    if (shortcuts.matches(e, 'archiveSession')) {
       if (!focus || focus.closed) return;
       e.preventDefault();
       archiveAgent(focus.paneId);
       return;
     }
 
-    // ⌘. — pause the focused session, or resume it if already paused.
-    if (e.key === '.') {
+    // Pause the focused session, or resume it if already paused.
+    if (shortcuts.matches(e, 'pauseSession')) {
       if (!focus || focus.closed) return;
       e.preventDefault();
       if (focus.paused) resumeAgent(focus.paneId);
@@ -1021,10 +1018,10 @@
       return;
     }
 
-    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    const dir = shortcuts.matches(e, 'nextAgent') ? 1 : shortcuts.matches(e, 'prevAgent') ? -1 : 0;
+    if (dir === 0) return;
     if (navTargets.length === 0) return;
     e.preventDefault();
-    const dir = e.key === 'ArrowDown' ? 1 : -1;
     const i = currentNavIndex();
     const ni =
       i < 0
@@ -1172,7 +1169,7 @@
       <div class="lh">
         <img class="logo" src="/logomark.svg" alt="" aria-hidden="true" />
         <h1>Sessions <span class="count">{rows.length}</span></h1>
-        <button type="button" class="launch" onclick={newAgent} aria-label="New session" use:tooltip={'New session (⌘N)'}>＋</button>
+        <button type="button" class="launch" onclick={newAgent} aria-label="New session" use:tooltip={`New session (${shortcuts.text('newSession')})`}>＋</button>
       </div>
 
       <!-- Middle region: the agent roster (or its empty state). Flexes to fill
@@ -1289,14 +1286,14 @@
             <!-- Pause + Archive (non-empty) / Delete
                  (empty), routed through the same handlers — no longer delete-only. -->
             {#if focus.paused}
-              <button type="button" class="hbtn" onclick={() => resumeAgent(focus.paneId)} use:tooltip={'Resume (⌘.)'}>Resume</button>
+              <button type="button" class="hbtn" onclick={() => resumeAgent(focus.paneId)} use:tooltip={`Resume (${shortcuts.text('pauseSession')})`}>Resume</button>
             {:else}
-              <button type="button" class="hbtn" onclick={() => pauseAgent(focus.paneId)} use:tooltip={'Pause / defer for later (⌘.)'}>Pause</button>
+              <button type="button" class="hbtn" onclick={() => pauseAgent(focus.paneId)} use:tooltip={`Pause / defer for later (${shortcuts.text('pauseSession')})`}>Pause</button>
             {/if}
             {#if isEmptySession(focus.paneId)}
-              <button type="button" class="hbtn danger" onclick={() => archiveAgent(focus.paneId)} use:tooltip={'Delete empty session (⌘W)'}>Delete</button>
+              <button type="button" class="hbtn danger" onclick={() => archiveAgent(focus.paneId)} use:tooltip={`Delete empty session (${shortcuts.text('archiveSession')})`}>Delete</button>
             {:else}
-              <button type="button" class="hbtn danger" onclick={() => archiveAgent(focus.paneId)} use:tooltip={'Archive session (⌘W)'}>Archive</button>
+              <button type="button" class="hbtn danger" onclick={() => archiveAgent(focus.paneId)} use:tooltip={`Archive session (${shortcuts.text('archiveSession')})`}>Archive</button>
             {/if}
           {/if}
         </div>
