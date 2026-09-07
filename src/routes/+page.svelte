@@ -15,6 +15,7 @@
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { sessionGrouping } from '$lib/settings/sessionGrouping.svelte';
   import { shellSettings } from '$lib/settings/shell.svelte';
   import { agentSettings } from '$lib/settings/agent.svelte';
   import { isAgentProgram } from '$lib/agent/backends';
@@ -124,6 +125,8 @@
     void autoAdvance.load();
     // Load the sessions-panel density preference (defaults to full three-line rows).
     void compactMode.load();
+    // Load the sessions-panel grouping preference (defaults to status lanes).
+    void sessionGrouping.load();
     // Resolve the platform default shell from the backend and load the user's
     // shell preference. The layout restore below AWAITS this: until it resolves,
     // `defaultShell()` still reports the Unix default, and restoring a Windows

@@ -23,6 +23,7 @@
   import { SHORTCUT_DEFS } from './keybindings';
   import ShortcutRecorder from './ShortcutRecorder.svelte';
   import { compactMode, type Density } from '$lib/settings/compactMode.svelte';
+  import { sessionGrouping, type GroupingMode } from '$lib/settings/sessionGrouping.svelte';
   import { shellSettings } from '$lib/settings/shell.svelte';
   import { agentSettings } from '$lib/settings/agent.svelte';
   import { AGENT_KINDS, backendFor, type AgentKind } from '$lib/agent/backends';
@@ -122,6 +123,11 @@
     { value: 'default', label: 'Default' },
     { value: 'compact', label: 'Compact' },
     { value: 'minimal', label: 'Minimal' }
+  ];
+  const GROUPING_OPTIONS: DropdownOption[] = [
+    { value: 'status', label: 'Status' },
+    { value: 'date', label: 'Date' },
+    { value: 'none', label: 'None' }
   ];
   const QUALITY_OPTIONS: DropdownOption[] = [
     { value: 'accurate', label: 'Accurate (large-v3-turbo)' },
@@ -231,6 +237,17 @@
                 onChange={(v) => compactMode.setDensity(v as Density)}
                 ariaLabel="Density"
                 autofocusTrigger
+              />
+            </div>
+          </li>
+          <li class="row">
+            <span class="desc">Group by</span>
+            <div class="control">
+              <Dropdown
+                value={sessionGrouping.mode}
+                options={GROUPING_OPTIONS}
+                onChange={(v) => sessionGrouping.setMode(v as GroupingMode)}
+                ariaLabel="Group by"
               />
             </div>
           </li>
