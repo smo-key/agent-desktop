@@ -63,3 +63,19 @@ describe('reported-title redaction', () => {
     expect(ring.entries[0]).toBe('weird [31mtitle');
   });
 });
+
+describe('redaction precision', () => {
+  it('leaves flags that only look like secrets alone', () => {
+    // `-p` is a port / pid / patch flag far more often than a password one, and
+    // mangling those loses real signal (and can collide two distinct titles).
+    for (const cmd of ['git log -p', 'docker run -p 8080:80 img', 'ps -p 1234', 'scp -p file host:/tmp']) {
+      expect(noteActivity(emptyActivity(), cmd).entries[0]).toBe(cmd);
+    }
+    // A plain URL keeps its shape; only embedded credentials are stripped.
+    expect(noteActivity(emptyActivity(), 'curl https://api.example.com/v1/users').entries[0]).toBe(
+      'curl https://api.example.com/v1/users'
+    );
+    // The attached mysql form is still redacted.
+    expect(noteActivity(emptyActivity(), 'mysql -uroot -pHunter2').entries[0]).toBe('mysql -uroot -p…');
+  });
+});

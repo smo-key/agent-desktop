@@ -95,8 +95,12 @@ export function redactSecrets(title: string): string {
       '$1…'
     )
     .replace(/(--(?:password|token|secret|api-key|apikey)[= ])\S+/gi, '$1…')
-    // `-pSecret` (mysql-style) and `-p Secret`
-    .replace(/(\s-p)\s?\S+/g, '$1…')
+    // `-pSecret` — the mysql/mariadb form, where the value is ATTACHED to the
+    // flag. Only that shape: a space-separated `-p` is far more often a port or a
+    // pid (`docker run -p 8080:80`, `ps -p 123`, `git log -p`), and mangling those
+    // both loses real signal and can collide two distinct titles into one.
+    // A value that looks like a port, path or host:port is left alone.
+    .replace(/(\s-p)(?![\s\d])(?!\S*[:/])(\S+)/g, '$1…')
     // Bare provider tokens wherever they appear
     .replace(/\b(sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{8,}|xox[abprs]-[A-Za-z0-9-]{8,})/g, '…');
 }
