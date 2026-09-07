@@ -617,3 +617,143 @@ fn app_quit_reaps_all_children() {
     }
     assert_eq!(manager.live_count(), 0, "panes remain after kill_all");
 }
+
+// --- Process-tree termination -------------------------------------------------
+//
+// `ChildKiller::kill` alone only signals the direct child (SIGHUP on Unix), so
+// anything the child spawned that ignores hangup — `nohup`, dev servers, tools
+// with their own signal handlers — used to outlive the pane. These tests pin
+// the "kill the whole tree" behaviour.
+
+/// True while `pid` is a live (non-zombie) process, as reported by `ps`.
+#[cfg(unix)]
+fn pid_alive(pid: u32) -> bool {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .expect("ps should run");
+    let stat = String::from_utf8_lossy(&out.stdout);
+    let stat = stat.trim();
+    !stat.is_empty() && !stat.starts_with('Z')
+}
+
+/// Poll until `pid` is gone or `timeout` elapses; returns whether it is gone.
+#[cfg(unix)]
+fn wait_pid_gone(pid: u32, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if !pid_alive(pid) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    !pid_alive(pid)
+}
+
+/// Spawn `/bin/sh -c <script>` in a pane, where the script writes the pid of a
+/// long-running grandchild into a temp file. Returns (pane id, event rx,
+/// grandchild pid).
+#[cfg(unix)]
+fn spawn_sh_with_pidfile(
+    manager: &PtyManager,
+    script_for_pidfile: impl Fn(&str) -> String,
+) -> (u64, mpsc::Receiver<PtyEvent>, u32) {
+    static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let pidfile = std::env::temp_dir().join(format!(
+        "agent-desktop-pty-tree-{}-{n}.pid",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&pidfile);
+    let script = script_for_pidfile(pidfile.to_str().unwrap());
+
+    let (tx, rx) = mpsc::channel();
+    let cfg = SpawnConfig {
+        program: "/bin/sh".into(),
+        args: vec!["-c".into(), script],
+        cwd: None,
+        cols: 80,
+        rows: 24,
+        ..Default::default()
+    };
+    let id = manager
+        .spawn_with_sink(cfg, move |ev| tx.send(ev).map_err(|_| ()))
+        .expect("spawn should succeed");
+
+    // Wait for the script to publish the grandchild pid.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let pid = loop {
+        if let Ok(s) = std::fs::read_to_string(&pidfile) {
+            if let Ok(pid) = s.trim().parse::<u32>() {
+                break pid;
+            }
+        }
+        assert!(Instant::now() < deadline, "grandchild pid never published");
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    let _ = std::fs::remove_file(&pidfile);
+    assert!(pid_alive(pid), "grandchild should be running before kill");
+    (id, rx, pid)
+}
+
+/// #### Scenario: Closing a pane kills descendants that ignore hangup
+#[cfg(unix)]
+#[test]
+fn closing_a_pane_kills_descendants_that_ignore_hangup() {
+    let manager = PtyManager::new();
+    // `nohup` makes the grandchild ignore SIGHUP — exactly what a dev server
+    // or a tool with its own signal handling does.
+    let (id, rx, grandchild) = spawn_sh_with_pidfile(&manager, |pidfile| {
+        format!("nohup sleep 300 >/dev/null 2>&1 & echo $! > {pidfile}; wait")
+    });
+
+    manager.kill(id).expect("kill should succeed");
+
+    let (_data, code) = drain_until_exit(&rx, Duration::from_secs(10));
+    assert!(code.is_some(), "direct child was not reaped / no Exit emitted");
+    assert!(
+        wait_pid_gone(grandchild, Duration::from_secs(5)),
+        "grandchild {grandchild} outlived its pane"
+    );
+}
+
+/// #### Scenario: Closing a pane kills a child that traps hangup
+#[cfg(unix)]
+#[test]
+fn closing_a_pane_kills_a_child_that_traps_hangup() {
+    let manager = PtyManager::new();
+    // The shell itself ignores SIGHUP, and `sleep` inherits that disposition.
+    let (id, rx, grandchild) = spawn_sh_with_pidfile(&manager, |pidfile| {
+        format!("trap '' HUP; sleep 300 & echo $! > {pidfile}; wait")
+    });
+
+    manager.kill(id).expect("kill should succeed");
+
+    let (_data, code) = drain_until_exit(&rx, Duration::from_secs(10));
+    assert!(code.is_some(), "HUP-ignoring child was not terminated / no Exit emitted");
+    assert!(
+        wait_pid_gone(grandchild, Duration::from_secs(5)),
+        "grandchild {grandchild} outlived its pane"
+    );
+}
+
+/// #### Scenario: App quit kills descendants that ignore hangup
+#[cfg(unix)]
+#[test]
+fn app_quit_kills_descendants_that_ignore_hangup() {
+    let manager = PtyManager::new();
+    let (_id, rx, grandchild) = spawn_sh_with_pidfile(&manager, |pidfile| {
+        format!("nohup sleep 300 >/dev/null 2>&1 & echo $! > {pidfile}; wait")
+    });
+
+    // Simulate CloseRequested: must be synchronous, since the app exits next.
+    manager.kill_all();
+
+    assert!(
+        !pid_alive(grandchild),
+        "grandchild {grandchild} still alive after kill_all returned"
+    );
+    let (_data, code) = drain_until_exit(&rx, Duration::from_secs(10));
+    assert!(code.is_some(), "direct child was not reaped / no Exit emitted");
+    assert_eq!(manager.live_count(), 0, "panes remain after kill_all");
+}

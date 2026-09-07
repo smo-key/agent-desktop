@@ -78,10 +78,21 @@ struct Pane {
     /// Writer into the PTY (slave stdin); raw bytes, no decoding.
     writer: Box<dyn Write + Send>,
     /// Killer cloned from the child so we can terminate it from any thread.
+    /// Fallback only: the primary teardown path is [`process_tree::terminate`]
+    /// on `pid`, which also reaches descendants the killer cannot see.
     killer: Box<dyn ChildKiller + Send + Sync>,
+    /// OS pid of the direct child (the PTY session leader). `None` only if the
+    /// platform child handle cannot report one.
+    pid: Option<u32>,
     /// Handle to the dedicated read-loop thread, so we can join on teardown.
     reader: Option<JoinHandle<()>>,
 }
+
+/// How long a pane's process tree gets to exit after the graceful signals
+/// before survivors are force-killed (single-pane close; runs off-thread).
+const KILL_GRACE: Duration = Duration::from_millis(1000);
+/// Same, for app quit (`kill_all`), which blocks the close handler — shorter.
+const KILL_ALL_GRACE: Duration = Duration::from_millis(500);
 
 /// Tauri-managed state: a registry of live panes plus a monotonic id counter.
 pub struct PtyManager {
@@ -166,6 +177,7 @@ impl PtyManager {
             .take_writer()
             .map_err(|e| format!("take_writer failed: {e}"))?;
         let killer = child.clone_killer();
+        let pid = child.process_id();
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
@@ -182,6 +194,7 @@ impl PtyManager {
             master: pair.master,
             writer,
             killer,
+            pid,
             reader: Some(reader_handle),
         };
         self.panes.lock().unwrap().insert(id, pane);
@@ -236,10 +249,16 @@ impl PtyManager {
             .map_err(|e| format!("get_size failed: {e}"))
     }
 
-    /// Kill a pane's child via its cloned killer (callable from any thread) AND
-    /// remove the pane from the registry so its master/writer fds are dropped
-    /// (closing them) rather than leaking until quit. The read loop then observes
-    /// EOF and reaps the child. A no-op (returns `Ok`) if the pane does not exist.
+    /// Kill a pane's ENTIRE process tree — the direct child plus everything it
+    /// spawned, including processes that ignore hangup or moved to their own
+    /// process group — AND remove the pane from the registry so its
+    /// master/writer fds are dropped (closing them) rather than leaking until
+    /// quit. The read loop then observes EOF and reaps the child. A no-op
+    /// (returns `Ok`) if the pane does not exist.
+    ///
+    /// The graceful-then-forceful escalation (see [`process_tree::terminate`])
+    /// waits up to [`KILL_GRACE`], so it runs on a detached thread and this
+    /// returns immediately after the first signals are sent.
     ///
     /// The pane is REMOVED from the map while the lock is held, then killed after
     /// the lock is released (mirroring `kill_all`'s single-id semantics — we never
@@ -249,27 +268,56 @@ impl PtyManager {
         let Some(mut pane) = pane else {
             return Ok(()); // absent: nothing to kill (idempotent).
         };
-        let result = pane.killer.kill().map_err(|e| format!("kill failed: {e}"));
+        let result = match pane.pid {
+            Some(pid) => {
+                std::thread::Builder::new()
+                    .name(format!("pty-killer-{id}"))
+                    .spawn(move || process_tree::terminate(pid, KILL_GRACE))
+                    .map(|_| ())
+                    .map_err(|e| format!("failed to spawn killer thread: {e}"))
+            }
+            None => pane.killer.kill().map_err(|e| format!("kill failed: {e}")),
+        };
         // Dropping `pane` here closes the master + writer fds. We do NOT join the
         // reader thread (it unwinds on its own once the master is gone); this also
         // avoids holding anything across a join.
         result
     }
 
-    /// Kill and reap every live pane (wired into Tauri `CloseRequested`), so no
-    /// zombie or orphan processes remain.
+    /// Kill every live pane's whole process tree and reap the direct children
+    /// (wired into Tauri `CloseRequested`), so no zombie or orphan processes
+    /// remain. Synchronous: when this returns, every tree is dead.
     pub fn kill_all(&self) {
         // Drain the registry so each pane is dropped (joining its reader) after
-        // its child is killed.
+        // its tree is killed.
         let drained: Vec<(PaneId, Pane)> = {
             let mut panes = self.panes.lock().unwrap();
             panes.drain().collect()
         };
+        // Escalate every tree in parallel so the close handler pays one grace
+        // period, not one per pane.
+        let killers: Vec<JoinHandle<()>> = drained
+            .iter()
+            .filter_map(|(id, pane)| {
+                let pid = pane.pid?;
+                std::thread::Builder::new()
+                    .name(format!("pty-killer-{id}"))
+                    .spawn(move || process_tree::terminate(pid, KILL_ALL_GRACE))
+                    .ok()
+            })
+            .collect();
         for (_id, mut pane) in drained {
-            let _ = pane.killer.kill();
-            if let Some(handle) = pane.reader.take() {
-                let _ = handle.join();
+            if pane.pid.is_none() {
+                let _ = pane.killer.kill();
             }
+            // Drop the master/writer fds now so a child blocked on the tty
+            // gets EOF while its tree is being torn down.
+            drop(pane.master);
+            drop(pane.writer);
+            let _ = pane.reader.take().map(|h| h.join());
+        }
+        for h in killers {
+            let _ = h.join();
         }
     }
 
@@ -455,6 +503,133 @@ impl ReapableChild for Box<dyn portable_pty::Child + Send + Sync> {
             Ok(status) => status.exit_code() as i32,
             Err(_) => -1,
         }
+    }
+}
+
+
+/// Whole-process-tree termination for a pane.
+///
+/// `portable-pty`'s `ChildKiller` only signals the direct child (SIGHUP on
+/// Unix, `TerminateProcess` on Windows). Everything the child started — build
+/// servers, `nohup`'d jobs, agents' tool subprocesses, anything that trapped
+/// HUP or moved to its own process group — would otherwise outlive the pane.
+/// `terminate` reaches all of it: graceful signals first, a short grace period,
+/// then SIGKILL for whatever is still standing.
+pub mod process_tree {
+    use std::time::Duration;
+
+    /// Terminate the process tree rooted at `root` (a PTY session leader, so
+    /// `root` is also its own process-group id). Returns once every member is
+    /// gone or has been force-killed; never panics on already-dead pids.
+    #[cfg(unix)]
+    pub fn terminate(root: u32, grace: Duration) {
+        use std::time::Instant;
+
+        // 1. Graceful. SIGHUP to the leader (shells propagate it to their
+        //    jobs; it is what closing a real terminal sends) and SIGTERM to
+        //    every other member plus the whole process group.
+        let initial = members(root);
+        signal(root, libc::SIGHUP);
+        for &pid in initial.iter().filter(|&&p| p != root) {
+            signal(pid, libc::SIGTERM);
+        }
+        signal_group(root, libc::SIGTERM);
+
+        // 2. Wait up to `grace` for the tree to drain on its own.
+        let deadline = Instant::now() + grace;
+        while Instant::now() < deadline {
+            if members(root).is_empty() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(40));
+        }
+
+        // 3. Force. Re-walk the tree (children may have been spawned since)
+        //    and SIGKILL every survivor, plus the group as a whole.
+        for pid in members(root) {
+            signal(pid, libc::SIGKILL);
+        }
+        signal_group(root, libc::SIGKILL);
+    }
+
+    /// `taskkill /T` walks the child tree and `/F` forces termination.
+    #[cfg(windows)]
+    pub fn terminate(root: u32, _grace: Duration) {
+        use crate::no_window::NoConsoleWindow;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &root.to_string()])
+            .no_console_window()
+            .output();
+    }
+
+    #[cfg(unix)]
+    fn signal(pid: u32, sig: libc::c_int) {
+        // ESRCH (already gone) and EPERM are both fine to ignore here.
+        unsafe {
+            libc::kill(pid as libc::pid_t, sig);
+        }
+    }
+
+    /// Signal every process in the group whose id is `pgid`.
+    #[cfg(unix)]
+    fn signal_group(pgid: u32, sig: libc::c_int) {
+        unsafe {
+            libc::kill(-(pgid as libc::pid_t), sig);
+        }
+    }
+
+    /// A row of the process table.
+    #[cfg(unix)]
+    struct Proc {
+        pid: u32,
+        ppid: u32,
+        pgid: u32,
+        zombie: bool,
+    }
+
+    /// Snapshot the process table via `ps` (portable across macOS and Linux;
+    /// no /proc dependency). An unreadable table yields an empty snapshot.
+    #[cfg(unix)]
+    fn snapshot() -> Vec<Proc> {
+        let Ok(out) = std::process::Command::new("ps")
+            .args(["-axo", "pid=,ppid=,pgid=,stat="])
+            .output()
+        else {
+            return Vec::new();
+        };
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|line| {
+                let mut it = line.split_whitespace();
+                let pid = it.next()?.parse().ok()?;
+                let ppid = it.next()?.parse().ok()?;
+                let pgid = it.next()?.parse().ok()?;
+                let zombie = it.next().is_some_and(|s| s.starts_with('Z'));
+                Some(Proc { pid, ppid, pgid, zombie })
+            })
+            .collect()
+    }
+
+    /// Live (non-zombie) members of `root`'s tree: `root`, its descendants by
+    /// parent pid, and anything still in `root`'s process group (which catches
+    /// jobs whose parent already died and were reparented to init).
+    #[cfg(unix)]
+    pub fn members(root: u32) -> Vec<u32> {
+        use std::collections::HashSet;
+        let procs = snapshot();
+        let mut tree: HashSet<u32> = HashSet::new();
+        let mut frontier = vec![root];
+        while let Some(p) = frontier.pop() {
+            if !tree.insert(p) {
+                continue;
+            }
+            frontier.extend(procs.iter().filter(|q| q.ppid == p).map(|q| q.pid));
+        }
+        procs
+            .iter()
+            .filter(|q| !q.zombie && (tree.contains(&q.pid) || q.pgid == root))
+            .map(|q| q.pid)
+            .collect()
     }
 }
 

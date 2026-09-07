@@ -16,6 +16,7 @@ dependencies = [
  "futures-util",
  "image",
  "interprocess",
+ "libc",
  "log",
  "mac-notification-sys",
  "notify",

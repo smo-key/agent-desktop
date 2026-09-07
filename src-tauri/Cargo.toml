@@ -83,6 +83,12 @@ interprocess = { version = "2", default-features = false }
 # gesture (see src/voice_activation.rs). objc2 0.6 / objc2-app-kit 0.3 are the
 # tauri-2-compatible bindings (objc2 itself is already in the tree via the
 # dialog plugin). block2 supplies the Objective-C block used as the event handler.
+# Signal a pane's whole process tree on close (see src/pty.rs `process_tree`):
+# `kill(2)` on individual pids and on the process group. Already in the tree via
+# portable-pty; pinned directly for the explicit calls we make.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSEvent"] }
