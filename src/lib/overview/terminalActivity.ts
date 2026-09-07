@@ -89,18 +89,24 @@ export function redactSecrets(title: string): string {
   return title
     // https://user:pass@host
     .replace(/(:\/\/[^\s:/@]+):[^\s@/]+@/g, '$1:…@')
-    // KEY=value / --token=value / -p value, when the name looks secret-bearing
+    // KEY=value, with or without a prefix (`TOKEN=…` as well as `GITHUB_TOKEN=…`).
     .replace(
-      /(\b[A-Za-z_][\w-]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|CREDENTIAL)S?\b\s*=\s*)\S+/gi,
+      /(\b(?:[A-Za-z_][\w-]*)?(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)S?\b\s*=\s*)\S+/gi,
       '$1…'
     )
+    // `PWD`/`PASSWD` only with a prefix: a bare `PWD=/home/me` is the working
+    // directory a shell reports, not a secret, and redacting it loses real signal.
+    .replace(/(\b[A-Za-z_][\w-]*_(?:PWD|PASSWD)\b\s*=\s*)\S+/gi, '$1…')
     .replace(/(--(?:password|token|secret|api-key|apikey)[= ])\S+/gi, '$1…')
     // `-pSecret` — the mysql/mariadb form, where the value is ATTACHED to the
     // flag. Only that shape: a space-separated `-p` is far more often a port or a
     // pid (`docker run -p 8080:80`, `ps -p 123`, `git log -p`), and mangling those
     // both loses real signal and can collide two distinct titles into one.
-    // A value that looks like a port, path or host:port is left alone.
-    .replace(/(\s-p)(?![\s\d])(?!\S*[:/])(\S+)/g, '$1…')
+    // A value that looks like a port, path, host:port — or a plain word, which is
+    // how the common alpha flags read (`find -print`, `tar -pxvf`, `gcc -pipe`) —
+    // is left alone. Redacting those would both lose signal and collide two
+    // distinct titles into one, which stalls the change key.
+    .replace(/(\s-p)(?![\s\d])(?!\S*[:/])(?![a-z]+\b)(\S+)/g, '$1…')
     // Bare provider tokens wherever they appear
     .replace(/\b(sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{8,}|xox[abprs]-[A-Za-z0-9-]{8,})/g, '…');
 }

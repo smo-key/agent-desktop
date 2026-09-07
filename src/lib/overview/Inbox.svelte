@@ -477,6 +477,10 @@
    *  the user was given, not against whatever the row says a few seconds later. */
   async function startTitleEdit(target: AgentRow | null = focus) {
     if (!target) return;
+    // An advance armed just before the editor opened would still fire and yank
+    // focus (discarding the draft), so it is cancelled here rather than only being
+    // prevented from re-arming.
+    clearAdvance();
     titleDraft = focusTitle(target);
     titleSeed = titleDraft;
     editingPaneId = target.paneId;
@@ -496,7 +500,9 @@
   function commitTitleEdit(explicit = false) {
     if (!editingTitle) return;
     editingTitle = false;
-    const row = viewRows.find((r) => r.paneId === editingPaneId);
+    // `allRows`, not the project-filtered `viewRows`: a row that left the active
+    // filter mid-edit must still receive the rename the user typed.
+    const row = allRows.find((r) => r.paneId === editingPaneId);
     // Compared against the SEED (what the editor was opened with), never against
     // the row's live title: a title that resolved while the editor sat open must
     // not turn an untouched draft into a rename on blur.
@@ -549,9 +555,6 @@
   // input). Once it stops needing you, focus advances to the earliest waiting agent
   // after the grace; if nobody else needs you, the current agent stays.
   $effect(() => {
-    // A rename in progress holds the focus: auto-advancing would flip `shownId`,
-    // and the cancel-on-switch effect would silently discard what the user typed.
-    if (editingTitle) return;
     const shownRow = viewRows.find((r) => r.paneId === shownId) ?? null;
     // The agent we're on just LEFT attention (handled / went Working)?
     const sameAgent = shownId !== null && shownId === lastShownId;
@@ -565,11 +568,24 @@
     lastShownStatus = shownRow?.status ?? null;
 
     // First focus, or the shown agent was closed -> switch immediately to the
-    // focus target (earliest waiting agent, or none).
+    // focus target (earliest waiting agent, or none). This runs even mid-rename:
+    // it is the ONLY path that recovers when the edited row disappears on its own
+    // (a terminal exits and its runtime is dropped), and moving `shownId` here is
+    // what makes the cancel-on-switch effect above discard the now-orphaned edit.
     if (shownId === null || shownRow === null) {
       clearAdvance();
       userSelected = null;
       shownId = resolveFocus(viewRows, null)?.paneId ?? null;
+      return;
+    }
+
+    // A rename in progress holds the focus from here on: an AUTO advance would
+    // flip `shownId` and the cancel-on-switch effect would silently discard what
+    // the user typed. The bookkeeping above still runs, so `lastShownStatus` keeps
+    // tracking the row and a transition that happened during the edit can't fire a
+    // stale advance the moment it commits.
+    if (editingTitle) {
+      clearAdvance();
       return;
     }
 
@@ -615,6 +631,9 @@
     advanceTimer = setTimeout(() => {
       advanceTimer = undefined;
       pendingTarget = null;
+      // A rename opened during the grace holds the focus (belt-and-braces with the
+      // `clearAdvance()` in `startTitleEdit`): advancing here would discard it.
+      if (editingTitle) return;
       userSelected = null;
       shownId = next;
     }, ADVANCE_DELAY_MS);

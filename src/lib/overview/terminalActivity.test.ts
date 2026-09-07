@@ -52,6 +52,12 @@ describe('reported-title redaction', () => {
     expect(noteActivity(emptyActivity(), 'curl -H auth --token=abcdefghijkl x').entries[0]).toBe(
       'curl -H auth --token=… x'
     );
+    // The keyword does not need a prefix.
+    expect(noteActivity(emptyActivity(), 'export TOKEN=hunter2secret').entries[0]).toBe('export TOKEN=…');
+    expect(noteActivity(emptyActivity(), 'PASSWORD=hunter2 ./run.sh').entries[0]).toBe('PASSWORD=… ./run.sh');
+    // …but `PWD=` alone is the working directory a shell reports, not a secret.
+    expect(noteActivity(emptyActivity(), 'PWD=/home/me').entries[0]).toBe('PWD=/home/me');
+    expect(noteActivity(emptyActivity(), 'DB_PWD=hunter2').entries[0]).toBe('DB_PWD=…');
     // A plain command is untouched.
     expect(noteActivity(emptyActivity(), 'yarn test --watch').entries[0]).toBe('yarn test --watch');
   });
@@ -68,7 +74,18 @@ describe('redaction precision', () => {
   it('leaves flags that only look like secrets alone', () => {
     // `-p` is a port / pid / patch flag far more often than a password one, and
     // mangling those loses real signal (and can collide two distinct titles).
-    for (const cmd of ['git log -p', 'docker run -p 8080:80 img', 'ps -p 1234', 'scp -p file host:/tmp']) {
+    for (const cmd of [
+      'git log -p',
+      'docker run -p 8080:80 img',
+      'ps -p 1234',
+      'scp -p file host:/tmp',
+      // Attached ALPHA flags are words, not secrets — and redacting `find . -print`
+      // and `find . -prune` to the same string would stall the change key.
+      'find . -print',
+      'find . -prune',
+      'tar -pxvf archive.tar',
+      'gcc -pipe -O2 main.c'
+    ]) {
       expect(noteActivity(emptyActivity(), cmd).entries[0]).toBe(cmd);
     }
     // A plain URL keeps its shape; only embedded credentials are stripped.
