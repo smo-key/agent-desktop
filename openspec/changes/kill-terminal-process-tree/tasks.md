@@ -37,3 +37,8 @@
       are kept (double-forked daemons behind an unwaited launcher); grace
       raised to 3s on close / 1.5s on quit so a `claude` session can run its
       exit hooks. Unit tests for both discovery rules.
+- [x] 2.4 Adversarial review round 4 (confirmation, no criticals): quit's join
+      deadline now covers a single-pane killer still inside its 3s grace; the
+      app's pid is skipped during the tree walk (not removed after) so its
+      other children can never be swept in; `reaped` is re-read right before
+      the snapshot. Full `cargo test` green, clippy clean on touched files.

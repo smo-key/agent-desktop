@@ -338,13 +338,9 @@ impl PtyManager {
         let Some(mut pane) = pane else {
             return Ok(()); // absent: nothing to kill (idempotent).
         };
-        let Some(pid) = pane.pid else {
+        if pane.pid.is_none() {
             return pane.killer.kill().map_err(|e| format!("kill failed: {e}"));
-        };
-        let root = process_tree::Root {
-            pid,
-            reaped: pane.reaped.load(Ordering::SeqCst),
-        };
+        }
         // The payload lives in a shared slot so that, if no thread can be
         // spawned, the same work runs inline instead of being lost.
         let payload = Arc::new(Mutex::new(Some(pane)));
@@ -352,7 +348,7 @@ impl PtyManager {
             let payload = Arc::clone(&payload);
             move || {
                 if let Some(pane) = payload.lock().unwrap().take() {
-                    terminate_panes(vec![pane], vec![root], KILL_GRACE);
+                    terminate_panes(vec![pane], KILL_GRACE);
                 }
             }
         };
@@ -368,7 +364,7 @@ impl PtyManager {
             }
             Err(_) => {
                 if let Some(pane) = payload.lock().unwrap().take() {
-                    terminate_panes(vec![pane], vec![root], KILL_GRACE);
+                    terminate_panes(vec![pane], KILL_GRACE);
                 }
             }
         }
@@ -386,18 +382,11 @@ impl PtyManager {
             let mut panes = self.panes.lock().unwrap();
             panes.drain().collect()
         };
-        let mut roots = Vec::new();
         let mut readers = Vec::new();
         let mut panes = Vec::new();
         for (_id, mut pane) in drained {
-            match pane.pid {
-                Some(pid) => roots.push(process_tree::Root {
-                    pid,
-                    reaped: pane.reaped.load(Ordering::SeqCst),
-                }),
-                None => {
-                    let _ = pane.killer.kill();
-                }
+            if pane.pid.is_none() {
+                let _ = pane.killer.kill();
             }
             if let Some(h) = pane.reader.take() {
                 readers.push(h);
@@ -407,12 +396,12 @@ impl PtyManager {
         // One snapshot + graceful signals for every pane, then the grace and
         // forced kill, then the PTY drops (see `kill` for the ordering) — all
         // off the caller's thread so a blocking writer drop cannot hang quit.
-        let payload = Arc::new(Mutex::new(Some((panes, roots))));
+        let payload = Arc::new(Mutex::new(Some(panes)));
         let job = {
             let payload = Arc::clone(&payload);
             move || {
-                if let Some((panes, roots)) = payload.lock().unwrap().take() {
-                    terminate_panes(panes, roots, KILL_ALL_GRACE);
+                if let Some(panes) = payload.lock().unwrap().take() {
+                    terminate_panes(panes, KILL_ALL_GRACE);
                 }
             }
         };
@@ -421,13 +410,15 @@ impl PtyManager {
             .spawn(job)
             .ok();
         if worker.is_none() {
-            if let Some((panes, roots)) = payload.lock().unwrap().take() {
-                terminate_panes(panes, roots, KILL_ALL_GRACE);
+            if let Some(panes) = payload.lock().unwrap().take() {
+                terminate_panes(panes, KILL_ALL_GRACE);
             }
         }
         // Stragglers from earlier single-pane closes get their forced kill too.
         let pending: Vec<JoinHandle<()>> = std::mem::take(&mut *self.killers.lock().unwrap());
-        let deadline = Instant::now() + KILL_ALL_GRACE + READER_JOIN_TIMEOUT;
+        // A killer from an earlier single-pane close may still be inside its
+        // (longer) grace; the deadline must cover it or quit races its SIGKILL.
+        let deadline = Instant::now() + KILL_GRACE.max(KILL_ALL_GRACE) + READER_JOIN_TIMEOUT;
         for h in worker.into_iter().chain(pending).chain(readers) {
             join_within(h, deadline);
         }
@@ -607,7 +598,18 @@ where
 /// (a writer drop can block if the child stopped reading its tty, so it must
 /// come after the forced kill). Runs on a killer thread, or inline as a
 /// fallback.
-fn terminate_panes(panes: Vec<Pane>, roots: Vec<process_tree::Root>, grace: Duration) {
+fn terminate_panes(panes: Vec<Pane>, grace: Duration) {
+    // `reaped` is read as late as possible: a child that exits between the
+    // close request and this point must not be treated as still ours.
+    let roots: Vec<process_tree::Root> = panes
+        .iter()
+        .filter_map(|p| {
+            p.pid.map(|pid| process_tree::Root {
+                pid,
+                reaped: p.reaped.load(Ordering::SeqCst),
+            })
+        })
+        .collect();
     let trees = process_tree::begin(&roots);
     process_tree::finish(trees, grace);
     drop(panes);
@@ -805,18 +807,20 @@ pub mod process_tree {
             let my_group = own_group();
             loop {
                 let before = (self.tracked.len(), self.groups.len());
-                for q in procs.iter().filter(|q| self.groups.contains(&q.pgid)) {
+                self.groups.remove(&my_group);
+                for q in procs.iter().filter(|q| q.pid != me && self.groups.contains(&q.pgid)) {
                     self.tracked.insert(q.pid);
                 }
                 let mut frontier: Vec<u32> = self.tracked.iter().copied().collect();
                 while let Some(p) = frontier.pop() {
-                    for q in procs.iter().filter(|q| q.ppid == p) {
+                    // Never walk through `me`: its children are the app's other
+                    // panes and helpers, not this pane's tree.
+                    for q in procs.iter().filter(|q| q.ppid == p && q.pid != me) {
                         if self.tracked.insert(q.pid) {
                             frontier.push(q.pid);
                         }
                     }
                 }
-                self.tracked.remove(&me);
                 for q in procs.iter().filter(|q| self.tracked.contains(&q.pid)) {
                     self.groups.insert(q.pgid);
                 }
@@ -1019,10 +1023,19 @@ pub mod process_tree {
                 Tree::discover(Root { pid: 100, reaped: true }, &table).is_none(),
                 "a live row for a reaped pid is a recycled pid"
             );
-            // Even if discovery were fooled, the app and its group are never
-            // targets: an unreaped root sitting in our group yields nothing.
-            let t = Tree::discover(root(100), &table);
-            assert!(t.as_ref().map_or(true, |t| !t.tracked.contains(&me) && !t.groups.contains(&my_group)));
+            // Even if discovery were fooled (an unreaped root sitting in our
+            // group), neither the app, its group, nor its other children —
+            // another pane 200/201, helper 7 — are ever targets.
+            let table = vec![
+                row(me, 1, my_group),
+                row(100, me, my_group),
+                row(7, me, my_group),
+                row(200, me, 200),
+                row(201, 200, 200),
+            ];
+            let t = Tree::discover(root(100), &table).expect("root is a live child");
+            assert_eq!(t.tracked, HashSet::from([100]));
+            assert!(!t.groups.contains(&my_group));
         }
 
         #[test]
