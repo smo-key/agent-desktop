@@ -9,9 +9,15 @@ function run(...titles: string[]) {
 describe('terminal activity ring', () => {
   it('The shell reported activity accumulates', () => {
     const ring = run('~/git/app', 'yarn test', 'yarn test', '  ', 'git status');
-    // Blank titles are ignored and a repeat of the latest entry is collapsed.
+    // Blank titles are ignored and a repeat is collapsed.
     expect(ring.entries).toEqual(['~/git/app', 'yarn test', 'git status']);
     expect(activityText(ring)).toBe('~/git/app\nyarn test\ngit status');
+
+    // A shell that re-sets the DIRECTORY title at every prompt (oh-my-zsh sets it
+    // in both precmd and preexec) must not make the list — and so the change key,
+    // and so a model call — move on every command.
+    const alternating = run('~/git/app', 'yarn test', '~/git/app', 'git status', '~/git/app');
+    expect(alternating.entries).toEqual(['~/git/app', 'yarn test', 'git status']);
   });
 
   it('A shell that reports nothing new is never titled', () => {

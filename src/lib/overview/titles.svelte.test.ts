@@ -271,7 +271,7 @@ describe('TitleStore terminal titles', () => {
     const store = new TitleStore();
     store.refreshTerminals([ref({ activity: 'a\ncmd1' })], NOW);
     invokeMock.mockResolvedValueOnce('Do the newer thing');
-    store.refreshTerminals([ref({ activity: 'a\ncmd1\ncmd2' })], NOW + 20_000);
+    store.refreshTerminals([ref({ activity: 'a\ncmd1\ncmd2' })], NOW + 40_000);
     await flush();
     expect(store.titleFor('tp1')).toBe('Do the newer thing');
 
@@ -280,7 +280,7 @@ describe('TitleStore terminal titles', () => {
     expect(store.titleFor('tp1')).toBe('Do the newer thing');
     // …and the newer hash still stands, so the next tick does not re-fire.
     invokeMock.mockClear();
-    store.refreshTerminals([ref({ activity: 'a\ncmd1\ncmd2' })], NOW + 40_000);
+    store.refreshTerminals([ref({ activity: 'a\ncmd1\ncmd2' })], NOW + 80_000);
     await flush();
     expect(invokeMock).not.toHaveBeenCalled();
   });

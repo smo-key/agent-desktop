@@ -36,14 +36,18 @@ export function emptyActivity(): ActivityRing {
 }
 
 /**
- * Add a reported title. Blank titles are ignored, a repeat of the most recent
- * entry is collapsed (a shell re-sets the same title on every prompt), and the
- * oldest entry drops past `MAX_ACTIVITY`. Pure: never mutates `ring`.
+ * Add a reported title. Blank titles are ignored and a title ALREADY in the ring
+ * is dropped, not re-appended: a configured shell sets the title twice per
+ * command (the directory at the prompt, the command on dispatch), so an
+ * append-only ring would alternate `dir, cmd, dir, cmd…` — the change key would
+ * move on every command and spend a model call each time, and the ring would
+ * fill with repeats of one directory. Set semantics keep the key stable until
+ * something genuinely NEW happens. The oldest entry drops past `MAX_ACTIVITY`.
+ * Pure: never mutates `ring`.
  */
 export function noteActivity(ring: ActivityRing, title: string): ActivityRing {
   const t = title.trim().slice(0, MAX_ENTRY);
-  if (!t) return ring;
-  if (ring.entries[ring.entries.length - 1] === t) return ring;
+  if (!t || ring.entries.includes(t)) return ring;
   const entries = [...ring.entries, t];
   return { entries: entries.length > MAX_ACTIVITY ? entries.slice(entries.length - MAX_ACTIVITY) : entries };
 }

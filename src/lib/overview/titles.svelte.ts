@@ -29,11 +29,12 @@ import { titleSettings } from '$lib/settings/titles.svelte';
 export const TITLE_THROTTLE_MS = 3_000;
 
 /**
- * Min interval between TERMINAL title requests for one pane. Longer than the
- * session floor: a terminal's change key moves on every command (a session's on
- * every user message), so a burst of quick commands coalesces into one title.
+ * Min interval between TERMINAL title requests for one pane. Much longer than the
+ * session floor: a terminal's change key moves whenever the shell reports
+ * something new, and each request is a several-second on-device model call, so a
+ * burst of commands must coalesce into one title rather than one title each.
  */
-export const TERMINAL_THROTTLE_MS = 10_000;
+export const TERMINAL_THROTTLE_MS = 30_000;
 
 /**
  * How long to park a terminal pane after a FAILED request (no local model, the
