@@ -29,6 +29,10 @@ export interface Project {
   /** Optional logo image as a downscaled PNG data URL; renders instead of the
    *  icon glyph. Additive + optional — absent for projects created before logos. */
   logo?: string;
+  /** `true` when the project is ARCHIVED: hidden from the project pane, launcher
+   *  picker, keyboard cycle, and git polling until unarchived. Absent = active.
+   *  Additive + optional; only ever persisted as a literal `true`. */
+  archived?: boolean;
 }
 
 /** The CREATE/EDIT form's draft: the project record fields, minus the id. */
@@ -180,6 +184,36 @@ export function updateProject(
   });
 }
 
+/**
+ * Set or clear the ARCHIVED flag on the project with id `id` (same position, same
+ * id; nothing else changes, so bound agents stay bound). Clearing DROPS the key
+ * rather than writing `false`, so an active record never carries the field.
+ * Pure: never mutates inputs; no-op (a copy) if `id` is absent.
+ */
+export function setProjectArchived(
+  list: ReadonlyArray<Project>,
+  id: string,
+  archived: boolean
+): Project[] {
+  return list.map((p) => {
+    if (p.id !== id) return p;
+    const next: Project = { ...p };
+    if (archived) next.archived = true;
+    else delete next.archived;
+    return next;
+  });
+}
+
+/** The projects that are NOT archived, in list order (the panel's rows). */
+export function activeProjects(list: ReadonlyArray<Project>): Project[] {
+  return list.filter((p) => p.archived !== true);
+}
+
+/** The archived projects, in list order (the panel's "Archived" section). */
+export function archivedProjects(list: ReadonlyArray<Project>): Project[] {
+  return list.filter((p) => p.archived === true);
+}
+
 /** The project with id `id`, or null. */
 export function projectForId(
   list: ReadonlyArray<Project>,
@@ -225,6 +259,8 @@ function normalize(arr: ReadonlyArray<unknown>): Project[] {
     seen.add(path);
     const clean: Project = { ...item, path };
     if (typeof clean.logo !== 'string') delete clean.logo; // drop a malformed logo
+    // `archived` is kept only as a literal `true`; anything else means active.
+    if (clean.archived !== true) delete clean.archived;
     // Legacy cleanup: the removed auto-worktree feature once stored `autoWorktree`
     // on the record; strip any leftover value so it never round-trips back.
     delete (clean as unknown as Record<string, unknown>).autoWorktree;

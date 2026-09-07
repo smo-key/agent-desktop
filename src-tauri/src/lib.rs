@@ -1360,29 +1360,6 @@ async fn repo_web_url(repo_path: String) -> Result<Option<String>, String> {
     Ok(pr::repo_url_for(&repo_path).await)
 }
 
-/// Create a fresh session worktree off `repo_path`'s HEAD (manual worktree
-/// management UI). Returns `{ path, branch, base }`; ensures `.worktrees` is
-/// gitignored and the branch is unique. `Err` when `repo_path` isn't a git repo
-/// or git fails.
-#[tauri::command(async)]
-fn worktree_create(repo_path: String) -> Result<git::WorktreeCreated, String> {
-    git::worktree_create(&repo_path)
-}
-
-/// List the session worktrees under `<repo>/.worktrees/`, each as
-/// `{ path, branch, clean }`, for the management UI. Off-repo yields `[]`.
-#[tauri::command(async)]
-fn worktree_list(repo_path: String) -> Result<Vec<git::WorktreeInfo>, String> {
-    Ok(git::worktree_list(&repo_path))
-}
-
-/// Explicitly prune a worktree (and its branch), passing `--force` when `force`
-/// is true. Used by the management UI. `Err` on git failure.
-#[tauri::command(async)]
-fn worktree_remove(worktree_path: String, force: bool) -> Result<(), String> {
-    git::worktree_remove(&worktree_path, force)
-}
-
 /// Return the `pane_id -> [AgentEvent]` timeline for the caller's app panes, used
 /// to SEED the overview's event store on mount/resume. For each pane the events
 /// come from the in-memory ring (hot cache) first, then the durable per-session
@@ -1682,9 +1659,6 @@ pub fn run() {
             pr_status_for,
             open_prs_for,
             repo_web_url,
-            worktree_create,
-            worktree_list,
-            worktree_remove,
             events_for,
             orchestration_reply,
             notify_click::notify_agent,

@@ -21,8 +21,7 @@ import { launcher } from './launcherStore.svelte';
  * Start a new agent session. Launches directly into the currently-filtered project
  * when one is selected (no popup); otherwise opens the launcher dialog.
  *
- * The session always runs in the project's own folder. (Worktrees are managed
- * manually via the project's worktree view, not created automatically on launch.)
+ * The session always runs in the project's own folder.
  */
 export function startNewSession(): void {
   const proj = projectForId(projects.list, projectFilter.selected);

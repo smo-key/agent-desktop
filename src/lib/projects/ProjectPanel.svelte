@@ -1,9 +1,11 @@
 <script lang="ts">
   // The hideable left PROJECT PANEL shared by both overviews (ports ProjectPanel.jsx
   // + LaunchModal's create flow). It filters the fleet by project: "All agents",
-  // one row per project (tinted icon, name, an orange dot when any of its agents
-  // needs you, a live count), an optional "No project" bucket, and an inline
-  // "New project" create (name + Browse folder + icon picker).
+  // one row per ACTIVE project (tinted icon, name, an orange dot when any of its
+  // agents needs you, a live count), an optional "No project" bucket, an inline
+  // "New project" create (name + Browse folder + icon picker), and — when any
+  // project is archived — a "Show archived (N)" toggle that reveals a muted
+  // Archived section from which a project can be unarchived or deleted.
   //
   // Selection is the shared `projectFilter` store (so switching Overview<->Windows
   // keeps the filter); the project list is the persisted `projects` store. Counts
@@ -19,13 +21,13 @@
     projectCounts,
     unassignedCount,
     allAgentsCount,
+    nextFilterAfterArchive,
     ALL,
     UNASSIGNED
   } from './projectRollup';
   import Icon from '../icons/Icon.svelte';
   import ProjectIcon from '../icons/ProjectIcon.svelte';
   import ProjectDialog from './ProjectDialog.svelte';
-  import WorktreeDialog from './WorktreeDialog.svelte';
   import ContextMenu, { type MenuItem } from '../ui/ContextMenu.svelte';
   import { tooltip } from '../ui/tooltip';
   import { pointerReorder } from '../ui/pointerReorder';
@@ -37,7 +39,9 @@
     onToggle
   }: { rows: AgentRow[]; collapsed?: boolean; onToggle?: () => void } = $props();
 
-  // Right-click context menu for a project row (delete).
+  // Right-click context menu for a project row: an ACTIVE row gets edit / archive /
+  // push / pull / delete; an ARCHIVED row (in the Archived section) gets only
+  // unarchive / delete.
   let menu = $state<{ open: boolean; x: number; y: number; items: MenuItem[] }>({
     open: false,
     x: 0,
@@ -48,59 +52,75 @@
   function openMenu(e: MouseEvent, project: Project) {
     e.preventDefault();
     const { id: projectId, name, path } = project;
-    menu = {
-      open: true,
-      x: e.clientX,
-      y: e.clientY,
-      items: [
-        {
-          label: 'Edit project…',
-          icon: 'pencil',
-          onClick: () => {
-            creating = false;
-            editingId = projectId;
-          }
-        },
-        {
-          label: 'Worktrees…',
-          icon: 'git-branch',
-          onClick: () => {
-            worktreesFor = projectId;
-          }
-        },
-        {
-          label: 'Push',
-          icon: 'arrow-up',
-          onClick: () => void pushProject(path, name, projectId)
-        },
-        {
-          label: 'Pull',
-          icon: 'arrow-down',
-          onClick: () => void pullProject(path, name, projectId)
-        },
-        {
-          label: 'Delete project',
-          icon: 'trash-2',
-          danger: true,
-          onClick: () => {
-            const ok =
-              typeof confirm === 'function'
-                ? confirm(`Delete project "${name}"? Its agents keep running but lose this label.`)
-                : true;
-            if (!ok) return;
-            void projects.remove(projectId);
-            if (editingId === projectId) editingId = null;
-            if (projectFilter.selected === projectId) projectFilter.select(ALL);
-          }
-        }
-      ]
+    const deleteItem: MenuItem = {
+      label: 'Delete project',
+      icon: 'trash-2',
+      danger: true,
+      onClick: () => {
+        const ok =
+          typeof confirm === 'function'
+            ? confirm(`Delete project "${name}"? Its agents keep running but lose this label.`)
+            : true;
+        if (!ok) return;
+        void projects.remove(projectId);
+        if (editingId === projectId) editingId = null;
+        projectFilter.select(nextFilterAfterArchive(projectFilter.selected, projectId));
+      }
     };
+    const items: MenuItem[] = project.archived
+      ? [
+          {
+            label: 'Unarchive',
+            icon: 'rotate-ccw',
+            onClick: () => void projects.unarchive(projectId)
+          },
+          deleteItem
+        ]
+      : [
+          {
+            label: 'Edit project…',
+            icon: 'pencil',
+            onClick: () => {
+              creating = false;
+              editingId = projectId;
+            }
+          },
+          {
+            label: 'Push',
+            icon: 'arrow-up',
+            onClick: () => void pushProject(path, name, projectId)
+          },
+          {
+            label: 'Pull',
+            icon: 'arrow-down',
+            onClick: () => void pullProject(path, name, projectId)
+          },
+          {
+            // Reversible (unarchive from the Archived section), so no confirm. The
+            // row disappears from the active rows; if it was the selected filter,
+            // the selection falls back to All agents.
+            label: 'Archive project',
+            icon: 'archive',
+            onClick: () => {
+              void projects.archive(projectId);
+              if (editingId === projectId) editingId = null;
+              projectFilter.select(nextFilterAfterArchive(projectFilter.selected, projectId));
+            }
+          },
+          deleteItem
+        ];
+    menu = { open: true, x: e.clientX, y: e.clientY, items };
   }
 
   // Per-project counts + attention flags, the unassigned bucket size, and the
   // "All agents" total — all single-sourced from projectRollup so they share the
-  // same non-archived predicate (archived/previewed agents are excluded).
-  const counts = $derived(projectCounts(rows, projects.list));
+  // same non-archived predicate (archived/previewed agents are excluded). The
+  // rows (and the rail) show only ACTIVE projects; archived ones get their own
+  // rollup for the collapsible Archived section below "New project".
+  const counts = $derived(projectCounts(rows, projects.active));
+  const archivedCounts = $derived(projectCounts(rows, projects.archived));
+  /** Whether the Archived section is expanded. Session-local (not persisted). */
+  let showArchived = $state(false);
   const unassigned = $derived(unassignedCount(rows));
   const allAgents = $derived(allAgentsCount(rows));
 
@@ -145,13 +165,6 @@
   /** The resolved project being edited (or null) — feeds the edit dialog. */
   const editProject = $derived(
     editingId ? (projects.list.find((p) => p.id === editingId) ?? null) : null
-  );
-
-  /** The id of the project whose worktree-management dialog is open, or null. */
-  let worktreesFor = $state<string | null>(null);
-  /** The resolved project whose worktrees are being managed (or null). */
-  const worktreeProject = $derived(
-    worktreesFor ? (projects.list.find((p) => p.id === worktreesFor) ?? null) : null
   );
 
   async function saveCreate(draft: ProjectDraft) {
@@ -297,6 +310,53 @@
     <Icon name="plus" size={16} color="var(--fg-4)" />
     <span class="pp-name">New project</span>
   </button>
+
+  <!-- Archived projects: hidden by default; a toggle directly below "New project"
+       (only when something is archived) reveals them as muted rows. An archived row
+       still selects its filter (its agents keep running under it); its context menu
+       offers Unarchive / Delete only. Not drag-reorderable. -->
+  {#if archivedCounts.length > 0}
+    <button
+      type="button"
+      class="pp-item pp-new pp-archived-toggle"
+      aria-expanded={showArchived}
+      onclick={() => (showArchived = !showArchived)}
+    >
+      <Icon name="archive" size={16} color="var(--fg-4)" />
+      <span class="pp-name">
+        {showArchived ? 'Hide archived' : `Show archived (${archivedCounts.length})`}
+      </span>
+    </button>
+    {#if showArchived}
+      <div class="pp-label">Archived</div>
+      {#each archivedCounts as c (c.project.id)}
+        <div
+          class="pp-item pp-archived"
+          class:active={projectFilter.selected === c.project.id}
+          role="button"
+          tabindex="0"
+          onclick={() => projectFilter.select(c.project.id)}
+          onkeydown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              projectFilter.select(c.project.id);
+            }
+          }}
+          oncontextmenu={(e) => openMenu(e, c.project)}
+        >
+          {#if c.project.logo}
+            <img class="pp-logo" src={c.project.logo} alt="" />
+          {:else}
+            <Icon name={c.project.icon} size={16} color={c.project.color} />
+          {/if}
+          <span class="pp-name" use:tooltip={c.project.path}>{c.project.name}</span>
+          {#if c.attn}<span class="pp-attn" use:tooltip={'Needs attention'}></span>
+          {:else if c.working}<span class="pp-work" use:tooltip={'Working'}></span>{/if}
+          <span class="pp-ct">{c.count}</span>
+        </div>
+      {/each}
+    {/if}
+  {/if}
 </aside>
 {/if}
 
@@ -310,16 +370,6 @@
     initial={editProject}
     onSave={(draft) => saveEdit(editProject.id, draft)}
     onCancel={() => (editingId = null)}
-  />
-{/if}
-
-<!-- Worktree-management dialog for a project, opened from its context menu. -->
-{#if worktreeProject}
-  <WorktreeDialog
-    projectId={worktreeProject.id}
-    projectName={worktreeProject.name}
-    repoPath={worktreeProject.path}
-    onClose={() => (worktreesFor = null)}
   />
 {/if}
 
@@ -555,6 +605,14 @@
   }
   .pp-new {
     color: var(--fg-3);
+  }
+  /* Archived rows read as parked: muted until hovered/selected. */
+  .pp-item.pp-archived {
+    opacity: 0.6;
+  }
+  .pp-item.pp-archived:hover,
+  .pp-item.pp-archived.active {
+    opacity: 1;
   }
 
   /* A project's logo in an expanded row (replaces the glyph). */

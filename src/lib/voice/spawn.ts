@@ -23,7 +23,7 @@ import { projectFilter } from '../projects/projectFilter.svelte';
  * caller then surfaces a "no agent / no project" message).
  */
 export function spawnAgentWithDictation(text: string): boolean {
-  const proj = projectForId(projects.list, projectFilter.selected) ?? projects.list[0] ?? null;
+  const proj = projectForId(projects.list, projectFilter.selected) ?? projects.active[0] ?? null;
   if (!proj) return false;
   workspace.launch(
     buildLaunchPlan({ folder: proj.path, prompt: text, placement: 'tab', projectId: proj.id })

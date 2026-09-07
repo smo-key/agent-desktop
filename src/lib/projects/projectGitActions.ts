@@ -2,8 +2,7 @@
 // project pane. Each shells out (via the Rust `git_push` / `git_pull` commands)
 // against the project's FOLDER and surfaces git's own message non-blockingly via
 // the toast store — success or failure — so the user gets feedback without a
-// modal. Kept here (not in the Svelte component) so the wiring is unit-tested,
-// mirroring `worktreePanel`.
+// modal. Kept here (not in the Svelte component) so the wiring is unit-tested.
 
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from '../ui/toastStore.svelte';

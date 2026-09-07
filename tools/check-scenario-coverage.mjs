@@ -375,6 +375,14 @@ const MANUAL_SCENARIOS = {
     // mount-once slow-interval $effect in +page.svelte) has no pure surface to assert —
     // confirmed live in-app, like activity-timeline's route-interval scenarios.
     'initial_fetch_shortly_after_launch',
+    // Project archiving: the model/rollup scenarios are unit-tested (projects.test.ts,
+    // projectRollup.test.ts). These three are DOM/route wiring with no pure surface —
+    // the "Show archived (N)" toggle + Archived section in ProjectPanel.svelte, the
+    // launcher's ProjectSelect listing `projects.active`, and the +page.svelte git
+    // poll / background fetch iterating `projects.active` — confirmed live in-app.
+    'show_archived_reveals_archived_projects_below_new_project',
+    'archived_projects_are_absent_from_the_launcher_picker',
+    'git_polling_skips_archived_project_folders',
   ]),
   // tasks-panel: every scenario is a rendered-component / live-PTY behavior with no
   // pure surface to assert headless — confirmed live in-app.

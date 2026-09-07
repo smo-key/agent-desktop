@@ -215,7 +215,7 @@
       // recurring interval below is mount-once and at mount the list is still
       // empty). Refresh status after so the advanced ahead/behind surfaces promptly
       // — "shortly after launch", not a full FETCH_POLL_MS cadence later.
-      const paths = projects.list.map((p) => p.path);
+      const paths = projects.active.map((p) => p.path);
       void projectGit.fetchRemotes(paths).then(() => projectGit.refresh(paths));
     });
     // Terminals restore stopped now (auto-restart was dropped); the close handler is
@@ -399,15 +399,17 @@
 
   // PROJECT GIT poll. Each project's folder is probed for its branch + ahead/
   // behind/dirty (the `git_status_for` command) so the project pane shows its
-  // current branch even with no agent running. Reading `projects.list` here both
-  // refreshes immediately AND re-runs this effect when a project is added/removed,
-  // so a new project is probed at once; a slow interval keeps it fresh thereafter.
+  // current branch even with no agent running. Only ACTIVE projects are probed —
+  // an archived project's folder is left alone until it is unarchived. Reading
+  // `projects.active` here both refreshes immediately AND re-runs this effect when
+  // a project is added/removed/archived, so a new project is probed at once; a
+  // slow interval keeps it fresh thereafter.
   const GIT_POLL_MS = 4000;
   $effect(() => {
-    const paths = projects.list.map((p) => p.path);
+    const paths = projects.active.map((p) => p.path);
     void projectGit.refresh(paths);
     const id = setInterval(() => {
-      void projectGit.refresh(projects.list.map((p) => p.path));
+      void projectGit.refresh(projects.active.map((p) => p.path));
     }, GIT_POLL_MS);
     return () => clearInterval(id);
   });
@@ -432,7 +434,7 @@
   const FETCH_POLL_MS = 180000;
   $effect(() => {
     const id = setInterval(() => {
-      const paths = projects.list.map((p) => p.path);
+      const paths = projects.active.map((p) => p.path);
       void projectGit.fetchRemotes(paths).then(() => projectGit.refresh(paths));
     }, FETCH_POLL_MS);
     return () => clearInterval(id);

@@ -24,7 +24,7 @@
   // trigger (combobox pattern). Index 0..N-1 are the projects; index N is the
   // "New project" row. -1 means nothing highlighted.
   let active = $state(-1);
-  const optionCount = $derived(projects.list.length + 1); // projects + "New project"
+  const optionCount = $derived(projects.active.length + 1); // active projects + "New project"
   let menuEl = $state<HTMLDivElement | null>(null);
 
   // The trigger button — focused on mount when `autofocus` is set, with the menu
@@ -42,7 +42,7 @@
   /** Open the menu and highlight the current selection (or the first option). */
   function openMenu() {
     open = true;
-    const i = projects.list.findIndex((p) => p.id === value);
+    const i = projects.active.findIndex((p) => p.id === value);
     active = i >= 0 ? i : 0;
   }
 
@@ -53,7 +53,7 @@
 
   /** Activate the highlighted option: pick that project, or open the create flow. */
   function activateActive() {
-    if (active >= 0 && active < projects.list.length) choose(projects.list[active].id);
+    if (active >= 0 && active < projects.active.length) choose(projects.active[active].id);
     else creating = true; // the "New project" row
   }
 
@@ -176,7 +176,7 @@
 
   {#if open}
     <div class="psel-menu" bind:this={menuEl}>
-      {#each projects.list as p, i (p.id)}
+      {#each projects.active as p, i (p.id)}
         <button
           type="button"
           class="psel-opt"
@@ -191,7 +191,7 @@
         </button>
       {/each}
 
-      {#if projects.list.length > 0}<div class="psel-sep"></div>{/if}
+      {#if projects.active.length > 0}<div class="psel-sep"></div>{/if}
 
       {#if creating}
         <div class="psel-createbox">
@@ -239,8 +239,8 @@
         <button
           type="button"
           class="psel-opt psel-new"
-          class:hl={active === projects.list.length}
-          onmousemove={() => (active = projects.list.length)}
+          class:hl={active === projects.active.length}
+          onmousemove={() => (active = projects.active.length)}
           onclick={() => (creating = true)}
         >
           <Icon name="plus" size={15} color="var(--blue-300)" />
