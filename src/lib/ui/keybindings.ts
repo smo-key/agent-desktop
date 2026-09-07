@@ -62,6 +62,9 @@ export interface KeyEventLike {
   ctrlKey: boolean;
   altKey: boolean;
   shiftKey: boolean;
+  /** Physical key (`KeyA`, `Digit1`, …) — used for ⌥ chords, whose `key` is the
+   *  layout-transformed character (`å`, `Dead`) on macOS. Optional. */
+  code?: string;
 }
 
 function chord(key: string, mods: Partial<Omit<KeyChord, 'key'>> = {}): KeyChord {
@@ -194,15 +197,46 @@ export function defaultBindings(): Bindings {
   return resolveBindings({});
 }
 
-/** Overlay overrides on the defaults. Unknown ids and invalid chords are dropped. */
+/**
+ * Overlay overrides on the defaults. Unknown ids and invalid chords are dropped,
+ * and so is any override that would leave two shortcuts on ONE chord (a
+ * hand-edited slice, or a default that changed underneath an old override): the
+ * colliding overrides are discarded and their defaults apply, so the resolved
+ * bindings are always collision-free.
+ */
 export function resolveBindings(overrides: BindingOverrides | null | undefined): Bindings {
   const out = {} as Bindings;
+  const overridden = new Set<ShortcutId>();
   for (const def of SHORTCUT_DEFS) {
     const raw = overrides ? overrides[def.id] : undefined;
     const parsed = raw === undefined ? null : parseChord(raw);
+    if (parsed) overridden.add(def.id);
     out[def.id] = parsed ?? { ...def.default };
   }
-  return out;
+  // Collision pass: drop every OVERRIDE that shares a chord with any other binding
+  // (defaults are unique among themselves, so dropping overrides always converges).
+  // Every colliding override in a pass is dropped TOGETHER (computed before any
+  // mutation), so the outcome never depends on definition order; repeat until
+  // stable (a restored default can itself collide with a remaining override).
+  for (;;) {
+    const clashing = [...overridden].filter((id) =>
+      SHORTCUT_DEFS.some((d) => d.id !== id && sameChord(out[d.id], out[id]))
+    );
+    if (clashing.length === 0) return out;
+    for (const id of clashing) {
+      out[id] = defaultChord(id);
+      overridden.delete(id);
+    }
+  }
+}
+
+/** Chords the webview / OS own app-wide (clipboard, select-all, undo, quit, hide):
+ *  binding one would `preventDefault` it everywhere, including inside a terminal. */
+const RESERVED_META_KEYS = new Set(['C', 'V', 'X', 'A', 'Z', 'Q', 'H']);
+
+/** Whether a chord is reserved for the system and may not be recorded. */
+export function isReservedChord(c: KeyChord): boolean {
+  return c.meta && !c.ctrl && !c.alt && !c.shift && RESERVED_META_KEYS.has(normalizeKey(c.key));
 }
 
 const MODIFIER_KEYS = new Set(['Meta', 'Control', 'Alt', 'Shift', 'CapsLock', 'Fn', 'OS']);
@@ -222,11 +256,23 @@ export function isRecordableChord(c: KeyChord): boolean {
   return /^F([1-9]|1[0-9]|2[0-4])$/.test(c.key);
 }
 
-/** The chord a keydown represents, or null when only modifiers are down. */
+/**
+ * The chord a keydown represents, or null when only modifiers are down (or the
+ * key is a dead key with no physical fallback). With ⌥ held, macOS reports the
+ * layout-transformed character in `key` (`å`, `Dead`, `∂`…), so the physical
+ * `code` is used for letters and digits — `⌥N` is `{ key: 'N', alt }` whatever the
+ * layout produced.
+ */
 export function chordFromEvent(e: KeyEventLike): KeyChord | null {
   if (!e.key || MODIFIER_KEYS.has(e.key)) return null;
+  let key = e.key;
+  if (e.altKey && typeof e.code === 'string') {
+    const m = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(e.code);
+    if (m) key = m[1] ?? m[2];
+  }
+  if (key === 'Dead' || key === 'Unidentified') return null;
   return {
-    key: normalizeKey(e.key),
+    key: normalizeKey(key),
     meta: !!e.metaKey,
     ctrl: !!e.ctrlKey,
     alt: !!e.altKey,
@@ -294,7 +340,8 @@ export function parseChord(raw: unknown): KeyChord | null {
     alt: o.alt === true,
     shift: o.shift === true
   };
-  return isRecordableChord(c) ? c : null;
+  if (c.key === 'Dead' || c.key === 'Unidentified') return null;
+  return isRecordableChord(c) && !isReservedChord(c) ? c : null;
 }
 
 /** Validate a persisted overrides object: keeps only known ids with valid chords. */

@@ -746,7 +746,10 @@ export class WorkspaceStore {
       // resume:false so the closed pane never tries to (re)spawn while completed;
       // previewArchived flips it back on with resume:true. Also clear any preview
       // state so re-archiving a previewing session always terminates its PTY.
-      const { preview: _pv, previewCount: _pc, ...rest } = cur;
+      // `launchArgs` (the worktree flag) is FIRST-SPAWN only: an archived pane that
+      // is later previewed respawns with `--resume`, and must never create a
+      // second worktree — drop it here, the one in-session path to a respawn.
+      const { preview: _pv, previewCount: _pc, launchArgs: _la, ...rest } = cur;
       entry.registry = { ...entry.registry, [paneId]: { ...rest, closed: true, resume: false } };
       return;
     }

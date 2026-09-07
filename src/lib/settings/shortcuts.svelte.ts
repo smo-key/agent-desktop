@@ -17,6 +17,7 @@ import {
   defaultChord,
   findConflict,
   formatChordText,
+  isReservedChord,
   parseOverrides,
   resolveBindings,
   sameChord,
@@ -48,8 +49,11 @@ export function parseShortcutPrefs(raw: unknown): ShortcutPrefs {
   return { overrides: parseOverrides(o.overrides) };
 }
 
-/** The result of trying to record a chord for a shortcut. */
-export type SetBindingResult = { ok: true } | { ok: false; conflict: ShortcutId };
+/** The result of trying to record (or reset) a chord for a shortcut. */
+export type SetBindingResult =
+  | { ok: true }
+  | { ok: false; conflict: ShortcutId }
+  | { ok: false; reserved: true };
 
 /** Reactive shortcuts store. Singleton, read by the key handlers + hints and
  *  written by the Settings recorder. */
@@ -97,6 +101,7 @@ export class ShortcutsStore {
    *  uses it — the conflict is returned so the recorder can name it. Recording a
    *  shortcut's own default drops its override instead of storing a no-op one. */
   setBinding(id: ShortcutId, chord: KeyChord): SetBindingResult {
+    if (isReservedChord(chord)) return { ok: false, reserved: true };
     const conflict = findConflict(this.bindings, id, chord);
     if (conflict) return { ok: false, conflict };
     const overrides: BindingOverrides = { ...this.prefs.overrides };
@@ -107,13 +112,18 @@ export class ShortcutsStore {
     return { ok: true };
   }
 
-  /** Restore `id` to its default (drop its override). No write when not overridden. */
-  resetBinding(id: ShortcutId): void {
-    if (this.prefs.overrides[id] === undefined) return;
+  /** Restore `id` to its default (drop its override). Refused when another
+   *  shortcut has since taken that default chord — two actions must never share
+   *  one chord. No write when not overridden. */
+  resetBinding(id: ShortcutId): SetBindingResult {
+    if (this.prefs.overrides[id] === undefined) return { ok: true };
+    const conflict = findConflict(this.bindings, id, defaultChord(id));
+    if (conflict) return { ok: false, conflict };
     const overrides: BindingOverrides = { ...this.prefs.overrides };
     delete overrides[id];
     this.prefs = { overrides };
     void this.save();
+    return { ok: true };
   }
 
   /** Restore every shortcut to its default. */

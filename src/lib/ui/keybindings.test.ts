@@ -8,6 +8,7 @@ import {
   formatChord,
   formatChordText,
   isRecordableChord,
+  isReservedChord,
   parseChord,
   parseOverrides,
   resolveBindings,
@@ -135,5 +136,52 @@ describe('keybindings — Keyboard shortcuts are user-customizable', () => {
     // The hint for a rebound shortcut is the rebound chord.
     const b = resolveBindings({ newSession: chord('K', { meta: true, shift: true }) });
     expect(formatChordText(b.newSession)).toBe('⌘⇧K');
+  });
+});
+
+describe('keybindings — hardening', () => {
+  it('Option chords record the physical letter', () => {
+    // macOS reports the layout-transformed character with ⌥ held; the physical key wins.
+    expect(chordFromEvent({ ...ev('å', { altKey: true }), code: 'KeyA' })).toEqual(chord('A', { alt: true }));
+    expect(chordFromEvent({ ...ev('Dead', { altKey: true }), code: 'KeyN' })).toEqual(chord('N', { alt: true }));
+    expect(chordFromEvent({ ...ev('¡', { altKey: true }), code: 'Digit1' })).toEqual(chord('1', { alt: true }));
+    // A dead key with no physical fallback is not a chord; neither is a persisted one.
+    expect(chordFromEvent(ev('Dead', { altKey: true }))).toBeNull();
+    expect(parseChord({ key: 'Dead', alt: true })).toBeNull();
+    // Without ⌥ the character is authoritative (⌘⇧/ produces '?' — recorded as '?').
+    expect(chordFromEvent({ ...ev('?', { metaKey: true, shiftKey: true }), code: 'Slash' })).toEqual(
+      chord('?', { meta: true, shift: true })
+    );
+  });
+
+  it('System chords are reserved', () => {
+    for (const k of ['c', 'v', 'x', 'a', 'z', 'q', 'h']) {
+      expect(isReservedChord(chord(k, { meta: true }))).toBe(true);
+      expect(parseChord({ key: k, meta: true })).toBeNull();
+    }
+    // With another modifier they are ordinary chords.
+    expect(isReservedChord(chord('c', { meta: true, shift: true }))).toBe(false);
+    expect(isReservedChord(chord('c', { ctrl: true }))).toBe(false);
+  });
+
+  it('Colliding persisted bindings resolve to defaults', () => {
+    // Two overrides on one chord: both are dropped (their defaults apply).
+    const b = resolveBindings({
+      newSession: chord('K', { meta: true }),
+      createTask: chord('K', { meta: true })
+    });
+    expect(b.newSession).toEqual(chord('N', { meta: true }));
+    expect(b.createTask).toEqual(chord('T', { meta: true }));
+    // An override that lands on another shortcut's DEFAULT is dropped too.
+    const c = resolveBindings({ newSession: chord('T', { meta: true }) });
+    expect(c.newSession).toEqual(chord('N', { meta: true }));
+    expect(c.createTask).toEqual(chord('T', { meta: true }));
+    // A collision-free set is kept verbatim.
+    const d = resolveBindings({ newSession: chord('K', { meta: true }), createTask: chord('N', { meta: true }) });
+    expect(d.newSession).toEqual(chord('K', { meta: true }));
+    expect(d.createTask).toEqual(chord('N', { meta: true }));
+    // Resolved bindings are always pairwise distinct.
+    const all = Object.values(d).map((x) => JSON.stringify(x));
+    expect(new Set(all).size).toBe(all.length);
   });
 });

@@ -108,3 +108,35 @@ describe('ShortcutsStore', () => {
     expect(s.prefs.overrides).toEqual({});
   });
 });
+
+describe('ShortcutsStore — hardening', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockImplementation(async () => null);
+  });
+
+  it('Resetting a shortcut is refused when its default is taken', async () => {
+    const s = new ShortcutsStore();
+    await s.load();
+    expect(s.setBinding('newSession', chord('K', { meta: true }))).toEqual({ ok: true });
+    // ⌘N is free now, so another shortcut may take it…
+    expect(s.setBinding('archiveSession', chord('N', { meta: true }))).toEqual({ ok: true });
+    // …and resetting newSession back to ⌘N must be refused (never two on one chord).
+    expect(s.resetBinding('newSession')).toEqual({ ok: false, conflict: 'archiveSession' });
+    expect(s.text('newSession')).toBe('⌘K');
+    expect(s.text('archiveSession')).toBe('⌘N');
+    // Freeing ⌘N makes the reset succeed.
+    expect(s.resetBinding('archiveSession')).toEqual({ ok: true });
+    expect(s.resetBinding('newSession')).toEqual({ ok: true });
+    expect(s.text('newSession')).toBe('⌘N');
+  });
+
+  it('System chords are reserved', async () => {
+    const s = new ShortcutsStore();
+    await s.load();
+    expect(s.setBinding('newSession', chord('C', { meta: true }))).toEqual({ ok: false, reserved: true });
+    expect(s.text('newSession')).toBe('⌘N');
+    await flush();
+    expect(savedSlice()).toBeUndefined();
+  });
+});

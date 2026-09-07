@@ -2,7 +2,7 @@
 
 ### Requirement: Launch A Session In A New Git Worktree
 
-The launcher SHALL offer a "Start in a new git worktree" option with an OPTIONAL worktree name. When chosen for a `claude` session, the first spawn SHALL pass `--worktree` (followed by the name when one was given) so Claude Code creates and enters the worktree itself; the pane's recorded cwd stays the project folder. The worktree flag is LAUNCH-TIME ONLY: it SHALL NOT be persisted with the pane and SHALL NOT be re-applied when the pane is restored with `--resume`. Backends without worktree support SHALL ignore the option. A global shortcut (default ⌘⇧N) SHALL open the launcher with the worktree option preset and the currently filtered project preselected, so a name can be entered before launch.
+The launcher SHALL offer a "Start in a new git worktree" option with an OPTIONAL worktree name. When chosen for a `claude` session, the first spawn SHALL pass `--worktree` (followed by the name when one was given) so Claude Code creates and enters the worktree itself; the pane's recorded cwd stays the project folder. The worktree flag is FIRST-SPAWN ONLY: it SHALL NOT be persisted with the pane, SHALL NOT be re-applied when the pane is restored with `--resume`, and SHALL be dropped when the session is archived so a later preview respawn resumes without it. A name beginning with `-` SHALL have the dashes stripped so it is never parsed as a flag. Backends without worktree support SHALL ignore the option. A global shortcut (default ⌘⇧N) SHALL open the launcher with the worktree option preset and the currently filtered project preselected, so a name can be entered before launch.
 
 #### Scenario: Worktree launch passes the worktree flag
 - **WHEN** a claude session is launched with the worktree option and no name
@@ -15,6 +15,10 @@ The launcher SHALL offer a "Start in a new git worktree" option with an OPTIONAL
 #### Scenario: Worktree flag is not re-applied on restore
 - **WHEN** a pane launched with the worktree flag is serialized and restored
 - **THEN** the restored pane carries no worktree args (it resumes with `--resume` only)
+
+#### Scenario: Worktree flag is not re-applied when an archived session is previewed
+- **WHEN** a session launched with the worktree flag is archived and then previewed (`--resume`)
+- **THEN** its registry entry carries no worktree args and the respawn creates no worktree
 
 #### Scenario: Worktree option is ignored for backends without worktree support
 - **WHEN** a copilot session is launched with the worktree option

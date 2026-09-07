@@ -2,7 +2,7 @@
 
 ### Requirement: Keyboard shortcuts are user-customizable
 
-The application SHALL let the user rebind every app-level action shortcut — new session, new worktree session, create task, toggle Terminals panel, new terminal, cycle focus, show shortcuts, insert file path, next/previous agent, next/previous project filter, archive session, pause/resume session — from a `Keyboard shortcuts` section in Settings. A binding is a single key chord (one non-modifier key plus at least one of ⌘/⌃/⌥, or a function key); the shift modifier is part of the chord. Custom bindings SHALL persist in the `shortcuts` slice of `settings.json` and SHALL be applied by the live key handlers, so the recorded chord is what triggers the action. A chord already bound to another shortcut SHALL be refused with a hint naming the conflicting shortcut. Each shortcut SHALL be resettable to its default individually, and all at once. Fixed keys (Esc, bare `?`, the launcher's ⌘Enter, the in-terminal line-edit keys, the voice tap) are not rebindable.
+The application SHALL let the user rebind every app-level action shortcut — new session, new worktree session, create task, toggle Terminals panel, new terminal, cycle focus, show shortcuts, insert file path, next/previous agent, next/previous project filter, archive session, pause/resume session — from a `Keyboard shortcuts` section in Settings. A binding is a single key chord (one non-modifier key plus at least one of ⌘/⌃/⌥, or a function key); the shift modifier is part of the chord. Custom bindings SHALL persist in the `shortcuts` slice of `settings.json` and SHALL be applied by the live key handlers, so the recorded chord is what triggers the action. A chord already bound to another shortcut SHALL be refused with a hint naming the conflicting shortcut, and chords the system owns app-wide (⌘C/⌘V/⌘X/⌘A/⌘Z/⌘Q/⌘H) SHALL be refused as reserved. Each shortcut SHALL be resettable to its default individually (refused, with the same hint, while another shortcut holds that default chord), and all at once. Two shortcuts SHALL never resolve to one chord: persisted overrides that collide are discarded in favor of the defaults. A chord recorded with ⌥ held SHALL be identified by the physical key (macOS reports a layout-transformed character), and a dead key SHALL not be recorded. Fixed keys (Esc, bare `?`, the launcher's ⌘Enter, the in-terminal line-edit keys, the voice tap) are not rebindable.
 
 #### Scenario: Default bindings apply with no customization
 - **WHEN** no custom binding has been recorded
@@ -31,6 +31,22 @@ The application SHALL let the user rebind every app-level action shortcut — ne
 #### Scenario: A chord without a modifier is not recordable
 - **WHEN** the user presses a bare letter while recording
 - **THEN** no binding is recorded
+
+#### Scenario: System chords are reserved
+- **WHEN** the user records ⌘C (or ⌘V, ⌘X, ⌘A, ⌘Z, ⌘Q, ⌘H) for a shortcut
+- **THEN** the binding is refused as reserved
+
+#### Scenario: Resetting a shortcut is refused when its default is taken
+- **WHEN** shortcut A was rebound, shortcut B now uses A's default chord, and the user resets A
+- **THEN** the reset is refused and B is named; freeing the chord lets the reset succeed
+
+#### Scenario: Colliding persisted bindings resolve to defaults
+- **WHEN** the persisted overrides would put two shortcuts on one chord
+- **THEN** the colliding overrides are discarded and those shortcuts use their defaults
+
+#### Scenario: Option chords record the physical letter
+- **WHEN** the user records ⌥N on a macOS layout that reports a dead key or accented character
+- **THEN** the binding is recorded as ⌥N by the physical key, and a dead key with no physical fallback is not recorded
 
 #### Scenario: Shortcut hints follow the custom binding
 - **WHEN** a shortcut has been rebound

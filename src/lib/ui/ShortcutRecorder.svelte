@@ -31,6 +31,15 @@
   function arm() {
     recording = true;
     hint = null;
+    // WebKit does not move focus to a <button> on mouse click, so the keydown
+    // listener below would never see the keys (they'd reach the app's global
+    // handlers instead). Take focus explicitly; `onblur` then disarms cleanly.
+    button?.focus();
+  }
+
+  function reset() {
+    const res = shortcuts.resetBinding(id);
+    if (!res.ok && 'conflict' in res) showHint(`Default is used by “${shortcutLabel(res.conflict)}”`);
   }
 
   function disarm() {
@@ -54,7 +63,7 @@
     }
     const res = shortcuts.setBinding(id, chord);
     if (!res.ok) {
-      showHint(`Used by “${shortcutLabel(res.conflict)}”`);
+      showHint('conflict' in res ? `Used by “${shortcutLabel(res.conflict)}”` : 'Reserved by the system');
       return;
     }
     disarm();
@@ -89,7 +98,7 @@
       class="reset"
       aria-label={`Reset ${shortcutLabel(id)} to its default`}
       use:tooltip={'Reset to default'}
-      onclick={() => shortcuts.resetBinding(id)}
+      onclick={reset}
     >
       <Icon name="rotate-ccw" size={12} />
     </button>

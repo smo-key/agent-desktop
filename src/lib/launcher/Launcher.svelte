@@ -197,6 +197,11 @@
 
       <!-- Worktree section (session-launcher: Launch A Session In A New Git
            Worktree). Hidden for backends without a worktree flag. -->
+      {#if !worktreeAvailable && worktree}
+        <section class="field">
+          <span class="note">Git worktrees are available for Claude sessions only.</span>
+        </section>
+      {/if}
       {#if worktreeAvailable}
         <section class="field">
           <label class="check">
@@ -299,6 +304,10 @@
     font-weight: 500;
     letter-spacing: 0.07em;
     text-transform: uppercase;
+    color: var(--fg-3);
+  }
+  .note {
+    font-size: 12px;
     color: var(--fg-3);
   }
   .check {

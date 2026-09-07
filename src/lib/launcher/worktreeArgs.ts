@@ -21,6 +21,9 @@ export function supportsWorktree(program: string): boolean {
  * when one was given. A blank / missing name lets claude pick the name.
  */
 export function worktreeLaunchArgs(name?: string | null): string[] {
-  const clean = typeof name === 'string' ? name.trim() : '';
+  // `--worktree` takes an OPTIONAL value, so a name beginning with `-` would be
+  // parsed by claude as another flag; strip leading dashes so a name is only
+  // ever a name.
+  const clean = typeof name === 'string' ? name.trim().replace(/^-+/, '').trim() : '';
   return clean === '' ? ['--worktree'] : ['--worktree', clean];
 }

@@ -140,3 +140,28 @@ describe('workspace — copilot panes are first-class agent panes (agent-backend
     expect(store.session(paneId).sessionId).toBeUndefined();
   });
 });
+
+// session-launcher: "Launch A Session In A New Git Worktree" — the worktree flag is
+// FIRST-SPAWN only. Archiving strips it, so the one in-session respawn path (an
+// archived session previewed with `--resume`) can never create a second worktree.
+describe('workspace — worktree launch args are first-spawn only', () => {
+  it('Worktree flag is not re-applied when an archived session is previewed', () => {
+    const store = new WorkspaceStore();
+    const paneId = store.launch({
+      program: 'claude',
+      cwd: '/proj',
+      placement: 'tab',
+      launchArgs: ['--worktree', 'feature-x']
+    });
+    expect(store.session(paneId).launchArgs).toEqual(['--worktree', 'feature-x']);
+    store.closeAgent(paneId);
+    expect(store.session(paneId).launchArgs).toBeUndefined();
+    store.previewArchived(paneId, 1);
+    const s = store.session(paneId);
+    expect(s.launchArgs).toBeUndefined();
+    expect(s.resume).toBe(true);
+    // An empty list is normalized away at launch.
+    const plain = store.launch({ program: 'claude', cwd: '/proj', placement: 'tab', launchArgs: [] });
+    expect(store.session(plain).launchArgs).toBeUndefined();
+  });
+});

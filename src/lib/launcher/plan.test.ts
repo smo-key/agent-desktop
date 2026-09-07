@@ -207,6 +207,15 @@ describe('buildLaunchPlan — Launch A Session In A New Git Worktree', () => {
       worktree: { name: ' feature-x ' }
     });
     expect(plan.launchArgs).toEqual(['--worktree', 'feature-x']);
+    // A name can never masquerade as a flag (`--worktree` takes an optional value).
+    expect(
+      buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'claude', worktree: { name: '--dangerous' } })
+        .launchArgs
+    ).toEqual(['--worktree', 'dangerous']);
+    expect(
+      buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'claude', worktree: { name: '-' } })
+        .launchArgs
+    ).toEqual(['--worktree']);
   });
 
   it('Worktree option is ignored for backends without worktree support', () => {
