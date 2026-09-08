@@ -30,6 +30,7 @@ bullets, one bold title per notable change —
 
 - **Closing a pane kills its whole process tree**: on close and on quit, child processes no longer outlive their pane, with stale or recycled pids never mistaken for ours.
 - **Terminal title privacy**: only echoed commands are recorded, titles stay on-device, and `-p` is redacted only when it is a password flag.
+- **Worktree sessions in any tab**: a worktree session launched in a background tab now adopts its worktree root, shows its subagents, and splits off a shell inside the worktree rather than the main checkout; a session whose worktree was removed no longer points at a missing directory.
 
 ### Removed
 
