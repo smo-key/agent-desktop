@@ -7,7 +7,7 @@
 // helper joins the two by pane id.
 //
 // Framework-free (no Svelte/Tauri imports): it takes the snapshot map plus a
-// `paneId -> cwd` lookup (the route passes `workspace.session(paneId).cwd`), so it
+// `paneId -> cwd` lookup (the route passes `sessionCwd(workspace.sessionAnywhere(paneId))`), so it
 // is trivially unit-tested. The result is sorted + de-duped by session id so a
 // re-seed effect only fires on a real change, not on map-reference churn.
 

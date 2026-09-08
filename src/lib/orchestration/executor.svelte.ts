@@ -436,7 +436,10 @@ function nameFor(pane: LocatedPane): string {
   const entry = workspace.workspaces.find((w) => w.id === pane.workspaceId);
   const wsName = entry?.name?.trim();
   if (wsName) return wsName;
-  const cwd = pane.session.cwd;
+  // The agent's REAL dir, so a worktree agent's fallback name is its worktree
+  // rather than the project folder it was launched from (matching the `cwd` the
+  // same record reports).
+  const cwd = sessionCwd(pane.session);
   if (cwd) {
     const leaf = cwd.replace(/[/\\]+$/, '').split(/[/\\]/).pop();
     if (leaf) return leaf;

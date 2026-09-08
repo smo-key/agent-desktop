@@ -248,15 +248,21 @@
     let stopWatching: (() => void) | undefined;
     // Gated on `shellReady` (never rejects) so pane programs resolve against the
     // real platform default rather than the pre-hydration placeholder.
-    void shellReady.then(restorePersistedLayout).then(() => {
-      restored = true;
-      // Seed restored agents' titles from the durable cache synchronously, so the
-      // cards render their real titles immediately rather than flashing their
-      // "Session N" fallback until the first (async) activity poll lands.
-      titles.hydrate(currentPaneRefs());
-      stopWatching = watchAndPersist();
-      void forgetRemovedWorktrees();
-    });
+    void shellReady
+      .then(restorePersistedLayout)
+      // BEFORE `restored` flips: flipping it renders the panes, and a pane whose
+      // adopted worktree dir was removed would spawn into the missing directory
+      // (an outright spawn failure) before the clear landed — and PaneNode keys
+      // the terminal on the pane id, so a later clear cannot remount it.
+      .then(forgetRemovedWorktrees)
+      .then(() => {
+        restored = true;
+        // Seed restored agents' titles from the durable cache synchronously, so
+        // the cards render their real titles immediately rather than flashing
+        // their "Session N" fallback until the first (async) activity poll lands.
+        titles.hydrate(currentPaneRefs());
+        stopWatching = watchAndPersist();
+      });
 
     // Seed the usage-dashboard snapshots store from the current set, then
     // subscribe to live `usage://snapshot` pushes from the Rust watcher. The

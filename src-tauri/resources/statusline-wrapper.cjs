@@ -261,6 +261,14 @@ function gitStatus(workspaceDir) {
       if (absGit !== absCommon) {
         const name = path.basename(absGit);
         out.worktree = name !== '' ? name : null;
+        // The worktree's ROOT dir, reported EXACTLY rather than left for the app to
+        // infer from the name: git derives the admin name from the directory's
+        // basename but APPENDS A COUNTER on collision (a second `feature-x`
+        // anywhere in the repo becomes `feature-x1`), so the name is not reliably a
+        // path segment of the dir. `--show-toplevel` answers from any subdirectory,
+        // so it is also correct once the session has cd'ed deeper.
+        const top = runGit(['rev-parse', '--show-toplevel']);
+        if (top !== null && top !== '') out.worktree_root = path.resolve(dir, top);
       }
     }
   } catch {

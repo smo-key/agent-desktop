@@ -4,7 +4,10 @@ import { paneWorktreesToForget, worktreeCwdToAdopt, worktreeRootOf } from './wor
 /** A pane launched with `--worktree` in the project folder. */
 const launched = { cwd: '/proj', launchArgs: ['--worktree'] };
 /** What such a session reports once claude has made its worktree. */
-const reported = { cwd: '/proj/.claude/worktrees/feature-x', git: { worktree: 'feature-x' } };
+const reported = {
+  cwd: '/proj/.claude/worktrees/feature-x',
+  git: { worktree: 'feature-x', worktree_root: '/proj/.claude/worktrees/feature-x' }
+};
 
 describe('worktree cwd adoption', () => {
   it('A worktree session resumes in its worktree', () => {
@@ -20,6 +23,52 @@ describe('worktree cwd adoption', () => {
     expect(worktreeCwdToAdopt(adopted, { cwd: '/somewhere/else', git: { worktree: 'feature-x' } })).toBeNull();
   });
 
+  it('A worktree session adopts the reported worktree root', () => {
+    // git derives a worktree's ADMIN name from its directory basename but appends a
+    // counter on collision (`feature-x` → `feature-x1`), so the name is not reliably
+    // a path segment — deriving the root from it would silently never adopt. The
+    // wrapper reports the root directly, and that wins.
+    expect(
+      worktreeCwdToAdopt(launched, {
+        cwd: '/proj/.claude/worktrees/shiny-thing/src',
+        git: { worktree: 'shiny-thing1', worktree_root: '/proj/.claude/worktrees/shiny-thing' }
+      })
+    ).toBe('/proj/.claude/worktrees/shiny-thing');
+    // An older wrapper reports no root: fall back to deriving it from the name, and
+    // to the reported dir when even that does not match — never to nothing.
+    expect(
+      worktreeCwdToAdopt(launched, {
+        cwd: '/proj/.claude/worktrees/feature-x/src',
+        git: { worktree: 'feature-x' }
+      })
+    ).toBe('/proj/.claude/worktrees/feature-x');
+    expect(
+      worktreeCwdToAdopt(launched, {
+        cwd: '/proj/.claude/worktrees/shiny-thing',
+        git: { worktree: 'shiny-thing1' }
+      })
+    ).toBe('/proj/.claude/worktrees/shiny-thing');
+  });
+
+  it('A worktree session keeps the path form the session reports', () => {
+    // git canonicalizes symlinks (`/var` → `/private/var` on macOS) while the
+    // session reports the unresolved path. Claude encodes ITS form into the
+    // project-dir name the subagent reader looks up, so the reported root is used
+    // for its NAME and the session's own path is cut at that segment.
+    expect(
+      worktreeCwdToAdopt(
+        { cwd: '/var/f/repo', launchArgs: ['--worktree'] },
+        {
+          cwd: '/var/f/repo/.claude/worktrees/feature-x/src',
+          git: {
+            worktree: 'feature-x',
+            worktree_root: '/private/var/f/repo/.claude/worktrees/feature-x'
+          }
+        }
+      )
+    ).toBe('/var/f/repo/.claude/worktrees/feature-x');
+  });
+
   it('A worktree session adopts the worktree root, not a subdirectory', () => {
     // The report is the session's CURRENT dir. If it has already `cd`ed deeper, the
     // subdir is still inside the worktree — so the worktree gate alone would let it
@@ -28,7 +77,7 @@ describe('worktree cwd adoption', () => {
     expect(
       worktreeCwdToAdopt(launched, {
         cwd: '/proj/.claude/worktrees/feature-x/src/lib',
-        git: { worktree: 'feature-x' }
+        git: { worktree: 'feature-x', worktree_root: '/proj/.claude/worktrees/feature-x' }
       })
     ).toBe('/proj/.claude/worktrees/feature-x');
     expect(worktreeRootOf('/w/feature-x', 'feature-x')).toBe('/w/feature-x');
@@ -39,8 +88,10 @@ describe('worktree cwd adoption', () => {
     // No segment matches the worktree's name — we cannot tell where it starts, so
     // nothing is adopted rather than guessing.
     expect(worktreeRootOf('/w/other/src', 'feature-x')).toBeNull();
+    // Nothing usable at all (no root, an unmatched name, and the reported dir IS
+    // the launch dir) adopts nothing.
     expect(
-      worktreeCwdToAdopt(launched, { cwd: '/tmp/elsewhere', git: { worktree: 'feature-x' } })
+      worktreeCwdToAdopt(launched, { cwd: '/proj', git: { worktree: 'feature-x' } })
     ).toBeNull();
   });
 

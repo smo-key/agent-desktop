@@ -21,6 +21,13 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 export interface GitStatus {
   branch: string | null;
   dirty: boolean | null;
+  /**
+   * The linked worktree's ROOT dir (`git rev-parse --show-toplevel`), or
+   * null/absent (main checkout, off-repo, older wrapper). Reported explicitly
+   * because the worktree NAME is git's admin name, which gains a counter suffix
+   * on a basename collision and so is not reliably a segment of the path.
+   */
+  worktree_root?: string | null;
   /** Number of changed paths in the worktree, or null when git couldn't answer. */
   modified?: number | null;
   ahead?: number | null;

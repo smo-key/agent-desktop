@@ -23,7 +23,15 @@
 // "delegation never crashes the wrapper" property.
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -329,6 +337,31 @@ describe('statusline-wrapper git worktree detection', () => {
     base.workspace = { current_dir: dir, project_dir: dir };
     return JSON.stringify(base);
   }
+
+  it('Snapshot reports the worktree root exactly', () => {
+    // git's worktree ADMIN name gains a counter on a basename collision, so the
+    // name is not reliably a path segment of the dir — the root is reported
+    // directly, and it is the ROOT even when the session sits in a subdir.
+    expect(runWrapper(payloadIn(linked)).status).toBe(0);
+    const g = readSnapshot().git as Record<string, unknown>;
+    // git canonicalizes (on macOS /var is a symlink to /private/var), so compare
+    // the tail — the app cuts the SESSION's own path at this dir's name rather
+    // than adopting git's text, precisely because the two forms differ.
+    expect(String(g.worktree_root).endsWith('/.claude/worktrees/feature-x')).toBe(true);
+
+    const sub = join(linked, 'src');
+    mkdirSync(sub, { recursive: true });
+    expect(runWrapper(payloadIn(sub)).status).toBe(0);
+    const gSub = readSnapshot().git as Record<string, unknown>;
+    // Reported from a SUBDIR, it is still the worktree's root.
+    expect(gSub.worktree_root).toBe(g.worktree_root);
+
+    // The main checkout is not a linked worktree: no name, no root.
+    expect(runWrapper(payloadIn(repo)).status).toBe(0);
+    const gMain = readSnapshot().git as Record<string, unknown>;
+    expect(gMain.worktree).toBeNull();
+    expect(gMain.worktree_root).toBeUndefined();
+  });
 
   it('Snapshot reports the dir the session is in', () => {
     // session-launcher: the app spawns a `--worktree` pane in the project folder,

@@ -42,7 +42,7 @@ export interface WorktreeAdoptionSession {
 export interface WorktreeAdoptionSnapshot {
   /** The session's CURRENT working dir, as claude reports it. */
   cwd?: string | null;
-  git?: { worktree?: string | null } | null;
+  git?: { worktree?: string | null; worktree_root?: string | null } | null;
 }
 
 /**
@@ -73,15 +73,37 @@ export function worktreeCwdToAdopt(
   if (!session.launchArgs?.includes('--worktree')) return null;
   const name = snapshot?.git?.worktree;
   if (!name) return null;
+  // The worktree's ROOT, not wherever the session happens to be standing: the
+  // reported dir is its CURRENT one, so a session that has already `cd`ed deeper
+  // would otherwise pin the pane to that subdir permanently (the subdir is still
+  // inside the worktree, so the worktree gate alone allows it), and the subagent
+  // reader — which locates sidecars by exact dir — would never find them.
+  //
+  // The wrapper reports the root (`git rev-parse --show-toplevel`), but we use it
+  // for its DIRECTORY NAME and then cut the session's OWN reported path at that
+  // segment, rather than adopting git's text verbatim: git resolves symlinks
+  // (`/var` → `/private/var` on macOS) while the session reports the unresolved
+  // path, and the pane's dir has to match the session's form — that form is what
+  // Claude encodes into its project-dir name, which is how the subagent reader
+  // finds the session's sidecars.
+  //
+  // The reported root's basename is also what makes this reliable at all: git's
+  // admin NAME gains a counter suffix on a basename collision (`feature-x` →
+  // `feature-x1`) and then matches no segment of the path. The admin name is only
+  // the fallback for a snapshot written by an older wrapper, and the reported dir
+  // itself the last resort — never adopting nothing when a worktree is confirmed.
+  const root = typeof snapshot?.git?.worktree_root === 'string' ? snapshot.git.worktree_root.trim() : '';
   const reported = typeof snapshot?.cwd === 'string' ? snapshot.cwd.trim() : '';
-  if (!reported || reported === session.cwd) return null;
-  // Adopt the worktree's ROOT, not wherever the session happens to be standing:
-  // the report is the session's CURRENT dir, so a session that has already `cd`ed
-  // into a subdir would otherwise pin the pane to that subdir permanently (the
-  // subdir is still inside the worktree, so the worktree gate alone allows it),
-  // and the subagent reader — which locates sidecars by exact dir — would then
-  // never find them.
-  return worktreeRootOf(reported, name);
+  const marker = root ? baseName(root) : name;
+  const adopt = worktreeRootOf(reported, marker) || worktreeRootOf(reported, name) || root || reported;
+  if (!adopt || adopt === session.cwd) return null;
+  return adopt;
+}
+
+/** The last non-empty path segment of `dir` (either separator). Pure. */
+function baseName(dir: string): string {
+  const parts = dir.split(/[/\\]/).filter((p) => p !== '');
+  return parts[parts.length - 1] ?? '';
 }
 
 /**

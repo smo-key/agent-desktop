@@ -566,11 +566,23 @@ pub struct SessionRef {
     pub program: Option<String>,
 }
 
-/// Encode an absolute cwd the way Claude names its project dirs: every path
-/// separator (`/`) becomes `-`. E.g. `/Users/arthur/git/agent-desktop` ->
-/// `-Users-arthur-git-agent-desktop`. (Backslashes are mapped too, defensively.)
+/// Encode an absolute cwd the way Claude names its project dirs: every character
+/// that is not an ASCII letter, digit or `-` becomes `-`. E.g.
+/// `/Users/arthur/git/agent-desktop` -> `-Users-arthur-git-agent-desktop`, and
+/// `/Users/me/app/.claude/worktrees/feature-x` ->
+/// `-Users-me-app--claude-worktrees-feature-x` (the `/` and the `.` each map to a
+/// `-`, hence the doubled one).
+///
+/// Mapping ONLY the separators — as this did until 2026-09 — was wrong for any
+/// path containing `.`, `_`, `+` or a space, which includes EVERY linked worktree
+/// (`.claude/worktrees/…`): the encoded name missed, and since
+/// [`subagents_for_sessions`] has no scan fallback (unlike
+/// [`crate::activity::find_transcript`]), a worktree session listed no subagents
+/// at all.
 pub fn project_dir_for_cwd(cwd: &str) -> String {
-    cwd.replace(['/', '\\'], "-")
+    cwd.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+        .collect()
 }
 
 /// Resolve the absolute project session dir for a session under `projects_base`
@@ -1201,14 +1213,29 @@ mod tests {
         assert!(parse_session_subagents(&dir, "sess-x").is_empty());
     }
 
-    /// `project_dir_for_cwd` encodes a cwd the way Claude names its project dirs
-    /// (every `/` -> `-`, including the leading separator).
+    /// `project_dir_for_cwd` encodes a cwd the way Claude names its project dirs:
+    /// EVERY character that is not an ASCII letter, digit or `-` becomes `-`, not
+    /// just the separators. The worktree case is the one that mattered: a real
+    /// `~/.claude/projects` entry for a session in `<repo>/.claude/worktrees/<name>`
+    /// carries a DOUBLED `-` where `/.claude` sits, so separator-only encoding
+    /// missed it and the session's subagents were never found.
     #[test]
     fn project_dir_encoding_matches_claude() {
         assert_eq!(
             project_dir_for_cwd("/Users/arthur/git/agent-desktop"),
             "-Users-arthur-git-agent-desktop"
         );
+        assert_eq!(
+            project_dir_for_cwd("/Users/me/app/.claude/worktrees/feature-x"),
+            "-Users-me-app--claude-worktrees-feature-x"
+        );
+        // `_`, `+`, `.` and spaces all fold to `-`; digits and `-` are kept.
+        assert_eq!(
+            project_dir_for_cwd("/w/my_app+2/a b/v1.2"),
+            "-w-my-app-2-a-b-v1-2"
+        );
+        // Windows separators fold too (a defensive carry-over).
+        assert_eq!(project_dir_for_cwd("C:\\w\\app"), "C--w-app");
     }
 
     /// `subagents_for_sessions` builds the per-session map, resolving each

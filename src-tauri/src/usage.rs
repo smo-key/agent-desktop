@@ -62,6 +62,12 @@ pub struct GitStatus {
     /// (older wrapper schema, main checkout, or off-repo).
     #[serde(default)]
     pub worktree: Option<String>,
+    /// The linked worktree's ROOT dir (`git rev-parse --show-toplevel`), else
+    /// `null` / absent. Reported explicitly because the worktree NAME is git's
+    /// admin name, which gains a counter suffix on a basename collision and so is
+    /// not reliably a segment of the path.
+    #[serde(default)]
+    pub worktree_root: Option<String>,
 }
 
 /// A per-pane usage snapshot, mirroring the JSON the statusline wrapper writes.
@@ -329,7 +335,8 @@ mod tests {
                 modified: None,
                 ahead: Some(2),
                 behind: Some(0),
-                worktree: None
+                worktree: None,
+                worktree_root: None,
             })
         );
         assert_eq!(snap.ts, 1_717_200_000);
@@ -364,7 +371,8 @@ mod tests {
                 modified: None,
                 ahead: None,
                 behind: None,
-                worktree: None
+                worktree: None,
+                worktree_root: None,
             })
         );
     }

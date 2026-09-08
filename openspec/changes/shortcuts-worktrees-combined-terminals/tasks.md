@@ -63,10 +63,21 @@
       `sessionCwd` is preferred for respawn, transcript and subagent lookups.
 
 - [x] 2.7 Review fixes: resolve the pane from ANY workspace (`sessionAnywhere`,
-      also for the subagent refs), adopt the worktree ROOT (`worktreeRootOf`),
-      forget a removed worktree dir at startup (`paneWorktreesToForget` +
-      `clearWorktreeCwd`), and prefer the worktree for splits, new-session
-      inherit, the orchestrator's `AgentInfo.cwd` and startup session pruning.
+      also for the subagent refs), adopt the worktree ROOT, forget a removed
+      worktree dir before the panes render (`paneWorktreesToForget` +
+      `clearWorktreeCwd`), and prefer the worktree for splits, the
+      orchestrator's `AgentInfo.cwd` and startup session pruning. (`activeCwd`
+      also prefers it, but its only production caller always passes a cwd, so
+      that path is currently inert.)
+- [x] 2.8 Round-2 review fixes: the wrapper reports the worktree ROOT
+      (`git.worktree_root`) since git's admin name gains a counter suffix on a
+      basename collision and then matches no path segment — the app cuts the
+      session's OWN reported path at that dir's name, because git canonicalizes
+      symlinks while Claude encodes the session's form into the project-dir
+      name. `project_dir_for_cwd` now folds EVERY non-alphanumeric to `-` as
+      Claude does: mapping only separators missed every `.claude/worktrees/…`
+      path, so a worktree session's subagents were never found whatever cwd it
+      was given.
 
 ## 4. Verification
 
