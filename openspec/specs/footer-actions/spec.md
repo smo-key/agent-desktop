@@ -3,6 +3,7 @@
 ## Purpose
 TBD - created by archiving change agent-session-ux-improvements. Update Purpose after archive.
 ## Requirements
+
 ### Requirement: Per-branch PR bubble in the footer
 
 The footer SHALL show a per-branch PR bubble immediately to the RIGHT of the
@@ -259,3 +260,14 @@ image SHALL only hide that piece of the row and SHALL NOT error or hide the row.
 - **WHEN** a PR's author, last-updated time, or avatar image is unavailable
 - **THEN** only that missing piece is omitted from the row and the row still renders and opens on GitHub
 
+### Requirement: Footer shows the focused session's worktree
+
+The footer's right zone SHALL show a worktree pill, next to the model pill, naming the linked git worktree the focused session runs in (from its snapshot's `git.worktree`), and SHALL omit the pill when the focused session is not in a worktree or has no snapshot.
+
+#### Scenario: Worktree pill shown for a worktree session
+- **WHEN** the focused pane's snapshot reports worktree `feature-x`
+- **THEN** the footer view carries `feature-x` as the worktree and the pill renders it
+
+#### Scenario: Worktree pill omitted outside a worktree
+- **WHEN** the focused pane's snapshot reports no worktree, or no pane is focused
+- **THEN** the footer view's worktree is null and no pill renders

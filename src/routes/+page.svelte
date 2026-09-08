@@ -9,13 +9,19 @@
   import { help } from '$lib/ui/helpStore.svelte';
   import SettingsModal from '$lib/ui/SettingsModal.svelte';
   import ConfirmModal from '$lib/ui/ConfirmModal.svelte';
+  import WhatsNewModal from '$lib/changelog/WhatsNewModal.svelte';
+  import { whatsNew } from '$lib/changelog/whatsNewStore.svelte';
+  import { loadSettings } from '$lib/settings/persist';
   import { confirmModal } from '$lib/ui/confirmStore.svelte';
   import { settingsModal } from '$lib/ui/settingsStore.svelte';
   import { openWith } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { sessionGrouping } from '$lib/settings/sessionGrouping.svelte';
   import { shellSettings } from '$lib/settings/shell.svelte';
+  import { agentSettings } from '$lib/settings/agent.svelte';
+  import { isAgentProgram } from '$lib/agent/backends';
   import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
   import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
@@ -25,8 +31,12 @@
   import { initVoiceActivation } from '$lib/voice/activation';
   import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
-  import { startNewSession } from '$lib/launcher/newSession';
-  import { workspace } from '$lib/layout/workspace.svelte';
+  import { startNewSession, startNewWorktreeSession } from '$lib/launcher/newSession';
+  import { shortcuts } from '$lib/settings/shortcuts.svelte';
+  import { showTerminalsDock, terminalsCombined } from '$lib/tasks/placement';
+  import { sessionCwd, workspace } from '$lib/layout/workspace.svelte';
+  import { invoke } from '@tauri-apps/api/core';
+  import { paneWorktreesToForget, worktreeCwdToAdopt } from '$lib/launcher/worktreeArgs';
   import { insertFilenameInto, focusedTerminalHandle } from '$lib/layout/insertFilename';
   import { initFileDrop } from '$lib/layout/fileDrop';
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
@@ -77,7 +87,6 @@
   import { focusRequest } from '$lib/overview/focusRequest.svelte';
   import { listen } from '@tauri-apps/api/event';
   import { runtimeMap } from '$lib/overview/runtime';
-  import { coordinatorNeedsInput } from '$lib/orchestration/coordinatorNeedsInput.svelte';
   import { windowFocus } from '$lib/overview/windowFocus.svelte';
   import { focusAgent } from '$lib/overview/focusAgent.svelte';
   import { alerts } from '$lib/overview/alerts.svelte';
@@ -114,22 +123,33 @@
     // background-staging path as launch, surfaced only via the title-bar pill. The
     // returned stop fn (a no-op outside Tauri) is cleared on teardown below.
     const stopUpdatePolling = startUpdatePolling();
+    // Release notes: open the What's new dialog once per version after an update
+    // (whats-new-dialog spec). Reads settings.json for the `whatsNew.seenVersion`
+    // slice; a fresh install or a dev build stays quiet. Best-effort, non-blocking.
+    void loadSettings().then((settings) => whatsNew.maybeShowOnLaunch(settings));
     // Load the user's open-with preferences (seeds defaults on first run).
     void openWith.load();
     // Load session-title preferences (the opt-in cloud title fallback).
     void titleSettings.load();
     // Load the auto-advance focus preference (opt-in; defaults OFF).
     void autoAdvance.load();
-    // Load the compact-mode preference (opt-in; defaults OFF / full three-line rows).
+    // Load the sessions-panel density preference (defaults to full three-line rows).
     void compactMode.load();
+    // Load the sessions-panel grouping preference (defaults to status lanes).
+    void sessionGrouping.load();
     // Resolve the platform default shell from the backend and load the user's
     // shell preference. The layout restore below AWAITS this: until it resolves,
     // `defaultShell()` still reports the Unix default, and restoring a Windows
     // layout against it would rewrite every saved `pwsh` to `/bin/zsh` — spawning
     // dead panes AND persisting the mangled value back over the good one.
     const shellReady = shellSettings.load();
+    // Load the agent-backend preference (Claude / Copilot for new sessions) and
+    // probe whether the selected CLI is installed (agent-backends).
+    void agentSettings.load();
     // Load the subagents-visibility preference (defaults ON / subagents shown).
     void subagentsVisible.load();
+    // Load the user's custom keyboard-shortcut bindings (defaults until loaded).
+    void shortcuts.load();
     // Load the needs-input alert channel modes (opt-in; both default OFF / silent).
     void notifications.load();
     // Load the persisted one-time onboarding flag FIRST so a returning user who has
@@ -211,7 +231,7 @@
       // recurring interval below is mount-once and at mount the list is still
       // empty). Refresh status after so the advanced ahead/behind surfaces promptly
       // — "shortly after launch", not a full FETCH_POLL_MS cadence later.
-      const paths = projects.list.map((p) => p.path);
+      const paths = projects.active.map((p) => p.path);
       void projectGit.fetchRemotes(paths).then(() => projectGit.refresh(paths));
     });
     // Terminals restore stopped now (auto-restart was dropped); the close handler is
@@ -228,14 +248,21 @@
     let stopWatching: (() => void) | undefined;
     // Gated on `shellReady` (never rejects) so pane programs resolve against the
     // real platform default rather than the pre-hydration placeholder.
-    void shellReady.then(restorePersistedLayout).then(() => {
-      restored = true;
-      // Seed restored agents' titles from the durable cache synchronously, so the
-      // cards render their real titles immediately rather than flashing their
-      // "Session N" fallback until the first (async) activity poll lands.
-      titles.hydrate(currentPaneRefs());
-      stopWatching = watchAndPersist();
-    });
+    void shellReady
+      .then(restorePersistedLayout)
+      // BEFORE `restored` flips: flipping it renders the panes, and a pane whose
+      // adopted worktree dir was removed would spawn into the missing directory
+      // (an outright spawn failure) before the clear landed — and PaneNode keys
+      // the terminal on the pane id, so a later clear cannot remount it.
+      .then(forgetRemovedWorktrees)
+      .then(() => {
+        restored = true;
+        // Seed restored agents' titles from the durable cache synchronously, so
+        // the cards render their real titles immediately rather than flashing
+        // their "Session N" fallback until the first (async) activity poll lands.
+        titles.hydrate(currentPaneRefs());
+        stopWatching = watchAndPersist();
+      });
 
     // Seed the usage-dashboard snapshots store from the current set, then
     // subscribe to live `usage://snapshot` pushes from the Rust watcher. The
@@ -273,7 +300,7 @@
     });
 
     // Start the ORCHESTRATION EXECUTOR: subscribe to `orchestration://request`
-    // (the Rust control socket round-trips a coordinator's toolkit ops here) and
+    // (the Rust control socket round-trips the MCP toolkit's ops here) and
     // perform each op against the pane/launcher/activity stores, replying via the
     // `orchestration_reply` command. Mirrors the other listeners' lifecycle.
     let unlistenExecutor: (() => void) | undefined;
@@ -336,7 +363,55 @@
   // The app's app-pane session refs ({sessionId, cwd}), joining each snapshot's
   // Claude session id with its pane cwd from the workspace registry (pure helper).
   function currentSessionRefs(): SessionRef[] {
-    return appSessionRefs(snapshots.byPane, (paneId) => workspace.session(paneId).cwd);
+    return appSessionRefs(snapshots.byPane, (paneId) => {
+      // ANY workspace, not just the active one: `session()` fabricates a
+      // login-shell default for a pane outside it, which would hand the subagent
+      // watcher `{cwd: null, program: '/bin/zsh'}` — silently dropping the watch
+      // (and mislabelling a copilot pane) whenever the user switches session tabs.
+      const sess = workspace.sessionAnywhere(paneId);
+      if (!sess) return null;
+      // The ADOPTED worktree dir when there is one: the subagent reader locates a
+      // session's sidecars purely by cwd, so a `--worktree` session lists none
+      // unless we hand it the dir the session actually runs in.
+      return { cwd: sessionCwd(sess), program: sess.program };
+    });
+  }
+
+  /**
+   * Drop any ADOPTED worktree dir that no longer exists (session-launcher: "A
+   * worktree session resumes in its worktree"). A worktree is commonly removed
+   * once its branch merges, and the dir is persisted — so a restored pane would
+   * otherwise keep trying to spawn in a missing directory forever. Existence is
+   * checked with `resolve_path`, which canonicalizes and so answers `null` for a
+   * path that is gone. Runs once, right after restore.
+   */
+  async function forgetRemovedWorktrees(): Promise<void> {
+    const panes: { paneId: string; worktreeCwd?: string }[] = [];
+    for (const ws of workspace.workspaces) {
+      for (const [paneId, sess] of Object.entries(ws.registry)) {
+        if (sess.worktreeCwd) panes.push({ paneId, worktreeCwd: sess.worktreeCwd });
+      }
+    }
+    if (panes.length === 0) return;
+    const alive = new Set<string>();
+    await Promise.all(
+      panes.map(async (p) => {
+        try {
+          const resolved = await invoke<string | null>('resolve_path', {
+            cwd: null,
+            token: p.worktreeCwd
+          });
+          if (resolved) alive.add(p.worktreeCwd as string);
+        } catch {
+          // Treat an IPC failure as "still there": never discard a good dir over a
+          // transient error — a missing one is caught on the next launch.
+          alive.add(p.worktreeCwd as string);
+        }
+      })
+    );
+    for (const paneId of paneWorktreesToForget(panes, (dir) => alive.has(dir))) {
+      workspace.clearWorktreeCwd(paneId);
+    }
   }
 
   // The app's claude panes as {paneId, sessionId, cwd} — the input to the
@@ -347,8 +422,13 @@
     const refs: PaneRef[] = [];
     for (const ws of workspace.workspaces) {
       for (const [paneId, sess] of Object.entries(ws.registry)) {
-        if (sess.program === 'claude' && sess.sessionId) {
-          refs.push({ paneId, sessionId: sess.sessionId, cwd: sess.cwd });
+        if (isAgentProgram(sess.program) && sess.sessionId) {
+          refs.push({
+            paneId,
+            sessionId: sess.sessionId,
+            cwd: sessionCwd(sess),
+            program: sess.program
+          });
         }
       }
     }
@@ -368,6 +448,27 @@
   // The app's set of launched session ids (sorted, de-duped), used to keep the
   // subagents watched-set current as panes come and go.
   const ourSessionIds = $derived(appSessionIds(snapshots.byPane));
+
+  // ADOPT a worktree session's real working dir (session-launcher: "A worktree
+  // session resumes in its worktree"). `claude --worktree` creates the worktree
+  // itself, so the pane was spawned in the project folder and only the running
+  // session knows where it ended up — it reports that dir in its snapshot. The
+  // rule (`worktreeCwdToAdopt`) adopts it ONCE, so a session that later `cd`s
+  // elsewhere never drags the pane's dir with it. Runs off the snapshot map, so a
+  // pane is adopted as soon as its first statusline write lands.
+  $effect(() => {
+    for (const [paneId, snap] of Object.entries(snapshots.byPane)) {
+      // ANY workspace: the snapshot map spans them all, and `session()` would
+      // fabricate a login-shell pane for one outside the active workspace — so a
+      // worktree session launched and then left in a background tab would never be
+      // adopted, and would later adopt whatever dir it had `cd`ed to by the time
+      // its tab came forward.
+      const sess = workspace.sessionAnywhere(paneId);
+      if (!sess) continue;
+      const adopt = worktreeCwdToAdopt(sess, snap);
+      if (adopt) workspace.adoptWorktreeCwd(paneId, adopt);
+    }
+  });
 
   // Keep the SUBAGENTS watched-set current too: whenever the app's session refs
   // change (a new app pane reports a session id, a cwd resolves, or one ends),
@@ -392,15 +493,17 @@
 
   // PROJECT GIT poll. Each project's folder is probed for its branch + ahead/
   // behind/dirty (the `git_status_for` command) so the project pane shows its
-  // current branch even with no agent running. Reading `projects.list` here both
-  // refreshes immediately AND re-runs this effect when a project is added/removed,
-  // so a new project is probed at once; a slow interval keeps it fresh thereafter.
+  // current branch even with no agent running. Only ACTIVE projects are probed —
+  // an archived project's folder is left alone until it is unarchived. Reading
+  // `projects.active` here both refreshes immediately AND re-runs this effect when
+  // a project is added/removed/archived, so a new project is probed at once; a
+  // slow interval keeps it fresh thereafter.
   const GIT_POLL_MS = 4000;
   $effect(() => {
-    const paths = projects.list.map((p) => p.path);
+    const paths = projects.active.map((p) => p.path);
     void projectGit.refresh(paths);
     const id = setInterval(() => {
-      void projectGit.refresh(projects.list.map((p) => p.path));
+      void projectGit.refresh(projects.active.map((p) => p.path));
     }, GIT_POLL_MS);
     return () => clearInterval(id);
   });
@@ -416,7 +519,7 @@
   //
   // This effect owns ONLY the recurring interval, and reads no rune synchronously,
   // so it mounts ONCE — unlike the local status poll above, an immediate re-fetch
-  // on every `projects.list` reassignment (coordinator start, drag-reorder, edit,
+  // on every `projects.list` reassignment (drag-reorder, edit,
   // reload) would be an off-schedule network fetch storm. The interval re-reads the
   // live list each tick, so a newly added project is picked up within one cycle (and
   // its LOCAL branch/status already shows at once via the fast 4s poll). The INITIAL
@@ -425,7 +528,7 @@
   const FETCH_POLL_MS = 180000;
   $effect(() => {
     const id = setInterval(() => {
-      const paths = projects.list.map((p) => p.path);
+      const paths = projects.active.map((p) => p.path);
       void projectGit.fetchRemotes(paths).then(() => projectGit.refresh(paths));
     }, FETCH_POLL_MS);
     return () => clearInterval(id);
@@ -486,8 +589,7 @@
       alertNowMs,
       activity.bySession,
       undefined,
-      events.activityMap(),
-      new Set(Object.keys(coordinatorNeedsInput.all()))
+      events.activityMap()
     ).map((r) => {
       // Enrich the row for its desktop notification: the TITLE reads
       // "<Project Name>: <Agent Title>". The Agent Title is the GENERATED session
@@ -495,23 +597,14 @@
       // workspace/cwd `name` — so it reads "Fix login dialog" rather than the bare
       // "Session N". The Project Name is the agent's owning project's display name
       // (dropped when it has none). `notificationTitle`/`Body` read `name`/
-      // `projectName`; the focus/coordinator logic keys on `paneId`, so both
-      // overrides are alert-display only.
+      // `projectName`; the focus logic keys on `paneId`, so both overrides are
+      // alert-display only.
       const title = titles.titleFor(r.paneId);
       const proj = projectForId(projects.list, r.projectId);
       const projectName = proj ? projectLabel(proj) : null;
       return { ...r, name: title ?? r.name, projectName };
     })
   );
-  // Clear a coordinator's explicit needs-input flag once it resumes (status back to
-  // `working`). This mirror of the Inbox effect must ALSO run here on the always-
-  // mounted route, otherwise the flag would never clear while the user is in grid view
-  // (Inbox unmounted), pinning a coordinator in attention. Idempotent with the Inbox's.
-  $effect(() => {
-    for (const r of alertRows) {
-      if (r.role === 'coordinator') coordinatorNeedsInput.clearOnWorking(r.paneId, r.status);
-    }
-  });
   // The agent the user is "viewing": the focused grid PANE in grid view (focusedPaneId,
   // not the leaf id), else the inbox focus agent — used by the `agent-unfocused` mode.
   const viewedPaneId = $derived(view.isGrid ? workspace.focusedPaneId : focusAgent.paneId);
@@ -581,7 +674,7 @@
   // Used by Cmd-T (new-task dialog), Cmd-Y (new terminal) and Cmd-Tab (focus cycle).
   const terminalsActiveProjectId = $derived(
     activeProjectId({
-      focusedId: workspace.active ? workspace.focusedId : '',
+      focusedId: workspace.focusedPaneId ?? '', // the PANE id (registry key), not the leaf id
       projectIdOf: (id) => workspace.session(id).projectId,
       selectedProjectId:
         projectFilter.selected === ALL || projectFilter.selected === UNASSIGNED
@@ -609,6 +702,13 @@
 
   // Cmd-Y: open a new bare interactive shell in the active project (no command)
   // and focus it. Opens the Terminals panel first so the new terminal is visible.
+  // Terminals placement (tasks-panel / ui-preferences): in the COMBINED placement
+  // terminals are rows in the sessions list, the right dock + its toggle are hidden
+  // (the dock stays mounted, hidden, as the PTY home), ⌘J is inert, and a new
+  // terminal is SELECTED as a row (via `focusRequest`) rather than focused in the dock.
+  const combinedTerminals = $derived(terminalsCombined(uiPrefs.data.terminalsPlacement));
+  const dockShown = $derived(showTerminalsDock(uiPrefs.data.terminalsPlacement, tasksPanel.open));
+
   function newTerminal() {
     tasksPanel.open = true;
     const pid = terminalsActiveProjectId;
@@ -617,6 +717,9 @@
     const pane = projectTasks.bareForProject(pid).find((b) => b.id === id)?.paneId;
     if (pane) {
       lastCycledPaneId = pane;
+      if (combinedTerminals) {
+        focusRequest.request(pane); // the inbox selects the new terminal row
+      }
       focusTerminal(pane); // registry parks the request until the pane mounts
     }
   }
@@ -627,7 +730,10 @@
   let lastCycledPaneId: string | null = null;
   function focusCycleList(): string[] {
     const list: string[] = [];
-    if (workspace.active && workspace.focusedId) list.push(workspace.focusedId);
+    // The focused agent by PANE id (what focusTerminal / the roster key on) — the
+    // tree leaf id (`workspace.focusedId`) is not a terminal handle.
+    const agent = workspace.focusedPaneId;
+    if (agent) list.push(agent);
     const pid = terminalsActiveProjectId;
     if (pid) {
       for (const t of projectTasks.forProject(pid)) {
@@ -650,25 +756,34 @@
     tasksPanel.open = true; // terminals must be mounted/visible to take focus
     const anchor = lastCycledPaneId && list.includes(lastCycledPaneId)
       ? lastCycledPaneId
-      : workspace.focusedId;
+      : (workspace.focusedPaneId ?? '');
     const cur = list.indexOf(anchor);
     const next = list[(cur + 1 + list.length) % list.length];
     lastCycledPaneId = next;
+    // Combined placement: a terminal is visible only as the SELECTED row, so cycling
+    // onto one selects its row (the inbox then focuses + scrolls it); cycling back
+    // onto the agent selects the agent row the same way.
+    if (combinedTerminals) {
+      focusRequest.request(next);
+      return;
+    }
     focusTerminal(next);
     scrollTerminalToBottom(next);
   }
 
-  // Keyboard shortcuts (macOS):
-  //   Cmd-N            open the session LAUNCHER (folder picker + recents +
-  //                    optional prompt + placement). The deliberate, full-flow
-  //                    "new session" entry point.
-  //   Cmd-T            open the create-task dialog for the active project.
-  //   Cmd-Y            open a new bare interactive terminal in the Terminals panel.
-  //   Cmd-Tab          cycle focus across the active agent + its project's terminals.
-  //   Cmd-W            close the focused pane
-  //   Cmd-]            focus next (cyclic, DFS +1)
-  //   Cmd-[            focus prev (cyclic, DFS -1)
-  //   Alt-Arrow        directional focus (spatial neighbor)
+  // Keyboard shortcuts. The app-level bindings are USER-CUSTOMIZABLE (Settings →
+  // Keyboard shortcuts): each check below asks the `shortcuts` store whether the
+  // keydown is that action's CURRENT chord (default in parentheses), so a rebound
+  // shortcut fires on its new chord and never on the old one.
+  //   newSession (⌘N)          open the session LAUNCHER / launch into the project
+  //   newWorktreeSession (⌘⇧N) open the launcher with the worktree option preset
+  //   createTask (⌘T)          open the create-task dialog for the active project
+  //   toggleTerminals (⌘J)     toggle the right-docked Terminals panel
+  //   newTerminal (⌘Y)         open a new bare interactive terminal
+  //   cycleFocus (⌘Tab)        cycle focus across the active agent + its terminals
+  //   showShortcuts (⌘/)       toggle the help modal
+  //   insertFilePath (⌘O)      insert a picked file's path into the focused terminal
+  // Fixed (not rebindable): Esc, bare `?`. Grid-only (inert): ⌘W / ⌘] / ⌘[ / ⌥-Arrow.
   function onKeydown(e: KeyboardEvent) {
     const meta = e.metaKey;
     const alt = e.altKey;
@@ -686,12 +801,25 @@
       return;
     }
 
+    // What's new modal (release notes): like confirm/help, it owns the keyboard
+    // while open — Esc closes it (covered here so it works with focus anywhere)
+    // and every shortcut beneath is blocked. It reopens from Settings, so it can
+    // sit over the Settings dialog; on close, hand focus back to that dialog so
+    // its own Esc handler keeps working (it only fires with focus inside it).
+    if (whatsNew.open) {
+      if (key === 'Escape') {
+        e.preventDefault();
+        whatsNew.close();
+      }
+      return;
+    }
+
     // Help overlay: Cmd-/ toggles it from anywhere; bare ? opens it too, but only
     // when NOT typing into a field/terminal, so a literal "?" still reaches prompts
     // and the xterm terminal (Cmd-/ is the always-safe path). Handled before the
     // per-view guards so help works in every view; `help.open` below then blocks the
     // pane shortcuts beneath the modal (the modal owns its own Esc).
-    if (meta && key === '/') {
+    if (shortcuts.matches(e, 'showShortcuts')) {
       e.preventDefault();
       help.toggle();
       return;
@@ -718,29 +846,37 @@
 
     // Cmd-N starts a new session: straight into the selected project (no popup), or
     // the launcher when no single project is in focus. Same path as the inbox "+".
-    if (meta && (key === 'n' || key === 'N')) {
+    if (shortcuts.matches(e, 'newSession')) {
       e.preventDefault();
       startNewSession();
       return;
     }
 
+    // newWorktreeSession (⌘⇧N) opens the launcher with "Start in a new git
+    // worktree" preset (+ the filtered project preselected) so a name can be typed.
+    if (shortcuts.matches(e, 'newWorktreeSession')) {
+      e.preventDefault();
+      startNewWorktreeSession();
+      return;
+    }
+
     // Cmd-J toggles the right-docked Terminals panel (process-independent: hiding
     // never kills a running terminal). Works in every view, like Cmd-N.
-    if (meta && (key === 'j' || key === 'J')) {
+    if (shortcuts.matches(e, 'toggleTerminals')) {
       e.preventDefault();
-      tasksPanel.toggle();
+      if (!combinedTerminals) tasksPanel.toggle(); // inert when terminals are rows
       return;
     }
 
     // Cmd-T opens the create-task dialog for the active project (every view).
-    if (meta && (key === 't' || key === 'T')) {
+    if (shortcuts.matches(e, 'createTask')) {
       e.preventDefault();
       taskDialog.showCreate(terminalsActiveProjectId);
       return;
     }
 
     // Cmd-Y opens a new bare interactive terminal in the Terminals panel.
-    if (meta && (key === 'y' || key === 'Y')) {
+    if (shortcuts.matches(e, 'newTerminal')) {
       e.preventDefault();
       newTerminal();
       return;
@@ -749,21 +885,21 @@
     // Cmd-Tab cycles focus across the active agent and its project's terminals.
     // NOTE: macOS reserves Cmd-Tab for the app switcher at the system level, so this
     // may not reach the webview on macOS; it works where the OS lets the key through.
-    if (meta && key === 'Tab') {
+    if (shortcuts.matches(e, 'cycleFocus')) {
       e.preventDefault();
       cycleFocus();
       return;
     }
 
-    // Cmd-O inserts a picked file's quoted path into the FOCUSED terminal at the
-    // cursor. A global shortcut (works in every view, incl. while xterm holds
-    // focus) — placed BEFORE the grid-only gate below so it isn't made inert.
-    // Exclude Alt/Ctrl so only the bare Cmd-O combo fires (stray Cmd-Opt-O /
-    // Cmd-Ctrl-O fall through). `insertFilenameInto` checks the focused
-    // handle BEFORE opening the picker, so this is a clean no-op (no dialog) when
-    // no terminal is focused; preventDefault keeps the keystroke off the PTY and
-    // suppresses the webview's native "Open file" accelerator.
-    if (meta && !alt && !e.ctrlKey && (key === 'o' || key === 'O')) {
+    // insertFilePath (⌘O) inserts a picked file's quoted path into the FOCUSED
+    // terminal at the cursor. A global shortcut (works in every view, incl. while
+    // xterm holds focus) — placed BEFORE the grid-only gate below so it isn't made
+    // inert. The chord match is EXACT (a stray ⌘⌥O / ⌘⌃O falls through).
+    // `insertFilenameInto` checks the focused handle BEFORE opening the picker, so
+    // this is a clean no-op (no dialog) when no terminal is focused; preventDefault
+    // keeps the keystroke off the PTY and suppresses the webview's native "Open
+    // file" accelerator.
+    if (shortcuts.matches(e, 'insertFilePath')) {
       e.preventDefault();
       void insertFilenameInto(focusedTerminalHandle());
       return;
@@ -912,12 +1048,13 @@
           </span>
         </button>
       {/if}
+      {#if !combinedTerminals}
       <button
         class="tb-btn"
         class:active={tasksPanel.open}
         aria-label="Toggle terminals panel"
         aria-pressed={tasksPanel.open}
-        use:tooltip={{ text: 'Terminals (⌘J)', placement: 'bottom' }}
+        use:tooltip={{ text: `Terminals (${shortcuts.text('toggleTerminals')})`, placement: 'bottom' }}
         onclick={() => tasksPanel.toggle()}
       >
         <Icon name="panel-right" size={14} />
@@ -927,10 +1064,11 @@
           </span>
         {/if}
       </button>
+      {/if}
       <button class="tb-btn" aria-label="Settings" use:tooltip={{ text: 'Settings', placement: 'bottom' }} onclick={() => settingsModal.show()}>
         <Icon name="settings" size={14} />
       </button>
-      <button class="help-btn" aria-label="Keyboard shortcuts" use:tooltip={{ text: 'Keyboard shortcuts (⌘/)', placement: 'bottom' }} onclick={() => help.show()}>?</button>
+      <button class="help-btn" aria-label="Keyboard shortcuts" use:tooltip={{ text: `Keyboard shortcuts (${shortcuts.text('showShortcuts')})`, placement: 'bottom' }} onclick={() => help.show()}>?</button>
       {/if}
     </div>
   </header>
@@ -985,7 +1123,7 @@
        (terminals-panel spec). Takes zero width when closed. -->
   <aside
     class="terminals-dock"
-    class:hidden={!tasksPanel.open}
+    class:hidden={!dockShown}
     style="flex-basis: {tasksPanel.width}px;"
   >
     <!-- Drag the left edge to resize the panel width (persisted). -->
@@ -1028,6 +1166,11 @@
 <HelpModal />
 <SettingsModal />
 <ConfirmModal />
+<!-- Release notes modal. Held back while the first-launch model gate is up (the
+     store keeps `open` set, so it appears as soon as the gate is dismissed). -->
+{#if !onboarding.visible}
+  <WhatsNewModal />
+{/if}
 <!-- Voice input (the bottom-center mic FAB + the dictation panel) sits above the
      onboarding gate's z-index, so hide it entirely while the first-launch gate is
      up: the models it needs aren't downloaded yet and the takeover owns the screen. -->

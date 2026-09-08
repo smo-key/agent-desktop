@@ -34,7 +34,8 @@ contrast, are best handed over as a real absolute path.
 - The drop targets the session **under the cursor**; drops anywhere else (and
   outside the window) do nothing.
 - The app is never replaced by a dropped file.
-- Project/task drag-to-reorder keeps working (no user-visible regression).
+- Project/task drag-to-reorder keeps working (no user-visible regression) —
+  re-implemented on pointer events, since native drag-drop kills HTML5 DnD.
 
 **Non-Goals:**
 - No change to what the agent does with the file once handed over.
@@ -125,3 +126,16 @@ the agent consumes one clipboard image per `Ctrl+V`.
 - **[`position`→CSS mapping or `elementFromPoint` misfires under the overlay
   title bar]** → The WebView spans the full window; verify the mapping during
   the spike and adjust the offset if needed.
+
+## Decision: reorder moves to pointer events
+
+With `dragDropEnabled: true`, no in-page `dragstart` ever fires (task 1.2a), so
+the HTML5-DnD reorder in `ProjectPanel.svelte` and `TasksLauncher.svelte` was
+inert. Both lists now use `src/lib/ui/pointerReorder.ts`, a Svelte action over a
+pure gesture state machine (`reorderGesture.ts`): a primary-button press on a
+`[data-reorder-id]` row, movement past a 4px threshold to start the drag,
+`elementFromPoint` hit-testing for the hovered row (never the pressed one),
+release over another row → the existing `projects.reorder` /
+`projectTasks.reorder`. A press that never crosses the threshold is a normal
+click; a drag suppresses the click it would otherwise produce. Escape cancels.
+Pointer events are not intercepted by the native drag-drop handler.

@@ -113,8 +113,13 @@ drag leaves it, is dropped, or moves to non-session chrome.
 ### Requirement: Existing drag-to-reorder is preserved
 
 Enabling native drag-drop SHALL NOT remove the ability to reorder projects and
-tasks by dragging one row onto another. The reorder interactions SHALL continue
-to function with their existing behavior.
+tasks by dragging one row onto another. Because native drag-drop swallows in-page
+HTML5 drag events, the reorder interactions SHALL be driven by pointer events: a
+primary-button press on a row that moves past a small threshold becomes a drag,
+the row under the pointer (other than the dragged one) is the drop target, and
+releasing over a target applies the existing reorder. A press that never crosses
+the threshold SHALL remain a normal click, and a completed drag SHALL NOT also
+activate the row.
 
 #### Scenario: Projects can still be reordered by dragging
 
@@ -125,3 +130,15 @@ to function with their existing behavior.
 
 - **WHEN** the user drags one task row onto another
 - **THEN** the active project's task list is reordered and persisted as before
+
+#### Scenario: A press that does not move stays a click
+
+- **WHEN** the user presses a row and releases without moving past the drag
+  threshold
+- **THEN** no reorder happens and the row's normal click action runs
+
+#### Scenario: A drag does not double as a click
+
+- **WHEN** the user drags a row past the threshold and releases it, over another
+  row or over nothing
+- **THEN** the row's click action does not run (only the reorder, if any)

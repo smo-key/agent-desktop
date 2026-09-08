@@ -148,6 +148,10 @@ pub struct PaneRef {
     /// The pane's absolute working directory (fast-path hint), or `null`.
     #[serde(default)]
     pub cwd: Option<String>,
+    /// The pane's agent backend (`claude` when absent). `copilot` panes are
+    /// served from the copilot session event log, not the Claude transcript.
+    #[serde(default)]
+    pub program: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -891,12 +895,12 @@ mod tests {
 
         let panes = vec![
             // Same cwd, different sessions -> each reads its OWN transcript.
-            PaneRef { pane_id: "pane-A".into(), session_id: Some("sess-A".into()), cwd: Some(cwd.into()) },
-            PaneRef { pane_id: "pane-B".into(), session_id: Some("sess-B".into()), cwd: Some(cwd.into()) },
+            PaneRef { pane_id: "pane-A".into(), session_id: Some("sess-A".into()), cwd: Some(cwd.into()), program: None },
+            PaneRef { pane_id: "pane-B".into(), session_id: Some("sess-B".into()), cwd: Some(cwd.into()), program: None },
             // No cwd -> resolved via the project-dir scan (session ids are unique).
-            PaneRef { pane_id: "pane-B2".into(), session_id: Some("sess-B".into()), cwd: None },
+            PaneRef { pane_id: "pane-B2".into(), session_id: Some("sess-B".into()), cwd: None, program: None },
             // No session id -> omitted.
-            PaneRef { pane_id: "pane-none".into(), session_id: None, cwd: Some(cwd.into()) },
+            PaneRef { pane_id: "pane-none".into(), session_id: None, cwd: Some(cwd.into()), program: None },
         ];
         let map = activity_for_panes(base, &panes);
         assert_eq!(map.get("pane-A").and_then(|a| a.summary.as_deref()), Some("from A"));

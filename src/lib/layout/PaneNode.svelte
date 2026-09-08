@@ -13,9 +13,10 @@
   import TaskBadge from '$lib/usage/TaskBadge.svelte';
   import Gutter from './Gutter.svelte';
   import PaneNode from './PaneNode.svelte';
-  import { workspace } from './workspace.svelte';
+  import { sessionCwd, workspace } from './workspace.svelte';
   import { setRect, clearRect } from './rects.svelte';
   import { buildPaneMenu } from './paneMenu';
+  import { shortcuts } from '$lib/settings/shortcuts.svelte';
   import { contextMenu } from './contextmenu.svelte';
   import { getTerminal } from './terminals';
   import { insertFilenameInto } from './insertFilename';
@@ -107,7 +108,11 @@
         void insertFilenameInto(handle);
       },
       canClose,
-      hasSelection: handle?.hasSelection() ?? false
+      hasSelection: handle?.hasSelection() ?? false,
+      hints: {
+        insertFilePath: shortcuts.text('insertFilePath'),
+        newSession: shortcuts.text('newSession')
+      }
     });
     contextMenu.show(e.clientX, e.clientY, sections);
   }
@@ -137,8 +142,8 @@
         <TerminalPane
           paneId={node.paneId}
           program={resolveProgram(session?.program)}
-          args={session?.extraArgs ?? []}
-          cwd={session?.cwd ?? null}
+          args={[...(session?.launchArgs ?? []), ...(session?.extraArgs ?? [])]}
+          cwd={sessionCwd(session)}
           initialInput={session?.initialInput}
           sessionId={session?.sessionId}
           resume={session?.resume}

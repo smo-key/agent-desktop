@@ -28,7 +28,7 @@ import {
   type RestoredState,
   type RestoredWorkspace
 } from './persistence';
-import { workspace, type WorkspaceEntry } from './workspace.svelte';
+import { sessionCwd, workspace, type WorkspaceEntry } from './workspace.svelte';
 
 /** Debounce interval for layout writes (ms). Rapid mutations coalesce into one. */
 const SAVE_DEBOUNCE_MS = 250;
@@ -102,7 +102,10 @@ async function pruneUnusedSessions(state: RestoredState): Promise<RestoredState>
   for (const w of state.workspaces) {
     for (const [paneId, s] of Object.entries(w.registry)) {
       if (s.program === 'claude' && s.sessionId) {
-        panes.push({ paneId, sessionId: s.sessionId, cwd: s.cwd });
+        // The pane's REAL dir (an adopted worktree when it has one), so the
+        // transcript lookup hits its fast path instead of relying on the
+        // full-scan fallback for every restored worktree pane.
+        panes.push({ paneId, sessionId: s.sessionId, cwd: sessionCwd(s) });
       }
     }
   }

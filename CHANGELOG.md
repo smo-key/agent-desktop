@@ -1,9 +1,42 @@
 # Changelog
 
-All notable changes to this project are documented here.
-This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
+Release notes for Agent Desktop. Each version gets one `## <version> — <date>`
+section, written by the Release task before the version bump lands on `main`;
+the GitHub Release body and the in-app "What's new" dialog both come from the
+matching section here. Newest first.
 
-## [0.3.1] - 2026-07-23
+Format: short `### New` / `### Improved` / `### Fixed` / `### Removed` sections,
+bullets, one bold title per notable change —
+`- **Feature title**: a short, impactful description and use case.`
+
+## 0.3.2 — 2026-09-08
+
+### New
+
+- **What's new dialog**: release notes open once after each update so you see what changed; click the version number in Settings to read them again. Release notes are now hand-written per version and shared with the GitHub release.
+- **GitHub Copilot as an agent backend**: pick Claude Code or Copilot per session; Copilot sessions report status, usage, titles and subagents from their events log, and specialists launch on Copilot via generated custom agents.
+- **Worktree sessions**: start a session in a fresh git worktree from the launcher; the worktree shows on the session row and in the footer.
+- **Customizable keyboard shortcuts**: rebind any app shortcut in Settings.
+- **Roster grouping and pinning**: group sessions by Status, Date or None, pin sessions to the top, and choose a Minimal density that shows only the title.
+- **Terminal titles and renames**: terminal rows title themselves from the commands you run and can be renamed; optionally list terminals alongside sessions with the same status treatment as agents.
+- **Project archiving**: archive and unarchive projects; archived projects stay out of ⌘N, voice and the footer git controls.
+
+### Improved
+
+- **Drag to reorder**: projects and tasks reorder with a pointer-based drag that works under the native drag-drop layer.
+- **Voice dictation recovery**: model downloads are serialized, a stalled download no longer wedges the readiness check, the mic is released on every teardown, and a failed dictation always has a way out.
+
+### Fixed
+
+- **Closing a pane kills its whole process tree**: on close and on quit, child processes no longer outlive their pane, with stale or recycled pids never mistaken for ours.
+- **Terminal title privacy**: only echoed commands are recorded, titles stay on-device, and `-p` is redacted only when it is a password flag.
+- **Worktree sessions in any tab**: a worktree session launched in a background tab now adopts its worktree root, shows its subagents, and splits off a shell inside the worktree rather than the main checkout; a session whose worktree was removed no longer points at a missing directory.
+
+### Removed
+
+- **Coordinator**: the coordinator feature and the Worktrees dialog are gone; worktrees are started from the launcher instead.
+
+## 0.3.1 — 2026-07-23
 
 ### Bug Fixes
 
@@ -17,7 +50,7 @@ This file is generated from the conventional-commit history by [git-cliff](https
 
 - Bump version to 0.3.1
 
-## [0.3.0] - 2026-07-22
+## 0.3.0 — 2026-07-22
 
 ### Features
 
@@ -75,7 +108,7 @@ delta; svelte-check, vitest, and adversarial review all pass.)
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 
-## [0.2.4] - 2026-06-14
+## 0.2.4 — 2026-06-14
 
 ### Miscellaneous
 
@@ -84,7 +117,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 
 Updated Windows or Intel Mac installation instructions.
 
-## [0.2.3] - 2026-06-14
+## 0.2.3 — 2026-06-14
 
 ### Bug Fixes
 
@@ -102,7 +135,7 @@ Updated Windows or Intel Mac installation instructions.
 - Bump version to 0.2.3
 - **openspec**: Sync + archive projects-panel-working-indicator
 
-## [0.2.2] - 2026-06-14
+## 0.2.2 — 2026-06-14
 
 ### Features
 
@@ -126,13 +159,13 @@ Updated Windows or Intel Mac installation instructions.
 - **tasks**: Clarify Release task to bump patch version explicitly
 - Bump version to 0.2.2
 
-## [0.2.1] - 2026-06-14
+## 0.2.1 — 2026-06-14
 
 ### Miscellaneous
 
 - Bump version to 0.2.1
 
-## [0.2.0] - 2026-06-14
+## 0.2.0 — 2026-06-14
 
 ### Features
 
@@ -172,44 +205,44 @@ Updated Windows or Intel Mac installation instructions.
 
 - **tasks**: Reorder tasks and add Openspec Status watcher
 
-## [0.1.10] - 2026-06-14
+## 0.1.10 — 2026-06-14
 
 ### Bug Fixes
 
 - **ci**: Normalize paths in localStorage gate for Windows
 
-## [0.1.9] - 2026-06-14
+## 0.1.9 — 2026-06-14
 
 ### Bug Fixes
 
 - **test**: Make event-hook delivery test work on Windows (named pipe)
 
-## [0.1.8] - 2026-06-14
+## 0.1.8 — 2026-06-14
 
 ### Bug Fixes
 
 - **ci**: Order-independent Windows sidecar format check
 
-## [0.1.7] - 2026-06-14
+## 0.1.7 — 2026-06-14
 
 ### Bug Fixes
 
 - **ci**: Patch llama <chrono> include in-source, not via force-include flag
 
-## [0.1.6] - 2026-06-14
+## 0.1.6 — 2026-06-14
 
 ### Bug Fixes
 
 - **ci**: Correct Windows chrono flag form and macOS unsigned fallback
 
-## [0.1.5] - 2026-06-14
+## 0.1.5 — 2026-06-14
 
 ### Bug Fixes
 
 - **ci**: Unblock Windows llama build and macOS signing fallback
 - **test**: Use a fast-failing unwritable snapshot dir, not /proc
 
-## [0.1.4] - 2026-06-13
+## 0.1.4 — 2026-06-13
 
 ### Bug Fixes
 
@@ -224,13 +257,13 @@ Updated Windows or Intel Mac installation instructions.
 
 - **release**: Drop Intel-mac leg, bump actions to latest majors, Node 22
 
-## [0.1.3] - 2026-06-13
+## 0.1.3 — 2026-06-13
 
 ### Bug Fixes
 
 - **ci**: Build llama with LLAMA_BUILD_EXAMPLES=ON so llama-server target exists
 
-## [0.1.2] - 2026-06-13
+## 0.1.2 — 2026-06-13
 
 ### Bug Fixes
 
@@ -245,7 +278,7 @@ Updated Windows or Intel Mac installation instructions.
 
 - **release**: Install JS deps with Yarn instead of npm ci
 
-## [0.1.0] - 2026-06-13
+## 0.1.0 — 2026-06-13
 
 ### Features
 

@@ -1,5 +1,5 @@
 // FRONTEND EXECUTOR for the orchestration toolkit (agent-orchestration-runtime,
-// tasks 4.1–4.6). The pane registry is FRONTEND-owned, so when a coordinator's
+// tasks 4.1–4.6). The pane registry is FRONTEND-owned, so when an agent's
 // bundled MCP toolkit calls an op it round-trips Rust → the Tauri
 // `orchestration://request` event → THIS executor → the `orchestration_reply`
 // command → back over the socket. We perform the op against the existing
@@ -10,14 +10,15 @@
 // `{ id, op, args }` and — by the existing Rust/adapter contract, which this task
 // must NOT change — `projectId` is NOT injected anywhere in transport. So the
 // executor reads the orchestrator's project from **`args.projectId`**. The
-// coordinator-launch task (6.2) MUST therefore supply the coordinator's own
+// toolkit-mounting launch MUST therefore supply the orchestrating agent's own
 // `projectId` so it rides in every toolkit call's args (e.g. by stamping it into
 // the adapter env and having the adapter merge it into args, OR by the toolkit
 // tool schemas carrying it). When `args.projectId` is absent the executor cannot
 // safely scope the op and REJECTS it with a clear error rather than guessing —
-// the singleton executor may face several coordinators (one per project), so a
-// heuristic "the only project" fallback would be wrong. This keeps the contract
-// explicit and the executor correct under multiple coordinators.
+// the singleton executor may face several orchestrating agents (one per
+// project), so a heuristic "the only project" fallback would be wrong. This
+// keeps the contract explicit and the executor correct under multiple
+// orchestrators.
 //
 // ── IDLE-GATING for message_agent (task 4.6) ─────────────────────────────────
 // Injecting input mid-turn garbles a session, so delivery is gated on the target
@@ -29,7 +30,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { workspace, type PaneSession } from '../layout/workspace.svelte';
+import { sessionCwd, workspace, type PaneSession } from '../layout/workspace.svelte';
 import { leavesInOrder } from '../layout/tree';
 import { getTerminal } from '../layout/terminals';
 import { getRuntime } from '../overview/runtime';
@@ -42,9 +43,13 @@ import { projectForId } from '../projects/projects';
 import { specialists } from '../specialists/specialists.svelte';
 import { parseSpecialist } from '../specialists/specialists';
 import { specialistLaunchArgs } from './launchArgs';
+import {
+  copilotAgentFile,
+  copilotAgentName,
+  copilotSpecialistArgs
+} from '../specialists/copilotAgent';
 import { buildLaunchPlan } from '../launcher/plan';
-import { findCoordinatorPane, type CoordinatorPaneView } from './coordinator';
-import { coordinatorNeedsInput } from './coordinatorNeedsInput.svelte';
+import { isAgentProgram } from '$lib/agent/backends';
 
 /** The Tauri event name the Rust control server emits each request on. */
 export const REQUEST_EVENT = 'orchestration://request';
@@ -111,18 +116,11 @@ export interface ExecutorDeps {
   loadSpecialist: (projectPath: string, name: string) => Promise<import('../specialists/specialists').Specialist>;
   /** Launch a new claude pane; returns the new pane id. */
   launch: (plan: Parameters<typeof workspace.launch>[0]) => string;
-  /** The paneId of the project's live coordinator, or null — so a coordinator-driven
-   *  spawn is attributed to it in the roster/overview (task 6.5). */
-  coordinatorFor: (projectId: string) => string | null;
   /** Archive (close) / unarchive (restore) a pane. */
   archive: (paneId: string) => void;
   unarchive: (paneId: string) => void;
   /** Schedule `run` after `ms` (setTimeout in prod; tests inject a controllable one). */
   schedule: (run: () => void, ms: number) => void;
-  /** SET the project coordinator's explicit "needs input" flag (tasks 10.11–10.12),
-   *  with an optional short reason/prompt — surfaced in the roster so the user is
-   *  notified the coordinator needs them (vs. its default keep-working heuristic). */
-  setCoordinatorNeedsInput: (paneId: string, message: string | null) => void;
   /** The pane's GENERATED session title (the label shown on its card), or null when
    *  none yet — used to identify an agent by a meaningful name instead of its raw
    *  "Session N" workspace name in `list_agents` / `inspect_agent`. */
@@ -199,8 +197,6 @@ export class OrchestrationExecutor {
         return this.archiveAgent(args);
       case 'unarchive_agent':
         return this.unarchiveAgent(args);
-      case 'request_user_input':
-        return this.requestUserInput(args);
       default:
         return { error: `unknown op: ${op}` };
     }
@@ -228,11 +224,8 @@ export class OrchestrationExecutor {
     if (!paneId) return { error: 'missing paneId' };
     const pane = this.deps.locate(paneId);
     if (!pane) return { error: `no such agent pane: ${paneId}` };
-    if (pane.session.program !== 'claude') return { error: `not an agent pane: ${paneId}` };
+    if (!isAgentProgram(pane.session.program)) return { error: `not an agent pane: ${paneId}` };
     if (pane.session.closed === true) return { error: `agent pane is closed: ${paneId}` };
-    if (pane.session.role === 'coordinator') {
-      return { error: `cannot target a coordinator pane: ${paneId}` };
-    }
     if ((pane.session.projectId ?? null) !== projectId) {
       return { error: `agent pane is outside the orchestrator's project: ${paneId}` };
     }
@@ -261,6 +254,8 @@ export class OrchestrationExecutor {
         ? args.specialist.trim()
         : undefined;
 
+    const plan = buildLaunchPlan({ folder: cwdArg, prompt, placement: 'tab', projectId });
+
     let extraArgs: string[] | undefined;
     if (specialistName) {
       let spec: import('../specialists/specialists').Specialist;
@@ -271,19 +266,35 @@ export class OrchestrationExecutor {
           error: `could not load specialist "${specialistName}": ${err instanceof Error ? err.message : String(err)}`
         };
       }
-      extraArgs = specialistLaunchArgs(spec);
+      if (plan.program === 'copilot') {
+        // Copilot path (`agent-specialists` / design S2): translate the
+        // specialist into an app-generated custom agent under
+        // ~/.copilot/agents/ and launch with `--agent <name>`. Persona + model
+        // carry over; Claude tool names do not exist in Copilot's vocabulary,
+        // so tool scoping stays Claude-only (declared narrowing).
+        const agentName = copilotAgentName(spec.name);
+        if (!agentName) {
+          return { error: `specialist name unusable as a copilot agent: "${spec.name}"` };
+        }
+        try {
+          await invoke('copilot_install_agent', {
+            name: agentName,
+            content: copilotAgentFile(spec)
+          });
+        } catch (err) {
+          return {
+            error: `could not install copilot agent for "${specialistName}": ${err instanceof Error ? err.message : String(err)}`
+          };
+        }
+        extraArgs = copilotSpecialistArgs(agentName);
+      } else {
+        extraArgs = specialistLaunchArgs(spec);
+      }
     }
-
-    // Attribute the spawned agent to the project's coordinator (task 6.5) when one
-    // is driving the orchestration, so the roster shows it belongs to the coordinator.
-    const coordinatorPaneId = this.deps.coordinatorFor(projectId) ?? undefined;
-
-    const plan = buildLaunchPlan({ folder: cwdArg, prompt, placement: 'tab', projectId });
     const paneId = this.deps.launch({
       ...plan,
       specialist: specialistName,
-      extraArgs,
-      coordinatorPaneId
+      extraArgs
     });
     if (!paneId) return { error: 'failed to launch agent' };
     return { result: { paneId, specialist: specialistName ?? null } };
@@ -354,11 +365,8 @@ export class OrchestrationExecutor {
   private listAgents(args: Record<string, unknown>): OpResult {
     const projectId = this.orchestratorProject(args);
     if (!projectId) return { error: 'missing orchestrator projectId in args (scope required)' };
-    // Exclude coordinator panes: a coordinator orchestrates specialists and normal
-    // sessions, never other coordinators or itself.
     const agents = this.deps
       .panesInProject(projectId)
-      .filter((p) => p.session.role !== 'coordinator')
       .map((p) => this.infoFor(p));
     return { result: { agents } };
   }
@@ -390,35 +398,12 @@ export class OrchestrationExecutor {
     if (!paneId) return { error: 'missing paneId' };
     const pane = this.deps.locate(paneId);
     if (!pane) return { error: `no such agent pane: ${paneId}` };
-    if (pane.session.program !== 'claude') return { error: `not an agent pane: ${paneId}` };
-    if (pane.session.role === 'coordinator') {
-      return { error: `cannot target a coordinator pane: ${paneId}` };
-    }
+    if (!isAgentProgram(pane.session.program)) return { error: `not an agent pane: ${paneId}` };
     if ((pane.session.projectId ?? null) !== projectId) {
       return { error: `agent pane is outside the orchestrator's project: ${paneId}` };
     }
     this.deps.unarchive(paneId);
     return { result: { unarchived: true } };
-  }
-
-  /**
-   * `request_user_input({ message?, projectId })`: the COORDINATOR explicitly signals
-   * it needs the user (tasks 10.11–10.12). Resolve the project's live coordinator pane
-   * and SET its reactive "needs input" flag (with the optional `message`) so the
-   * roster surfaces it in the Needs-you lane — bypassing the coordinator's default
-   * keep-working heuristic. Errors when the project has no live coordinator pane.
-   */
-  private requestUserInput(args: Record<string, unknown>): OpResult {
-    const projectId = this.orchestratorProject(args);
-    if (!projectId) return { error: 'missing orchestrator projectId in args (scope required)' };
-    const coordinatorPaneId = this.deps.coordinatorFor(projectId);
-    if (!coordinatorPaneId) {
-      return { error: `no live coordinator pane for project: ${projectId}` };
-    }
-    const message =
-      typeof args.message === 'string' && args.message.trim() !== '' ? args.message.trim() : null;
-    this.deps.setCoordinatorNeedsInput(coordinatorPaneId, message);
-    return { result: { notified: true, paneId: coordinatorPaneId } };
   }
 
   /** Build the `AgentInfo` for a located pane. */
@@ -429,7 +414,10 @@ export class OrchestrationExecutor {
       // refers to "Fix login dialog" rather than "Session 1"; fall back to the
       // workspace/cwd name when the agent has no title yet.
       name: this.deps.titleOf(pane.paneId) ?? nameFor(pane),
-      cwd: pane.session.cwd,
+      // The dir the agent REALLY works in (its adopted worktree when it has one):
+      // the orchestrator reasons and reports about this path, so a worktree agent
+      // must not be described as living on the main checkout.
+      cwd: sessionCwd(pane.session),
       projectId: pane.session.projectId ?? null,
       status: this.deps.statusOf(pane.paneId),
       archived: pane.session.closed === true,
@@ -448,7 +436,10 @@ function nameFor(pane: LocatedPane): string {
   const entry = workspace.workspaces.find((w) => w.id === pane.workspaceId);
   const wsName = entry?.name?.trim();
   if (wsName) return wsName;
-  const cwd = pane.session.cwd;
+  // The agent's REAL dir, so a worktree agent's fallback name is its worktree
+  // rather than the project folder it was launched from (matching the `cwd` the
+  // same record reports).
+  const cwd = sessionCwd(pane.session);
   if (cwd) {
     const leaf = cwd.replace(/[/\\]+$/, '').split(/[/\\]/).pop();
     if (leaf) return leaf;
@@ -476,7 +467,7 @@ function panesInProjectReal(projectId: string): LocatedPane[] {
   for (const entry of workspace.workspaces) {
     for (const leaf of leavesInOrder(entry.ws.root)) {
       const session = entry.registry[leaf.paneId];
-      if (!session || session.program !== 'claude') continue;
+      if (!session || !isAgentProgram(session.program)) continue;
       if ((session.projectId ?? null) !== projectId) continue;
       out.push({ workspaceId: entry.id, paneId: leaf.paneId, session });
     }
@@ -515,26 +506,6 @@ function projectPathReal(projectId: string): string | null {
   return projectForId(projects.list, projectId)?.path ?? null;
 }
 
-/** The paneId of the project's LIVE coordinator (role:'coordinator', not closed), or
- *  null — so a coordinator-driven spawn is attributed to it in the roster (task 6.5). */
-function coordinatorForReal(projectId: string): string | null {
-  const panes: CoordinatorPaneView[] = [];
-  for (const entry of workspace.workspaces) {
-    for (const leaf of leavesInOrder(entry.ws.root)) {
-      const s = entry.registry[leaf.paneId];
-      if (!s) continue;
-      panes.push({
-        paneId: leaf.paneId,
-        program: s.program,
-        projectId: s.projectId ?? null,
-        role: s.role,
-        closed: s.closed
-      });
-    }
-  }
-  return findCoordinatorPane(panes, projectId)?.paneId ?? null;
-}
-
 /** Load + parse a specialist `.md` by name within a project path. */
 async function loadSpecialistReal(projectPath: string, name: string) {
   const raw = await invoke<string>('specialists_read', { projectPath, name });
@@ -559,13 +530,11 @@ function realDeps(): ExecutorDeps {
     projectPath: projectPathReal,
     loadSpecialist: loadSpecialistReal,
     launch: (plan) => workspace.launch(plan),
-    coordinatorFor: coordinatorForReal,
     archive: (paneId) => workspace.closeAgent(paneId),
     unarchive: (paneId) => workspace.restoreAgent(paneId),
     schedule: (run, ms) => {
       setTimeout(run, ms);
     },
-    setCoordinatorNeedsInput: (paneId, message) => coordinatorNeedsInput.set(paneId, message),
     titleOf: (paneId) => titles.titleFor(paneId)
   };
 }

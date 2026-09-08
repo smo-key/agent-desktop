@@ -153,6 +153,11 @@ const ENFORCED_CAPABILITIES = new Set([
   // denied/non-Tauri no-op) are headless-exempt (MANUAL below); the chime + the
   // Settings pickers' rendered wiring are confirmed live in the same pass.
   'needs-input-alerts',
+  // whats-new-dialog: the section lookup/parser (section.test.ts), the
+  // once-per-version launch rules + reopen (whatsNewStore.svelte.test.ts), and
+  // the rendered modal's markup + Esc/backdrop/"Got it" dismissal (a jsdom
+  // component test, WhatsNewModal.svelte.test.ts) are all headless-tested.
+  'whats-new-dialog',
 ]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by
@@ -375,10 +380,37 @@ const MANUAL_SCENARIOS = {
     // mount-once slow-interval $effect in +page.svelte) has no pure surface to assert —
     // confirmed live in-app, like activity-timeline's route-interval scenarios.
     'initial_fetch_shortly_after_launch',
+    // Project archiving: the model/rollup scenarios are unit-tested (projects.test.ts,
+    // projectRollup.test.ts). These three are DOM/route wiring with no pure surface —
+    // the "Show archived (N)" toggle + Archived section in ProjectPanel.svelte, the
+    // launcher's ProjectSelect listing `projects.active`, and the +page.svelte git
+    // poll / background fetch iterating `projects.active` — confirmed live in-app.
+    'show_archived_reveals_archived_projects_below_new_project',
+    'a_selected_archived_project_never_goes_invisible',
+    'archived_projects_are_absent_from_the_launcher_picker',
+    'archived_projects_are_excluded_from_new_session_shortcuts_and_footer_git',
+    'git_polling_skips_archived_project_folders',
   ]),
   // tasks-panel: every scenario is a rendered-component / live-PTY behavior with no
   // pure surface to assert headless — confirmed live in-app.
   'tasks-panel': new Set([
+    // Combined terminals placement (shortcuts-worktrees-combined-terminals): the
+    // row model, status derivation, project filtering, focus actions, and the
+    // dock-visibility rule are pure unit tests (terminalRows.test.ts /
+    // placement.test.ts). These two are DOM-bound — the live `portal` teleport of a
+    // dock terminal body into the inbox focus slot (no respawn), and ⌘Y's new bare
+    // shell appearing + being selected as a row through `focusRequest`.
+    'selecting_a_terminal_row_shows_its_live_terminal_without_respawn',
+    'new_terminal_shortcut_adds_and_selects_a_row',
+    // Renaming a terminal row is the SAME inline-edit surface as a session rename
+    // (focus-header input + row context menu) — DOM-bound, so it is confirmed live;
+    // the store rules behind it (title key, sticky custom title, hydrate on
+    // restart) are unit-tested in terminalRows.test.ts / titles.svelte.test.ts.
+    'renaming_a_terminal_row_from_the_header_or_its_menu',
+    // The focus-reconciliation effect holding still while a rename editor is open
+    // is a live-DOM interaction (an inline input's lifetime vs. the auto-advance
+    // effect); the commit RULE it protects is unit-tested in titles.svelte.test.ts.
+    'a_rename_in_progress_holds_the_focus',
     'panel_position_and_default_size',
     'resizable_splitter',
     'active_project_scoping',
@@ -423,6 +455,14 @@ const MANUAL_SCENARIOS = {
     'permission_requested_on_enable',
     'permission_denied',
     'non_desktop_context',
+  ]),
+  // whats-new-dialog: the two scenarios that are +page.svelte wiring — the
+  // `{#if !onboarding.visible}` mount gate and the global-keydown ownership
+  // (shortcut blocking + Esc + focus hand-back to Settings) — need the live
+  // page; everything else is unit/jsdom-tested.
+  'whats-new-dialog': new Set([
+    'held_back_while_onboarding_is_up',
+    'dialog_owns_the_keyboard_while_open',
   ]),
 };
 

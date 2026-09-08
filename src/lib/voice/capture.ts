@@ -70,6 +70,11 @@ export class MicCapture {
   // Live-level analyser for the recording waveform.
   #analyser: AnalyserNode | null = null;
   #freqBuf: Uint8Array<ArrayBuffer> = new Uint8Array(0);
+  // Set by stop(). Everything stop() releases is still null while getUserMedia is
+  // pending, so WITHOUT this flag a stop during that window is a total no-op and
+  // the stream that lands afterwards is never released — the OS mic indicator
+  // stays lit with the panel closed. start() re-checks it after the await.
+  #stopped = false;
   readonly #opts: MicCaptureOptions;
 
   constructor(opts: MicCaptureOptions = {}) {
@@ -85,8 +90,17 @@ export class MicCapture {
   async start(): Promise<void> {
     // Re-entrancy guard: already capturing.
     if (this.#stream) return;
+    this.#stopped = false;
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Teardown raced the permission prompt (panel dismissed / retried while the OS
+    // dialog was up). The stop() that ran mid-await found nothing to release, so
+    // release the just-granted stream HERE and build nothing — otherwise the mic
+    // stays on for the life of the app with no reference left to turn it off.
+    if (this.#stopped) {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
     this.#stream = stream;
     this.#chunks = [];
 
@@ -188,6 +202,10 @@ export class MicCapture {
    * or already stopped.
    */
   stop(): void {
+    // Record the intent FIRST: an in-flight start() reads this after its await and
+    // releases the stream it is about to receive (see start()).
+    this.#stopped = true;
+
     const recorder = this.#recorder;
     if (recorder && recorder.state !== 'inactive') {
       try {

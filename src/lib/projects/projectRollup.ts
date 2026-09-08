@@ -94,14 +94,18 @@ export function filterRowsByProject(
 
 /**
  * The panel's filter options, top-to-bottom, for keyboard nav: ALL, then each
- * project (in list order), then UNASSIGNED iff any agent is unassigned. Matches
- * the panel's render order so `⌘⇧↑`/`⌘⇧↓` walks exactly what's on screen.
+ * ACTIVE project (in list order — archived projects are skipped, since the panel
+ * hides them), then UNASSIGNED iff any agent is unassigned. Matches the panel's
+ * render order so `⌘⇧↑`/`⌘⇧↓` walks exactly what's on screen.
  */
 export function filterOrder(
   projects: ReadonlyArray<Project>,
   hasUnassigned: boolean
 ): ProjectFilter[] {
-  const order: ProjectFilter[] = [ALL, ...projects.map((p) => p.id)];
+  const order: ProjectFilter[] = [
+    ALL,
+    ...projects.filter((p) => p.archived !== true).map((p) => p.id)
+  ];
   if (hasUnassigned) order.push(UNASSIGNED);
   return order;
 }
@@ -121,4 +125,12 @@ export function stepFilter(
   if (i < 0) return dir === 1 ? order[0] : order[order.length - 1];
   const next = Math.min(order.length - 1, Math.max(0, i + dir));
   return order[next];
+}
+
+/**
+ * The filter to show after project `archivedId` is archived (or deleted): the
+ * selection falls back to ALL when it WAS that project, and is otherwise kept.
+ */
+export function nextFilterAfterArchive(selected: ProjectFilter, archivedId: string): ProjectFilter {
+  return selected === archivedId ? ALL : selected;
 }

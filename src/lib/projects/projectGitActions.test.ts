@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 // `invoke` is mocked so the push/pull wiring can be asserted without a live Tauri
-// backend. Mock pattern mirrors worktreePanel / projectGit tests.
+// backend. Mock pattern mirrors the projectGit tests.
 const invokeMock = vi.fn(async (..._a: unknown[]): Promise<unknown> => '');
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 

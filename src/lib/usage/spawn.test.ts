@@ -347,7 +347,7 @@ describe('buildSpawnOverride', () => {
 });
 
 describe('buildMcpToolkitConfig', () => {
-  // Task 3.6: the per-session --mcp-config the coordinator launch (task 6.2) consumes.
+  // Task 3.6: the per-session --mcp-config a toolkit-mounting launch consumes.
   it('builds an mcp-config naming the bundled adapter run via node with the socket + projectId env', () => {
     const cfg = buildMcpToolkitConfig(
       '/Users/me/Library/Application Support/agent-desktop/bin/orchestration-mcp.js',
@@ -362,7 +362,7 @@ describe('buildMcpToolkitConfig', () => {
           env: {
             AGENT_DESKTOP_CONTROL_SOCKET:
               '/Users/me/Library/Application Support/agent-desktop/control.sock',
-            // The coordinator's own project id rides into the adapter so it can stamp
+            // The launching agent's own project id rides into the adapter so it can stamp
             // it into every forwarded tool call's args (the executor scopes on it).
             AGENT_DESKTOP_PROJECT_ID: 'proj-coord-1'
           }
@@ -371,5 +371,59 @@ describe('buildMcpToolkitConfig', () => {
     });
     // Round-trips through JSON (it is passed as --mcp-config content).
     expect(JSON.parse(JSON.stringify(cfg))).toEqual(cfg);
+  });
+});
+
+describe('buildSpawnOverride — copilot backend (agent-backends)', () => {
+  const paths = {
+    wrapperPath: '/app/bin/statusline-wrapper.js',
+    snapshotDir: '/app/snapshots',
+    eventHookPath: '/app/bin/event-hook.js',
+    socketPath: '/tmp/sock',
+    adapterPath: '/app/bin/orchestration-mcp.js',
+    controlSocketPath: '/tmp/ctl'
+  };
+
+  it('Copilot spawn is minimal and clean', () => {
+    // Fresh copilot pane: backend args + pane env only — no --settings, no
+    // hooks, no statusline, and the user's ~/.copilot config untouched.
+    const out = buildSpawnOverride({
+      program: 'copilot',
+      args: [],
+      paneId: 'P1',
+      sessionId: 'S1',
+      usagePaths: paths
+    });
+    expect(out.args).toEqual(['--session-id', 'S1', '--no-remote']);
+    expect(out.args.join(' ')).not.toContain('--settings');
+    expect(out.env).toEqual([
+      ['AGENT_DESKTOP_PANE', 'P1'],
+      ['AGENT_DESKTOP_SNAPSHOT_DIR', '/app/snapshots']
+    ]);
+  });
+
+  it('copilot restore resumes by the app-minted id', () => {
+    const out = buildSpawnOverride({
+      program: 'copilot',
+      args: ['--extra'],
+      paneId: 'P1',
+      sessionId: 'S1',
+      resume: true,
+      usagePaths: null
+    });
+    expect(out.args).toEqual(['--resume', 'S1', '--no-remote', '--extra']);
+    expect(out.env).toEqual([['AGENT_DESKTOP_PANE', 'P1']]);
+  });
+
+  it('claude spawn behavior is unchanged by the registry', () => {
+    const out = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'P1',
+      sessionId: 'S1',
+      usagePaths: paths
+    });
+    expect(out.args[0]).toBe('--session-id');
+    expect(out.args).toContain('--settings');
   });
 });

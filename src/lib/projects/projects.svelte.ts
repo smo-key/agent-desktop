@@ -16,6 +16,9 @@ import {
   removeProject,
   reorderProjects,
   updateProject,
+  setProjectArchived,
+  activeProjects,
+  archivedProjects,
   parseProjects,
   serializeProjects,
   type Project
@@ -28,6 +31,17 @@ export class ProjectsStore {
 
   /** True once `load()` has resolved (so the UI can distinguish empty vs unloaded). */
   loaded = $state(false);
+
+  /** The NON-archived projects, in list order — what the panel rows, launcher
+   *  picker, keyboard cycle, and git polling iterate. */
+  get active(): Project[] {
+    return activeProjects(this.list);
+  }
+
+  /** The archived projects, in list order (the panel's "Archived" section). */
+  get archived(): Project[] {
+    return archivedProjects(this.list);
+  }
 
   /**
    * Load the persisted projects from `projects.json` and seed the store. On ANY
@@ -80,6 +94,24 @@ export class ProjectsStore {
     await this.save();
   }
 
+  /** Archive the project with id `id` (hide it from the active surfaces) and
+   *  persist. Keeps its id/position so bound agents stay bound. No-op if absent. */
+  async archive(id: string): Promise<void> {
+    await this.setArchived(id, true);
+  }
+
+  /** Unarchive the project with id `id` (restore it in place) and persist. */
+  async unarchive(id: string): Promise<void> {
+    await this.setArchived(id, false);
+  }
+
+  private async setArchived(id: string, archived: boolean): Promise<void> {
+    const current = this.list.find((p) => p.id === id);
+    if (!current || (current.archived === true) === archived) return; // absent or unchanged
+    this.list = setProjectArchived(this.list, id, archived);
+    await this.save();
+  }
+
   /** Remove the project with id `id` and persist (best-effort). No-op if absent. */
   async remove(id: string): Promise<void> {
     const next = removeProject(this.list, id);
@@ -88,13 +120,25 @@ export class ProjectsStore {
     await this.save();
   }
 
-  /** Persist the current list via the Rust `projects_save` command (best-effort). */
-  private async save(): Promise<void> {
-    try {
-      await invoke('projects_save', { json: serializeProjects(this.list) });
-    } catch (err) {
-      console.error('projects_save failed', err);
-    }
+  /** The tail of the save chain: every save waits for the previous one. */
+  private pendingSave: Promise<void> = Promise.resolve();
+
+  /**
+   * Persist the current list via the Rust `projects_save` command (best-effort).
+   * Saves are CHAINED so two rapid mutations (archive → unarchive, edit → reorder)
+   * can never complete out of order and leave `projects.json` holding the older
+   * state; each save serializes the list as it stands when its turn comes.
+   */
+  private save(): Promise<void> {
+    const run = async () => {
+      try {
+        await invoke('projects_save', { json: serializeProjects(this.list) });
+      } catch (err) {
+        console.error('projects_save failed', err);
+      }
+    };
+    this.pendingSave = this.pendingSave.then(run, run);
+    return this.pendingSave;
   }
 }
 

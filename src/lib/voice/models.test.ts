@@ -14,6 +14,7 @@ import {
   downloadRows,
   modelsDiskUsage,
   deleteModels,
+  ensureModels,
   type PerModel
 } from './models';
 
@@ -140,5 +141,121 @@ describe('deleteModels', () => {
   it('degrades a backend failure to 0 freed (never throws)', async () => {
     invokeMock.mockRejectedValueOnce(new Error('boom'));
     await expect(deleteModels()).resolves.toBe(0);
+  });
+});
+
+describe('ensureModels — never runs two downloads at once', () => {
+  // The Rust downloader starts each model by UNLINKING any existing `.part` file
+  // and finishes by renaming `.part` into place, and readiness is an existence
+  // check with no size/checksum. So two overlapping downloads of the same model
+  // race: the first to finish renames the OTHER's truncated file into place, and
+  // the model is then reported ready forever while every transcription fails.
+  // The panel's "Try again" control re-triggers model readiness, so this has to
+  // collapse rather than stack.
+  it('collapses concurrent calls into a single download', async () => {
+    let releaseDownload!: () => void;
+    const download = new Promise((r) => (releaseDownload = () => r(undefined)));
+
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'voice_models_status') return Promise.resolve({ ready: false, missing: ['a'] });
+      if (cmd === 'voice_download_models') return download;
+      return Promise.resolve(null);
+    });
+
+    const first = ensureModels('fast', false);
+    const second = ensureModels('fast', false); // the impatient second click
+    releaseDownload();
+    await Promise.all([first, second]);
+
+    const downloads = invokeMock.mock.calls.filter((c) => c[0] === 'voice_download_models');
+    expect(downloads).toHaveLength(1);
+  });
+
+  // A stalled download must not wedge the app. `curl` is spawned with no timeout,
+  // so a hung transfer never returns; if the cheap readiness check were queued
+  // behind it, every later caller would block forever — including the voice panel's
+  // "Try again", whose entire job is to re-check.
+  //
+  // Loaded through a FRESH module instance: this test deliberately leaves a
+  // never-settling download in the module-level queue, which would otherwise block
+  // every later test in this file.
+  it('a readiness check still resolves while a download is stalled', async () => {
+    vi.resetModules();
+    const { ensureModels: freshEnsureModels } = await import('./models');
+
+    invokeMock.mockImplementation((cmd: string, args: { tier?: string }) => {
+      if (cmd === 'voice_models_status') {
+        // The stalled selection is missing; the other one is already on disk.
+        return Promise.resolve(
+          args.tier === 'fast' ? { ready: false, missing: ['a'] } : { ready: true, missing: [] }
+        );
+      }
+      if (cmd === 'voice_download_models') return new Promise(() => {}); // never settles
+      return Promise.resolve(null);
+    });
+
+    void freshEnsureModels('fast', false); // hangs forever, deliberately not awaited
+    await expect(freshEnsureModels('accurate', false)).resolves.toBeUndefined();
+  });
+
+  // The readiness check runs OUTSIDE the download queue (so a stall can't wedge
+  // it) — which means it can now execute while another selection is mid-download.
+  // Its "everything is present" short-circuit must therefore not stomp the live
+  // download's session: markReady() clears active/perModel/error, which would flip
+  // Settings' "Delete models" back on mid-download (deleting the .part out from
+  // under curl), blank the progress UI, and discard an already-surfaced error.
+  it('a readiness check does not clobber a live download session', async () => {
+    vi.resetModules();
+    const { ensureModels: freshEnsureModels } = await import('./models');
+    const { modelDownload } = await import('./modelStore.svelte');
+
+    invokeMock.mockImplementation((cmd: string, args: { tier?: string }) => {
+      if (cmd === 'voice_models_status') {
+        return Promise.resolve(
+          args.tier === 'accurate' ? { ready: false, missing: ['a'] } : { ready: true, missing: [] }
+        );
+      }
+      if (cmd === 'voice_download_models') return new Promise(() => {}); // still running
+      return Promise.resolve(null);
+    });
+
+    void freshEnsureModels('accurate', false); // starts the download
+    await new Promise((r) => setTimeout(r, 0)); // let it reach begin()
+    expect(modelDownload.active).toBe(true);
+
+    // A different, already-satisfied selection asks about readiness mid-download.
+    await freshEnsureModels('fast', false);
+
+    expect(modelDownload.active).toBe(true); // the live download still owns the store
+  });
+
+  it('runs a later download after the first finishes, never overlapping', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const started: string[] = [];
+    let releaseFirst!: () => void;
+    const gate = new Promise((r) => (releaseFirst = () => r(undefined)));
+
+    invokeMock.mockImplementation(async (cmd: string, args: { tier?: string }) => {
+      if (cmd === 'voice_models_status') return { ready: false, missing: ['a'] };
+      if (cmd === 'voice_download_models') {
+        started.push(args.tier!);
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        if (args.tier === 'fast') await gate;
+        active -= 1;
+        return null;
+      }
+      return null;
+    });
+
+    const a = ensureModels('fast', false);
+    const b = ensureModels('accurate', false);
+    releaseFirst();
+    await Promise.all([a, b]);
+
+    // The load-bearing assertion: the two downloads never ran at the same time.
+    expect(maxActive).toBe(1);
+    expect(started).toEqual(['fast', 'accurate']);
   });
 });

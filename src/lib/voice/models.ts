@@ -146,34 +146,87 @@ export async function deleteModels(): Promise<number> {
  * once the download command returns (or immediately if already ready). The store
  * is the source of truth the UI renders; this function never throws — a transport
  * failure is recorded as `modelDownload.error`.
+ *
+ * Safe to call repeatedly (the voice panel's "Try again" does): identical requests
+ * share one run, and downloads never overlap — see the serialization note below.
  */
-export async function ensureModels(tier: string, polish: boolean): Promise<void> {
+export function ensureModels(tier: string, polish: boolean): Promise<void> {
+  const key = `${tier}:${polish}`;
+  // An identical request already queued/running: share it rather than stacking.
+  const already = queuedEnsures.get(key);
+  if (already) return already;
+  const run = runEnsureModels(tier, polish).finally(() => queuedEnsures.delete(key));
+  queuedEnsures.set(key, run);
+  return run;
+}
+
+/**
+ * DOWNLOAD SERIALIZATION. Downloads must never overlap: the Rust downloader starts
+ * each model by unlinking any existing `.part` file and finishes by renaming
+ * `.part` into place, and readiness is an existence check with no size or checksum.
+ * Two concurrent downloads of the same model therefore corrupt it — the first to
+ * finish renames the OTHER's truncated file into place, after which the model is
+ * reported ready forever while every transcription against it fails, recoverable
+ * only via Settings → Delete models. This is reachable by ordinary UI actions: the
+ * voice panel's "Try again" control re-checks readiness, and Settings + onboarding
+ * both call in as well.
+ *
+ * ONLY the download is queued. The readiness check deliberately runs OUTSIDE this
+ * chain: `curl` is spawned with no timeout, so a stalled transfer never returns,
+ * and queueing the cheap status IPC behind it would wedge every later caller —
+ * including the ones that only needed to learn the models are already present, and
+ * including the "Try again" control whose whole job is to re-check.
+ */
+let downloadChain: Promise<void> = Promise.resolve();
+const queuedEnsures = new Map<string, Promise<void>>();
+
+/** The work behind [`ensureModels`]; always reached through its dedupe map. */
+async function runEnsureModels(tier: string, polish: boolean): Promise<void> {
   const status = await modelsStatus(tier, polish);
   if (status.ready) {
-    modelDownload.markReady();
+    // Because readiness runs outside the download queue, this can land WHILE another
+    // selection is downloading. `markReady()` clears active/perModel/error, so
+    // announcing "ready" then would stomp that live session: Settings' Delete models
+    // would re-enable mid-download (unlinking the `.part` out from under curl), the
+    // progress UI would blank, and an already-surfaced error would be discarded. The
+    // running download owns the store until it finishes.
+    if (!modelDownload.active) modelDownload.markReady();
     return;
   }
 
-  modelDownload.begin();
-  const channel = new Channel<DownloadEvent>();
-  channel.onmessage = (msg) => {
-    switch (msg.event) {
-      case 'start':
-        modelDownload.setProgress(msg.id, 0, msg.total);
-        break;
-      case 'progress':
-        modelDownload.setProgress(msg.id, msg.received, msg.total);
-        break;
-      case 'done':
-        modelDownload.markModelDone(msg.id);
-        break;
-      case 'error':
-        modelDownload.setError(msg.message);
-        break;
-    }
-  };
+  // Queue the download itself behind any in-flight one.
+  const next = downloadChain.catch(() => {}).then(() => runDownload(tier, polish));
+  downloadChain = next.catch(() => {});
+  return next;
+}
 
+/** Download the missing models for a selection. Serialized by [`runEnsureModels`]. */
+async function runDownload(tier: string, polish: boolean): Promise<void> {
+  modelDownload.begin();
+  // Everything after begin() lives in the try, so a THROW before/around the invoke
+  // can't leave the store pinned "downloading" (which disables Settings' Delete and
+  // the onboarding gate). Note this does not cover a HANG: `curl` is spawned with no
+  // timeout, so a stalled transfer never settles the invoke, `finish()` never runs,
+  // and no later download can start. Giving the transfer a timeout is the real fix
+  // and belongs on the Rust side.
   try {
+    const channel = new Channel<DownloadEvent>();
+    channel.onmessage = (msg) => {
+      switch (msg.event) {
+        case 'start':
+          modelDownload.setProgress(msg.id, 0, msg.total);
+          break;
+        case 'progress':
+          modelDownload.setProgress(msg.id, msg.received, msg.total);
+          break;
+        case 'done':
+          modelDownload.markModelDone(msg.id);
+          break;
+        case 'error':
+          modelDownload.setError(msg.message);
+          break;
+      }
+    };
     await invoke('voice_download_models', { tier, polish, onEvent: channel });
   } catch (e) {
     modelDownload.setError(e instanceof Error ? e.message : String(e));

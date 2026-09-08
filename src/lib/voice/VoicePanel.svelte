@@ -30,6 +30,11 @@
   // larger models land — readiness is surfaced, not enforced, by this slice.
   $effect(() => {
     if (!voiceStore.open) return;
+    // Re-check on retry too, not just on open. "Voice models aren't ready yet — try
+    // again in a moment." is itself one of the failure messages, so a Try again
+    // that never re-attempts the download would loop on that error forever — the
+    // exact dead end this panel's recovery controls exist to remove.
+    void voiceStore.session;
     void ensureModels(voice.prefs.modelTier, voice.prefs.polish);
   });
 
@@ -43,6 +48,12 @@
 
   $effect(() => {
     if (!voiceStore.open) return;
+    // Depend on the capture-SESSION counter as well as `open`: a pipeline that has
+    // finalized or failed is spent (`#finished`, mic released), so recovering in
+    // place needs a brand-new one. `voiceStore.retry()` bumps `session`, which
+    // re-runs this effect — tearing the spent pipeline down via the cleanup below
+    // and building a fresh one — without the panel ever closing.
+    void voiceStore.session; // re-run on retry, with a fresh capture session
 
     const p = new DictationPipeline();
     let cancelled = false;
@@ -64,8 +75,9 @@
         if (cancelled) return;
         const outcome = classifyMicError(err);
         if (outcome === 'denied') {
-          voiceStore.setState('denied');
-          voiceStore.setError(MIC_DENIED_GUIDANCE);
+          // Pass the phase explicitly: a bare setError() forces 'error', which
+          // used to clobber the 'denied' phase and hide the System Settings hint.
+          voiceStore.setError(MIC_DENIED_GUIDANCE, 'denied');
         } else {
           // setError forces state to 'error'.
           voiceStore.setError(micGuidanceFor('error'));
@@ -151,7 +163,10 @@
   let bars = $state<number[]>(new Array(5).fill(0));
 
   $effect(() => {
-    if (voiceStore.state !== 'recording') {
+    // Gate on `open` as well as the phase. This component is mounted permanently,
+    // so a store left in the recording phase while the panel is CLOSED would pin
+    // this rAF loop at 60fps for the rest of the app's life with nothing on screen.
+    if (!voiceStore.open || voiceStore.state !== 'recording') {
       bars = new Array(5).fill(0);
       return;
     }
@@ -178,9 +193,11 @@
     return Math.round(4 + Math.min(1, level) * 22);
   }
 
-  // The text shown in the recording / processing rows: the live partial, falling
-  // back to the committed final (e.g. while finalizing) or a gentle placeholder.
-  const overlayText = $derived(voiceStore.partial || voiceStore.finalText);
+  // The recording + processing rows show the LIVE partial only (with a placeholder
+  // when it is empty). They deliberately do NOT fall back to `finalText`: retry()
+  // preserves that across a failed insert, so a fallback would render a PREVIOUS
+  // utterance as if it were the one being captured or finalized now. The completed
+  // transcript has its own home in the guidance block.
 </script>
 
 
@@ -230,20 +247,49 @@
     {/if}
 
     {#if voiceStore.state === 'denied' || voiceStore.state === 'error'}
-      <!-- Denied / error state: prominent guidance; recording does NOT proceed. -->
+      <!-- Denied / error state: prominent guidance; recording does NOT proceed.
+           This branch replaces the .rec row (and its ✓ / × controls), so it MUST
+           carry its own way out — without them the panel was a dead end: no
+           button on screen, the right-⌘ tap inert, and only an undiscoverable
+           Escape left. "Try again" recovers in place (fresh capture session);
+           "Dismiss" closes the panel. -->
       <div class="guidance" class:denied={voiceStore.state === 'denied'}>
         <p class="guidance-msg">{voiceStore.error ?? status}</p>
         {#if voiceStore.state === 'denied'}
           <p class="guidance-hint">
             Open System Settings → Privacy &amp; Security → Microphone, allow
-            agent-desktop, then reopen voice input.
+            agent-desktop, then try again.
           </p>
         {/if}
+        {#if voiceStore.finalText}
+          <!-- A failure AFTER a good transcription (dead pane / no agent): the
+               pipeline keeps the panel open so the dictation isn't lost, so show
+               it — selectable — rather than only the error string. -->
+          <p class="guidance-text">{voiceStore.finalText}</p>
+        {/if}
+        <div class="guidance-actions">
+          <button
+            type="button"
+            class="g-retry"
+            use:tooltip={'Try again (tap right ⌘)'}
+            onclick={() => voiceStore.retry()}
+          >
+            Try again
+          </button>
+          <button
+            type="button"
+            class="g-dismiss"
+            use:tooltip={'Dismiss (Esc)'}
+            onclick={() => discard()}
+          >
+            Dismiss
+          </button>
+        </div>
       </div>
     {:else if voiceStore.state === 'transcribing'}
       <!-- PROCESSING: the same captured text, shimmering blue until finalized. -->
       <div class="proc">
-        <span class="proc-text">{overlayText || 'Transcribing…'}</span>
+        <span class="proc-text">{voiceStore.partial || 'Transcribing…'}</span>
       </div>
     {:else}
       <!-- RECORDING (or requesting mic): live waveform + transcript + confirm (✓). -->
@@ -253,7 +299,13 @@
             <span class="bar" style:height={`${barHeight(b)}px`}></span>
           {/each}
         </div>
-        <span class="rec-text" class:dim={!overlayText}>{overlayText || status}</span>
+        <!-- Live capture shows the LIVE partial only — as does `.proc` above.
+             Neither falls back to `finalText`, which retry() preserves from a
+             previous attempt: that text belongs to the old utterance and would
+             read as if this one had already picked it up. -->
+        <span class="rec-text" class:dim={!voiceStore.partial}
+          >{voiceStore.partial || status}</span
+        >
         <button
           class="confirm"
           aria-label="Insert dictation"
@@ -460,6 +512,64 @@
     font-size: 12px;
     line-height: 1.5;
     color: var(--fg-3);
+  }
+
+  /* The preserved transcript from a failed INSERT — selectable so the user can
+     copy it out even if they abandon the panel. */
+  .guidance-text {
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: var(--r-sm);
+    background: var(--space-800);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--fg-2);
+    max-height: 20vh;
+    overflow-y: auto;
+    word-break: break-word;
+    user-select: text;
+  }
+
+  /* The guidance block's WAY OUT. This branch replaces the .rec row's ✓ / ×, so
+     without these the failure state has no on-screen control at all. Sizing and
+     colour follow the DESIGN.md button-primary / button-ghost recipes (body type,
+     rounded.md, blue-500 / fg-2). */
+  .guidance-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 2px;
+  }
+  .g-retry,
+  .g-dismiss {
+    padding: 6px 14px;
+    border-radius: var(--r-md);
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+    cursor: pointer;
+    transition:
+      background 0.15s ease,
+      color 0.15s ease;
+  }
+  .g-retry {
+    border: none;
+    background: var(--accent);
+    color: var(--fg-on-accent);
+    font-weight: 500;
+  }
+  .g-retry:hover {
+    background: var(--accent-hover);
+  }
+  .g-dismiss {
+    border: 1px solid var(--line-default);
+    background: transparent;
+    color: var(--fg-2);
+  }
+  .g-dismiss:hover {
+    background: var(--bg-hover);
+    color: var(--fg-1);
   }
 
   /* "Preparing models…" download progress: a determinate bar fed by the

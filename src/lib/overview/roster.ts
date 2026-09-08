@@ -69,41 +69,6 @@ export function laneForRow(row: AgentRow): AgentLane {
 }
 
 /**
- * PURE: whether a COORDINATOR genuinely needs the user's input. The coordinator is
- * an orchestrator expected to keep working/delegating, so the DEFAULT idle/waiting
- * heuristic (a quiet PTY / a `Stop`/`SessionStart` event) must NOT flag it as
- * needing you. It needs you ONLY when:
- *   (a) it asks a question via the built-in AskUserQuestion tool — detected from the
- *       row's pending question(s) (`question`/`questions`, event-sourced), OR
- *   (b) it explicitly called the `request_user_input` orchestration tool — the
- *       `flag` argument (the reactive coordinatorNeedsInput store, read by the caller).
- *
- * Non-coordinator rows never reach this — their needs-input is the normal status
- * heuristic. Pure: depends only on its inputs.
- */
-export function coordinatorNeedsInput(
-  row: Pick<AgentRow, 'question' | 'questions'>,
-  flag: boolean
-): boolean {
-  const hasQuestion = !!row.question || (Array.isArray(row.questions) && row.questions.length > 0);
-  return hasQuestion || flag === true;
-}
-
-/**
- * PURE: whether a row is an ARCHIVED COORDINATOR — a `role:'coordinator'` row whose
- * session is CLOSED (Archived). The roster labels exactly these rows with the bot
- * "Coordinator" badge (agent-roster-display: "Archived coordinator is labeled"); a
- * LIVE coordinator keeps its existing presentation (its own pinned-row badge), so it
- * is deliberately NOT matched here. A `preview`-ed coordinator (resumed-from-archived,
- * `closed:false`) is live again and likewise unmatched.
- */
-export function isArchivedCoordinator(
-  row: Pick<AgentRow, 'role' | 'closed'>
-): boolean {
-  return row.role === 'coordinator' && row.closed === true;
-}
-
-/**
  * PURE: whether a row is actively waiting on YOU — waiting/errored AND neither
  * paused (deferred) nor archived (closed). The inbox's attention queue + focus
  * advance use this so a paused/archived agent never nags or steals focus.
@@ -240,6 +205,24 @@ export function orderRowsByLane(
 }
 
 /**
+ * PURE: lift the pinned rows to the very top of the display order — above every
+ * lane, in the `pinned` list's order (most recently pinned first) — leaving the
+ * remaining rows in their incoming (lane-grouped) order. Pinned ids with no row
+ * are ignored. Returns a new array; never mutates inputs.
+ */
+export function pinRowsToTop(rows: AgentRow[], pinned: ReadonlyArray<string>): AgentRow[] {
+  if (pinned.length === 0) return [...rows];
+  const byId = new Map(rows.map((r) => [r.paneId, r]));
+  const top: AgentRow[] = [];
+  for (const id of pinned) {
+    const r = byId.get(id);
+    if (r) top.push(r);
+  }
+  const topSet = new Set(top.map((r) => r.paneId));
+  return [...top, ...rows.filter((r) => !topSet.has(r.paneId))];
+}
+
+/**
  * PURE: the paneIds of the ARCHIVED rows — those in the `done` lane (closed or
  * previewing-an-archived-session), in roster order. This is exactly the set shown
  * under the overview's "Archived" header, so it backs the "delete all archived"
@@ -253,6 +236,11 @@ export function archivedPaneIds(rows: AgentRow[]): string[] {
 export interface PaneRuntime {
   /** Epoch ms of the most recent PTY output, or null if none seen yet. */
   lastOutputAt: number | null;
+  /** Epoch ms when this runtime entry was first created (the pane's first
+   *  output / exit) — a STABLE "started" time for ordering plain-terminal rows,
+   *  which would otherwise re-sort on every output chunk. Optional (older
+   *  fixtures omit it). */
+  spawnedAt?: number;
   /** Whether the pane's process has exited. */
   exited: boolean;
   /** The process exit code once exited, else null (and null for an unknown code). */
@@ -278,6 +266,14 @@ export interface PaneRuntime {
    * flight. Set by `noteResize`; absent means "no recent resize" (fail-safe).
    */
   resizeAt?: number | null;
+  /**
+   * The latest FOREGROUND-JOB probe result for a plain terminal (combined
+   * placement): `true` when a job owns the terminal (the shell is running a
+   * command), `false` when the shell sits at its prompt, `null`/absent when unknown
+   * (never probed, or a platform without the probe). Set by `noteForeground`; read
+   * by `deriveTerminalStatus` (terminalRows.ts). Never set for agent panes.
+   */
+  foregroundBusy?: boolean | null;
   /**
    * The pane's PREVIOUSLY-derived (final) status — the hysteresis memory for the
    * silence-based demotion. The Overview records each row's final status here after
@@ -397,13 +393,6 @@ export interface RosterPane {
    *  spawned AS by the orchestration toolkit — used to badge/attribute the agent
    *  in the roster. Absent for panes not spawned as a specialist. */
   specialist?: string | null;
-  /** OPTIONAL role marker — `'coordinator'` for the per-project coordinator pane.
-   *  Used to badge the coordinator in the roster (task 6.5). Absent for ordinary agents. */
-  role?: 'coordinator' | null;
-  /** OPTIONAL paneId of the COORDINATOR that spawned/drives this agent — so the
-   *  roster can attribute the agent to its coordinator's orchestration (task 6.5).
-   *  Absent for user-started agents and coordinator panes themselves. */
-  coordinatorPaneId?: string | null;
   /** Whether this agent's session is CLOSED (Archived) — its PTY is terminated
    *  and it is retained only for restore/delete. */
   closed?: boolean;
@@ -451,6 +440,11 @@ export interface AgentRow {
    *  Used alongside `model` to derive a versioned human-readable label via
    *  `modelLabel(modelId, model)`. */
   modelId: string | null;
+  /** The linked git worktree the session runs in (snapshot `git.worktree`), or
+   *  null outside a worktree / when unknown. Shown on the row's meta line left of
+   *  the time (agent-roster-display) in the slot the model label used to occupy.
+   *  Optional: `rowFor` always sets it, but roster fixtures may omit it. */
+  worktree?: string | null;
   /** The current in-progress task (`activeForm`), or null. */
   task: string | null;
   /** The agent's last assistant message (high-level "what it just said"), or null. */
@@ -478,19 +472,24 @@ export interface AgentRow {
    *  alert callsite (parallel to the `name` title override), not by `rowFor`; roster
    *  fixtures and non-alert consumers may omit it. Null/undefined → no project prefix. */
   projectName?: string | null;
+  /**
+   * `'terminal'` for a PLAIN-TERMINAL row (a task run or bare shell listed with the
+   * sessions in the combined placement — terminalRows.ts); absent/`'session'` for an
+   * agent row. Terminal rows have no workspace, transcript, or events: the inbox's
+   * session-only effects (auto-archive / resume / preview / summaries) skip them.
+   */
+  kind?: 'session' | 'terminal';
+  /** Terminal rows: `'task'` (a terminal-kind task def) or `'bare'` (a ⌘Y shell). */
+  terminalKind?: 'task' | 'bare';
+  /** Terminal rows: the store key (`task:<defId>` / `bare:<bareId>`) behind the row. */
+  terminalKey?: string;
+  /** Terminal rows: whether the process is up (drives Kill vs Close / Restart). */
+  running?: boolean;
   /** The SPECIALIST this pane was spawned AS (registry `specialist`), or null if
    *  it was not spawned as a specialist. Surfaced as a roster badge so a
-   *  coordinator-spawned specialist agent is visibly attributed (task 5.4).
+   *  specialist-spawned agent is visibly attributed (task 5.4).
    *  Optional: `rowFor` always sets it, but roster fixtures may omit it. */
   specialist?: string | null;
-  /** The role marker — `'coordinator'` for the per-project coordinator pane, else
-   *  null. Surfaced so the overview can badge the coordinator (task 6.5). Optional:
-   *  `rowFor` always sets it, but roster fixtures may omit it. */
-  role?: 'coordinator' | null;
-  /** The paneId of the COORDINATOR that spawned/drives this agent, or null. Surfaced
-   *  so the roster can attribute the agent to its coordinator's orchestration
-   *  (task 6.5). Optional: `rowFor` always sets it, but fixtures may omit it. */
-  coordinatorPaneId?: string | null;
   /** Whether the agent's session is CLOSED (Completed): PTY terminated, retained
    *  only for restore (`claude --resume`) or delete. Forces the `finished` status
    *  so a closed agent always sits in the Completed lane. Optional: `rowFor` always
@@ -591,8 +590,7 @@ function rowFor(
   activity: RowActivity | undefined,
   event: EventActivity | undefined,
   nowMs: number,
-  workingWindowMs: number,
-  coordFlag: boolean
+  workingWindowMs: number
 ): AgentRow {
   // Status precedence: a process exit is AUTHORITATIVE (a dead process is never
   // "working"); otherwise the event-sourced status wins; the PTY-byte heuristic is
@@ -617,40 +615,11 @@ function rowFor(
     : runtime?.exited
       ? ptyStatus
       : liveEventStatus ?? ptyStatus;
-  // COORDINATOR status (tasks 10.11–10.12 + coordinator-idle-when-quiet): a LIVE
-  // coordinator does NOT inherit the default idle/waiting heuristic. It derives one of
-  // three states; a closed/exited coordinator keeps its derived (finished/error)
-  // status — it's not "live".
-  //   1. NEEDS YOU (`waiting`, → Needs-you lane) — it asked an AskUserQuestion (its
-  //      pending question(s)) OR called `request_user_input` (the `coordFlag`), OR it
-  //      has NEVER been prompted: a freshly launched coordinator spawns at an empty
-  //      prompt (`startCoordinator` launches with `prompt:''`) and is genuinely
-  //      waiting on YOU for its first instruction until its first turn starts
-  //      (`everPrompted === true`, set when you type or an escalation is injected).
-  //   2. WORKING (In flight) — engaged and ACTUALLY running: streaming output within
-  //      the working window (`ptyStatus`) OR a live terminal active-work affordance
-  //      ("esc to interrupt" / "Waiting for N dynamic workflow(s)") seen within the
-  //      busy grace window. These are the same activity signals a normal pane uses.
-  //   3. IDLE — engaged but genuinely quiet at its prompt (no recent output, no
-  //      affordance). It stays OUT of attention (it never nags) and is NOT shown In
-  //      flight, so it shows no flashing dot — fixing the "always looks like it's
-  //      running" bug while preserving the no-nag suppression.
-  if (pane.role === 'coordinator' && !closed && !runtime?.exited) {
-    const everPrompted = event?.everPrompted === true;
-    const needsYou = coordinatorNeedsInput({ question, questions }, coordFlag) || !everPrompted;
-    if (needsYou) {
-      status = 'waiting';
-    } else {
-      const busy =
-        runtime?.terminalBusyAt != null && nowMs - runtime.terminalBusyAt <= BUSY_GRACE_MS;
-      status = ptyStatus === 'working' || busy ? 'working' : 'idle';
-    }
-  }
   // TERMINAL-BUSY In-flight override (agent-status-derivation): Claude Code may be
   // actively working while its event hooks report idle — a foreground command
   // running in the terminal, or in-session background work (a dynamic workflow /
   // another agent still running). The TerminalPane stamps `runtime.terminalBusyAt`
-  // from `detectTerminalBusy` on each positive detection. For a LIVE, NON-coordinator
+  // from `detectTerminalBusy` on each positive detection. For a LIVE
   // pane with NO pending AskUserQuestion, show it In flight (`working`) rather than
   // Needs input, so it stays out of attention until the work finishes or the user
   // interrupts it.
@@ -664,16 +633,14 @@ function rowFor(
   // it immediately and it lapses a few seconds after the affordance truly ends.
   //
   // Strictly ADDITIVE and fail-safe: with no detection ever (or once the window has
-  // lapsed) the result is byte-for-byte the prior derivation. The coordinator path is
-  // untouched (decided above by coordinatorNeedsInput), an exited/closed pane is never
-  // re-flagged working (a dead process is never working), and a pending question keeps
-  // Needs input regardless of any indicator.
+  // lapsed) the result is byte-for-byte the prior derivation. An exited/closed pane is
+  // never re-flagged working (a dead process is never working), and a pending question
+  // keeps Needs input regardless of any indicator.
   const hasPendingQuestion =
     question != null || (Array.isArray(questions) && questions.length > 0);
   if (
     runtime?.terminalBusyAt != null &&
     nowMs - runtime.terminalBusyAt <= BUSY_GRACE_MS &&
-    pane.role !== 'coordinator' &&
     !closed &&
     !runtime.exited &&
     !hasPendingQuestion
@@ -687,6 +654,7 @@ function rowFor(
     cwd: pane.cwd,
     model: snapshot?.model ?? null,
     modelId: snapshot?.model_id ?? null,
+    worktree: snapshot?.git?.worktree || null,
     task: snapshot?.task ?? null,
     summary: activity?.summary ?? null,
     // The pending question is event-sourced (it rides the PreToolUse event); the
@@ -713,8 +681,6 @@ function rowFor(
     status,
     projectId: pane.projectId ?? null,
     specialist: pane.specialist ?? null,
-    role: pane.role ?? null,
-    coordinatorPaneId: pane.coordinatorPaneId ?? null,
     closed,
     paused: pane.paused === true,
     pausedCount: pane.pausedCount ?? null,
@@ -739,9 +705,6 @@ function rowFor(
  * @param activity    the live session_id -> transcript activity map (summary/question)
  * @param workingWindowMs  activity window in ms (default WORKING_WINDOW_MS)
  * @param eventActivity  the live pane_id -> event-sourced activity map (status/question)
- * @param coordNeedsInput  set of coordinator paneIds that explicitly called
- *   `request_user_input` (tasks 10.11–10.12); a coordinator in this set needs you
- *   even with no pending AskUserQuestion. Default empty (no explicit signals).
  */
 export function buildRoster(
   map: SnapshotMap,
@@ -750,8 +713,7 @@ export function buildRoster(
   nowMs: number,
   activity: ActivityMap = {},
   workingWindowMs: number = WORKING_WINDOW_MS,
-  eventActivity: Record<string, EventActivity> = {},
-  coordNeedsInput: ReadonlySet<string> = new Set()
+  eventActivity: Record<string, EventActivity> = {}
 ): AgentRow[] {
   const rows: AgentRow[] = [];
   for (const ws of workspaces) {
@@ -770,8 +732,7 @@ export function buildRoster(
           act,
           eventActivity[pane.paneId],
           nowMs,
-          workingWindowMs,
-          coordNeedsInput.has(pane.paneId)
+          workingWindowMs
         )
       );
     }

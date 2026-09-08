@@ -92,6 +92,16 @@ pub fn default_shell() -> String {
     }
 }
 
+/// Whether `program` resolves on the seeded `PATH` (`agent-backends`: the
+/// Settings install-detection hint). A bare name only — anything containing a
+/// path separator is rejected rather than probed.
+pub fn program_on_path(program: &str) -> bool {
+    if program.is_empty() || program.contains('/') || program.contains('\\') {
+        return false;
+    }
+    which_on_path(program).is_some()
+}
+
 /// First directory on the seeded `PATH` containing `program` (with the platform's
 /// executable extensions), or `None`. Used to decide whether `pwsh` exists.
 fn which_on_path(program: &str) -> Option<std::path::PathBuf> {
@@ -156,7 +166,15 @@ fn compose_path(login: &str, process: &str, home: &str, windows: bool) -> String
         )
     } else {
         (
-            vec![format!("{home}/.local/bin"), format!("{home}/.cargo/bin")],
+            // `~/.npm-global/bin` is a common npm-prefix target where the
+            // Copilot CLI (`@github/copilot`) lands; nvm-managed node dirs are
+            // versioned and unguessable, but those flow in via the login-shell
+            // probe.
+            vec![
+                format!("{home}/.local/bin"),
+                format!("{home}/.cargo/bin"),
+                format!("{home}/.npm-global/bin"),
+            ],
             "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         )
     };
@@ -328,6 +346,7 @@ mod tests {
                 sparse,
                 "/Users/x/.local/bin",
                 "/Users/x/.cargo/bin",
+                "/Users/x/.npm-global/bin",
                 "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
             ],
             ':',

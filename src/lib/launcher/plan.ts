@@ -1,12 +1,17 @@
 // PURE, framework-free launch-plan builder for the session launcher (Milestone 5
 // / session-launcher spec: Placement As New Tab Or Split Of Focused Pane,
-// Optional Initial Prompt, No Auto-Run Of Slash Commands). Given the launcher's
-// raw form inputs ({folder, prompt, placement}) it produces a normalized,
-// JSON-able plan that the runes-side `workspace.launch(plan)` consumes. No
-// Svelte/Tauri/DOM imports, so the load-bearing guarantees — program is ALWAYS
-// `claude`, the initial input is EXACTLY the user's text (never an app-fabricated
-// slash command), and the placement is normalized — are unit-tested without a DOM
-// or a live PTY.
+// Optional Initial Prompt, No Auto-Run Of Slash Commands; extended by
+// `agent-backends`). Given the launcher's raw form inputs ({folder, prompt,
+// placement, agent}) it produces a normalized, JSON-able plan that the
+// runes-side `workspace.launch(plan)` consumes. No Svelte/Tauri/DOM imports, so
+// the load-bearing guarantees — program is ALWAYS a registered agent backend
+// (the launcher's per-session choice, else the global default), the initial
+// input is EXACTLY the user's text (never an app-fabricated slash command), and
+// the placement is normalized — are unit-tested without a DOM or a live PTY.
+
+import { parseAgentKind, type AgentKind } from '$lib/agent/backends';
+import { defaultAgentKind } from '$lib/agent/defaultAgent';
+import { supportsWorktree, worktreeLaunchArgs } from './worktreeArgs';
 
 /** Where the launched session is placed relative to the current layout. */
 export type Placement = 'tab' | 'split-right' | 'split-down';
@@ -27,16 +32,28 @@ export interface LaunchRequest {
   placement: Placement;
   /** OPTIONAL id of the project this session is launched under. */
   projectId?: string | null;
+  /**
+   * OPTIONAL per-session agent override. Absent/blank → the global agent
+   * setting (`defaultAgentKind()`); an unknown value normalizes to claude.
+   */
+  agent?: AgentKind | null;
+  /**
+   * OPTIONAL: start the session in a NEW git worktree (`claude --worktree [name]`).
+   * `name` is the optional worktree name (blank → claude picks one). Ignored for
+   * backends whose CLI has no worktree flag.
+   */
+  worktree?: { name?: string | null } | null;
 }
 
 /**
- * A normalized, ready-to-execute launch plan. The program is ALWAYS `claude`
- * (the launcher never spawns anything else) and `initialInput` is the user's
- * verbatim prompt or `undefined` — NEVER a synthesized `/command`.
+ * A normalized, ready-to-execute launch plan. The program is ALWAYS a
+ * registered agent backend — the per-session override when given, else the
+ * global agent setting — and `initialInput` is the user's verbatim prompt or
+ * `undefined` — NEVER a synthesized `/command`.
  */
 export interface LaunchPlan {
-  /** Always `claude` — the launcher only ever spawns claude sessions. */
-  program: 'claude';
+  /** The resolved agent backend for this session (`claude` / `copilot`). */
+  program: AgentKind;
   /** The chosen folder as the session's working directory (absolute path). */
   cwd: string;
   /** Normalized placement. */
@@ -54,6 +71,13 @@ export interface LaunchPlan {
    * the pane's registry entry; never inferred.
    */
   projectId: string | undefined;
+  /**
+   * LAUNCH-TIME-ONLY CLI args applied on the pane's FIRST spawn and never again —
+   * today the worktree flag (`--worktree [name]`). Empty when nothing applies.
+   * Recorded on the pane as `launchArgs` (not persisted), so a restored pane
+   * resumes without them.
+   */
+  launchArgs: string[];
 }
 
 /** Whether a placement splits the focused pane (vs. opening a fresh tab). */
@@ -64,7 +88,8 @@ export function isSplitPlacement(placement: Placement): boolean {
 /**
  * Build a normalized launch plan from the launcher's raw inputs.
  *
- *  - `program` is hard-coded to `claude`.
+ *  - `program` is the per-session `agent` override when present, else the
+ *    global agent setting (Launcher Agent Selection).
  *  - `cwd` is the chosen folder, trimmed of surrounding whitespace.
  *  - `initialInput` is the user's prompt VERBATIM when non-blank, else
  *    `undefined`. The text is passed through untouched — including a leading `/`
@@ -105,11 +130,21 @@ export function buildLaunchPlan(
       ? req.projectId
       : undefined;
 
+  // Resolve the backend: explicit per-session override wins; otherwise the
+  // global setting. Unknown/blank values normalize to the safe default.
+  const program: AgentKind = req.agent ? parseAgentKind(req.agent) : defaultAgentKind();
+
+  // Worktree launch: only for a backend whose CLI accepts `--worktree`; the
+  // option is otherwise dropped (no unknown flag reaches the other CLI).
+  const launchArgs =
+    req.worktree && supportsWorktree(program) ? worktreeLaunchArgs(req.worktree.name) : [];
+
   return {
-    program: 'claude',
+    program,
     cwd,
     placement,
     initialInput,
-    projectId
+    projectId,
+    launchArgs
   };
 }

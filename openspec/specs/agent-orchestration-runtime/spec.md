@@ -34,9 +34,10 @@ id.
 - **THEN** each call receives only its own matching reply
 
 ### Requirement: Spawn new agents
-The toolkit SHALL let the orchestrator spawn a new `claude` agent pane in its
-project with a given initial prompt and an optional working directory within the
-project. The new agent's identity SHALL be returned to the orchestrator.
+The toolkit SHALL let the orchestrator spawn a new agent pane (the backend
+resolved by the app's agent-backends registry) in its project with a given
+initial prompt and an optional working directory within the project. The new
+agent's identity SHALL be returned to the orchestrator.
 
 #### Scenario: Orchestrator spawns an agent
 - **WHEN** the orchestrator calls `spawn_agent` with a prompt
@@ -72,20 +73,16 @@ so the orchestrator must wait for the question to clear (or have the user answer
 ### Requirement: List and inspect project agents
 The toolkit SHALL let the orchestrator enumerate the project's agent panes
 (`list_agents`) and inspect a single agent (`inspect_agent`). `list_agents` SHALL
-return every `claude` agent pane in the project — both orchestrator-spawned agents
+return every agent pane in the project — both orchestrator-spawned agents
 and the user's manually-started sessions.
 
 #### Scenario: Listing returns all project agents
 - **WHEN** the orchestrator calls `list_agents`
-- **THEN** every `claude` agent pane in the orchestrator's project is returned, including the user's pre-existing sessions
+- **THEN** every agent pane in the orchestrator's project is returned, including the user's pre-existing sessions
 
 #### Scenario: Inspecting an agent returns its details
 - **WHEN** the orchestrator calls `inspect_agent` for an agent in its project
 - **THEN** that agent's identity and current state are returned
-
-#### Scenario: Coordinator panes are excluded from listing
-- **WHEN** the orchestrator calls `list_agents` in a project that has a coordinator pane
-- **THEN** the coordinator pane is not included in the result
 
 ### Requirement: Archive and unarchive project agents
 The toolkit SHALL let the orchestrator archive (`archive_agent`) and unarchive
@@ -113,10 +110,6 @@ SHALL be rejected without performing the action.
 - **WHEN** the orchestrator targets a pane id that does not exist or is closed
 - **THEN** the operation is rejected with an error and no action is performed
 
-#### Scenario: Targeting a coordinator pane is rejected
-- **WHEN** the orchestrator targets a pane whose role is coordinator (including its own pane)
-- **THEN** the operation is rejected with an error and no action is performed
-
 ### Requirement: Injections into one agent are serialized
 The system SHALL serialize input injections directed at a single agent so that
 concurrent or rapid `message_agent` / `spawn_agent` deliveries to the same target
@@ -132,12 +125,11 @@ until the target can accept input.
 - **THEN** the injection is held and delivered once the agent can accept input
 
 ### Requirement: Toolkit excludes question-answering and governance
-The runtime toolkit SHALL NOT expose `answer_question` or any escalation /
-autonomy / guardrail behavior. Those concerns are owned by the separate
-coordinator-governance capability.
+The runtime toolkit SHALL NOT expose `answer_question`, `request_user_input`,
+or any escalation / autonomy / guardrail behavior.
 
 #### Scenario: No answer_question in the runtime toolkit
 - **WHEN** the runtime toolkit is exposed to an orchestrator
 - **THEN** it provides spawn / message / read / list / inspect / archive / unarchive only
-- **AND** it does not provide `answer_question` or guardrail enforcement
+- **AND** it does not provide `answer_question`, `request_user_input`, or guardrail enforcement
 

@@ -16,6 +16,7 @@ function fakeHandle(over: Partial<TerminalHandle> = {}): TerminalHandle {
     sendKeys: () => true,
     focus: () => {},
     scrollToBottom: () => {},
+    recentActivity: () => null,
     ...over
   };
 }

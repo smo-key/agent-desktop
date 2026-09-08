@@ -1,9 +1,11 @@
 <script lang="ts">
   // The hideable left PROJECT PANEL shared by both overviews (ports ProjectPanel.jsx
   // + LaunchModal's create flow). It filters the fleet by project: "All agents",
-  // one row per project (tinted icon, name, an orange dot when any of its agents
-  // needs you, a live count), an optional "No project" bucket, and an inline
-  // "New project" create (name + Browse folder + icon picker).
+  // one row per ACTIVE project (tinted icon, name, an orange dot when any of its
+  // agents needs you, a live count), an optional "No project" bucket, an inline
+  // "New project" create (name + Browse folder + icon picker), and — when any
+  // project is archived — a "Show archived (N)" toggle that reveals a muted
+  // Archived section from which a project can be unarchived or deleted.
   //
   // Selection is the shared `projectFilter` store (so switching Overview<->Windows
   // keeps the filter); the project list is the persisted `projects` store. Counts
@@ -19,15 +21,16 @@
     projectCounts,
     unassignedCount,
     allAgentsCount,
+    nextFilterAfterArchive,
     ALL,
     UNASSIGNED
   } from './projectRollup';
   import Icon from '../icons/Icon.svelte';
   import ProjectIcon from '../icons/ProjectIcon.svelte';
   import ProjectDialog from './ProjectDialog.svelte';
-  import WorktreeDialog from './WorktreeDialog.svelte';
   import ContextMenu, { type MenuItem } from '../ui/ContextMenu.svelte';
   import { tooltip } from '../ui/tooltip';
+  import { pointerReorder } from '../ui/pointerReorder';
   import { pushProject, pullProject } from './projectGitActions';
 
   let {
@@ -36,7 +39,9 @@
     onToggle
   }: { rows: AgentRow[]; collapsed?: boolean; onToggle?: () => void } = $props();
 
-  // Right-click context menu for a project row (delete).
+  // Right-click context menu for a project row: an ACTIVE row gets edit / archive /
+  // push / pull / delete; an ARCHIVED row (in the Archived section) gets only
+  // unarchive / delete.
   let menu = $state<{ open: boolean; x: number; y: number; items: MenuItem[] }>({
     open: false,
     x: 0,
@@ -47,59 +52,90 @@
   function openMenu(e: MouseEvent, project: Project) {
     e.preventDefault();
     const { id: projectId, name, path } = project;
-    menu = {
-      open: true,
-      x: e.clientX,
-      y: e.clientY,
-      items: [
-        {
-          label: 'Edit project…',
-          icon: 'pencil',
-          onClick: () => {
-            creating = false;
-            editingId = projectId;
-          }
-        },
-        {
-          label: 'Worktrees…',
-          icon: 'git-branch',
-          onClick: () => {
-            worktreesFor = projectId;
-          }
-        },
-        {
-          label: 'Push',
-          icon: 'arrow-up',
-          onClick: () => void pushProject(path, name, projectId)
-        },
-        {
-          label: 'Pull',
-          icon: 'arrow-down',
-          onClick: () => void pullProject(path, name, projectId)
-        },
-        {
-          label: 'Delete project',
-          icon: 'trash-2',
-          danger: true,
-          onClick: () => {
-            const ok =
-              typeof confirm === 'function'
-                ? confirm(`Delete project "${name}"? Its agents keep running but lose this label.`)
-                : true;
-            if (!ok) return;
-            void projects.remove(projectId);
-            if (editingId === projectId) editingId = null;
-            if (projectFilter.selected === projectId) projectFilter.select(ALL);
-          }
-        }
-      ]
+    const deleteItem: MenuItem = {
+      label: 'Delete project',
+      icon: 'trash-2',
+      danger: true,
+      onClick: () => {
+        const ok =
+          typeof confirm === 'function'
+            ? confirm(`Delete project "${name}"? Its agents keep running but lose this label.`)
+            : true;
+        if (!ok) return;
+        void projects.remove(projectId);
+        if (editingId === projectId) editingId = null;
+        projectFilter.select(nextFilterAfterArchive(projectFilter.selected, projectId));
+      }
     };
+    const items: MenuItem[] = project.archived
+      ? [
+          {
+            label: 'Unarchive',
+            icon: 'rotate-ccw',
+            onClick: () => void projects.unarchive(projectId)
+          },
+          deleteItem
+        ]
+      : [
+          {
+            label: 'Edit project…',
+            icon: 'pencil',
+            onClick: () => {
+              creating = false;
+              editingId = projectId;
+            }
+          },
+          {
+            label: 'Push',
+            icon: 'arrow-up',
+            onClick: () => void pushProject(path, name, projectId)
+          },
+          {
+            label: 'Pull',
+            icon: 'arrow-down',
+            onClick: () => void pullProject(path, name, projectId)
+          },
+          {
+            // Reversible (unarchive from the Archived section), so no confirm. The
+            // row disappears from the active rows; if it was the selected filter,
+            // the selection falls back to All agents.
+            label: 'Archive project',
+            icon: 'archive',
+            onClick: () => {
+              void projects.archive(projectId);
+              if (editingId === projectId) editingId = null;
+              projectFilter.select(nextFilterAfterArchive(projectFilter.selected, projectId));
+            }
+          },
+          deleteItem
+        ];
+    menu = { open: true, x: e.clientX, y: e.clientY, items };
   }
 
   // Per-project counts + attention flags, the unassigned bucket size, and the
   // "All agents" total — all single-sourced from projectRollup so they share the
-  // same non-archived predicate (archived/previewed agents are excluded).
-  const counts = $derived(projectCounts(rows, projects.list));
+  // same non-archived predicate (archived/previewed agents are excluded). The
+  // rows (and the rail) show only ACTIVE projects; archived ones get their own
+  // rollup for the collapsible Archived section below "New project".
+  const counts = $derived(projectCounts(rows, projects.active));
+  const archivedCounts = $derived(projectCounts(rows, projects.archived));
+  /** Whether the Archived section is expanded. Session-local (not persisted). */
+  let showArchived = $state(false);
+  /** Whether the current filter selection is an archived project. */
+  const archivedSelected = $derived(projects.archived.some((p) => p.id === projectFilter.selected));
+  // Keep the section and the selection coherent: a selected archived project must
+  // stay visible (covers a persisted filter restored after a restart, before the
+  // user has touched the toggle), and an empty section never stays "expanded".
+  $effect(() => {
+    if (archivedSelected) showArchived = true;
+    else if (projects.archived.length === 0) showArchived = false;
+  });
+  /** Toggle the Archived section; hiding it while an archived project is the
+   *  filter falls back to All agents so the selection never goes invisible. */
+  function toggleArchived() {
+    if (showArchived && archivedSelected) projectFilter.select(ALL);
+    showArchived = !showArchived;
+  }
   const unassigned = $derived(unassignedCount(rows));
   const allAgents = $derived(allAgentsCount(rows));
 
@@ -119,37 +155,22 @@
   });
 
   // --- Drag-to-reorder the project list -------------------------------------
-  // The expanded project rows are draggable: dropping one onto another reorders
+  // The expanded project rows are reorderable: dragging one onto another reorders
   // the persisted `projects` list (projects.reorder → reorderProjects + save), so
   // the panel order — and the collapsed rail, which mirrors it — is user-arranged
-  // and survives restart. `dragId` is the row being dragged; `dragOverId` is the
-  // current drop target (for the insertion-highlight).
+  // and survives restart. The drag is POINTER-based (`pointerReorder`), not HTML5
+  // DnD: Tauri's native drag-drop (enabled for file drops onto sessions) swallows
+  // every in-page `dragstart`. `dragId` is the row being dragged; `dragOverId` is
+  // the current drop target (for the highlight).
   let dragId = $state<string | null>(null);
   let dragOverId = $state<string | null>(null);
 
-  function onProjDragStart(e: DragEvent, id: string) {
-    dragId = id;
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move';
-      // Some browsers refuse to start a drag unless data is set.
-      e.dataTransfer.setData('text/plain', id);
-    }
+  function onReorderChange(drag: string | null, over: string | null) {
+    dragId = drag;
+    dragOverId = over;
   }
-  function onProjDragOver(e: DragEvent, id: string) {
-    if (!dragId || dragId === id) return;
-    e.preventDefault(); // allow the drop
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    dragOverId = id;
-  }
-  function onProjDrop(e: DragEvent, id: string) {
-    e.preventDefault();
-    if (dragId && dragId !== id) void projects.reorder(dragId, id);
-    dragId = null;
-    dragOverId = null;
-  }
-  function onProjDragEnd() {
-    dragId = null;
-    dragOverId = null;
+  function onReorderDrop(from: string, to: string) {
+    void projects.reorder(from, to);
   }
 
   // --- Create / edit dialog state (the shared ProjectForm drives both) ------
@@ -159,13 +180,6 @@
   /** The resolved project being edited (or null) — feeds the edit dialog. */
   const editProject = $derived(
     editingId ? (projects.list.find((p) => p.id === editingId) ?? null) : null
-  );
-
-  /** The id of the project whose worktree-management dialog is open, or null. */
-  let worktreesFor = $state<string | null>(null);
-  /** The resolved project whose worktrees are being managed (or null). */
-  const worktreeProject = $derived(
-    worktreesFor ? (projects.list.find((p) => p.id === worktreesFor) ?? null) : null
   );
 
   async function saveCreate(draft: ProjectDraft) {
@@ -233,7 +247,12 @@
     {/if}
   </aside>
 {:else}
-<aside class="ppanel" aria-label="Projects" bind:this={panelEl}>
+<aside
+  class="ppanel"
+  aria-label="Projects"
+  bind:this={panelEl}
+  use:pointerReorder={{ onChange: onReorderChange, onDrop: onReorderDrop }}
+>
   <div class="pp-head">
     <span class="pp-title">Workspace</span>
     <button
@@ -258,21 +277,16 @@
   <div class="pp-label">Projects</div>
 
   {#each counts as c (c.project.id)}
-    <!-- A div (not a <button>): WKWebView (Tauri/macOS) refuses to start a native
-         HTML5 drag from a form control, so the draggable row must be a plain
-         element. role/tabindex/onkeydown restore the button semantics. -->
+    <!-- A div with button semantics (role/tabindex/onkeydown) rather than a
+         <button>, so the row is a plain element for the pointer drag. -->
     <div
-      class="pp-item"
+      class="pp-item reorderable"
       class:active={projectFilter.selected === c.project.id}
       class:dragging={dragId === c.project.id}
       class:dragover={dragOverId === c.project.id}
       role="button"
       tabindex="0"
-      draggable="true"
-      ondragstart={(e) => onProjDragStart(e, c.project.id)}
-      ondragover={(e) => onProjDragOver(e, c.project.id)}
-      ondrop={(e) => onProjDrop(e, c.project.id)}
-      ondragend={onProjDragEnd}
+      data-reorder-id={c.project.id}
       onclick={() => projectFilter.select(c.project.id)}
       onkeydown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -311,6 +325,53 @@
     <Icon name="plus" size={16} color="var(--fg-4)" />
     <span class="pp-name">New project</span>
   </button>
+
+  <!-- Archived projects: hidden by default; a toggle directly below "New project"
+       (only when something is archived) reveals them as muted rows. An archived row
+       still selects its filter (its agents keep running under it); its context menu
+       offers Unarchive / Delete only. Not drag-reorderable. -->
+  {#if archivedCounts.length > 0}
+    <button
+      type="button"
+      class="pp-item pp-new pp-archived-toggle"
+      aria-expanded={showArchived}
+      onclick={toggleArchived}
+    >
+      <Icon name="archive" size={16} color="var(--fg-4)" />
+      <span class="pp-name">
+        {showArchived ? 'Hide archived' : `Show archived (${archivedCounts.length})`}
+      </span>
+    </button>
+    {#if showArchived}
+      <div class="pp-label">Archived</div>
+      {#each archivedCounts as c (c.project.id)}
+        <div
+          class="pp-item pp-archived"
+          class:active={projectFilter.selected === c.project.id}
+          role="button"
+          tabindex="0"
+          onclick={() => projectFilter.select(c.project.id)}
+          onkeydown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              projectFilter.select(c.project.id);
+            }
+          }}
+          oncontextmenu={(e) => openMenu(e, c.project)}
+        >
+          {#if c.project.logo}
+            <img class="pp-logo" src={c.project.logo} alt="" />
+          {:else}
+            <Icon name={c.project.icon} size={16} color={c.project.color} />
+          {/if}
+          <span class="pp-name" use:tooltip={c.project.path}>{c.project.name}</span>
+          {#if c.attn}<span class="pp-attn" use:tooltip={'Needs attention'}></span>
+          {:else if c.working}<span class="pp-work" use:tooltip={'Working'}></span>{/if}
+          <span class="pp-ct">{c.count}</span>
+        </div>
+      {/each}
+    {/if}
+  {/if}
 </aside>
 {/if}
 
@@ -324,16 +385,6 @@
     initial={editProject}
     onSave={(draft) => saveEdit(editProject.id, draft)}
     onCancel={() => (editingId = null)}
-  />
-{/if}
-
-<!-- Worktree-management dialog for a project, opened from its context menu. -->
-{#if worktreeProject}
-  <WorktreeDialog
-    projectId={worktreeProject.id}
-    projectName={worktreeProject.name}
-    repoPath={worktreeProject.path}
-    onClose={() => (worktreesFor = null)}
   />
 {/if}
 
@@ -496,12 +547,11 @@
     background: var(--blue-tint);
     color: var(--blue-200);
   }
-  /* Drag-to-reorder: the lifted row dims; the drop target shows an insertion line.
-     `-webkit-user-drag: element` is required for WebKit (WKWebView) to honor the
-     native drag — the `draggable` attribute alone is unreliable there. */
-  .pp-item[draggable='true'] {
+  /* Drag-to-reorder (pointer-based): the lifted row dims; the drop target shows a
+     ring. `touch-action: none` hands the gesture to the pointer handlers. */
+  .pp-item.reorderable {
     cursor: grab;
-    -webkit-user-drag: element;
+    touch-action: none;
   }
   .pp-item.dragging {
     opacity: 0.45;
@@ -570,6 +620,14 @@
   }
   .pp-new {
     color: var(--fg-3);
+  }
+  /* Archived rows read as parked: muted until hovered/selected. */
+  .pp-item.pp-archived {
+    opacity: 0.6;
+  }
+  .pp-item.pp-archived:hover,
+  .pp-item.pp-archived.active {
+    opacity: 1;
   }
 
   /* A project's logo in an expanded row (replaces the glyph). */

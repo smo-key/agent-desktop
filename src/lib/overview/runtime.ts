@@ -24,7 +24,7 @@ const runtimes = new Map<string, PaneRuntime>();
 function entryFor(paneId: string): PaneRuntime {
   let r = runtimes.get(paneId);
   if (!r) {
-    r = { lastOutputAt: null, exited: false, exitCode: null };
+    r = { lastOutputAt: null, exited: false, exitCode: null, spawnedAt: Date.now() };
     runtimes.set(paneId, r);
   }
   return r;
@@ -88,6 +88,19 @@ export function noteExit(paneId: string, code: number | null): void {
  */
 export function noteBusy(paneId: string, busy: boolean, nowMs: number): void {
   if (busy) entryFor(paneId).terminalBusyAt = nowMs;
+}
+
+/**
+ * Record the latest FOREGROUND-JOB probe result for a plain terminal pane (see
+ * `PaneRuntime.foregroundBusy`): `true` (a job owns the terminal), `false` (idle
+ * prompt), or `null` (unknown — the probe is unavailable / stopped). Records ONLY
+ * when a runtime entry already exists (a pane that never produced output derives
+ * `working` regardless, and `deriveTerminalStatus` treats a missing entry as
+ * unknown). Cheap: a single field write per probe tick.
+ */
+export function noteForeground(paneId: string, busy: boolean | null): void {
+  const r = runtimes.get(paneId);
+  if (r) r.foregroundBusy = busy;
 }
 
 /**

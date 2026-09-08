@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { defaultAgentKind, setAgentPreference } from '$lib/agent/defaultAgent';
 import { buildLaunchPlan, isSplitPlacement, type LaunchPlan } from './plan';
 
 // Tests for the PURE launch-plan builder that normalizes the launcher's raw form
@@ -138,5 +139,93 @@ describe('buildLaunchPlan — normalization', () => {
     expect(
       buildLaunchPlan({ folder: '/p', placement: 'tab', projectId: '  ' }).projectId
     ).toBeUndefined();
+  });
+});
+
+describe('buildLaunchPlan — agent backend resolution (agent-backends)', () => {
+  afterEach(() => setAgentPreference(null));
+
+  it('Launcher seeds from the global setting', () => {
+    // The global agent setting is Copilot; a launch with no per-session
+    // override spawns the copilot backend.
+    setAgentPreference('copilot');
+    const plan = buildLaunchPlan({ folder: '/p', placement: 'tab' });
+    expect(plan.program).toBe('copilot');
+  });
+
+  it('One-off override does not change the default', () => {
+    // Global default is claude; a single launch overrides to copilot. The
+    // override applies to THAT plan only — the global resolution is untouched.
+    setAgentPreference('claude');
+    const oneOff = buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'copilot' });
+    expect(oneOff.program).toBe('copilot');
+    expect(defaultAgentKind()).toBe('claude');
+    const next = buildLaunchPlan({ folder: '/p', placement: 'tab' });
+    expect(next.program).toBe('claude');
+  });
+
+  it('Per-session override wins', () => {
+    setAgentPreference('copilot');
+    expect(
+      buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'claude' }).program
+    ).toBe('claude');
+  });
+
+  it('unknown override values normalize to claude', () => {
+    expect(
+      buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'gemini' as never }).program
+    ).toBe('claude');
+  });
+});
+
+// Worktree launch (session-launcher: "Launch A Session In A New Git Worktree").
+// The `it(...)` titles are the EXACT scenario names so the coverage gate maps
+// them here; the live launcher checkbox + spawn are confirmed in-app.
+describe('buildLaunchPlan — Launch A Session In A New Git Worktree', () => {
+  afterEach(() => setAgentPreference('claude'));
+
+  it('Worktree launch passes the worktree flag', () => {
+    const plan = buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'claude', worktree: {} });
+    expect(plan.launchArgs).toEqual(['--worktree']);
+    // A blank name is the same as no name.
+    expect(
+      buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'claude', worktree: { name: '   ' } })
+        .launchArgs
+    ).toEqual(['--worktree']);
+    // No worktree option → no launch args at all.
+    expect(buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'claude' }).launchArgs).toEqual([]);
+    expect(
+      buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'claude', worktree: null }).launchArgs
+    ).toEqual([]);
+  });
+
+  it('Worktree launch with a name passes the name', () => {
+    const plan = buildLaunchPlan({
+      folder: '/p',
+      placement: 'tab',
+      agent: 'claude',
+      worktree: { name: ' feature-x ' }
+    });
+    expect(plan.launchArgs).toEqual(['--worktree', 'feature-x']);
+    // A name can never masquerade as a flag (`--worktree` takes an optional value).
+    expect(
+      buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'claude', worktree: { name: '--dangerous' } })
+        .launchArgs
+    ).toEqual(['--worktree', 'dangerous']);
+    expect(
+      buildLaunchPlan({ folder: '/p', placement: 'tab', agent: 'claude', worktree: { name: '-' } })
+        .launchArgs
+    ).toEqual(['--worktree']);
+  });
+
+  it('Worktree option is ignored for backends without worktree support', () => {
+    const plan = buildLaunchPlan({
+      folder: '/p',
+      placement: 'tab',
+      agent: 'copilot',
+      worktree: { name: 'feature-x' }
+    });
+    expect(plan.program).toBe('copilot');
+    expect(plan.launchArgs).toEqual([]);
   });
 });

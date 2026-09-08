@@ -194,14 +194,26 @@ function detectTask(sessionId) {
 }
 
 /**
- * Git branch + dirty flag + ahead/behind counts for the workspace dir, by
- * shelling out to git with short timeouts. Returns
- * { branch, dirty, ahead, behind } — always an object (never null) so the
- * snapshot has a stable shape; individual fields are null when git can't answer.
- * `ahead`/`behind` are both vs the branch's own upstream branch. Fully guarded.
+ * Git branch + dirty flag + ahead/behind counts + linked-worktree name for the
+ * workspace dir, by shelling out to git with short timeouts. Returns
+ * { branch, dirty, modified, ahead, behind, worktree } — always an object (never
+ * null) so the snapshot has a stable shape; individual fields are null when git
+ * can't answer. `ahead`/`behind` are both vs the branch's own upstream branch.
+ * `worktree` is the linked worktree's name (the basename of its git dir) when
+ * the dir is inside a LINKED worktree — its `--git-dir` differs from its
+ * `--git-common-dir` — and null for a main checkout or off-repo. Location-
+ * independent: it does not assume where `claude --worktree` (or anything else)
+ * put the worktree. Fully guarded.
  */
 function gitStatus(workspaceDir) {
-  const out = { branch: null, dirty: null, modified: null, ahead: null, behind: null };
+  const out = {
+    branch: null,
+    dirty: null,
+    modified: null,
+    ahead: null,
+    behind: null,
+    worktree: null,
+  };
   try {
     const dir = str(workspaceDir);
     if (!dir) return out;
@@ -237,6 +249,27 @@ function gitStatus(workspaceDir) {
     if (ahead !== null) {
       const n = parseInt(ahead, 10);
       if (Number.isFinite(n)) out.ahead = n;
+    }
+    // Linked worktree: the per-worktree git dir (`<main>/.git/worktrees/<name>`)
+    // differs from the shared common dir (`<main>/.git`). Both are resolved to
+    // absolute paths (git may print them relative to the cwd) before comparing.
+    const gitDir = runGit(['rev-parse', '--git-dir']);
+    const commonDir = runGit(['rev-parse', '--git-common-dir']);
+    if (gitDir !== null && commonDir !== null && gitDir !== '' && commonDir !== '') {
+      const absGit = path.resolve(dir, gitDir);
+      const absCommon = path.resolve(dir, commonDir);
+      if (absGit !== absCommon) {
+        const name = path.basename(absGit);
+        out.worktree = name !== '' ? name : null;
+        // The worktree's ROOT dir, reported EXACTLY rather than left for the app to
+        // infer from the name: git derives the admin name from the directory's
+        // basename but APPENDS A COUNTER on collision (a second `feature-x`
+        // anywhere in the repo becomes `feature-x1`), so the name is not reliably a
+        // path segment of the dir. `--show-toplevel` answers from any subdirectory,
+        // so it is also correct once the session has cd'ed deeper.
+        const top = runGit(['rev-parse', '--show-toplevel']);
+        if (top !== null && top !== '') out.worktree_root = path.resolve(dir, top);
+      }
     }
   } catch {
     // leave nulls
@@ -275,6 +308,11 @@ function buildSnapshot(paneId, data) {
     rate_limits: rateLimits,
     cost: rawCost,
     git: gitStatus(workspaceDir),
+    // The dir the SESSION is actually in. For a `claude --worktree` session that
+    // is the linked worktree claude created for itself — the app spawned the pane
+    // in the project folder and has no other way to learn it (session-launcher:
+    // "A worktree session resumes in its worktree").
+    cwd: workspaceDir,
     ts: Math.floor(Date.now() / 1000),
   };
 }

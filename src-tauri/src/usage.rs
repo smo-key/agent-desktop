@@ -57,6 +57,17 @@ pub struct GitStatus {
     /// `null` when there is no upstream.
     #[serde(default)]
     pub behind: Option<i64>,
+    /// The linked git worktree's name when the workspace dir is inside one (its
+    /// `git-dir` differs from its `git-common-dir`), else `null` / absent
+    /// (older wrapper schema, main checkout, or off-repo).
+    #[serde(default)]
+    pub worktree: Option<String>,
+    /// The linked worktree's ROOT dir (`git rev-parse --show-toplevel`), else
+    /// `null` / absent. Reported explicitly because the worktree NAME is git's
+    /// admin name, which gains a counter suffix on a basename collision and so is
+    /// not reliably a segment of the path.
+    #[serde(default)]
+    pub worktree_root: Option<String>,
 }
 
 /// A per-pane usage snapshot, mirroring the JSON the statusline wrapper writes.
@@ -100,6 +111,12 @@ pub struct Snapshot {
     /// Git branch + dirty for the workspace dir.
     #[serde(default)]
     pub git: Option<GitStatus>,
+    /// The dir the session is actually in (claude's `workspace.current_dir`), or
+    /// `null` / absent (older wrapper schema). A `--worktree` session reports the
+    /// linked worktree it created for itself, which the app adopts as the pane's
+    /// working dir.
+    #[serde(default)]
+    pub cwd: Option<String>,
     /// Unix timestamp (SECONDS) the snapshot was written — drives the live/idle
     /// heartbeat and "newest snapshot" rate-limit selection.
     #[serde(default)]
@@ -317,7 +334,9 @@ mod tests {
                 dirty: Some(true),
                 modified: None,
                 ahead: Some(2),
-                behind: Some(0)
+                behind: Some(0),
+                worktree: None,
+                worktree_root: None,
             })
         );
         assert_eq!(snap.ts, 1_717_200_000);
@@ -351,7 +370,9 @@ mod tests {
                 dirty: None,
                 modified: None,
                 ahead: None,
-                behind: None
+                behind: None,
+                worktree: None,
+                worktree_root: None,
             })
         );
     }
@@ -404,6 +425,7 @@ mod tests {
             rate_limits: None,
             cost: None,
             git: None,
+            cwd: None,
             ts,
         };
         assert!(c.should_emit(&mk("a", 100)), "first ever emits");

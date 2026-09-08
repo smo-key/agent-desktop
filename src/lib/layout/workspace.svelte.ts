@@ -18,6 +18,7 @@
 // (task 4.x) serializes exactly `{ workspaces: [...], activeWorkspaceId }`.
 
 import { defaultShell } from '$lib/shell/defaultShell';
+import { isAgentProgram, type AgentKind } from '$lib/agent/backends';
 import {
   freshWorkspace,
   splitLeaf,
@@ -124,27 +125,43 @@ export interface PaneSession {
    */
   extraArgs?: string[];
   /**
-   * OPTIONAL role marker. `'coordinator'` marks the per-project COORDINATOR pane —
-   * a single `claude` session launched with the orchestration MCP toolkit + the
-   * orchestrator system prompt, so it can spawn/coordinate specialists and existing
-   * project sessions (task 6.x). PERSISTED so the coordinator is re-identified after
-   * navigation / restart (a project keeps at most one). Absent for ordinary agents.
+   * OPTIONAL LAUNCH-TIME-ONLY agent CLI args — today the worktree flag
+   * (`--worktree [name]`, session-launcher). Like `initialInput` it is NOT
+   * persisted (the serializer re-projects only the durable fields), so a restored
+   * pane resumes WITHOUT it and can never create a second worktree. Passed to
+   * `TerminalPane` ahead of `extraArgs`. Absent for every pane except one freshly
+   * launched with the option.
    */
-  role?: 'coordinator';
+  launchArgs?: string[];
   /**
-   * OPTIONAL paneId of the COORDINATOR that spawned/drives this agent (task 6.5):
-   * set on a pane spawned via the orchestration toolkit when the spawning project
-   * has a live coordinator, so the roster/overview can attribute the agent to its
-   * coordinator's orchestration. PERSISTED so the attribution survives a restart.
-   * Absent for user-started agents and coordinator panes themselves.
+   * The linked git WORKTREE dir this pane's session actually runs in, adopted at
+   * runtime from the session's own report (`worktreeCwdToAdopt`). `claude
+   * --worktree` creates the worktree itself, so the pane is SPAWNED in the
+   * project folder ({@link cwd}) and only the running session knows the real
+   * path. PERSISTED, and preferred over `cwd` wherever a pane's working dir is
+   * resolved ({@link sessionCwd}) — so a resumed session respawns in its worktree
+   * and its subagents are found. Absent for every pane but an adopted worktree one.
    */
-  coordinatorPaneId?: string;
+  worktreeCwd?: string;
 }
 
-/** A fresh Claude session id for a `claude` pane (so the app owns it and can find
- *  the agent's exact transcript), else `undefined` for non-claude panes. */
-function claudeSessionId(program: string): string | undefined {
-  return program === 'claude' ? crypto.randomUUID() : undefined;
+/**
+ * The working directory a pane's session actually runs in: its adopted worktree
+ * dir when it has one, else the dir it was launched in. Use this — not `cwd` —
+ * for respawning, for transcript/subagent lookups, and anywhere a pane's folder
+ * is reported. Pure.
+ */
+export function sessionCwd(
+  session: Pick<PaneSession, 'cwd' | 'worktreeCwd'> | null | undefined
+): string | null {
+  return session?.worktreeCwd ?? session?.cwd ?? null;
+}
+
+/** A fresh APP-MINTED session id for an agent pane (claude or copilot — both
+ *  CLIs accept `--session-id <uuid>`, so the app owns the id and can locate the
+ *  session's transcript / event log), else `undefined` for shell panes. */
+function agentSessionId(program: string): string | undefined {
+  return isAgentProgram(program) ? crypto.randomUUID() : undefined;
 }
 
 /**
@@ -217,8 +234,7 @@ function makeEntry(
   projectId?: string,
   specialist?: string,
   extraArgs?: string[],
-  role?: 'coordinator',
-  coordinatorPaneId?: string
+  launchArgs?: string[]
 ): WorkspaceEntry {
   return {
     id: nextWorkspaceId(),
@@ -232,9 +248,8 @@ function makeEntry(
         projectId,
         specialist,
         extraArgs,
-        role,
-        coordinatorPaneId,
-        sessionId: claudeSessionId(program)
+        launchArgs,
+        sessionId: agentSessionId(program)
       }
     }
   };
@@ -303,6 +318,21 @@ export class WorkspaceStore {
     return this.active?.registry[paneId] ?? { program: loginShell(), cwd: null };
   }
 
+  /**
+   * The spawn params for a pane in ANY workspace, or null when no workspace holds
+   * it. Unlike {@link session} this never fabricates a login-shell default for a
+   * pane that merely isn't in the ACTIVE workspace — a caller that keys off a
+   * snapshot (which spans every workspace) would otherwise read a made-up pane and
+   * silently do the wrong thing.
+   */
+  sessionAnywhere(paneId: string): PaneSession | null {
+    for (const entry of this.workspaces) {
+      const s = entry.registry[paneId];
+      if (s) return s;
+    }
+    return null;
+  }
+
   /** Whether a workspace has any panes whose PTY is presumed live. */
   hasPanes(id: string): boolean {
     const entry = this.workspaces.find((w) => w.id === id);
@@ -355,8 +385,7 @@ export class WorkspaceStore {
     projectId?: string,
     specialist?: string,
     extraArgs?: string[],
-    role?: 'coordinator',
-    coordinatorPaneId?: string
+    launchArgs?: string[]
   ): string {
     const name = this.nextSessionName();
     const entry = makeEntry(
@@ -368,8 +397,7 @@ export class WorkspaceStore {
       projectId,
       specialist,
       extraArgs,
-      role,
-      coordinatorPaneId
+      launchArgs
     );
     this.workspaces = [...this.workspaces, entry];
     this.activeWorkspaceId = entry.id;
@@ -430,8 +458,7 @@ export class WorkspaceStore {
     projectId?: string,
     specialist?: string,
     extraArgs?: string[],
-    role?: 'coordinator',
-    coordinatorPaneId?: string
+    launchArgs?: string[]
   ): string {
     const entry = this.requireActive();
     const id = nextPaneId();
@@ -444,9 +471,8 @@ export class WorkspaceStore {
         projectId,
         specialist,
         extraArgs,
-        role,
-        coordinatorPaneId,
-        sessionId: claudeSessionId(program)
+        launchArgs,
+        sessionId: agentSessionId(program)
       }
     };
     return id;
@@ -462,7 +488,10 @@ export class WorkspaceStore {
     if (!entry) return;
     const focusedLeaf = findLeaf(entry.ws.root, entry.ws.focusedId);
     if (!focusedLeaf) return;
-    const inheritCwd = entry.registry[focusedLeaf.paneId]?.cwd ?? null;
+    // A split inherits the focused pane's REAL dir: splitting next to a worktree
+    // agent is how you run git against ITS branch, so the new shell must open in
+    // the worktree, not on the main checkout.
+    const inheritCwd = sessionCwd(entry.registry[focusedLeaf.paneId]);
     const newPaneId = this.spawnPaneId(loginShell(), inheritCwd);
 
     const root = splitLeaf(
@@ -500,8 +529,7 @@ export class WorkspaceStore {
     projectId?: string,
     specialist?: string,
     extraArgs?: string[],
-    role?: 'coordinator',
-    coordinatorPaneId?: string
+    launchArgs?: string[]
   ): string | null {
     const entry = this.active;
     if (!entry) return null;
@@ -513,8 +541,7 @@ export class WorkspaceStore {
       projectId,
       specialist,
       extraArgs,
-      role,
-      coordinatorPaneId
+      launchArgs
     );
 
     const root = splitLeaf(
@@ -551,20 +578,17 @@ export class WorkspaceStore {
    * pane's mount spawn it. Returns the new pane's `paneId`.
    */
   launch(plan: {
-    program: 'claude';
+    program: AgentKind;
     cwd: string;
     placement: 'tab' | 'split-right' | 'split-down';
     initialInput?: string;
     projectId?: string;
     /** OPTIONAL specialist name this pane is spawned AS (orchestration spawn_agent). */
     specialist?: string;
-    /** OPTIONAL extra claude CLI args (specialist persona/model/tool flags, OR the
-     *  coordinator's `--append-system-prompt` + `--mcp-config`). */
+    /** OPTIONAL extra agent CLI args (specialist persona/model/tool flags). */
     extraArgs?: string[];
-    /** OPTIONAL role marker — `'coordinator'` for the per-project coordinator pane. */
-    role?: 'coordinator';
-    /** OPTIONAL paneId of the coordinator that spawned this agent (task 6.5). */
-    coordinatorPaneId?: string;
+    /** OPTIONAL launch-time-only CLI args (the worktree flag); never persisted. */
+    launchArgs?: string[];
   }): string {
     const {
       program,
@@ -572,10 +596,10 @@ export class WorkspaceStore {
       initialInput,
       projectId,
       specialist,
-      extraArgs,
-      role,
-      coordinatorPaneId
+      extraArgs
     } = plan;
+    // Normalize: an empty list is the same as none (keeps the registry entry clean).
+    const launchArgs = plan.launchArgs && plan.launchArgs.length > 0 ? plan.launchArgs : undefined;
     // A split needs a focused leaf in the active workspace; otherwise open a tab.
     const canSplit = this.focusedPaneId !== null;
     const placement =
@@ -589,8 +613,7 @@ export class WorkspaceStore {
         projectId,
         specialist,
         extraArgs,
-        role,
-        coordinatorPaneId
+        launchArgs
       );
       const id = this.focusedPaneId ?? '';
       this.lastLaunchedId = id || null;
@@ -607,8 +630,7 @@ export class WorkspaceStore {
       projectId,
       specialist,
       extraArgs,
-      role,
-      coordinatorPaneId
+      launchArgs
     );
     this.lastLaunchedId = newPaneId ?? null;
     return newPaneId ?? '';
@@ -764,8 +786,46 @@ export class WorkspaceStore {
       // resume:false so the closed pane never tries to (re)spawn while completed;
       // previewArchived flips it back on with resume:true. Also clear any preview
       // state so re-archiving a previewing session always terminates its PTY.
-      const { preview: _pv, previewCount: _pc, ...rest } = cur;
+      // `launchArgs` (the worktree flag) is FIRST-SPAWN only: an archived pane that
+      // is later previewed respawns with `--resume`, and must never create a
+      // second worktree — drop it here, the one in-session path to a respawn.
+      const { preview: _pv, previewCount: _pc, launchArgs: _la, ...rest } = cur;
       entry.registry = { ...entry.registry, [paneId]: { ...rest, closed: true, resume: false } };
+      return;
+    }
+  }
+
+  /**
+   * Record the linked git WORKTREE dir a pane's session actually runs in
+   * (session-launcher: "A worktree session resumes in its worktree"). Called once
+   * per pane, with the dir `worktreeCwdToAdopt` derived from that session's own
+   * report; persisted, so a restart / archive-preview respawn lands in the
+   * worktree instead of the project folder. Idempotent: a pane that already has
+   * one keeps it, so a later `cd` inside the session can never move it. No-op
+   * when the pane is gone.
+   */
+  adoptWorktreeCwd(paneId: string, worktreeCwd: string): void {
+    for (const entry of this.workspaces) {
+      const cur = entry.registry[paneId];
+      if (!cur) continue;
+      if (cur.worktreeCwd) return;
+      entry.registry = { ...entry.registry, [paneId]: { ...cur, worktreeCwd } };
+      return;
+    }
+  }
+
+  /**
+   * Forget a pane's adopted worktree dir — used when that dir no longer exists
+   * (the worktree was removed after the session ran). Without this the pane would
+   * keep trying to spawn in a missing directory forever, since nothing else clears
+   * the field; dropping it falls the pane back to the folder it was launched in.
+   */
+  clearWorktreeCwd(paneId: string): void {
+    for (const entry of this.workspaces) {
+      const cur = entry.registry[paneId];
+      if (!cur?.worktreeCwd) continue;
+      const { worktreeCwd: _wt, ...rest } = cur;
+      entry.registry = { ...entry.registry, [paneId]: rest };
       return;
     }
   }
@@ -835,7 +895,7 @@ export class WorkspaceStore {
       if (!leafByPaneId(entry.ws.root, paneId)) continue;
       const cur = entry.registry[paneId];
       if (!cur) return;
-      const resume = cur.program === 'claude' && !!cur.sessionId;
+      const resume = isAgentProgram(cur.program) && !!cur.sessionId;
       entry.registry = { ...entry.registry, [paneId]: { ...cur, closed: false, resume } };
       return;
     }
@@ -856,7 +916,7 @@ export class WorkspaceStore {
       if (!cur) return;
       // Only a claude pane with a session id can resume a transcript; otherwise leave
       // it archived (the caller falls back to a plain select).
-      if (cur.program !== 'claude' || !cur.sessionId) return;
+      if (!isAgentProgram(cur.program) || !cur.sessionId) return;
       // Re-preview must NOT reset an already-established baseline (the auto-preview
       // effect re-runs on every focus tick): only seed `previewCount` when absent.
       const previewCount = cur.preview ? (cur.previewCount ?? userMsgCount) : userMsgCount;
@@ -936,7 +996,9 @@ export class WorkspaceStore {
     if (!entry) return null;
     const leaf = findLeaf(entry.ws.root, entry.ws.focusedId);
     if (!leaf) return null;
-    return entry.registry[leaf.paneId]?.cwd ?? null;
+    // The focused pane's REAL dir (its worktree when it has one), so a new session
+    // started from a worktree agent inherits that worktree.
+    return sessionCwd(entry.registry[leaf.paneId]);
   }
 
   /** A unique-ish default name like "Session N" for the next new workspace. */

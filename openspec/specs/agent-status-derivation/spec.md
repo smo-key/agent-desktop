@@ -3,6 +3,7 @@
 ## Purpose
 TBD - created by archiving change agent-session-ux-improvements. Update Purpose after archive.
 ## Requirements
+
 ### Requirement: A busy session reads In flight, not Needs input
 
 An agent SHALL be shown as **In flight** (working) rather than **Needs input** when Claude Code is actively working in a session but its event hooks report idle — until the work finishes (plus a short grace window, below) or the user interrupts it. This SHALL cover at least: (a) a foreground command running in the agent's terminal (the "Running…" / "esc to interrupt" / "ctrl+b to run in background" state, e.g. from a `! <cmd>` bash-mode run); and (b) in-session background work — a dynamic workflow or another agent still running within the session (the "Waiting for N dynamic workflow(s) to finish" state) after the main agent's turn has returned.
@@ -34,33 +35,6 @@ The override SHALL NOT apply when the agent has a pending AskUserQuestion (such 
 #### Scenario: No indicator means unchanged behavior
 - **WHEN** no active-work indicator has ever been observed for the agent (or the grace window has lapsed since the last observation)
 - **THEN** the agent's status is derived exactly as it was before this change
-
-### Requirement: A freshly launched coordinator reads Waiting, not Working
-
-A LIVE project coordinator SHALL derive its status from three cases — Needs you, actively running, or idle — and SHALL NOT be shown as permanently In flight (working) while it is quiet. A coordinator that has NEVER started a turn (it spawned at an empty prompt and has had no `UserPromptSubmit`, whether typed by the user or injected by an escalation) SHALL read **Waiting** (Needs you), awaiting its first instruction. A coordinator that asks an AskUserQuestion or sets the `request_user_input` flag SHALL read **Waiting** regardless.
-
-Otherwise — an ENGAGED coordinator (it has started at least one turn) with no pending question and no `request_user_input` flag — its status SHALL reflect its REAL activity, the same signals a non-coordinator pane uses:
-
-- It SHALL read **Working** (In flight) while it is actually running: streaming output within the working window, or a terminal active-work affordance ("esc to interrupt" / "Waiting for N dynamic workflow(s)") observed within the busy grace window.
-- It SHALL read **Idle** when it is genuinely quiet at its prompt (no recent output and no active-work affordance). An idle coordinator SHALL stay OUT of the Needs-you/attention lane (it never nags) and SHALL NOT be shown In flight — it SHALL show no in-flight status dot.
-
-The "has started a turn" signal SHALL be latched durably (it survives eviction from the bounded activity ring), so a long single turn does not revert an engaged coordinator to the never-prompted Waiting case.
-
-#### Scenario: Just-launched coordinator awaits the first instruction
-- **WHEN** a coordinator has just been launched and has never been prompted (no turn has started)
-- **THEN** it is shown as Waiting (Needs you), awaiting your first instruction
-
-#### Scenario: Engaged but quiet coordinator reads Idle, out of attention
-- **WHEN** a coordinator has started at least one turn and is now quiet — no recent output, no active-work affordance, no pending question, and no request_user_input flag
-- **THEN** it is shown as Idle: out of attention (not Needs you) AND not In flight, so it shows no in-flight status dot
-
-#### Scenario: Actively running coordinator reads Working
-- **WHEN** an engaged coordinator with no pending question and no request_user_input flag is actively running — it is streaming output within the working window, or its terminal shows an active-work affordance within the busy grace window
-- **THEN** it is shown as Working (In flight) with the in-flight dot
-
-#### Scenario: A long-running coordinator stays Working after its prompt ages out
-- **WHEN** an engaged coordinator runs a single long, actively-working turn whose events push the original `UserPromptSubmit` out of the bounded activity ring
-- **THEN** it still reads Working — the "has started a turn" signal is latched DURABLY (it survives ring eviction) so it never reverts to the never-prompted Waiting case
 
 ### Requirement: A working parent stays In flight while a Task subagent finishes
 
@@ -151,3 +125,47 @@ PTY output that is the direct result of a self-initiated terminal resize SHALL N
 - **WHEN** output arrives with no self-initiated resize having occurred in the preceding window
 - **THEN** the activity stamp is recorded exactly as before this change (fail-safe)
 
+### Requirement: Status inputs are per-backend, statuses are shared
+Status derivation SHALL consume backend-specific input sources — Claude panes
+from hook events, transcript tailing, and Claude TUI busy markers; Copilot
+panes from session event-log turn/ask-user events and Copilot TUI busy
+markers — and SHALL produce the same status vocabulary (Needs input / In
+flight / Idle) with the same precedence rules for every agent backend.
+Terminal busy-marker strings SHALL come from the pane's backend descriptor,
+never from a hard-coded Claude string set.
+
+#### Scenario: Copilot pane derives the same statuses
+- **WHEN** a Copilot pane has a turn in flight, then asks a question, then goes quiet after the turn ends
+- **THEN** it derives In flight, then Needs input, then Idle under the same precedence a Claude pane would
+
+#### Scenario: Busy markers resolved per backend
+- **WHEN** terminal-output busy scanning runs for a pane
+- **THEN** the marker strings scanned for are those declared by that pane's backend descriptor
+
+### Requirement: Terminal rows derive status from the foreground job
+
+A terminal row (combined placement) SHALL read **In flight** while a working process needs no action from the user — a running terminal-kind task, or a bare shell whose terminal is owned by a foreground job — and **Needs input** when the shell sits at an idle prompt. A terminal that exited with a non-zero code SHALL read as an error (Needs input); a stopped terminal (clean exit kept open, or stopped by the user) SHALL read finished. When the foreground state is unknown (platforms without the probe, or before the first probe), a running shell SHALL fall back to the output-activity derivation used for agents.
+
+#### Scenario: A running task terminal reads In flight
+- **WHEN** a terminal-kind task is running
+- **THEN** its row status is `working`
+
+#### Scenario: A shell running a foreground job reads In flight
+- **WHEN** a bare shell is running and the probe reports a foreground job
+- **THEN** its row status is `working`
+
+#### Scenario: An idle shell prompt reads Needs input
+- **WHEN** a bare shell is running and the probe reports no foreground job
+- **THEN** its row status is `waiting`
+
+#### Scenario: A failed terminal reads Needs input as an error
+- **WHEN** a terminal stopped with a non-zero exit code
+- **THEN** its row status is `error`
+
+#### Scenario: A stopped terminal reads finished
+- **WHEN** a terminal stopped with exit code 0 or was stopped by the user
+- **THEN** its row status is `finished`
+
+#### Scenario: Unknown foreground state falls back to output activity
+- **WHEN** a bare shell is running and no probe result is known
+- **THEN** its status follows the output-activity derivation (recent output → `working`, quiet → `waiting`)

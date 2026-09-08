@@ -41,6 +41,10 @@ describe('Pane Context Menu', () => {
     const m = buildPaneMenu(makeDeps());
     const insert = item(m, 'insert-filename');
     expect(insert.shortcut).toBe('⌘O');
+    // Shortcut hints follow the custom binding when the caller injects them.
+    const custom = buildPaneMenu(makeDeps({ hints: { insertFilePath: '⌘⇧I', newSession: '⌘K' } }));
+    expect(custom.flat().find((i) => i.id === 'insert-filename')?.shortcut).toBe('⌘⇧I');
+    expect(custom.flat().find((i) => i.id === 'new-session')?.shortcut).toBe('⌘K');
     expect(insert.disabled).toBeFalsy();
     // It lives in the first section alongside Copy/Paste.
     expect(m[0].some((i) => i.id === 'insert-filename')).toBe(true);

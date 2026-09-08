@@ -21,6 +21,7 @@
 // (which imports this module) — kept separate so this stays pure + testable.
 
 import { defaultShell, resolveProgram } from '$lib/shell/defaultShell';
+import { isAgentProgram } from '$lib/agent/backends';
 import {
   closeLeaf,
   freshWorkspace,
@@ -99,22 +100,17 @@ export interface PersistedSession {
    */
   specialist?: string;
   /**
-   * OPTIONAL extra `claude` CLI args (specialist persona/model/tool flags, OR the
-   * coordinator's `--append-system-prompt` + `--mcp-config`). Persisted so a resumed
-   * pane re-applies them on restart. Absent for panes spawned without extra args.
+   * OPTIONAL extra agent CLI args (specialist persona/model/tool flags). Persisted
+   * so a resumed pane re-applies them on restart. Absent for panes spawned without
+   * extra args.
    */
   extraArgs?: string[];
   /**
-   * OPTIONAL role marker (`'coordinator'`). Persisted so the per-project coordinator
-   * pane is re-identified after a restart. Absent for ordinary agents.
+   * OPTIONAL adopted worktree dir (session-launcher): the linked git worktree a
+   * `--worktree` session actually runs in, learned from the session's own report.
+   * Persisted so a resumed pane respawns there rather than in the project folder.
    */
-  role?: 'coordinator';
-  /**
-   * OPTIONAL paneId of the coordinator that spawned/drives this agent (task 6.5).
-   * Persisted so the roster attribution survives a restart. Absent for user-started
-   * agents and coordinator panes themselves.
-   */
-  coordinatorPaneId?: string;
+  worktreeCwd?: string;
 }
 
 /** One serialized workspace: identity + name + its pane tree + its registry. */
@@ -224,10 +220,11 @@ function projectRegistry(
       ...(Array.isArray(src?.extraArgs) && src.extraArgs.length > 0
         ? { extraArgs: src.extraArgs }
         : {}),
-      // Persist the coordinator role marker + (for spawned agents) the back-reference
-      // to the coordinator that drives them, so both survive a restart.
-      ...(src?.role === 'coordinator' ? { role: 'coordinator' as const } : {}),
-      ...(src?.coordinatorPaneId ? { coordinatorPaneId: src.coordinatorPaneId } : {})
+      // Persist the ADOPTED worktree dir (session-launcher): unlike `launchArgs`,
+      // which must never be re-applied (it would create a SECOND worktree), this
+      // is the dir the session already lives in — a resumed pane has to respawn
+      // there, and its subagents are located by it.
+      ...(src?.worktreeCwd ? { worktreeCwd: src.worktreeCwd } : {}),
     };
   }
   return out;
@@ -332,21 +329,21 @@ function sanitizeRegistry(
       const persistedSessionId =
         typeof raw.sessionId === 'string' && raw.sessionId ? raw.sessionId : undefined;
       const sessionId =
-        program === 'claude' ? (persistedSessionId ?? crypto.randomUUID()) : undefined;
+        isAgentProgram(program) ? (persistedSessionId ?? crypto.randomUUID()) : undefined;
       // A closed (Archived) pane restores as closed: no spawn, no resume until the
       // user restores it (which sets resume:true then).
-      const closed = raw.closed === true && program === 'claude';
+      const closed = raw.closed === true && isAgentProgram(program);
       // A paused pane stays LIVE (it resumes), unlike closed — so the user can keep
       // messaging it. It keeps its baseline count so it doesn't auto-resume at once;
       // an absent/legacy count restores as null and is re-established lazily.
-      const paused = raw.paused === true && program === 'claude' && !closed;
+      const paused = raw.paused === true && isAgentProgram(program) && !closed;
       const pausedCount =
         paused && typeof raw.pausedCount === 'number' && Number.isFinite(raw.pausedCount)
           ? raw.pausedCount
           : paused
             ? null
             : undefined;
-      const resume = program === 'claude' && !closed && !!persistedSessionId;
+      const resume = isAgentProgram(program) && !closed && !!persistedSessionId;
       out[leafNode.paneId] = {
         program,
         cwd: typeof raw.cwd === 'string' ? raw.cwd : null,
@@ -367,12 +364,10 @@ function sanitizeRegistry(
         raw.extraArgs.length > 0
           ? { extraArgs: raw.extraArgs as string[] }
           : {}),
-        // Restore the coordinator role marker + the spawned-agent back-reference so
-        // the coordinator is re-identified and attribution is preserved on restart.
-        ...(raw.role === 'coordinator' ? { role: 'coordinator' as const } : {}),
-        ...(typeof raw.coordinatorPaneId === 'string' && raw.coordinatorPaneId
-          ? { coordinatorPaneId: raw.coordinatorPaneId }
-          : {})
+        // Restore the adopted worktree dir so the resumed pane respawns in it.
+        ...(typeof raw.worktreeCwd === 'string' && raw.worktreeCwd
+          ? { worktreeCwd: raw.worktreeCwd }
+          : {}),
       };
     } else {
       out[leafNode.paneId] = { program: defaultShell(), cwd: null };
@@ -424,6 +419,9 @@ export function pruneEmptySessions(
       leaves
         .filter((leaf) => {
           const s = w.registry[leaf.paneId];
+          // Claude panes only: the history probe reads the CLAUDE transcript, so a
+          // copilot pane would always look history-less and be wrongly dropped.
+          // Copilot panes are never auto-pruned (safe default).
           return !!s && s.program === 'claude' && s.resume === true && !hasHistory(leaf.paneId);
         })
         .map((leaf) => leaf.id)

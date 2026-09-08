@@ -13,8 +13,8 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -78,15 +78,64 @@ struct Pane {
     /// Writer into the PTY (slave stdin); raw bytes, no decoding.
     writer: Box<dyn Write + Send>,
     /// Killer cloned from the child so we can terminate it from any thread.
+    /// Fallback only: the primary teardown path is [`process_tree::terminate`]
+    /// on `pid`, which also reaches descendants the killer cannot see.
     killer: Box<dyn ChildKiller + Send + Sync>,
+    /// OS pid of the direct child (the PTY session leader). `None` only if the
+    /// platform child handle cannot report one.
+    pid: Option<u32>,
+    /// Set by the read loop the moment it has `wait()`ed the child. Once set,
+    /// `pid` may already belong to an unrelated process and must never be
+    /// signalled again.
+    reaped: Arc<AtomicBool>,
     /// Handle to the dedicated read-loop thread, so we can join on teardown.
     reader: Option<JoinHandle<()>>,
 }
+
+/// The foreground-job answer for a pane (see [`PtyManager::foreground_busy`]).
+/// Unix only: the PTY's foreground process group vs the direct child's pid (the
+/// child is the session leader portable-pty spawned, so its pgid is its pid). A
+/// reaped child has no meaningful answer (`None`).
+#[cfg(unix)]
+fn foreground_busy_of(pane: &Pane) -> Option<bool> {
+    if pane.reaped.load(Ordering::SeqCst) {
+        return None;
+    }
+    let pid = pane.pid?;
+    let fg = pane.master.process_group_leader()?;
+    if fg <= 0 {
+        return None;
+    }
+    Some(fg as u32 != pid)
+}
+
+/// Windows has no process-group ownership of a console to inspect.
+#[cfg(not(unix))]
+fn foreground_busy_of(_pane: &Pane) -> Option<bool> {
+    None
+}
+
+/// Upper bound on waiting for a pane's reader thread during `kill_all`. The
+/// thread ends on EOF from the slave, which a straggler we could not see (a
+/// double-forked daemon) might still hold open; the app must quit regardless.
+const READER_JOIN_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// How long a pane's process tree gets to exit after the graceful signals
+/// before survivors are force-killed (single-pane close; runs off-thread, so
+/// generous: a `claude` session runs its SessionEnd hooks and MCP shutdown
+/// on the way out). Well-behaved trees are gone at the first 40ms poll.
+const KILL_GRACE: Duration = Duration::from_millis(3000);
+/// Same, for app quit (`kill_all`), which blocks the close handler — shorter.
+const KILL_ALL_GRACE: Duration = Duration::from_millis(1500);
 
 /// Tauri-managed state: a registry of live panes plus a monotonic id counter.
 pub struct PtyManager {
     panes: Mutex<HashMap<PaneId, Pane>>,
     next_id: AtomicU64,
+    /// Detached escalation threads started by `kill` (grace wait + SIGKILL).
+    /// `kill_all` joins them so a quit right after a pane close still force-
+    /// kills that pane's stragglers.
+    killers: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl Default for PtyManager {
@@ -100,6 +149,7 @@ impl PtyManager {
         Self {
             panes: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
+            killers: Mutex::new(Vec::new()),
         }
     }
 
@@ -166,6 +216,12 @@ impl PtyManager {
             .take_writer()
             .map_err(|e| format!("take_writer failed: {e}"))?;
         let killer = child.clone_killer();
+        let pid = child.process_id();
+        let reaped = Arc::new(AtomicBool::new(false));
+        let child = FlaggedChild {
+            inner: child,
+            reaped: Arc::clone(&reaped),
+        };
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
@@ -182,6 +238,8 @@ impl PtyManager {
             master: pair.master,
             writer,
             killer,
+            pid,
+            reaped,
             reader: Some(reader_handle),
         };
         self.panes.lock().unwrap().insert(id, pane);
@@ -236,10 +294,41 @@ impl PtyManager {
             .map_err(|e| format!("get_size failed: {e}"))
     }
 
-    /// Kill a pane's child via its cloned killer (callable from any thread) AND
-    /// remove the pane from the registry so its master/writer fds are dropped
-    /// (closing them) rather than leaking until quit. The read loop then observes
-    /// EOF and reaps the child. A no-op (returns `Ok`) if the pane does not exist.
+    /// Whether a live pane's terminal is currently OWNED BY A FOREGROUND JOB
+    /// (terminal-core: "Foreground Job Query"). On Unix the kernel's foreground
+    /// process group for the PTY (`tcgetpgrp` via the master) is compared with
+    /// the pane's direct child — the shell, which is its own session/group
+    /// leader: a different group means a job the shell launched holds the
+    /// terminal (`Some(true)`); the shell's own group means it sits at its prompt
+    /// (`Some(false)`). `None` when the platform (Windows) or the child handle
+    /// cannot answer, so the caller falls back rather than guessing. An unknown
+    /// pane id is an error.
+    pub fn foreground_busy(&self, id: PaneId) -> Result<Option<bool>, String> {
+        let panes = self.panes.lock().unwrap();
+        let pane = panes
+            .get(&id)
+            .ok_or_else(|| format!("no live pane with id {id}"))?;
+        Ok(foreground_busy_of(pane))
+    }
+
+    /// Kill a pane's ENTIRE process tree — the direct child plus everything it
+    /// spawned, including processes that ignore hangup, moved to their own
+    /// process group, or were orphaned when the child itself exited — AND
+    /// remove the pane from the registry so its master/writer fds are released
+    /// rather than leaking until quit. A no-op (returns `Ok`) if the pane does
+    /// not exist.
+    ///
+    /// All the work runs on a detached `pty-killer-*` thread (joined by
+    /// `kill_all`), in this order:
+    /// 1. snapshot the process table and send the graceful signals
+    ///    ([`process_tree::begin`]) — BEFORE the PTY is touched, because
+    ///    dropping the writer sends `^D` and an interactive shell exits on
+    ///    EOF without hanging up its jobs;
+    /// 2. wait the grace period and force-kill survivors
+    ///    ([`process_tree::finish`]);
+    /// 3. drop the pane. The writer drop can block if the child stopped
+    ///    reading its tty, which is why it comes after the forced kill and
+    ///    never runs on the caller's thread.
     ///
     /// The pane is REMOVED from the map while the lock is held, then killed after
     /// the lock is released (mirroring `kill_all`'s single-id semantics — we never
@@ -249,27 +338,89 @@ impl PtyManager {
         let Some(mut pane) = pane else {
             return Ok(()); // absent: nothing to kill (idempotent).
         };
-        let result = pane.killer.kill().map_err(|e| format!("kill failed: {e}"));
-        // Dropping `pane` here closes the master + writer fds. We do NOT join the
-        // reader thread (it unwinds on its own once the master is gone); this also
-        // avoids holding anything across a join.
-        result
+        if pane.pid.is_none() {
+            return pane.killer.kill().map_err(|e| format!("kill failed: {e}"));
+        }
+        // The payload lives in a shared slot so that, if no thread can be
+        // spawned, the same work runs inline instead of being lost.
+        let payload = Arc::new(Mutex::new(Some(pane)));
+        let job = {
+            let payload = Arc::clone(&payload);
+            move || {
+                if let Some(pane) = payload.lock().unwrap().take() {
+                    terminate_panes(vec![pane], KILL_GRACE);
+                }
+            }
+        };
+        match std::thread::Builder::new()
+            .name(format!("pty-killer-{id}"))
+            .spawn(job)
+        {
+            Ok(handle) => {
+                let mut killers = self.killers.lock().unwrap();
+                // Drop finished escalations so the list cannot grow unbounded.
+                killers.retain(|h| !h.is_finished());
+                killers.push(handle);
+            }
+            Err(_) => {
+                if let Some(pane) = payload.lock().unwrap().take() {
+                    terminate_panes(vec![pane], KILL_GRACE);
+                }
+            }
+        }
+        Ok(())
     }
 
-    /// Kill and reap every live pane (wired into Tauri `CloseRequested`), so no
-    /// zombie or orphan processes remain.
+    /// Kill every live pane's whole process tree and reap the direct children
+    /// (wired into Tauri `CloseRequested`), so no zombie or orphan processes
+    /// remain. Synchronous and bounded: when this returns every tree we could
+    /// see has been signalled, given [`KILL_ALL_GRACE`], and force-killed if
+    /// still alive; reader/killer joins give up after [`READER_JOIN_TIMEOUT`]
+    /// so a straggler we could not see cannot keep the app from quitting.
     pub fn kill_all(&self) {
-        // Drain the registry so each pane is dropped (joining its reader) after
-        // its child is killed.
         let drained: Vec<(PaneId, Pane)> = {
             let mut panes = self.panes.lock().unwrap();
             panes.drain().collect()
         };
+        let mut readers = Vec::new();
+        let mut panes = Vec::new();
         for (_id, mut pane) in drained {
-            let _ = pane.killer.kill();
-            if let Some(handle) = pane.reader.take() {
-                let _ = handle.join();
+            if pane.pid.is_none() {
+                let _ = pane.killer.kill();
             }
+            if let Some(h) = pane.reader.take() {
+                readers.push(h);
+            }
+            panes.push(pane);
+        }
+        // One snapshot + graceful signals for every pane, then the grace and
+        // forced kill, then the PTY drops (see `kill` for the ordering) — all
+        // off the caller's thread so a blocking writer drop cannot hang quit.
+        let payload = Arc::new(Mutex::new(Some(panes)));
+        let job = {
+            let payload = Arc::clone(&payload);
+            move || {
+                if let Some(panes) = payload.lock().unwrap().take() {
+                    terminate_panes(panes, KILL_ALL_GRACE);
+                }
+            }
+        };
+        let worker = std::thread::Builder::new()
+            .name("pty-killer-all".into())
+            .spawn(job)
+            .ok();
+        if worker.is_none() {
+            if let Some(panes) = payload.lock().unwrap().take() {
+                terminate_panes(panes, KILL_ALL_GRACE);
+            }
+        }
+        // Stragglers from earlier single-pane closes get their forced kill too.
+        let pending: Vec<JoinHandle<()>> = std::mem::take(&mut *self.killers.lock().unwrap());
+        // A killer from an earlier single-pane close may still be inside its
+        // (longer) grace; the deadline must cover it or quit races its SIGKILL.
+        let deadline = Instant::now() + KILL_GRACE.max(KILL_ALL_GRACE) + READER_JOIN_TIMEOUT;
+        for h in worker.into_iter().chain(pending).chain(readers) {
+            join_within(h, deadline);
         }
     }
 
@@ -442,6 +593,43 @@ where
     let _ = producer.join();
 }
 
+/// Tear down `panes` (whose direct children are `roots`): graceful signals
+/// first, then the grace period and forced kill, and only then the PTY drops
+/// (a writer drop can block if the child stopped reading its tty, so it must
+/// come after the forced kill). Runs on a killer thread, or inline as a
+/// fallback.
+fn terminate_panes(panes: Vec<Pane>, grace: Duration) {
+    // `reaped` is read as late as possible: a child that exits between the
+    // close request and this point must not be treated as still ours.
+    let roots: Vec<process_tree::Root> = panes
+        .iter()
+        .filter_map(|p| {
+            p.pid.map(|pid| process_tree::Root {
+                pid,
+                reaped: p.reaped.load(Ordering::SeqCst),
+            })
+        })
+        .collect();
+    let trees = process_tree::begin(&roots);
+    process_tree::finish(trees, grace);
+    drop(panes);
+}
+
+/// Join `handle` if it finishes before `deadline`; otherwise leave it running
+/// (it is detached, not leaked: it ends on its own once its fds close).
+fn join_within(handle: JoinHandle<()>, deadline: Instant) {
+    while Instant::now() < deadline {
+        if handle.is_finished() {
+            let _ = handle.join();
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if handle.is_finished() {
+        let _ = handle.join();
+    }
+}
+
 /// Minimal interface the read loop needs to reap a child: block until it exits
 /// and return its exit code. Abstracted so the loop is unit-testable without a
 /// real process.
@@ -449,11 +637,456 @@ trait ReapableChild {
     fn reap(&mut self) -> i32;
 }
 
+/// Wraps a child so the pane learns the instant it has been reaped (after
+/// which its pid is no longer ours to signal).
+struct FlaggedChild<C> {
+    inner: C,
+    reaped: Arc<AtomicBool>,
+}
+
+impl<C: ReapableChild> ReapableChild for FlaggedChild<C> {
+    fn reap(&mut self) -> i32 {
+        let code = self.inner.reap();
+        self.reaped.store(true, Ordering::SeqCst);
+        code
+    }
+}
+
 impl ReapableChild for Box<dyn portable_pty::Child + Send + Sync> {
     fn reap(&mut self) -> i32 {
         match self.wait() {
             Ok(status) => status.exit_code() as i32,
             Err(_) => -1,
+        }
+    }
+}
+
+
+/// Whole-process-tree termination for a pane.
+///
+/// `portable-pty`'s `ChildKiller` only signals the direct child (SIGHUP on
+/// Unix, `TerminateProcess` on Windows). Everything the child started — build
+/// servers, `nohup`'d jobs, agents' tool subprocesses, anything that trapped
+/// HUP or moved to its own process group — would otherwise outlive the pane.
+///
+/// Two-phase: [`begin`] snapshots the process table, records every member of
+/// each tree (pids AND their process groups, so a job that is reparented to
+/// init after its shell dies is still found) and sends the graceful signals;
+/// [`finish`] waits a grace period and SIGKILLs whatever is left. The split
+/// lets the caller send signals before the PTY is torn down.
+///
+/// Pid-reuse safety. The child is the PTY's session leader, so its pid is
+/// also its process-group id, and POSIX forbids recycling a pid while a group
+/// with that id exists. A root is therefore accepted if it is a live or
+/// zombie child of THIS process, or — when it is already gone — if processes
+/// in its group still exist (proof the group, hence the pane's session, has
+/// persisted). A live root that is NOT our child is a recycled pid and is
+/// skipped. Pid/group ids `<= 1` are never signalled.
+pub mod process_tree {
+    use std::collections::HashSet;
+    use std::time::{Duration, Instant};
+
+    /// A pane's direct child as the caller knows it.
+    #[derive(Debug, Clone, Copy)]
+    pub struct Root {
+        pub pid: u32,
+        /// True once the read loop has `wait()`ed the child: its pid may have
+        /// been recycled, so ownership must be proven via its process group.
+        pub reaped: bool,
+    }
+
+    /// The set of processes belonging to one pane, as tracked across the
+    /// escalation.
+    #[derive(Debug, Clone)]
+    pub struct Tree {
+        root: u32,
+        /// The root was alive (not a zombie) when discovered: it gets SIGHUP.
+        root_alive: bool,
+        /// Every pid ever observed in the tree, zombies included (a zombie's
+        /// group id can still lead us to its orphans). Kept even after a
+        /// member dies (its descendants may still be alive, and `ps` no
+        /// longer links them).
+        tracked: HashSet<u32>,
+        /// Every process-group id observed on a tracked member. A job under
+        /// job control leads its own group; signalling the group reaches its
+        /// helpers even if they were forked after our last look.
+        groups: HashSet<u32>,
+        /// True if the process table could not be read: fall back to the
+        /// root + its group and skip the "already dead" early exit.
+        blind: bool,
+    }
+
+    /// A row of the process table.
+    #[cfg(unix)]
+    #[derive(Debug, Clone, Copy)]
+    struct Proc {
+        pid: u32,
+        ppid: u32,
+        pgid: u32,
+        zombie: bool,
+    }
+
+    /// Snapshot the process table via `ps` (portable across macOS and Linux;
+    /// no /proc dependency). `None` if `ps` is missing or rejects the flags.
+    #[cfg(unix)]
+    fn snapshot() -> Option<Vec<Proc>> {
+        let out = std::process::Command::new("ps")
+            .args(["-axo", "pid=,ppid=,pgid=,stat="])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let rows: Vec<Proc> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|line| {
+                let mut it = line.split_whitespace();
+                let pid = it.next()?.parse().ok()?;
+                let ppid = it.next()?.parse().ok()?;
+                let pgid = it.next()?.parse().ok()?;
+                let zombie = it.next().is_some_and(|s| s.starts_with('Z'));
+                Some(Proc { pid, ppid, pgid, zombie })
+            })
+            .collect();
+        (!rows.is_empty()).then_some(rows)
+    }
+
+    #[cfg(unix)]
+    impl Tree {
+        /// Build the tree for `root` from `procs`, or `None` if there is
+        /// nothing of ours to signal. See the module docs for the ownership
+        /// rules; in short: a live root must be our child, a zombie root is
+        /// still ours, and an absent root is represented by its group.
+        fn discover(root: Root, procs: &[Proc]) -> Option<Tree> {
+            let me = std::process::id();
+            let row = procs.iter().find(|q| q.pid == root.pid);
+            let mut tree = Tree {
+                root: root.pid,
+                root_alive: false,
+                tracked: HashSet::new(),
+                groups: HashSet::from([root.pid]),
+                blind: false,
+            };
+            match row {
+                // Any process still holding a pid we already `wait()`ed is a
+                // recycled pid — even (especially) one whose parent is us,
+                // i.e. another pane's child or a helper like `ps`/`git`.
+                Some(_) if root.reaped => return None,
+                Some(r) if r.ppid != me => return None, // recycled pid
+                Some(r) => {
+                    tree.root_alive = !r.zombie;
+                    tree.tracked.insert(root.pid);
+                }
+                None => {} // gone: group members only
+            }
+            let live = tree.absorb(procs);
+            (!live.is_empty()).then_some(tree)
+        }
+
+        /// Without a process table we can still hang up the leader and its
+        /// own group (everything that never left it) — but only while the
+        /// child is un-reaped, i.e. the pid is provably still ours.
+        fn blind(root: Root) -> Option<Tree> {
+            (!root.reaped).then(|| Tree {
+                root: root.pid,
+                tracked: HashSet::from([root.pid]),
+                groups: HashSet::from([root.pid]),
+                root_alive: true,
+                blind: true,
+            })
+        }
+
+        /// Fold `procs` into the tracked set: descendants (by parent chain from
+        /// any tracked pid) and members of any tracked group, iterated to a
+        /// fixpoint (descendants reveal new groups, group members reveal new
+        /// descendants). Returns the tracked pids alive right now.
+        fn absorb(&mut self, procs: &[Proc]) -> Vec<u32> {
+            // Belt and braces: whatever the table says, this process and its
+            // own group are never targets.
+            let me = std::process::id();
+            let my_group = own_group();
+            loop {
+                let before = (self.tracked.len(), self.groups.len());
+                self.groups.remove(&my_group);
+                for q in procs.iter().filter(|q| q.pid != me && self.groups.contains(&q.pgid)) {
+                    self.tracked.insert(q.pid);
+                }
+                let mut frontier: Vec<u32> = self.tracked.iter().copied().collect();
+                while let Some(p) = frontier.pop() {
+                    // Never walk through `me`: its children are the app's other
+                    // panes and helpers, not this pane's tree.
+                    for q in procs.iter().filter(|q| q.ppid == p && q.pid != me) {
+                        if self.tracked.insert(q.pid) {
+                            frontier.push(q.pid);
+                        }
+                    }
+                }
+                for q in procs.iter().filter(|q| self.tracked.contains(&q.pid)) {
+                    self.groups.insert(q.pgid);
+                }
+                self.groups.remove(&my_group);
+                if (self.tracked.len(), self.groups.len()) == before {
+                    break;
+                }
+            }
+            procs
+                .iter()
+                .filter(|q| !q.zombie && self.tracked.contains(&q.pid))
+                .map(|q| q.pid)
+                .collect()
+        }
+
+        /// SIGHUP to the leader if it is alive (what closing a real terminal
+        /// sends; shells forward it to their jobs), SIGTERM to every other
+        /// tracked pid, and SIGTERM to every tracked group (which includes
+        /// the leader's own group, so the leader sees both signals).
+        fn signal_graceful(&self) {
+            if self.root_alive {
+                signal(self.root, libc::SIGHUP);
+            }
+            for &pid in self.tracked.iter().filter(|&&p| p != self.root) {
+                signal(pid, libc::SIGTERM);
+            }
+            for &g in &self.groups {
+                signal_group(g, libc::SIGTERM);
+            }
+        }
+
+        /// SIGKILL `pids` and every tracked group.
+        fn signal_kill(&self, pids: &[u32]) {
+            for &pid in pids {
+                signal(pid, libc::SIGKILL);
+            }
+            for &g in &self.groups {
+                signal_group(g, libc::SIGKILL);
+            }
+        }
+    }
+
+    /// Pure planning step of [`begin`]: which trees exist for `roots` given
+    /// a process table (`None` = unreadable → blind trees).
+    #[cfg(unix)]
+    fn plan(roots: &[Root], procs: Option<&[Proc]>) -> Vec<Tree> {
+        roots
+            .iter()
+            .filter(|r| r.pid > 1)
+            .filter_map(|&root| match procs {
+                Some(procs) => Tree::discover(root, procs),
+                None => Tree::blind(root),
+            })
+            .collect()
+    }
+
+    /// Phase 1: one process-table snapshot, then discover every tree and send
+    /// its graceful signals. Call this BEFORE dropping the PTY.
+    #[cfg(unix)]
+    pub fn begin(roots: &[Root]) -> Vec<Tree> {
+        let procs = snapshot();
+        let trees = plan(roots, procs.as_deref());
+        for t in &trees {
+            t.signal_graceful();
+        }
+        trees
+    }
+
+    /// Phase 2: give the trees `grace` to exit, then SIGKILL every survivor.
+    /// One snapshot per poll tick is shared by all trees, re-absorbing any
+    /// late-spawned children.
+    #[cfg(unix)]
+    pub fn finish(mut trees: Vec<Tree>, grace: Duration) {
+        if trees.is_empty() {
+            return;
+        }
+        let deadline = Instant::now() + grace;
+        loop {
+            std::thread::sleep(Duration::from_millis(40));
+            let procs = snapshot();
+            let any_alive = match &procs {
+                Some(procs) => trees.iter_mut().any(|t| !t.absorb(procs).is_empty()),
+                // Unreadable table: assume alive until the deadline.
+                None => true,
+            };
+            if !any_alive || Instant::now() >= deadline {
+                break;
+            }
+        }
+        let procs = snapshot();
+        for t in trees.iter_mut() {
+            let survivors = match &procs {
+                Some(procs) => t.absorb(procs),
+                // Blind: SIGKILL everything we ever tracked (root + group).
+                None => t.tracked.iter().copied().collect(),
+            };
+            if survivors.is_empty() && !t.blind {
+                continue;
+            }
+            t.signal_kill(&survivors);
+        }
+    }
+
+    /// `taskkill /T` walks the child tree and `/F` forces termination. It is
+    /// pid-based, and Windows recycles pids fast, so a reaped root is skipped.
+    #[cfg(windows)]
+    pub fn begin(roots: &[Root]) -> Vec<Tree> {
+        use crate::no_window::NoConsoleWindow;
+        for r in roots.iter().filter(|r| r.pid > 1 && !r.reaped) {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/T", "/F", "/PID", &r.pid.to_string()])
+                .no_console_window()
+                .output();
+        }
+        Vec::new()
+    }
+
+    #[cfg(windows)]
+    pub fn finish(_trees: Vec<Tree>, _grace: Duration) {}
+
+    /// Signal one pid. Never pid 0/1 (or negatives): `kill(0, …)` hits our
+    /// own group and `kill(-1, …)` every process we own.
+    #[cfg(unix)]
+    fn signal(pid: u32, sig: libc::c_int) {
+        if pid <= 1 {
+            return;
+        }
+        // ESRCH (already gone) and EPERM are both fine to ignore here.
+        unsafe {
+            libc::kill(pid as libc::pid_t, sig);
+        }
+    }
+
+    /// This process's own process-group id.
+    #[cfg(unix)]
+    fn own_group() -> u32 {
+        // SAFETY: getpgrp has no preconditions and cannot fail.
+        unsafe { libc::getpgrp() as u32 }
+    }
+
+    /// Signal every process in the group whose id is `pgid`.
+    #[cfg(unix)]
+    fn signal_group(pgid: u32, sig: libc::c_int) {
+        if pgid <= 1 {
+            return;
+        }
+        unsafe {
+            libc::kill(-(pgid as libc::pid_t), sig);
+        }
+    }
+
+    #[cfg(all(test, unix))]
+    mod tests {
+        use super::*;
+
+        fn row(pid: u32, ppid: u32, pgid: u32) -> Proc {
+            Proc { pid, ppid, pgid, zombie: false }
+        }
+        fn root(pid: u32) -> Root {
+            Root { pid, reaped: false }
+        }
+
+        #[test]
+        fn discover_rejects_a_live_pid_that_is_not_our_child() {
+            let me = std::process::id();
+            // Our own pid (parent is not us) and an unrelated process: both
+            // are recycled/foreign pids → nothing is planned, even if some
+            // process happens to sit in a group of that id.
+            let table = vec![row(me, 1, me), row(4242, 1, 4242), row(4250, 4242, 4242)];
+            assert!(Tree::discover(root(me), &table).is_none());
+            assert!(Tree::discover(root(4242), &table).is_none());
+            assert!(plan(&[root(me), root(4242), root(0), root(1)], Some(&table)).is_empty());
+        }
+
+        #[test]
+        fn discover_tracks_descendants_and_their_process_groups() {
+            let me = std::process::id();
+            // root(100) → job(101, own group) → helper(102 in job's group);
+            // orphan(103) already reparented to init but still in root's group.
+            let table = vec![
+                row(100, me, 100),
+                row(101, 100, 101),
+                row(102, 101, 101),
+                row(103, 1, 100),
+                row(999, 1, 999), // unrelated
+            ];
+            let tree = Tree::discover(root(100), &table).expect("root is our child");
+            assert_eq!(tree.tracked, HashSet::from([100, 101, 102, 103]));
+            assert_eq!(tree.groups, HashSet::from([100, 101]));
+        }
+
+        #[test]
+        fn discover_rejects_a_reaped_pid_that_our_own_helper_now_holds() {
+            let me = std::process::id();
+            let my_group = own_group();
+            // Our child 100 was reaped; the pid now belongs to a new child of
+            // ours (say `ps` or `git`) in the app's own process group.
+            let table = vec![row(me, 1, my_group), row(100, me, my_group), row(7, me, my_group)];
+            assert!(
+                Tree::discover(Root { pid: 100, reaped: true }, &table).is_none(),
+                "a live row for a reaped pid is a recycled pid"
+            );
+            // Even if discovery were fooled (an unreaped root sitting in our
+            // group), neither the app, its group, nor its other children —
+            // another pane 200/201, helper 7 — are ever targets.
+            let table = vec![
+                row(me, 1, my_group),
+                row(100, me, my_group),
+                row(7, me, my_group),
+                row(200, me, 200),
+                row(201, 200, 200),
+            ];
+            let t = Tree::discover(root(100), &table).expect("root is a live child");
+            assert_eq!(t.tracked, HashSet::from([100]));
+            assert!(!t.groups.contains(&my_group));
+        }
+
+        #[test]
+        fn discover_reaches_orphans_through_a_zombie_launchers_group() {
+            let me = std::process::id();
+            // root(100) → launcher D(200, own session/group) forked server(201,
+            // pgid 200) and exited; D is a zombie its parent never waited.
+            let mut d = row(200, 100, 200);
+            d.zombie = true;
+            let table = vec![row(100, me, 100), d, row(201, 1, 200)];
+            let tree = Tree::discover(root(100), &table).expect("root is our child");
+            assert!(tree.groups.contains(&200), "zombie's group id is still a lead");
+            assert!(tree.tracked.contains(&201), "double-forked server found via that group");
+        }
+
+        #[test]
+        fn discover_uses_the_group_when_the_root_is_gone_or_a_zombie() {
+            let me = std::process::id();
+            // Reaped root, absent from the table; its orphan still leads a
+            // process in root's group → proof the session persisted.
+            let table = vec![row(103, 1, 100), row(104, 103, 100), row(999, 1, 999)];
+            let tree = Tree::discover(Root { pid: 100, reaped: true }, &table).expect("orphans found");
+            assert_eq!(tree.tracked, HashSet::from([103, 104]));
+            assert!(!tree.tracked.contains(&100), "an absent root is never signalled");
+            // Zombie root (Linux: orphan keeps the tty open): still ours.
+            let mut z = row(100, me, 100);
+            z.zombie = true;
+            let tree = Tree::discover(root(100), &[z, row(103, 1, 100)]).expect("zombie root's orphans found");
+            assert!(!tree.root_alive, "a zombie root gets no SIGHUP");
+            assert!(tree.tracked.contains(&103));
+            // Nothing left of the session → nothing to do.
+            assert!(Tree::discover(Root { pid: 100, reaped: true }, &[row(999, 1, 999)]).is_none());
+        }
+
+        #[test]
+        fn absorb_keeps_reparented_jobs_after_the_root_dies() {
+            let me = std::process::id();
+            let mut tree = Tree::discover(root(100), &[row(100, me, 100), row(101, 100, 101)]).unwrap();
+            // Root gone; job reparented to init in its own group, and it has
+            // since forked a grandchild.
+            let later = vec![row(101, 1, 101), row(105, 101, 101)];
+            let live = tree.absorb(&later);
+            assert_eq!(live.len(), 2);
+            assert!(tree.tracked.contains(&105));
+        }
+
+        #[test]
+        fn blind_mode_only_trusts_an_unreaped_root() {
+            assert!(Tree::blind(Root { pid: 100, reaped: true }).is_none());
+            assert!(Tree::blind(root(100)).is_some());
+            assert!(plan(&[root(0), root(1)], None).is_empty());
         }
     }
 }
