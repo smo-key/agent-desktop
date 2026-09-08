@@ -35,13 +35,17 @@ Rules, in order:
 4. Otherwise record the version and open the dialog **if** the changelog has a
    section for it. No section → stay quiet.
 
-`+page.svelte` calls `maybeShowOnLaunch` from its `onMount` after the other
-settings slices load, using the settings object already fetched there.
+`+page.svelte` calls `maybeShowOnLaunch` from its `onMount` with a fresh
+`loadSettings()` result (each settings store loads its own slice; there is no
+shared object to reuse). Best-effort and non-blocking, like the update check.
 
 ## Dialog and Settings
 
 `WhatsNewModal.svelte` mirrors `HelpModal.svelte` (backdrop, Esc, close button,
-"Got it"). Title: "What's new in Agent Desktop v<version>". In Settings the
+"Got it"). Link runs render as underlined text carrying the URL in a tooltip —
+the app has no external-URL opener yet (see proposal, out of scope). The modal
+is covered by a jsdom component test; `vite.config.ts` resolves Svelte's
+browser build under vitest (`process.env.VITEST`) so `mount()` is available. Title: "What's new in Agent Desktop v<version>". In Settings the
 footer version label and the update row's version text become buttons that
 call `whatsNew.show()`; a dev build shows the newest section under the label
 "dev".
