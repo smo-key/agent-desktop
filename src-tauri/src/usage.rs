@@ -105,12 +105,6 @@ pub struct Snapshot {
     /// Git branch + dirty for the workspace dir.
     #[serde(default)]
     pub git: Option<GitStatus>,
-    /// The dir the session is actually in (claude's `workspace.current_dir`), or
-    /// `null` / absent (older wrapper schema). A `--worktree` session reports the
-    /// linked worktree it created for itself, which the app adopts as the pane's
-    /// working dir.
-    #[serde(default)]
-    pub cwd: Option<String>,
     /// Unix timestamp (SECONDS) the snapshot was written — drives the live/idle
     /// heartbeat and "newest snapshot" rate-limit selection.
     #[serde(default)]

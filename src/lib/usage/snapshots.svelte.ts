@@ -68,10 +68,6 @@ export interface Snapshot {
   /** Total session cost in USD, or null. */
   cost: number | null;
   git: GitStatus | null;
-  /** The dir the session is actually in (claude's `workspace.current_dir`), or
-   *  null/absent on an older wrapper. A `--worktree` session reports the linked
-   *  worktree it made for itself; the app adopts it as the pane's working dir. */
-  cwd?: string | null;
   /** Unix timestamp (SECONDS) — drives the live/idle heartbeat. */
   ts: number;
 }

@@ -143,7 +143,7 @@
           paneId={node.paneId}
           program={resolveProgram(session?.program)}
           args={[...(session?.launchArgs ?? []), ...(session?.extraArgs ?? [])]}
-          cwd={sessionCwd(session)}
+          cwd={session?.cwd ?? null}
           initialInput={session?.initialInput}
           sessionId={session?.sessionId}
           resume={session?.resume}
