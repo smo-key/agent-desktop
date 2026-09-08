@@ -45,6 +45,24 @@ Three gaps in daily use of the desktop:
   **Needs you**; a non-zero exit is an error (**Needs you**); a stopped slot is
   **Archived**. Selecting a terminal row shows its live terminal in the focus
   pane without respawning it; the dock and its toggle are hidden.
+- **Terminal rows are named like sessions.** A terminal row can be renamed
+  (header inline edit + row menu), giving it a sticky custom title; a task
+  terminal's title persists under its task id, a bare shell's for its process.
+  Otherwise a bare shell is TITLED automatically by the same on-device model
+  that titles sessions, from the activity the terminal reports about itself —
+  the window titles the shell sets, which are the command it dispatched or its
+  directory. Deliberately NOT the user's keystrokes: the input stream carries
+  what programs read from stdin (a password at a prompt a shell builtin owns, a
+  heredoc body, a token piped to a CLI), which cannot be separated from
+  commands. Terminal titles are on-device only — the session-transcript cloud
+  fallback does not extend to them — and a reported title is untrusted text
+  (it is set by output bytes), so it is control-stripped and secret-redacted.
+- **A worktree session resumes in its worktree.** `claude --worktree` creates
+  the worktree itself, so the pane is spawned in the project folder and the app
+  never learned the real directory: resuming respawned in the project folder,
+  and the subagent reader (which locates sidecars purely by directory) found
+  none. The snapshot now reports the session's own directory and the pane adopts
+  it once, persisted, preferred for respawn and for transcript/subagent lookups.
 
 ## Assumptions (made autonomously — see the closing questions)
 
@@ -63,7 +81,8 @@ Three gaps in daily use of the desktop:
 
 - `keyboard-shortcuts` (ADDED: customizable bindings; MODIFIED: help modal
   reflects current bindings and lists the worktree shortcut)
-- `session-launcher` (ADDED: launch a session in a new git worktree)
+- `session-launcher` (ADDED: launch a session in a new git worktree; ADDED: a
+  worktree session resumes in its worktree)
 - `usage-dashboard` (ADDED: snapshot git status names the worktree)
 - `agent-roster-display` (MODIFIED: the card shows the worktree, not the model;
   compact-mode wording)
@@ -71,6 +90,8 @@ Three gaps in daily use of the desktop:
 - `ui-preferences` (MODIFIED: the `ui` slice gains the terminals placement;
   ADDED: placement preference defaults)
 - `tasks-panel` (MODIFIED: the dock applies to the separate placement;
-  ADDED: combined placement)
+  ADDED: combined placement; ADDED: terminal rows are titled like sessions)
 - `agent-status-derivation` (ADDED: terminal-row status)
 - `terminal-core` (ADDED: foreground-job query)
+- `session-titles` (ADDED: bare terminal rows are titled from the activity the
+  terminal reports)
