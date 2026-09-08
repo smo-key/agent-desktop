@@ -1,41 +1,46 @@
 # release-changelog Specification
 
 ## Purpose
-TBD - created by archiving change add-desktop-release-ci. Update Purpose after archive.
+Human-facing release notes: a hand-curated CHANGELOG.md section per version, authored by the Release task, used verbatim as the GitHub Release body and shown in-app after an update.
 ## Requirements
 ### Requirement: Grouped release notes from conventional commits
 
-The pipeline SHALL generate the GitHub Release body from the conventional commits
-between the previous release tag and the new one, using a pinned `git-cliff` with
-a committed `cliff.toml`, grouping entries by type (e.g. Features, Fixes, Docs).
+The pipeline SHALL use the `## <version>` section of `CHANGELOG.md` as the GitHub Release body, extracted by `scripts/release-notes.mjs`, and SHALL fail the gate job before any commit or tag is created when that section is missing.
 
 #### Scenario: Release notes generated
 
 - **WHEN** a release is published for version `X`
-- **THEN** the Release body lists the commits since the previous tag, grouped by
-  conventional-commit type
+- **THEN** the Release body is the body of the `## X` section of `CHANGELOG.md`, trimmed
 
-#### Scenario: First release with no previous tag
+#### Scenario: Missing section fails before tagging
 
-- **WHEN** a release is published and no previous `v*` tag exists
-- **THEN** the notes are generated from the full history up to the release commit
-  without failing
+- **WHEN** the gate job runs for version `X` and `CHANGELOG.md` has no `## X` section
+- **THEN** the job fails with a message naming the missing section and no release commit or `vX` tag is created
+
+#### Scenario: Section lookup accepts a v prefix
+
+- **WHEN** `scripts/release-notes.mjs` is run with `v1.2.3`
+- **THEN** it prints the `## 1.2.3` section body
 
 ### Requirement: Maintained CHANGELOG.md
 
-The pipeline SHALL regenerate `CHANGELOG.md` from the conventional-commit history
-and include the updated file in the same version-sync release commit, so the
-repository always carries an up-to-date changelog.
+`CHANGELOG.md` SHALL be hand-curated: one `## <version> — <YYYY-MM-DD>` section per release, newest first, with short `### New` / `### Improved` / `### Fixed` / `### Removed` sections as needed and one bold-titled bullet per notable change. The pipeline SHALL NOT regenerate it.
 
 #### Scenario: Changelog committed with the release
 
 - **WHEN** a release runs for version `X`
-- **THEN** `CHANGELOG.md` is updated to include the `vX` entry and committed
-  alongside the version-sync changes
+- **THEN** the release commit does not modify `CHANGELOG.md`; the `## X` section was authored before the version bump landed on `main`
 
 #### Scenario: Changelog and release notes are consistent
 
-- **WHEN** a release is published
-- **THEN** the `vX` section of `CHANGELOG.md` and the GitHub Release body are
-  derived from the same conventional-commit range
+- **WHEN** a release is published for version `X`
+- **THEN** the Release body and the in-app notes for `X` are both the `## X` section of `CHANGELOG.md`
 
+### Requirement: Release task authors the notes
+
+The project's `Release` agent task in `.agent-desktop/tasks.json` SHALL instruct the agent to run the quality gate, choose the next version, write the `## <version> — <date>` CHANGELOG section for everything since the last tag, bump `package.json`, commit, and push to `main` (or open a PR to `main`), without creating the tag.
+
+#### Scenario: Release task prompt covers the flow
+
+- **WHEN** the `Release` task definition is read
+- **THEN** its prompt mentions the quality gate, the CHANGELOG section format, bumping `package.json`, pushing to `main`, and that CI creates the tag
