@@ -300,6 +300,11 @@ function buildSnapshot(paneId, data) {
     rate_limits: rateLimits,
     cost: rawCost,
     git: gitStatus(workspaceDir),
+    // The dir the SESSION is actually in. For a `claude --worktree` session that
+    // is the linked worktree claude created for itself — the app spawned the pane
+    // in the project folder and has no other way to learn it (session-launcher:
+    // "A worktree session resumes in its worktree").
+    cwd: workspaceDir,
     ts: Math.floor(Date.now() / 1000),
   };
 }

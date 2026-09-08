@@ -34,7 +34,8 @@
   import { startNewSession, startNewWorktreeSession } from '$lib/launcher/newSession';
   import { shortcuts } from '$lib/settings/shortcuts.svelte';
   import { showTerminalsDock, terminalsCombined } from '$lib/tasks/placement';
-  import { workspace } from '$lib/layout/workspace.svelte';
+  import { sessionCwd, workspace } from '$lib/layout/workspace.svelte';
+  import { worktreeCwdToAdopt } from '$lib/launcher/worktreeArgs';
   import { insertFilenameInto, focusedTerminalHandle } from '$lib/layout/insertFilename';
   import { initFileDrop } from '$lib/layout/fileDrop';
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
@@ -356,7 +357,10 @@
   function currentSessionRefs(): SessionRef[] {
     return appSessionRefs(snapshots.byPane, (paneId) => {
       const sess = workspace.session(paneId);
-      return { cwd: sess.cwd, program: sess.program };
+      // The ADOPTED worktree dir when there is one: the subagent reader locates a
+      // session's sidecars purely by cwd, so a `--worktree` session lists none
+      // unless we hand it the dir the session actually runs in.
+      return { cwd: sessionCwd(sess), program: sess.program };
     });
   }
 
@@ -369,7 +373,12 @@
     for (const ws of workspace.workspaces) {
       for (const [paneId, sess] of Object.entries(ws.registry)) {
         if (isAgentProgram(sess.program) && sess.sessionId) {
-          refs.push({ paneId, sessionId: sess.sessionId, cwd: sess.cwd, program: sess.program });
+          refs.push({
+            paneId,
+            sessionId: sess.sessionId,
+            cwd: sessionCwd(sess),
+            program: sess.program
+          });
         }
       }
     }
@@ -389,6 +398,21 @@
   // The app's set of launched session ids (sorted, de-duped), used to keep the
   // subagents watched-set current as panes come and go.
   const ourSessionIds = $derived(appSessionIds(snapshots.byPane));
+
+  // ADOPT a worktree session's real working dir (session-launcher: "A worktree
+  // session resumes in its worktree"). `claude --worktree` creates the worktree
+  // itself, so the pane was spawned in the project folder and only the running
+  // session knows where it ended up — it reports that dir in its snapshot. The
+  // rule (`worktreeCwdToAdopt`) adopts it ONCE, so a session that later `cd`s
+  // elsewhere never drags the pane's dir with it. Runs off the snapshot map, so a
+  // pane is adopted as soon as its first statusline write lands.
+  $effect(() => {
+    for (const [paneId, snap] of Object.entries(snapshots.byPane)) {
+      const sess = workspace.session(paneId);
+      const adopt = worktreeCwdToAdopt(sess, snap);
+      if (adopt) workspace.adoptWorktreeCwd(paneId, adopt);
+    }
+  });
 
   // Keep the SUBAGENTS watched-set current too: whenever the app's session refs
   // change (a new app pane reports a session id, a cwd resolves, or one ends),

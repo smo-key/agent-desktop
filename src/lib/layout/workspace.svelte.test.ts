@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { WorkspaceStore } from './workspace.svelte';
+import { WorkspaceStore, sessionCwd } from './workspace.svelte';
 import { leavesInOrder } from './tree';
 
 // `@tauri-apps/api/core` is stubbed so any stray `invoke` from the store stays
@@ -163,5 +163,40 @@ describe('workspace — worktree launch args are first-spawn only', () => {
     // An empty list is normalized away at launch.
     const plain = store.launch({ program: 'claude', cwd: '/proj', placement: 'tab', launchArgs: [] });
     expect(store.session(plain).launchArgs).toBeUndefined();
+  });
+});
+
+// session-launcher: "A worktree session resumes in its worktree" — `claude
+// --worktree` makes the worktree itself, so the dir the session ends up in is
+// learned at runtime and then kept, including across archive → preview.
+describe('workspace — an adopted worktree dir is kept', () => {
+  it('A worktree session keeps its dir through archive and preview', () => {
+    const store = new WorkspaceStore();
+    const paneId = store.launch({
+      program: 'claude',
+      cwd: '/proj',
+      placement: 'tab',
+      launchArgs: ['--worktree', 'feature-x']
+    });
+    store.adoptWorktreeCwd(paneId, '/proj/.claude/worktrees/feature-x');
+    expect(sessionCwd(store.session(paneId))).toBe('/proj/.claude/worktrees/feature-x');
+
+    // Adoption happens ONCE: a session that later `cd`s cannot move its pane.
+    store.adoptWorktreeCwd(paneId, '/somewhere/else');
+    expect(store.session(paneId).worktreeCwd).toBe('/proj/.claude/worktrees/feature-x');
+
+    // Archiving strips the launch FLAG (no second worktree) but keeps the DIR, so
+    // the preview respawn resumes inside the worktree rather than the project.
+    store.closeAgent(paneId);
+    expect(store.session(paneId).launchArgs).toBeUndefined();
+    store.previewArchived(paneId, 1);
+    const s = store.session(paneId);
+    expect(s.launchArgs).toBeUndefined();
+    expect(sessionCwd(s)).toBe('/proj/.claude/worktrees/feature-x');
+
+    // A pane with no adopted dir simply reports the dir it was launched in.
+    const plain = store.launch({ program: 'claude', cwd: '/proj', placement: 'tab' });
+    expect(sessionCwd(store.session(plain))).toBe('/proj');
+    expect(sessionCwd(undefined)).toBeNull();
   });
 });

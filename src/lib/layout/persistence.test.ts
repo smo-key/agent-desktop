@@ -162,6 +162,30 @@ describe('Serialize Workspace Layout And Session Registry', () => {
     expect(back.launchArgs).toBeUndefined();
     expect(back.resume).toBe(true);
   });
+
+  it('An adopted worktree dir survives a restart', () => {
+    // The flag must never come back (it would make a SECOND worktree), but the dir
+    // the session already lives in must: the restored pane respawns THERE, and the
+    // subagent reader locates its sidecars by it.
+    const ws = freshWorkspace('p1', ids('n'));
+    const registry = {
+      p1: {
+        program: 'claude',
+        cwd: '/proj',
+        sessionId: 'sess-1',
+        launchArgs: ['--worktree', 'feature-x'],
+        worktreeCwd: '/proj/.claude/worktrees/feature-x'
+      }
+    } as unknown as Record<string, { program: string; cwd: string | null }>;
+    const state = serializeState([entry('ws-1', 'S', ws, registry)], 'ws-1');
+    const recorded = state.workspaces[0].registry.p1 as unknown as Record<string, unknown>;
+    expect(recorded.launchArgs).toBeUndefined();
+    expect(recorded.worktreeCwd).toBe('/proj/.claude/worktrees/feature-x');
+    const restored = restoreState(JSON.stringify(state), ids('r'));
+    const back = restored.workspaces[0].registry.p1 as unknown as Record<string, unknown>;
+    expect(back.worktreeCwd).toBe('/proj/.claude/worktrees/feature-x');
+    expect(back.cwd).toBe('/proj'); // the launch dir is kept as well
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -105,6 +105,12 @@ export interface PersistedSession {
    * extra args.
    */
   extraArgs?: string[];
+  /**
+   * OPTIONAL adopted worktree dir (session-launcher): the linked git worktree a
+   * `--worktree` session actually runs in, learned from the session's own report.
+   * Persisted so a resumed pane respawns there rather than in the project folder.
+   */
+  worktreeCwd?: string;
 }
 
 /** One serialized workspace: identity + name + its pane tree + its registry. */
@@ -214,7 +220,11 @@ function projectRegistry(
       ...(Array.isArray(src?.extraArgs) && src.extraArgs.length > 0
         ? { extraArgs: src.extraArgs }
         : {}),
-
+      // Persist the ADOPTED worktree dir (session-launcher): unlike `launchArgs`,
+      // which must never be re-applied (it would create a SECOND worktree), this
+      // is the dir the session already lives in — a resumed pane has to respawn
+      // there, and its subagents are located by it.
+      ...(src?.worktreeCwd ? { worktreeCwd: src.worktreeCwd } : {}),
     };
   }
   return out;
@@ -354,7 +364,10 @@ function sanitizeRegistry(
         raw.extraArgs.length > 0
           ? { extraArgs: raw.extraArgs as string[] }
           : {}),
-
+        // Restore the adopted worktree dir so the resumed pane respawns in it.
+        ...(typeof raw.worktreeCwd === 'string' && raw.worktreeCwd
+          ? { worktreeCwd: raw.worktreeCwd }
+          : {}),
       };
     } else {
       out[leafNode.paneId] = { program: defaultShell(), cwd: null };

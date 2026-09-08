@@ -99,9 +99,9 @@ describe('statusline-wrapper snapshot write', () => {
 
     const snap = readSnapshot();
     // The exact field set from the spec/design: pane_id, session_id, model,
-    // model_id, effort, task, context_pct, rate_limits, cost, git, ts.
+    // model_id, effort, task, context_pct, rate_limits, cost, git, cwd, ts.
     expect(Object.keys(snap).sort()).toEqual(
-      ['context_pct', 'cost', 'effort', 'git', 'model', 'model_id', 'pane_id', 'rate_limits', 'session_id', 'task', 'ts'].sort()
+      ['context_pct', 'cost', 'cwd', 'effort', 'git', 'model', 'model_id', 'pane_id', 'rate_limits', 'session_id', 'task', 'ts'].sort()
     );
     expect(snap.pane_id).toBe(PANE_ID);
     expect(snap.session_id).toBe('sess-abc-123');
@@ -329,6 +329,20 @@ describe('statusline-wrapper git worktree detection', () => {
     base.workspace = { current_dir: dir, project_dir: dir };
     return JSON.stringify(base);
   }
+
+  it('Snapshot reports the dir the session is in', () => {
+    // session-launcher: the app spawns a `--worktree` pane in the project folder,
+    // so the linked worktree it ends up in is only knowable from this report.
+    expect(runWrapper(payloadIn(linked)).status).toBe(0);
+    const inWorktree = readSnapshot();
+    expect(inWorktree.cwd).toBe(linked);
+    expect((inWorktree.git as Record<string, unknown>).worktree).toBe('feature-x');
+    // The main checkout reports itself, with no worktree.
+    expect(runWrapper(payloadIn(repo)).status).toBe(0);
+    const inMain = readSnapshot();
+    expect(inMain.cwd).toBe(repo);
+    expect((inMain.git as Record<string, unknown>).worktree).toBeNull();
+  });
 
   it('Snapshot names a linked worktree', () => {
     const res = runWrapper(payloadIn(linked));

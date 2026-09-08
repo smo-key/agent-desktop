@@ -133,6 +133,28 @@ export interface PaneSession {
    * launched with the option.
    */
   launchArgs?: string[];
+  /**
+   * The linked git WORKTREE dir this pane's session actually runs in, adopted at
+   * runtime from the session's own report (`worktreeCwdToAdopt`). `claude
+   * --worktree` creates the worktree itself, so the pane is SPAWNED in the
+   * project folder ({@link cwd}) and only the running session knows the real
+   * path. PERSISTED, and preferred over `cwd` wherever a pane's working dir is
+   * resolved ({@link sessionCwd}) — so a resumed session respawns in its worktree
+   * and its subagents are found. Absent for every pane but an adopted worktree one.
+   */
+  worktreeCwd?: string;
+}
+
+/**
+ * The working directory a pane's session actually runs in: its adopted worktree
+ * dir when it has one, else the dir it was launched in. Use this — not `cwd` —
+ * for respawning, for transcript/subagent lookups, and anywhere a pane's folder
+ * is reported. Pure.
+ */
+export function sessionCwd(
+  session: Pick<PaneSession, 'cwd' | 'worktreeCwd'> | null | undefined
+): string | null {
+  return session?.worktreeCwd ?? session?.cwd ?? null;
 }
 
 /** A fresh APP-MINTED session id for an agent pane (claude or copilot — both
@@ -751,6 +773,25 @@ export class WorkspaceStore {
       // second worktree — drop it here, the one in-session path to a respawn.
       const { preview: _pv, previewCount: _pc, launchArgs: _la, ...rest } = cur;
       entry.registry = { ...entry.registry, [paneId]: { ...rest, closed: true, resume: false } };
+      return;
+    }
+  }
+
+  /**
+   * Record the linked git WORKTREE dir a pane's session actually runs in
+   * (session-launcher: "A worktree session resumes in its worktree"). Called once
+   * per pane, with the dir `worktreeCwdToAdopt` derived from that session's own
+   * report; persisted, so a restart / archive-preview respawn lands in the
+   * worktree instead of the project folder. Idempotent: a pane that already has
+   * one keeps it, so a later `cd` inside the session can never move it. No-op
+   * when the pane is gone.
+   */
+  adoptWorktreeCwd(paneId: string, worktreeCwd: string): void {
+    for (const entry of this.workspaces) {
+      const cur = entry.registry[paneId];
+      if (!cur) continue;
+      if (cur.worktreeCwd) return;
+      entry.registry = { ...entry.registry, [paneId]: { ...cur, worktreeCwd } };
       return;
     }
   }

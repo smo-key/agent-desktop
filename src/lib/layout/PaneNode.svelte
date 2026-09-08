@@ -13,7 +13,7 @@
   import TaskBadge from '$lib/usage/TaskBadge.svelte';
   import Gutter from './Gutter.svelte';
   import PaneNode from './PaneNode.svelte';
-  import { workspace } from './workspace.svelte';
+  import { sessionCwd, workspace } from './workspace.svelte';
   import { setRect, clearRect } from './rects.svelte';
   import { buildPaneMenu } from './paneMenu';
   import { shortcuts } from '$lib/settings/shortcuts.svelte';
@@ -143,7 +143,7 @@
           paneId={node.paneId}
           program={resolveProgram(session?.program)}
           args={[...(session?.launchArgs ?? []), ...(session?.extraArgs ?? [])]}
-          cwd={session?.cwd ?? null}
+          cwd={sessionCwd(session)}
           initialInput={session?.initialInput}
           sessionId={session?.sessionId}
           resume={session?.resume}

@@ -21,6 +21,11 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(pkg.version)
   },
 
+  // Under vitest, resolve Svelte's BROWSER build so component tests can `mount()`
+  // into jsdom (the default "node" condition picks the server build, where mount
+  // is unavailable). Vitest sets VITEST=true; a real build/dev never sees this.
+  resolve: process.env.VITEST ? { conditions: ['browser', 'development'] } : undefined,
+
   // Tauri requires a fixed, strict port and a clean console.
   clearScreen: false,
   server: {

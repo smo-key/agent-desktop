@@ -57,6 +57,11 @@
 - [x] 3.10 Inbox rename for terminal rows: `titleKeyOf`, editable focus header,
       "Rename" in the terminal row menu, row shows the generated title.
 
+- [x] 2.6 Adopt a worktree session's real cwd: the wrapper reports the session's
+      dir, `worktreeCwdToAdopt` decides (once, gated on the worktree launch +
+      a linked-worktree report), `PaneSession.worktreeCwd` persists it, and
+      `sessionCwd` is preferred for respawn, transcript and subagent lookups.
+
 ## 4. Verification
 
 - [x] 4.1 `yarn check`, `yarn test`, `cargo test`, `yarn coverage`,

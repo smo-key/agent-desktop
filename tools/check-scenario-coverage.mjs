@@ -153,9 +153,10 @@ const ENFORCED_CAPABILITIES = new Set([
   // denied/non-Tauri no-op) are headless-exempt (MANUAL below); the chime + the
   // Settings pickers' rendered wiring are confirmed live in the same pass.
   'needs-input-alerts',
-  // whats-new-dialog: the section lookup/parser (section.test.ts) and the
-  // once-per-version launch rules + reopen (whatsNewStore.svelte.test.ts) are
-  // pure and unit-tested. The rendered modal's dismissal is DOM-bound (MANUAL).
+  // whats-new-dialog: the section lookup/parser (section.test.ts), the
+  // once-per-version launch rules + reopen (whatsNewStore.svelte.test.ts), and
+  // the rendered modal's markup + Esc/backdrop/"Got it" dismissal (a jsdom
+  // component test, WhatsNewModal.svelte.test.ts) are all headless-tested.
   'whats-new-dialog',
 ]);
 
@@ -454,11 +455,6 @@ const MANUAL_SCENARIOS = {
     'permission_requested_on_enable',
     'permission_denied',
     'non_desktop_context',
-  ]),
-  // whats-new-dialog: Esc / backdrop / "Got it" dismissal is the rendered
-  // WhatsNewModal's wiring (the store's close() IS unit-tested); confirmed live.
-  'whats-new-dialog': new Set([
-    'dialog_closes',
   ]),
 };
 
