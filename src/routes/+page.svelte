@@ -35,7 +35,8 @@
   import { shortcuts } from '$lib/settings/shortcuts.svelte';
   import { showTerminalsDock, terminalsCombined } from '$lib/tasks/placement';
   import { sessionCwd, workspace } from '$lib/layout/workspace.svelte';
-  import { worktreeCwdToAdopt } from '$lib/launcher/worktreeArgs';
+  import { invoke } from '@tauri-apps/api/core';
+  import { paneWorktreesToForget, worktreeCwdToAdopt } from '$lib/launcher/worktreeArgs';
   import { insertFilenameInto, focusedTerminalHandle } from '$lib/layout/insertFilename';
   import { initFileDrop } from '$lib/layout/fileDrop';
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
@@ -254,6 +255,7 @@
       // "Session N" fallback until the first (async) activity poll lands.
       titles.hydrate(currentPaneRefs());
       stopWatching = watchAndPersist();
+      void forgetRemovedWorktrees();
     });
 
     // Seed the usage-dashboard snapshots store from the current set, then
@@ -356,12 +358,54 @@
   // Claude session id with its pane cwd from the workspace registry (pure helper).
   function currentSessionRefs(): SessionRef[] {
     return appSessionRefs(snapshots.byPane, (paneId) => {
-      const sess = workspace.session(paneId);
+      // ANY workspace, not just the active one: `session()` fabricates a
+      // login-shell default for a pane outside it, which would hand the subagent
+      // watcher `{cwd: null, program: '/bin/zsh'}` — silently dropping the watch
+      // (and mislabelling a copilot pane) whenever the user switches session tabs.
+      const sess = workspace.sessionAnywhere(paneId);
+      if (!sess) return null;
       // The ADOPTED worktree dir when there is one: the subagent reader locates a
       // session's sidecars purely by cwd, so a `--worktree` session lists none
       // unless we hand it the dir the session actually runs in.
       return { cwd: sessionCwd(sess), program: sess.program };
     });
+  }
+
+  /**
+   * Drop any ADOPTED worktree dir that no longer exists (session-launcher: "A
+   * worktree session resumes in its worktree"). A worktree is commonly removed
+   * once its branch merges, and the dir is persisted — so a restored pane would
+   * otherwise keep trying to spawn in a missing directory forever. Existence is
+   * checked with `resolve_path`, which canonicalizes and so answers `null` for a
+   * path that is gone. Runs once, right after restore.
+   */
+  async function forgetRemovedWorktrees(): Promise<void> {
+    const panes: { paneId: string; worktreeCwd?: string }[] = [];
+    for (const ws of workspace.workspaces) {
+      for (const [paneId, sess] of Object.entries(ws.registry)) {
+        if (sess.worktreeCwd) panes.push({ paneId, worktreeCwd: sess.worktreeCwd });
+      }
+    }
+    if (panes.length === 0) return;
+    const alive = new Set<string>();
+    await Promise.all(
+      panes.map(async (p) => {
+        try {
+          const resolved = await invoke<string | null>('resolve_path', {
+            cwd: null,
+            token: p.worktreeCwd
+          });
+          if (resolved) alive.add(p.worktreeCwd as string);
+        } catch {
+          // Treat an IPC failure as "still there": never discard a good dir over a
+          // transient error — a missing one is caught on the next launch.
+          alive.add(p.worktreeCwd as string);
+        }
+      })
+    );
+    for (const paneId of paneWorktreesToForget(panes, (dir) => alive.has(dir))) {
+      workspace.clearWorktreeCwd(paneId);
+    }
   }
 
   // The app's claude panes as {paneId, sessionId, cwd} — the input to the
@@ -408,7 +452,13 @@
   // pane is adopted as soon as its first statusline write lands.
   $effect(() => {
     for (const [paneId, snap] of Object.entries(snapshots.byPane)) {
-      const sess = workspace.session(paneId);
+      // ANY workspace: the snapshot map spans them all, and `session()` would
+      // fabricate a login-shell pane for one outside the active workspace — so a
+      // worktree session launched and then left in a background tab would never be
+      // adopted, and would later adopt whatever dir it had `cd`ed to by the time
+      // its tab came forward.
+      const sess = workspace.sessionAnywhere(paneId);
+      if (!sess) continue;
       const adopt = worktreeCwdToAdopt(sess, snap);
       if (adopt) workspace.adoptWorktreeCwd(paneId, adopt);
     }

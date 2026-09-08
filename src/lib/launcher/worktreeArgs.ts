@@ -71,8 +71,51 @@ export function worktreeCwdToAdopt(
 ): string | null {
   if (session.worktreeCwd) return null; // adopt once — never chase a later `cd`
   if (!session.launchArgs?.includes('--worktree')) return null;
-  if (!snapshot?.git?.worktree) return null;
-  const reported = typeof snapshot.cwd === 'string' ? snapshot.cwd.trim() : '';
+  const name = snapshot?.git?.worktree;
+  if (!name) return null;
+  const reported = typeof snapshot?.cwd === 'string' ? snapshot.cwd.trim() : '';
   if (!reported || reported === session.cwd) return null;
-  return reported;
+  // Adopt the worktree's ROOT, not wherever the session happens to be standing:
+  // the report is the session's CURRENT dir, so a session that has already `cd`ed
+  // into a subdir would otherwise pin the pane to that subdir permanently (the
+  // subdir is still inside the worktree, so the worktree gate alone allows it),
+  // and the subagent reader — which locates sidecars by exact dir — would then
+  // never find them.
+  return worktreeRootOf(reported, name);
+}
+
+/**
+ * The ancestor of `dir` (or `dir` itself) whose last path segment is `name` — the
+ * root of the linked worktree the session is inside. Null when no segment matches,
+ * which leaves the pane un-adopted rather than guessing: git derives a worktree's
+ * admin name from its directory's basename, so a mismatch means we cannot tell
+ * where the worktree starts. Handles both separators and a trailing one. Pure.
+ */
+export function worktreeRootOf(dir: string, name: string): string | null {
+  const parts = dir.split(/[/\\]/);
+  // Walk from the DEEPEST match outward: with nested repos the innermost wins.
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (parts[i] !== '' && parts[i] === name) return parts.slice(0, i + 1).join('/');
+  }
+  return null;
+}
+
+/**
+ * The panes whose ADOPTED worktree dir no longer exists, and must therefore
+ * forget it (session-launcher: "A worktree session resumes in its worktree").
+ * A worktree is often removed once its branch merges, and the dir is persisted —
+ * so without this the pane would keep trying to spawn in a missing directory for
+ * the rest of its life, with nothing in the app able to clear the field. Forgetting
+ * it falls the pane back to the folder it was launched in. Pure: `exists` does the
+ * IO for the caller.
+ */
+export function paneWorktreesToForget(
+  panes: ReadonlyArray<{ paneId: string; worktreeCwd?: string }>,
+  exists: (dir: string) => boolean
+): string[] {
+  const out: string[] = [];
+  for (const p of panes) {
+    if (p.worktreeCwd && !exists(p.worktreeCwd)) out.push(p.paneId);
+  }
+  return out;
 }

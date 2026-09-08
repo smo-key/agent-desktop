@@ -62,6 +62,12 @@
       a linked-worktree report), `PaneSession.worktreeCwd` persists it, and
       `sessionCwd` is preferred for respawn, transcript and subagent lookups.
 
+- [x] 2.7 Review fixes: resolve the pane from ANY workspace (`sessionAnywhere`,
+      also for the subagent refs), adopt the worktree ROOT (`worktreeRootOf`),
+      forget a removed worktree dir at startup (`paneWorktreesToForget` +
+      `clearWorktreeCwd`), and prefer the worktree for splits, new-session
+      inherit, the orchestrator's `AgentInfo.cwd` and startup session pruning.
+
 ## 4. Verification
 
 - [x] 4.1 `yarn check`, `yarn test`, `cargo test`, `yarn coverage`,

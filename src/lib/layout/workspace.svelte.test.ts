@@ -199,4 +199,62 @@ describe('workspace — an adopted worktree dir is kept', () => {
     expect(sessionCwd(store.session(plain))).toBe('/proj');
     expect(sessionCwd(undefined)).toBeNull();
   });
+
+  it('A worktree pane is resolvable from any workspace', () => {
+    // `session()` answers for the ACTIVE workspace only and FABRICATES a login-shell
+    // default otherwise — so a caller keyed off the snapshot map (which spans every
+    // workspace) must use `sessionAnywhere`, or a worktree session sitting in a
+    // background tab is never adopted and its subagent watch is dropped.
+    const store = new WorkspaceStore();
+    const paneId = store.launch({
+      program: 'claude',
+      cwd: '/proj',
+      placement: 'tab',
+      launchArgs: ['--worktree']
+    });
+    store.adoptWorktreeCwd(paneId, '/proj/.claude/worktrees/feature-x');
+    store.newWorkspace(); // the worktree pane's workspace is no longer active
+
+    expect(store.session(paneId).cwd).toBeNull(); // the fabricated default
+    expect(store.sessionAnywhere(paneId)?.cwd).toBe('/proj');
+    expect(sessionCwd(store.sessionAnywhere(paneId))).toBe('/proj/.claude/worktrees/feature-x');
+    expect(store.sessionAnywhere('pane-does-not-exist')).toBeNull();
+  });
+
+  it('A pane forgets a worktree dir that no longer exists', () => {
+    const store = new WorkspaceStore();
+    const paneId = store.launch({
+      program: 'claude',
+      cwd: '/proj',
+      placement: 'tab',
+      launchArgs: ['--worktree']
+    });
+    store.adoptWorktreeCwd(paneId, '/proj/.claude/worktrees/gone');
+    store.clearWorktreeCwd(paneId);
+    expect(store.session(paneId).worktreeCwd).toBeUndefined();
+    // Back to the folder it was launched in, so it can spawn again.
+    expect(sessionCwd(store.session(paneId))).toBe('/proj');
+    store.clearWorktreeCwd(paneId); // idempotent
+    store.clearWorktreeCwd('nope'); // unknown pane is a no-op
+  });
+
+  it('A split inherits the focused pane worktree', () => {
+    // Splitting next to a worktree agent is how you run git against ITS branch, so
+    // the new shell must open in the worktree, not on the main checkout.
+    const store = new WorkspaceStore();
+    const paneId = store.launch({
+      program: 'claude',
+      cwd: '/proj',
+      placement: 'tab',
+      launchArgs: ['--worktree']
+    });
+    store.adoptWorktreeCwd(paneId, '/proj/.claude/worktrees/feature-x');
+    store.split('row');
+    // The split's new pane is the login shell that is not the agent pane.
+    const shellPane = Object.entries(store.active?.registry ?? {}).find(
+      ([id, sess]) => id !== paneId && sess.program !== 'claude'
+    );
+    expect(shellPane).toBeDefined();
+    expect(shellPane?.[1].cwd).toBe('/proj/.claude/worktrees/feature-x');
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { worktreeCwdToAdopt } from './worktreeArgs';
+import { paneWorktreesToForget, worktreeCwdToAdopt, worktreeRootOf } from './worktreeArgs';
 
 /** A pane launched with `--worktree` in the project folder. */
 const launched = { cwd: '/proj', launchArgs: ['--worktree'] };
@@ -20,6 +20,30 @@ describe('worktree cwd adoption', () => {
     expect(worktreeCwdToAdopt(adopted, { cwd: '/somewhere/else', git: { worktree: 'feature-x' } })).toBeNull();
   });
 
+  it('A worktree session adopts the worktree root, not a subdirectory', () => {
+    // The report is the session's CURRENT dir. If it has already `cd`ed deeper, the
+    // subdir is still inside the worktree — so the worktree gate alone would let it
+    // pin the pane there for good, and the subagent reader (exact-dir lookup) would
+    // never find its sidecars.
+    expect(
+      worktreeCwdToAdopt(launched, {
+        cwd: '/proj/.claude/worktrees/feature-x/src/lib',
+        git: { worktree: 'feature-x' }
+      })
+    ).toBe('/proj/.claude/worktrees/feature-x');
+    expect(worktreeRootOf('/w/feature-x', 'feature-x')).toBe('/w/feature-x');
+    expect(worktreeRootOf('/w/feature-x/', 'feature-x')).toBe('/w/feature-x');
+    expect(worktreeRootOf('C:\\w\\feature-x\\src', 'feature-x')).toBe('C:/w/feature-x');
+    // Nested match: the innermost wins.
+    expect(worktreeRootOf('/w/x/deep/x/src', 'x')).toBe('/w/x/deep/x');
+    // No segment matches the worktree's name — we cannot tell where it starts, so
+    // nothing is adopted rather than guessing.
+    expect(worktreeRootOf('/w/other/src', 'feature-x')).toBeNull();
+    expect(
+      worktreeCwdToAdopt(launched, { cwd: '/tmp/elsewhere', git: { worktree: 'feature-x' } })
+    ).toBeNull();
+  });
+
   it('adopts nothing without a worktree launch or a worktree report', () => {
     // A plain session in the same folder, however it reports, is never adopted.
     expect(worktreeCwdToAdopt({ cwd: '/proj' }, reported)).toBeNull();
@@ -33,5 +57,21 @@ describe('worktree cwd adoption', () => {
     expect(worktreeCwdToAdopt(launched, { git: { worktree: 'feature-x' } })).toBeNull();
     expect(worktreeCwdToAdopt(launched, { cwd: '   ', git: { worktree: 'feature-x' } })).toBeNull();
     expect(worktreeCwdToAdopt(launched, { cwd: '/proj', git: { worktree: 'feature-x' } })).toBeNull();
+  });
+});
+
+describe('forgetting a removed worktree', () => {
+  it('A pane forgets a worktree dir that no longer exists', () => {
+    // A worktree is commonly removed once its branch merges. The dir is persisted,
+    // so without this the pane would keep trying to spawn in a missing directory.
+    const panes = [
+      { paneId: 'p1', worktreeCwd: '/w/gone' },
+      { paneId: 'p2', worktreeCwd: '/w/here' },
+      { paneId: 'p3' } // never adopted one
+    ];
+    expect(paneWorktreesToForget(panes, (d) => d === '/w/here')).toEqual(['p1']);
+    // Nothing to do when every dir is still there.
+    expect(paneWorktreesToForget(panes, () => true)).toEqual([]);
+    expect(paneWorktreesToForget([], () => false)).toEqual([]);
   });
 });

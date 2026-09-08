@@ -32,7 +32,9 @@ The launcher SHALL offer a "Start in a new git worktree" option with an OPTIONAL
 
 The app SHALL adopt the working directory a `--worktree` session actually runs in, because Claude Code creates the worktree itself: the pane is spawned in the project folder and only the running session knows where it ended up. The statusline snapshot SHALL therefore report the session's current directory, and the pane SHALL adopt it as its working directory ONCE — only when that pane was launched with the worktree flag, the session reports it is inside a linked worktree, nothing has been adopted for it yet, and the reported directory differs from the launch directory — so a session that later changes directory never drags the pane's directory with it.
 
-The adopted directory SHALL be persisted (unlike the worktree flag, which must never be re-applied) and SHALL be preferred over the launch directory wherever a pane's working directory is resolved: respawning it (restart, or archive → preview) SHALL land in the worktree, and the transcript and subagent lookups SHALL use it — the subagent reader locates a session's sidecars purely by directory, so without this a worktree session lists no subagents.
+The adopted directory SHALL be the worktree's ROOT, not whatever subdirectory the session currently stands in, and a pane SHALL be resolvable for adoption from ANY workspace rather than only the active one — otherwise a session left in a background tab is adopted late, with whatever directory it has since moved to.
+
+The adopted directory SHALL be persisted (unlike the worktree flag, which must never be re-applied) and SHALL be preferred over the launch directory wherever a pane's working directory is resolved: respawning it (restart, or archive → preview) SHALL land in the worktree, the transcript and subagent lookups SHALL use it — the subagent reader locates a session's sidecars purely by directory, so without this a worktree session lists no subagents — a split off that pane SHALL open in the worktree, and the orchestrator SHALL be told the worktree as that agent's directory. A pane SHALL FORGET an adopted directory that no longer exists (a worktree removed after its branch merged), falling back to the folder it was launched in, since nothing else could ever clear it and the pane would otherwise never spawn again.
 
 #### Scenario: Snapshot reports the dir the session is in
 - **WHEN** the statusline wrapper runs for a session inside a linked worktree, and for one in the main checkout
@@ -41,6 +43,22 @@ The adopted directory SHALL be persisted (unlike the worktree flag, which must n
 #### Scenario: A worktree session resumes in its worktree
 - **WHEN** a pane launched with the worktree flag reports a linked-worktree directory that differs from its launch directory
 - **THEN** that directory is adopted as the pane's working directory
+
+#### Scenario: A worktree session adopts the worktree root, not a subdirectory
+- **WHEN** the session reports a directory nested inside its linked worktree
+- **THEN** the worktree's root is adopted, and nothing is adopted when no path segment matches the worktree name
+
+#### Scenario: A worktree pane is resolvable from any workspace
+- **WHEN** the pane's workspace is not the active one
+- **THEN** it still resolves to its real session (and its adopted worktree), rather than a fabricated login-shell default
+
+#### Scenario: A pane forgets a worktree dir that no longer exists
+- **WHEN** a restored pane's adopted worktree directory has been removed
+- **THEN** the pane forgets it and falls back to the folder it was launched in
+
+#### Scenario: A split inherits the focused pane worktree
+- **WHEN** a pane is split off an agent that runs in a worktree
+- **THEN** the new shell opens in that worktree
 
 #### Scenario: A worktree session keeps its dir through archive and preview
 - **WHEN** a pane with an adopted worktree directory is archived and then previewed

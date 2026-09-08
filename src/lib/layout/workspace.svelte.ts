@@ -318,6 +318,21 @@ export class WorkspaceStore {
     return this.active?.registry[paneId] ?? { program: loginShell(), cwd: null };
   }
 
+  /**
+   * The spawn params for a pane in ANY workspace, or null when no workspace holds
+   * it. Unlike {@link session} this never fabricates a login-shell default for a
+   * pane that merely isn't in the ACTIVE workspace — a caller that keys off a
+   * snapshot (which spans every workspace) would otherwise read a made-up pane and
+   * silently do the wrong thing.
+   */
+  sessionAnywhere(paneId: string): PaneSession | null {
+    for (const entry of this.workspaces) {
+      const s = entry.registry[paneId];
+      if (s) return s;
+    }
+    return null;
+  }
+
   /** Whether a workspace has any panes whose PTY is presumed live. */
   hasPanes(id: string): boolean {
     const entry = this.workspaces.find((w) => w.id === id);
@@ -473,7 +488,10 @@ export class WorkspaceStore {
     if (!entry) return;
     const focusedLeaf = findLeaf(entry.ws.root, entry.ws.focusedId);
     if (!focusedLeaf) return;
-    const inheritCwd = entry.registry[focusedLeaf.paneId]?.cwd ?? null;
+    // A split inherits the focused pane's REAL dir: splitting next to a worktree
+    // agent is how you run git against ITS branch, so the new shell must open in
+    // the worktree, not on the main checkout.
+    const inheritCwd = sessionCwd(entry.registry[focusedLeaf.paneId]);
     const newPaneId = this.spawnPaneId(loginShell(), inheritCwd);
 
     const root = splitLeaf(
@@ -797,6 +815,22 @@ export class WorkspaceStore {
   }
 
   /**
+   * Forget a pane's adopted worktree dir — used when that dir no longer exists
+   * (the worktree was removed after the session ran). Without this the pane would
+   * keep trying to spawn in a missing directory forever, since nothing else clears
+   * the field; dropping it falls the pane back to the folder it was launched in.
+   */
+  clearWorktreeCwd(paneId: string): void {
+    for (const entry of this.workspaces) {
+      const cur = entry.registry[paneId];
+      if (!cur?.worktreeCwd) continue;
+      const { worktreeCwd: _wt, ...rest } = cur;
+      entry.registry = { ...entry.registry, [paneId]: rest };
+      return;
+    }
+  }
+
+  /**
    * PAUSE (defer) the agent in pane `paneId`: mark it `paused` and record the
    * current user-message COUNT as the baseline. Unlike `closeAgent` this does NOT
    * touch `resume`/`closed` — the pane stays LIVE (its PTY keeps running) so you can
@@ -962,7 +996,9 @@ export class WorkspaceStore {
     if (!entry) return null;
     const leaf = findLeaf(entry.ws.root, entry.ws.focusedId);
     if (!leaf) return null;
-    return entry.registry[leaf.paneId]?.cwd ?? null;
+    // The focused pane's REAL dir (its worktree when it has one), so a new session
+    // started from a worktree agent inherits that worktree.
+    return sessionCwd(entry.registry[leaf.paneId]);
   }
 
   /** A unique-ish default name like "Session N" for the next new workspace. */

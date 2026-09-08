@@ -25,6 +25,12 @@ export type CwdLookup = (paneId: string) => { cwd: string | null; program?: stri
  * id (resume/fork), the FIRST encountered (by sorted pane id) wins the cwd — they
  * resolve to the same project dir anyway. Sorted by session id for a stable value.
  *
+ * A pane the lookup cannot resolve at all (`null` — no workspace holds it, e.g. a
+ * snapshot file left on disk by a previous run) is SKIPPED rather than recorded
+ * with a null cwd: it would otherwise take the "first wins" slot for its session
+ * id and hide the live pane's real dir, and a ref with no cwd is dropped by the
+ * subagent reader anyway.
+ *
  * @param map     the live pane_id -> snapshot map
  * @param cwdFor  pane id -> cwd lookup (the workspace registry)
  */
@@ -37,7 +43,9 @@ export function appSessionRefs(map: SnapshotMap, cwdFor: CwdLookup): SessionRef[
     const sessionId = snap?.session_id;
     if (typeof sessionId !== 'string' || sessionId.length === 0) continue;
     if (!bySession.has(sessionId)) {
-      bySession.set(sessionId, cwdFor(paneId) ?? { cwd: null });
+      const found = cwdFor(paneId);
+      if (!found) continue; // unresolvable pane — let a live one supply the cwd
+      bySession.set(sessionId, found);
     }
   }
   return [...bySession.entries()]

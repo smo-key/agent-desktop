@@ -30,7 +30,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { workspace, type PaneSession } from '../layout/workspace.svelte';
+import { sessionCwd, workspace, type PaneSession } from '../layout/workspace.svelte';
 import { leavesInOrder } from '../layout/tree';
 import { getTerminal } from '../layout/terminals';
 import { getRuntime } from '../overview/runtime';
@@ -414,7 +414,10 @@ export class OrchestrationExecutor {
       // refers to "Fix login dialog" rather than "Session 1"; fall back to the
       // workspace/cwd name when the agent has no title yet.
       name: this.deps.titleOf(pane.paneId) ?? nameFor(pane),
-      cwd: pane.session.cwd,
+      // The dir the agent REALLY works in (its adopted worktree when it has one):
+      // the orchestrator reasons and reports about this path, so a worktree agent
+      // must not be described as living on the main checkout.
+      cwd: sessionCwd(pane.session),
       projectId: pane.session.projectId ?? null,
       status: this.deps.statusOf(pane.paneId),
       archived: pane.session.closed === true,
