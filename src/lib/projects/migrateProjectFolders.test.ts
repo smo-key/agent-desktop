@@ -65,37 +65,13 @@ describe('project-folder-storage — migration', () => {
     expect(call('tasks_clear')).toHaveLength(1);
   });
 
-  it('autoWorktree lifted out of the registry', async () => {
-    invokeMock.mockImplementation(async (cmd: unknown) => {
-      if (cmd === 'tasks_load') return userTasks({ p: [] });
-      if (cmd === 'projects_load')
-        return projectsJson([{ id: 'p', path: '/p', name: 'P', autoWorktree: true }]);
-      return null;
-    });
-
-    await migrateToProjectFolders();
-
-    const cfgSaves = call('project_config_save');
-    expect(cfgSaves).toHaveLength(1);
-    const cfgArg = cfgSaves[0][1] as { projectPath: string; json: string };
-    expect(cfgArg.projectPath).toBe('/p');
-    expect(JSON.parse(cfgArg.json).autoWorktree).toBe(true);
-    // projects_save payload has autoWorktree stripped.
-    const projSave = call('projects_save');
-    expect(projSave).toHaveLength(1);
-    const payload = JSON.parse((projSave[0][1] as { json: string }).json);
-    expect(payload.projects[0]).not.toHaveProperty('autoWorktree');
-    expect(payload.projects[0]).toMatchObject({ id: 'p', path: '/p' });
-  });
-
   it('Unwritable project skipped', async () => {
     const tasks: Record<string, TaskDef[]> = {
       p: [{ id: 'a', name: 'dev', kind: 'terminal', command: 'x', cwd: null }]
     };
     invokeMock.mockImplementation(async (cmd: unknown) => {
       if (cmd === 'tasks_load') return userTasks(tasks);
-      if (cmd === 'projects_load')
-        return projectsJson([{ id: 'p', path: '/p', name: 'P', autoWorktree: true }]);
+      if (cmd === 'projects_load') return projectsJson([{ id: 'p', path: '/p', name: 'P' }]);
       if (cmd === 'project_tasks_save') throw new Error('unwritable folder');
       return null;
     });
@@ -105,29 +81,6 @@ describe('project-folder-storage — migration', () => {
     // tasks_clear/terminals_clear NOT called because the task write failed: the
     // source files are retained so the next launch retries (and won't clobber any
     // project that already migrated).
-    expect(call('tasks_clear')).toHaveLength(0);
-    expect(call('terminals_clear')).toHaveLength(0);
-    const projSave = call('projects_save');
-    expect(projSave).toHaveLength(1);
-  });
-
-  it('retains autoWorktree and sources when its config write fails', async () => {
-    invokeMock.mockImplementation(async (cmd: unknown) => {
-      if (cmd === 'tasks_load') return userTasks({});
-      if (cmd === 'projects_load')
-        return projectsJson([{ id: 'p', path: '/p', name: 'P', autoWorktree: true }]);
-      if (cmd === 'project_config_save') throw new Error('unwritable folder');
-      return null;
-    });
-
-    await migrateToProjectFolders();
-
-    const projSave = call('projects_save');
-    const payload = JSON.parse((projSave[0][1] as { json: string }).json);
-    // The failed project keeps its autoWorktree for a later retry...
-    expect(payload.projects[0].autoWorktree).toBe(true);
-    // ...and the user-level sources are NOT cleared, so autoWorktree is never
-    // silently lost (regression: cleanup was once gated only on task writes).
     expect(call('tasks_clear')).toHaveLength(0);
     expect(call('terminals_clear')).toHaveLength(0);
   });
@@ -196,28 +149,6 @@ describe('project-folder-storage — migration', () => {
     expect(call('terminals_clear')).toHaveLength(0);
   });
 
-  it('Existing config preserved', async () => {
-    // A teammate-committed `.agent-desktop/config.json` must not be overwritten by
-    // a stale `autoWorktree` in projects.json — but the registry field is still
-    // stripped (config.json is now the source of truth).
-    invokeMock.mockImplementation(async (cmd: unknown) => {
-      if (cmd === 'tasks_load') return userTasks({});
-      if (cmd === 'projects_load')
-        return projectsJson([{ id: 'p', path: '/p', name: 'P', autoWorktree: false }]);
-      if (cmd === 'project_config_load') return '{"version":1,"autoWorktree":true}';
-      return null;
-    });
-
-    await migrateToProjectFolders();
-
-    // Committed config left untouched...
-    expect(call('project_config_save')).toHaveLength(0);
-    // ...registry field stripped anyway.
-    const projSave = call('projects_save');
-    const payload = JSON.parse((projSave[0][1] as { json: string }).json);
-    expect(payload.projects[0]).not.toHaveProperty('autoWorktree');
-  });
-
   it('Idempotent', async () => {
     invokeMock.mockImplementation(async (cmd: unknown) => {
       if (cmd === 'tasks_load') return null;
@@ -228,8 +159,6 @@ describe('project-folder-storage — migration', () => {
     await migrateToProjectFolders();
 
     expect(call('project_tasks_save')).toHaveLength(0);
-    expect(call('project_config_save')).toHaveLength(0);
-    expect(call('projects_save')).toHaveLength(0);
     expect(call('tasks_clear')).toHaveLength(0);
   });
 
@@ -282,8 +211,6 @@ describe('project-folder-storage — migration', () => {
     await migrateToProjectFolders(); // run 2: both sources null → pure no-op
 
     expect(call('project_tasks_save')).toHaveLength(0);
-    expect(call('project_config_save')).toHaveLength(0);
-    expect(call('projects_save')).toHaveLength(0);
     expect(call('tasks_clear')).toHaveLength(0);
   });
 });

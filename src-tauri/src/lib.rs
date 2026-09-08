@@ -1,5 +1,6 @@
 pub mod activity;
 pub mod claude_title;
+pub mod copilot_events;
 pub mod events;
 pub mod git;
 pub mod ipc;
@@ -73,7 +74,7 @@ const STATUSLINE_WRAPPER_SRC: &str = include_str!("../resources/statusline-wrapp
 const EVENT_HOOK_SRC: &str = include_str!("../resources/event-hook.cjs");
 
 /// The baked orchestration MCP ADAPTER source (installed beside the wrapper). It is
-/// the dependency-free stdio MCP server attached to a launched COORDINATOR session
+/// the dependency-free stdio MCP server attached to a launched agent session
 /// (`--mcp-config`); it forwards each toolkit tool call over the Rust control socket
 /// to the frontend executor. Authored as CommonJS so it runs standalone under the
 /// `node` shebang. See `resources/orchestration-mcp.cjs`.
@@ -88,7 +89,7 @@ const WRAPPER_FILE: &str = "statusline-wrapper.js";
 /// Installed event-hook basename (a standalone `.js`, run via its shebang).
 const EVENT_HOOK_FILE: &str = "event-hook.js";
 /// Installed orchestration MCP adapter basename (a standalone `.js`, run via `node`
-/// in the coordinator's `--mcp-config` server).
+/// in the agent's `--mcp-config` server).
 const ORCHESTRATION_MCP_FILE: &str = "orchestration-mcp.js";
 /// Subdir (under app-data) the wrapper writes per-pane snapshots into and the
 /// `SnapshotWatcher` watches.
@@ -119,12 +120,12 @@ pub struct UsagePaths {
     /// binds, or the hook connects to nothing and silently drops every event.
     pub socket_path: String,
     /// Absolute path to the installed orchestration MCP adapter — `node <this>` is
-    /// the coordinator launch's `--mcp-config` server command (`buildMcpToolkitConfig`).
+    /// the toolkit launch's `--mcp-config` server command (`buildMcpToolkitConfig`).
     pub adapter_path: String,
     /// ADDRESS of the Rust orchestration CONTROL socket (sibling of
-    /// `socket_path`, same path-vs-pipe-name rule) — goes into the coordinator's
-    /// `--mcp-config` server env as `AGENT_DESKTOP_CONTROL_SOCKET` so the adapter
-    /// can reach the executor. MUST equal what `orchestration::start_control_server`
+    /// `socket_path`, same path-vs-pipe-name rule) — goes into the toolkit
+    /// launch's `--mcp-config` server env as `AGENT_DESKTOP_CONTROL_SOCKET` so
+    /// the adapter can reach the executor. MUST equal what `orchestration::start_control_server`
     /// binds.
     pub control_socket_path: String,
 }
@@ -298,6 +299,41 @@ fn installed_apps(names: Vec<String>) -> Vec<String> {
 #[tauri::command]
 fn default_shell() -> String {
     crate::shell_path::default_shell()
+}
+
+/// Install an app-generated Copilot custom agent (`agent-specialists`): writes
+/// `~/.copilot/agents/<name>.agent.md` so a specialist launch can pass
+/// `--agent <name>`. Only app-prefixed safe names are accepted.
+#[tauri::command]
+fn copilot_install_agent(name: String, content: String) -> Result<(), String> {
+    let base = copilot_events::agents_base().ok_or("HOME unset; cannot locate ~/.copilot")?;
+    copilot_events::install_agent(&base, &name, &content)
+}
+
+/// Register a copilot pane with the events tailer (`copilot-observability`):
+/// its `~/.copilot/session-state/<session_id>/events.jsonl` is tailed into the
+/// shared activity-event pipeline and its model refreshes the pane snapshot.
+#[tauri::command]
+fn copilot_watch(
+    state: State<'_, Arc<copilot_events::CopilotWatchState>>,
+    pane_id: String,
+    session_id: String,
+    resume: bool,
+) {
+    state.watch(pane_id, session_id, resume);
+}
+
+/// Drop a copilot pane's tail registration (pane closed / component destroyed).
+#[tauri::command]
+fn copilot_unwatch(state: State<'_, Arc<copilot_events::CopilotWatchState>>, pane_id: String) {
+    state.unwatch(&pane_id);
+}
+
+/// Whether an agent CLI (`claude`, `copilot`) is discoverable on the seeded
+/// login-shell `PATH` (`agent-backends`: Settings install-detection hint).
+#[tauri::command]
+fn program_on_path(program: String) -> bool {
+    crate::shell_path::program_on_path(&program)
 }
 
 /// Build the argument vector passed to `open` (after the program name) for
@@ -626,26 +662,48 @@ async fn session_focus(
     session_id: String,
     cwd: Option<String>,
     cloud_fallback: bool,
+    program: Option<String>,
 ) -> Result<Option<String>, String> {
-    let projects_base =
-        activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
-    let pane = PaneRef {
-        pane_id: String::new(),
-        session_id: Some(session_id),
-        cwd,
+    // Per-backend transcript text (`session-titles`): a copilot session's user /
+    // assistant prose comes from its event log; claude reads its transcript.
+    let (msgs, asst_msgs): (Vec<String>, Vec<String>) = if program.as_deref() == Some("copilot")
+    {
+        let Some(base) = copilot_events::session_state_base() else {
+            return Ok(None);
+        };
+        let Some(path) = copilot_events::events_path(&base, &session_id) else {
+            return Ok(None);
+        };
+        let events = copilot_events::read_session_events(&path);
+        (
+            copilot_events::user_messages(&events),
+            copilot_events::assistant_messages(&events),
+        )
+    } else {
+        let projects_base =
+            activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
+        let pane = PaneRef {
+            pane_id: String::new(),
+            session_id: Some(session_id),
+            cwd,
+            program: None,
+        };
+        let Some(transcript) = activity::find_transcript(&projects_base, &pane) else {
+            return Ok(None);
+        };
+        // Title-specific view: drops skill/command/caveat scaffolding (isMeta
+        // preludes, slash-command markup, interrupt markers) that the small title
+        // model otherwise copies into the title. Distinct from `user_messages` so
+        // the auto-resume / empty-session gates reading `user_hash` /
+        // `user_message_count` are unaffected.
+        (
+            activity::title_user_messages(&transcript),
+            activity::assistant_messages(&transcript),
+        )
     };
-    let Some(transcript) = activity::find_transcript(&projects_base, &pane) else {
-        return Ok(None);
-    };
-    // Title-specific view: drops skill/command/caveat scaffolding (isMeta preludes,
-    // slash-command markup, interrupt markers) that the small title model otherwise
-    // copies into the title. Distinct from `user_messages` so the auto-resume /
-    // empty-session gates that read `user_hash`/`user_message_count` are unaffected.
-    let msgs = activity::title_user_messages(&transcript);
     if msgs.is_empty() {
         return Ok(None);
     }
-    let asst_msgs = activity::assistant_messages(&transcript);
     // Bound the prompt to fit the local model's modest context window (the sidecar
     // runs with a 4096-token context). Weight the EARLIEST messages so the session's
     // original request is always included even in a long session (head + tail
@@ -705,6 +763,37 @@ async fn session_focus(
     Ok((!title.is_empty()).then_some(title))
 }
 
+/// Generate a short title for a plain TERMINAL row from the activity its shell
+/// REPORTED (`session-titles`: "Bare terminal rows are titled from the activity
+/// the shell reports"). Reuses [`session_focus`]'s on-device path — the
+/// `llama-server` sidecar plus the shared [`clean_title`] post-processing — but
+/// the input is the frontend-collected list of window titles the shell set,
+/// since a bare shell has no transcript on disk.
+///
+/// ON-DEVICE ONLY, deliberately: there is no `claude -p` fallback here. The
+/// `titles.cloudFallback` opt-in covers sending a SESSION TRANSCRIPT off-device;
+/// a shell's reported activity is different data and is not covered by that
+/// consent, so with no local model the row simply keeps its name.
+///
+/// `activity` is newline-separated, oldest first; empty input yields `None` (a
+/// shell that reported nothing is never titled). `async` for the same reason as
+/// `session_focus`.
+#[tauri::command]
+async fn terminal_focus(
+    app: AppHandle,
+    state: State<'_, Arc<polish::LlamaServer>>,
+    activity: String,
+) -> Result<Option<String>, String> {
+    let joined = activity.trim();
+    if joined.is_empty() {
+        return Ok(None);
+    }
+    let body = polish::build_terminal_title_body(joined, models::POLISH.id);
+    let raw = polish::chat_complete(&app, &state, body).await?;
+    let title = clean_title(&raw, joined);
+    Ok((!title.is_empty()).then_some(title))
+}
+
 /// Resize a pane's PTY (delivers SIGWINCH to the child).
 #[tauri::command]
 fn pty_resize(
@@ -720,6 +809,18 @@ fn pty_resize(
 #[tauri::command]
 fn pty_kill(manager: State<'_, Arc<PtyManager>>, id: PaneId) -> Result<(), String> {
     manager.kill(id)
+}
+
+/// Whether a live pane's terminal is owned by a foreground job (`Some(true)`),
+/// sits at the shell prompt (`Some(false)`), or cannot be determined (`None`).
+/// Polled by a plain-terminal pane in the combined terminals placement so its
+/// roster row reads In flight / Needs input (terminal-core: Foreground Job Query).
+#[tauri::command(async)]
+fn pty_foreground_busy(
+    manager: State<'_, Arc<PtyManager>>,
+    id: PaneId,
+) -> Result<Option<bool>, String> {
+    manager.foreground_busy(id)
 }
 
 /// Resolve the absolute path to an app-data file named `file`, creating the
@@ -918,20 +1019,6 @@ fn project_tasks_load(project_path: String) -> Result<Option<String>, String> {
 #[tauri::command]
 fn project_tasks_save(project_path: String, json: String) -> Result<(), String> {
     project_store::save_tasks(Path::new(&project_path), &json)
-}
-
-/// Load a project's `.agent-desktop/config.json`, or `None` when it does not exist
-/// yet. See [`project_store::load_config`].
-#[tauri::command]
-fn project_config_load(project_path: String) -> Result<Option<String>, String> {
-    project_store::load_config(Path::new(&project_path))
-}
-
-/// Atomically persist a project's `.agent-desktop/config.json` (atomic temp+rename,
-/// creating the dir if needed). See [`project_store::save_config`].
-#[tauri::command]
-fn project_config_save(project_path: String, json: String) -> Result<(), String> {
-    project_store::save_config(Path::new(&project_path), &json)
 }
 
 /// Resolve `<app_data_dir>`, creating it if needed.
@@ -1190,9 +1277,30 @@ fn start_subagents_watcher(
 /// transcript is simply absent from the map.
 #[tauri::command]
 fn activity_for(panes: Vec<PaneRef>) -> Result<HashMap<String, Activity>, String> {
-    let projects_base =
-        activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
-    Ok(activity::activity_for_panes(&projects_base, &panes))
+    // Route per backend: copilot panes derive activity from their session event
+    // log (`copilot-observability`); everything else reads the Claude transcript.
+    let (copilot, claude): (Vec<PaneRef>, Vec<PaneRef>) = panes
+        .into_iter()
+        .partition(|p| p.program.as_deref() == Some("copilot"));
+    let mut out = if claude.is_empty() {
+        HashMap::new()
+    } else {
+        let projects_base =
+            activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
+        activity::activity_for_panes(&projects_base, &claude)
+    };
+    if let Some(base) = copilot_events::session_state_base() {
+        for pane in copilot {
+            let Some(sid) = pane.session_id.as_deref() else { continue };
+            let Some(path) = copilot_events::events_path(&base, sid) else { continue };
+            let events = copilot_events::read_session_events(&path);
+            if events.is_empty() {
+                continue;
+            }
+            out.insert(pane.pane_id, copilot_events::activity_from_events(&events));
+        }
+    }
+    Ok(out)
 }
 
 /// Return the `path -> GitStatus` map for the given project FOLDERS (branch +
@@ -1297,39 +1405,6 @@ async fn open_prs_for(repo_path: String, base: String) -> Result<pr::OpenPrs, St
 #[tauri::command(async)]
 async fn repo_web_url(repo_path: String) -> Result<Option<String>, String> {
     Ok(pr::repo_url_for(&repo_path).await)
-}
-
-/// Create a fresh session worktree off `repo_path`'s HEAD (auto-worktree
-/// projects). Returns `{ path, branch, base }`; ensures `.worktrees` is gitignored
-/// and the branch is unique. `Err` when `repo_path` isn't a git repo or git fails.
-#[tauri::command(async)]
-fn worktree_create(repo_path: String) -> Result<git::WorktreeCreated, String> {
-    git::worktree_create(&repo_path)
-}
-
-/// Remove a session worktree (and its branch) only if it's clean — empty
-/// `status --porcelain` and zero commits past `base`. Returns `{ removed, reason }`;
-/// a kept (dirty / has-commits) worktree is NOT an error. `Err` only on git failure.
-#[tauri::command(async)]
-fn worktree_remove_if_clean(
-    worktree_path: String,
-    base: String,
-) -> Result<git::WorktreeRemoval, String> {
-    git::worktree_remove_if_clean(&worktree_path, &base)
-}
-
-/// List the session worktrees under `<repo>/.worktrees/`, each as
-/// `{ path, branch, clean }`, for the management UI. Off-repo yields `[]`.
-#[tauri::command(async)]
-fn worktree_list(repo_path: String) -> Result<Vec<git::WorktreeInfo>, String> {
-    Ok(git::worktree_list(&repo_path))
-}
-
-/// Explicitly prune a worktree (and its branch), passing `--force` when `force`
-/// is true. Used by the management UI. `Err` on git failure.
-#[tauri::command(async)]
-fn worktree_remove(worktree_path: String, force: bool) -> Result<(), String> {
-    git::worktree_remove(&worktree_path, force)
 }
 
 /// Return the `pane_id -> [AgentEvent]` timeline for the caller's app panes, used
@@ -1510,6 +1585,33 @@ pub fn run() {
                     Err(e) => log::warn!("start_event_server failed: {e}"),
                 }
             }
+            // Copilot events tailer (`copilot-observability`): translates each
+            // watched copilot pane's session events into the SAME event pipeline
+            // (ring + durable sink + `overview://event`) and refreshes the pane's
+            // usage snapshot on model changes. Watch registrations arrive via the
+            // `copilot_watch` command as panes spawn. Best-effort: a missing
+            // `~/.copilot` (CLI never run) just means no events until it exists.
+            let copilot_watch_state = Arc::new(copilot_events::CopilotWatchState::default());
+            app.manage(copilot_watch_state.clone());
+            if let Some(copilot_base) = copilot_events::session_state_base() {
+                if let Ok(base) = app_data_dir(app.handle()) {
+                    let snapshot_dir = base.join(SNAPSHOT_DIR);
+                    let handle = app.handle().clone();
+                    let event_state_for_copilot = app.state::<Arc<EventState>>().inner().clone();
+                    let tailer = copilot_events::start_copilot_tailer(
+                        copilot_base,
+                        copilot_watch_state,
+                        event_state_for_copilot,
+                        snapshot_dir,
+                        move |ev| {
+                            if let Err(e) = handle.emit(EVENT_EVENT, &ev) {
+                                log::warn!("emit {EVENT_EVENT} (copilot) failed: {e}");
+                            }
+                        },
+                    );
+                    app.manage(tailer);
+                }
+            }
             // Orchestration control socket: the transport the bundled MCP toolkit
             // adapter uses to round-trip toolkit ops through the frontend executor.
             // Each inbound request is emitted to the frontend over
@@ -1559,12 +1661,18 @@ pub fn run() {
             pty_write,
             pty_resize,
             pty_kill,
+            pty_foreground_busy,
             open_in_editor,
             resolve_path,
             open_path,
             installed_apps,
             default_shell,
+            program_on_path,
+            copilot_watch,
+            copilot_unwatch,
+            copilot_install_agent,
             session_focus,
+            terminal_focus,
             layout_load,
             layout_save,
             recents_load,
@@ -1585,8 +1693,6 @@ pub fn run() {
             specialists_delete,
             project_tasks_load,
             project_tasks_save,
-            project_config_load,
-            project_config_save,
             usage_paths,
             usage_snapshots,
             subagents_for,
@@ -1602,10 +1708,6 @@ pub fn run() {
             pr_status_for,
             open_prs_for,
             repo_web_url,
-            worktree_create,
-            worktree_remove_if_clean,
-            worktree_list,
-            worktree_remove,
             events_for,
             orchestration_reply,
             notify_click::notify_agent,
@@ -1966,7 +2068,7 @@ mod tests {
 
         // The orchestration MCP adapter is installed beside the wrapper (same baked
         // source + shebang + 0755 contract) and the control socket path (sibling of
-        // the events socket) is returned for the coordinator's --mcp-config server.
+        // the events socket) is returned for the toolkit launch's --mcp-config server.
         let adapter = PathBuf::from(&paths.adapter_path);
         assert_eq!(adapter, tmp.path().join(BIN_DIR).join(ORCHESTRATION_MCP_FILE));
         assert!(adapter.is_file(), "orchestration adapter must exist");

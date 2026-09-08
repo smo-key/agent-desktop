@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
-import { TitleStore } from './titles.svelte';
+import { TERMINAL_MAX_REQUESTS, TitleStore, shouldCommitRename } from './titles.svelte';
 import type { PaneRef } from './activity.svelte';
 
 const STORAGE_KEY = 'agent-desktop:session-titles';
@@ -186,5 +186,181 @@ describe('TitleStore manual (custom) titles', () => {
     expect(store.titleFor('p1')).toBe('Custom focus');
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) as string);
     expect(saved.s1).toEqual({ title: 'Custom focus', hash: null, manual: true });
+  });
+});
+
+// Terminal rows are titled by the same store, keyed by their TITLE KEY: a task
+// terminal's stable `task:<defId>` (persisted, so a restart recovers it) and a
+// bare shell's null (per-process, never written). Their change key is the list of
+// commands the user confirmed running, not screen text.
+describe('TitleStore terminal titles', () => {
+  const ref = (over: Partial<{ paneId: string; key: string | null; activity: string | null }> = {}) => ({
+    paneId: 'tp1',
+    key: null as string | null,
+    activity: '~/git/app\nyarn test',
+    ...over
+  });
+
+  it('A bare shell is titled from its recent commands', async () => {
+    invokeMock.mockResolvedValue('Run the test suite');
+    const store = new TitleStore();
+    store.refreshTerminals([ref()], NOW);
+    await flush();
+
+    // ON-DEVICE ONLY: no cloudFallback argument is sent for a terminal title.
+    expect(invokeMock).toHaveBeenCalledWith('terminal_focus', { activity: '~/git/app\nyarn test' });
+    expect(store.titleFor('tp1')).toBe('Run the test suite');
+    // A per-process bare shell is never written to the durable cache.
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+
+    // Unchanged activity does not re-request; NEW activity does.
+    invokeMock.mockClear();
+    store.refreshTerminals([ref()], NOW + 60_000);
+    await flush();
+    expect(invokeMock).not.toHaveBeenCalled();
+    invokeMock.mockResolvedValue('Inspect git history');
+    store.refreshTerminals([ref({ activity: '~/git/app\nyarn test\ngit log' })], NOW + 120_000);
+    await flush();
+    expect(store.titleFor('tp1')).toBe('Inspect git history');
+  });
+
+  it('An untouched shell is never titled', async () => {
+    invokeMock.mockResolvedValue('nope');
+    const store = new TitleStore();
+    // Nothing reported yet (a fresh shell) and a task row (its command IS its name).
+    store.refreshTerminals([ref({ activity: null }), ref({ paneId: 'tp2', key: 'task:t1', activity: null })], NOW);
+    await flush();
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(store.titleFor('tp1')).toBeNull();
+  });
+
+  it('A renamed terminal row keeps its custom title', async () => {
+    let resolve!: (v: string) => void;
+    invokeMock.mockReturnValue(new Promise<string>((r) => (resolve = r)));
+    const store = new TitleStore();
+    store.refreshTerminals([ref()], NOW);
+    // The user renames the row while the generation is still in flight.
+    store.setManualTitle('tp1', null, 'Nightly smoke run');
+    resolve('Run the test suite');
+    await flush();
+    expect(store.titleFor('tp1')).toBe('Nightly smoke run');
+    expect(store.isManual('tp1')).toBe(true);
+    // And it is sticky: later activity does not re-generate.
+    invokeMock.mockClear();
+    store.refreshTerminals([ref({ activity: '~/git/app\nmake build' })], NOW + 60_000);
+    await flush();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('A restarted task terminal recovers its custom title', async () => {
+    const store = new TitleStore();
+    store.setManualTitle('tp1', 'task:t1', 'Watch the dev server');
+    // Restart: same task def, a BRAND NEW pane id, and a fresh store (app restart).
+    const next = new TitleStore();
+    next.hydrateKeys([{ paneId: 'tp9', key: 'task:t1', activity: null }]);
+    expect(next.titleFor('tp9')).toBe('Watch the dev server');
+    expect(store.titleFor('tp1')).toBe('Watch the dev server');
+    await flush();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('A stale title response never replaces a newer one', async () => {
+    // Request A (slow) is overtaken by request B for a longer activity list.
+    let resolveA!: (v: string) => void;
+    invokeMock.mockReturnValueOnce(new Promise<string>((r) => (resolveA = r)));
+    const store = new TitleStore();
+    store.refreshTerminals([ref({ activity: 'a\ncmd1' })], NOW);
+    invokeMock.mockResolvedValueOnce('Do the newer thing');
+    store.refreshTerminals([ref({ activity: 'a\ncmd1\ncmd2' })], NOW + 40_000);
+    await flush();
+    expect(store.titleFor('tp1')).toBe('Do the newer thing');
+
+    resolveA('Do the older thing');
+    await flush();
+    expect(store.titleFor('tp1')).toBe('Do the newer thing');
+    // …and the newer hash still stands, so the next tick does not re-fire.
+    invokeMock.mockClear();
+    store.refreshTerminals([ref({ activity: 'a\ncmd1\ncmd2' })], NOW + 80_000);
+    await flush();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('A failed terminal title request backs off', async () => {
+    invokeMock.mockRejectedValue(new Error('polish model not present'));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const store = new TitleStore();
+    store.refreshTerminals([ref()], NOW);
+    await flush();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+
+    // The throttle alone would let this retry seconds later; the backoff does not.
+    invokeMock.mockClear();
+    store.refreshTerminals([ref()], NOW + 30_000);
+    await flush();
+    expect(invokeMock).not.toHaveBeenCalled();
+
+    // Once the backoff expires it tries again.
+    store.refreshTerminals([ref()], Date.now() + 400_000);
+    await flush();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('A terminal whose title never settles stops costing model calls', async () => {
+    // A prompt carrying a clock / history number, or a chat client's unread count,
+    // reports a NEW title forever — without a cap that is one on-device model call
+    // every throttle window for the life of the app.
+    invokeMock.mockResolvedValue('Do a thing');
+    const store = new TitleStore();
+    for (let i = 0; i < TERMINAL_MAX_REQUESTS + 5; i++) {
+      store.refreshTerminals([ref({ activity: `a\ncmd${i}` })], NOW + i * 60_000);
+      await flush();
+    }
+    expect(invokeMock).toHaveBeenCalledTimes(TERMINAL_MAX_REQUESTS);
+    expect(store.titleFor('tp1')).toBe('Do a thing'); // it keeps its last title
+  });
+
+  it("A closed terminal's title state is reclaimed", async () => {
+    invokeMock.mockResolvedValue('Run the test suite');
+    const store = new TitleStore();
+    store.refreshTerminals([ref()], NOW);
+    await flush();
+    expect(store.titleFor('tp1')).toBe('Run the test suite');
+
+    // The shell is closed: its per-process pane id is gone from the roster.
+    store.refreshTerminals([], NOW + 60_000);
+    expect(store.titleFor('tp1')).toBeNull();
+    // A session pane's entry is untouched by terminal eviction.
+    store.setManualTitle('pane-1', 's1', 'A session');
+    store.refreshTerminals([], NOW + 120_000);
+    expect(store.titleFor('pane-1')).toBe('A session');
+  });
+});
+
+describe('rename commit rule', () => {
+  it('Renaming a row to its current name pins that name', () => {
+    // A bare shell shows "Terminal"; pressing Enter on it is how the user pins the
+    // row so the auto-titler stops renaming it.
+    expect(shouldCommitRename('Terminal', 'Terminal', false, true)).toBe(true);
+    // Already pinned and unchanged: nothing to write.
+    expect(shouldCommitRename('Terminal', 'Terminal', true, true)).toBe(false);
+    // A changed draft always commits, pinned or not, however it was committed.
+    expect(shouldCommitRename('Build logs', 'Terminal', true, false)).toBe(true);
+    expect(shouldCommitRename('Build logs', 'Terminal', false, false)).toBe(true);
+    // An empty draft never commits (it must not blank the shown name).
+    expect(shouldCommitRename('   ', 'Terminal', false, true)).toBe(false);
+  });
+
+  it('Opening the rename editor and clicking away changes nothing', () => {
+    // The editor also commits on BLUR. An untouched draft committed that way must
+    // NOT pin the shown title: a manual title never re-generates, so a stray click
+    // would otherwise freeze a session's generated title forever.
+    expect(shouldCommitRename('Improve dialog handling', 'Improve dialog handling', false, false)).toBe(false);
+    expect(shouldCommitRename('Session 3', 'Session 3', false, false)).toBe(false);
+    // The comparison is against the SEED the editor opened with. A title that
+    // resolved (or a task terminal's live OSC title that moved) while the editor
+    // sat open must not make an untouched draft look like a rename on blur — the
+    // seed is what the caller passes, so an untouched draft still equals it.
+    const seed = 'Terminal';
+    expect(shouldCommitRename(seed, seed, false, false)).toBe(false);
   });
 });

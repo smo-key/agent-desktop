@@ -19,6 +19,11 @@ export interface PaneMenuDeps {
   canClose: boolean;
   /** Whether there is a selection to copy. */
   hasSelection: boolean;
+  /**
+   * OPTIONAL shortcut hints for the rebindable actions (Insert Filename, New
+   * Session), so the menu shows the user's CURRENT chords. Absent → the defaults.
+   */
+  hints?: { insertFilePath?: string; newSession?: string };
 }
 
 export interface PaneMenuItem {
@@ -57,7 +62,7 @@ export function buildPaneMenu(deps: PaneMenuDeps): PaneMenuSection[] {
       {
         id: 'insert-filename',
         label: 'Insert Filename…',
-        shortcut: '⌘O',
+        shortcut: deps.hints?.insertFilePath ?? '⌘O',
         run: () => deps.insertFilename()
       }
     ],
@@ -72,7 +77,7 @@ export function buildPaneMenu(deps: PaneMenuDeps): PaneMenuSection[] {
       {
         id: 'new-session',
         label: 'New Session',
-        shortcut: '⌘T',
+        shortcut: deps.hints?.newSession ?? '⌘N',
         run: () => deps.newSession()
       }
     ]

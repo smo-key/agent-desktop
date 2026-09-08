@@ -10,6 +10,7 @@
   import { footerView, footerGitProjectId } from './footerView';
   import { terminalLeftFraction } from './footerGeometry';
   import { workspace } from '$lib/layout/workspace.svelte';
+  import { isAgentProgram } from '$lib/agent/backends';
   import { projects } from '$lib/projects/projects.svelte';
   import { projectForId } from '$lib/projects/projects';
   import { projectFilter } from '$lib/projects/projectFilter.svelte';
@@ -29,6 +30,7 @@
   import BranchPicker from './BranchPicker.svelte';
   import ContextBar from './ContextBar.svelte';
   import { friendlyTime } from '$lib/overview/friendlyTime';
+  import Icon from '$lib/icons/Icon.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import { modelLabel, effortLabel } from './modelLabel';
 
@@ -57,10 +59,12 @@
   // selecting a project updates the footer git even in the overview, where the agent
   // panes are hidden but a pane is still focused underneath). Folder-based via
   // `projectGit`, so it shows a project's branch + ahead/behind/modified even with
-  // no agent running.
+  // no agent running. Resolved over the ACTIVE projects only: an archived project's
+  // folder is not polled, so rather than show (and flicker) null data with live
+  // Push/Pull/branch controls, the footer shows no folder git for it.
   const gitProject = $derived(
     projectForId(
-      projects.list,
+      projects.active,
       footerGitProjectId(projectId, projectFilter.selected, topView.isGrid)
     )
   );
@@ -191,7 +195,7 @@
     const reg = entry.registry;
     return terminalLeftFraction(
       entry.ws.root,
-      (pid) => reg[pid]?.program !== undefined && reg[pid].program !== 'claude'
+      (pid) => reg[pid]?.program !== undefined && !isAgentProgram(reg[pid].program)
     );
   });
 
@@ -236,6 +240,11 @@
   <div class="zone right">
     <ContextBar pct={view.context} />
     <span class="sep" aria-hidden="true"></span>
+    {#if view.worktree !== null}
+      <span class="pill worktree-pill" use:tooltip={'Git worktree of the focused session'}>
+        <Icon name="git-branch" size={11} />{view.worktree}
+      </span>
+    {/if}
     {#if view.model !== null || view.model_id !== null}
       <span class="pill model-pill" use:tooltip={'Model of the focused session'}>{modelLabel(view.model_id, view.model)}</span>
       {#if effortLabel(view.effort) !== null}
@@ -349,6 +358,16 @@
     background: var(--space-750);
     color: var(--fg-2);
     box-shadow: inset 0 0 0 1px var(--line-subtle);
+  }
+  /* Worktree pill: the linked git worktree the focused session runs in
+     (footer-actions). Sits left of the model pill; icon + name. */
+  .worktree-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .worktree-pill :global(svg) {
+    opacity: 0.8;
   }
   .effort-pill {
     color: var(--fg-3);

@@ -28,6 +28,31 @@ import { titleSettings } from '$lib/settings/titles.svelte';
  */
 export const TITLE_THROTTLE_MS = 3_000;
 
+/**
+ * Min interval between TERMINAL title requests for one pane. Much longer than the
+ * session floor: a terminal's change key moves whenever the shell reports
+ * something new, and each request is a several-second on-device model call, so a
+ * burst of commands must coalesce into one title rather than one title each.
+ */
+export const TERMINAL_THROTTLE_MS = 30_000;
+
+/**
+ * How long to park a terminal pane after a FAILED request (no local model, the
+ * sidecar won't start). Without a backoff the throttle alone would retry every
+ * few seconds for the life of the app, once per open terminal.
+ */
+export const TERMINAL_RETRY_MS = 300_000;
+
+/**
+ * Most titles to generate for ONE terminal in a session. A terminal's change key
+ * is a title the shell reports, and some terminals report a title that never
+ * repeats — a clock or history number in the prompt, a chat client's unread
+ * count — which would otherwise satisfy the throttle forever and run a
+ * several-second on-device model call every 30 s for the life of the app. After
+ * the cap the row keeps its last title (and can still be renamed).
+ */
+export const TERMINAL_MAX_REQUESTS = 12;
+
 /** localStorage key for the persisted, sessionId-keyed title cache. */
 const STORAGE_KEY = 'agent-desktop:session-titles';
 
@@ -80,6 +105,57 @@ export function shouldRequest(
   return true;
 }
 
+/** One terminal row to title / hydrate. */
+export interface TerminalTitleRef {
+  /** The live pane id (the runtime title key). */
+  paneId: string;
+  /**
+   * The DURABLE title key, or null when there is none. A task terminal passes
+   * `task:<defId>` (stable across restarts, so a custom title survives); a bare
+   * shell passes null — its id is per-process, exactly like the lane order that
+   * also omits terminal ids, so its title lives only for that process.
+   */
+  key: string | null;
+  /**
+   * What the shell has REPORTED doing in this terminal (its window titles,
+   * newline-joined, oldest first), or null when it has reported nothing
+   * meaningful / the row should not be titled by the model (a task terminal).
+   * Doubles as the change key.
+   */
+  activity: string | null;
+}
+
+/**
+ * PURE: whether committing a rename should WRITE a custom title.
+ *
+ * `shown` is the title the editor was OPENED with, not the row's live title: a
+ * generated title resolving mid-edit (or a task terminal's OSC title changing)
+ * must not make an untouched draft look like a rename.
+ *
+ * A draft that DIFFERS from that seed always commits. A draft that MATCHES it
+ * commits only when the user pressed Enter (`explicit`) on a name that is not
+ * already their own — deliberately retyping a row's current name is how you PIN
+ * it against the generator (a bare shell is literally called "Terminal", the very
+ * name a user would retype to stop it being renamed out from under them).
+ *
+ * `explicit` is what keeps a stray click from pinning a title: the editor also
+ * commits on BLUR, so opening it and clicking away must be a no-op rather than
+ * silently freezing a generated title forever (a manual title never
+ * re-generates). An empty draft never commits, so a rename can't blank a name.
+ */
+export function shouldCommitRename(
+  draft: string,
+  /** The title the rename editor was seeded with. */
+  shown: string,
+  isManual: boolean,
+  explicit: boolean
+): boolean {
+  const trimmed = draft.trim();
+  if (!trimmed) return false;
+  if (trimmed !== shown) return true;
+  return explicit && !isManual;
+}
+
 /** Reactive title store: paneId -> {title, hash}. */
 export class TitleStore {
   byPane = $state<Record<string, TitleEntry>>({});
@@ -89,6 +165,18 @@ export class TitleStore {
   #bySession: Record<string, TitleEntry> = loadPersisted();
   #pending = new Map<string, string>();
   #lastAttempt = new Map<string, number>();
+  // Terminal-only bookkeeping: panes we have titled (so their entries can be
+  // reclaimed when the terminal goes away) and a per-pane failure backoff.
+  #terminalPanes = new Set<string>();
+  #retryAfter = new Map<string, number>();
+  #terminalRequests = new Map<string, number>();
+
+  /** Whether a pane's shown title is the user's own (a rename), rather than
+   *  generated or absent. Lets a caller tell "already pinned by the user" from
+   *  "just happens to match the current title". */
+  isManual(paneId: string): boolean {
+    return this.byPane[paneId]?.manual === true;
+  }
 
   /** The generated title for a pane, or null when none yet. */
   titleFor(paneId: string): string | null {
@@ -161,7 +249,10 @@ export class TitleStore {
         cwd: pane.cwd,
         // Opt-in: allow the backend to fall back to `claude -p` (Haiku) when the
         // on-device title model is unavailable. Off by default (on-device only).
-        cloudFallback: titleSettings.prefs.cloudFallback
+        cloudFallback: titleSettings.prefs.cloudFallback,
+        // Per-backend transcript source (`session-titles`): copilot titles are
+        // generated from the copilot session event log.
+        program: pane.program ?? null
       });
       // Bail if the user gave this session a CUSTOM title while we were awaiting:
       // a manual title is sticky and must NEVER be clobbered by a now-stale
@@ -179,6 +270,104 @@ export class TitleStore {
       console.warn('session_focus failed; keeping previous title:', err);
     } finally {
       if (this.#pending.get(pane.paneId) === hash) this.#pending.delete(pane.paneId);
+    }
+  }
+
+  /**
+   * Seed a TERMINAL row's title from the durable cache (`session-titles`: "Bare
+   * terminal rows are titled from the activity the shell reports"). Same idea as
+   * `hydrate`, but keyed by the row's TITLE KEY rather than a session id: a task
+   * terminal's key (`task:<defId>`) is stable, so a restarted task terminal — a
+   * NEW pane id — shows its previous (usually custom) title with no model call. A
+   * bare shell passes `key: null` (its id is per-process and never persisted), so
+   * it is simply skipped here.
+   */
+  hydrateKeys(refs: ReadonlyArray<TerminalTitleRef>): void {
+    for (const r of refs) {
+      if (!this.byPane[r.paneId] && r.key) {
+        const saved = this.#bySession[r.key];
+        if (saved) this.byPane[r.paneId] = saved;
+      }
+    }
+  }
+
+  /**
+   * Request titles for TERMINAL rows whose reported activity changed. That text
+   * plays the role a session's `user_hash` plays: a shell sets its window title
+   * when it dispatches a command, so it changes per command rather than per output
+   * chunk — a noisy terminal (a build, `tail -f`) never re-triggers a title. A ref
+   * with `activity: null` (nothing reported yet, or a task terminal, whose command
+   * already IS its name) is skipped, and a manual title stays sticky through
+   * `shouldRequest`. Fire-and-forget.
+   */
+  refreshTerminals(refs: ReadonlyArray<TerminalTitleRef>, nowMs: number): void {
+    this.hydrateKeys(refs);
+    this.#evictGoneTerminals(refs);
+    for (const r of refs) {
+      const entry = this.byPane[r.paneId];
+      const pending = this.#pending.get(r.paneId);
+      const last = this.#lastAttempt.get(r.paneId) ?? 0;
+      // A pane whose last request FAILED (no model installed, sidecar down) is
+      // parked until its backoff expires: without this the 3 s floor alone would
+      // retry — and lazily re-spawn the sidecar — every few seconds, forever.
+      if (nowMs < (this.#retryAfter.get(r.paneId) ?? 0)) continue;
+      // A terminal whose reported title never repeats would keep qualifying
+      // forever; cap how many titles one terminal can cost.
+      if ((this.#terminalRequests.get(r.paneId) ?? 0) >= TERMINAL_MAX_REQUESTS) continue;
+      if (!shouldRequest(entry, pending, r.activity, last, nowMs, TERMINAL_THROTTLE_MS)) continue;
+      this.#terminalRequests.set(r.paneId, (this.#terminalRequests.get(r.paneId) ?? 0) + 1);
+      this.#pending.set(r.paneId, r.activity as string);
+      this.#lastAttempt.set(r.paneId, nowMs);
+      void this.#fetchTerminal(r, r.activity as string);
+    }
+  }
+
+  /** Forget every terminal pane we have seen that is no longer listed: a bare
+   *  shell's pane id dies with its process, so without this the runtime caches
+   *  would grow for the life of the app. Only panes THIS method registered are
+   *  dropped, so session entries are untouched. */
+  #evictGoneTerminals(refs: ReadonlyArray<TerminalTitleRef>): void {
+    const live = new Set(refs.map((r) => r.paneId));
+    for (const paneId of this.#terminalPanes) {
+      if (live.has(paneId)) continue;
+      this.#terminalPanes.delete(paneId);
+      delete this.byPane[paneId];
+      this.#pending.delete(paneId);
+      this.#lastAttempt.delete(paneId);
+      this.#retryAfter.delete(paneId);
+      this.#terminalRequests.delete(paneId);
+    }
+    for (const paneId of live) this.#terminalPanes.add(paneId);
+  }
+
+  async #fetchTerminal(ref: TerminalTitleRef, activity: string): Promise<void> {
+    try {
+      // ON-DEVICE ONLY — deliberately no cloud fallback. `titles.cloudFallback` is
+      // the user's opt-in for sending their SESSION transcript off-device; a
+      // shell's reported activity is different data (it can carry a command line's
+      // arguments) and is not covered by that consent, so a terminal title is
+      // simply skipped when the local model is unavailable.
+      const title = await invoke<string | null>('terminal_focus', { activity });
+      // A rename that landed while we were awaiting wins — a custom title is sticky.
+      if (this.byPane[ref.paneId]?.manual) return;
+      if (ref.key && this.#bySession[ref.key]?.manual) return;
+      // Drop a STALE response: the shell reported more activity while this was in
+      // flight, a newer request took over `#pending`, and it may already have
+      // resolved — writing now would revert the row to an older title and leave
+      // the hash mismatched, re-firing on the next tick.
+      if (this.#pending.get(ref.paneId) !== activity) return;
+      const next: TitleEntry = { title: title ?? null, hash: activity };
+      this.byPane[ref.paneId] = next;
+      // Only a DURABLE key is persisted: a bare shell's id dies with its process.
+      if (ref.key && next.title) {
+        this.#bySession[ref.key] = next;
+        this.#persist();
+      }
+    } catch (err) {
+      this.#retryAfter.set(ref.paneId, Date.now() + TERMINAL_RETRY_MS);
+      console.warn('terminal_focus failed; keeping previous title:', err);
+    } finally {
+      if (this.#pending.get(ref.paneId) === activity) this.#pending.delete(ref.paneId);
     }
   }
 

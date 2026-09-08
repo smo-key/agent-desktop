@@ -5,6 +5,8 @@ import {
   filterRowsByProject,
   filterOrder,
   stepFilter,
+  nextFilterAfterArchive,
+  allAgentsCount,
   ALL,
   UNASSIGNED
 } from './projectRollup';
@@ -32,8 +34,8 @@ function row(paneId: string, projectId: string | null, status: AgentStatus): Age
   };
 }
 
-function proj(id: string): Project {
-  return { id, name: id, path: '/' + id, icon: 'box', color: '#4C8DFF' };
+function proj(id: string, over: Partial<Project> = {}): Project {
+  return { id, name: id, path: '/' + id, icon: 'box', color: '#4C8DFF', ...over };
 }
 
 describe('projectRollup — Filter agents by project', () => {
@@ -162,5 +164,32 @@ describe('projectRollup — keyboard filter nav', () => {
     const order = filterOrder(projects, false); // [ALL, pay, web]
     expect(stepFilter(order, 'gone', 1)).toBe(ALL); // forward -> first
     expect(stepFilter(order, 'gone', -1)).toBe('web'); // backward -> last
+  });
+});
+
+describe('projectRollup — archived projects', () => {
+  it('Keyboard cycling skips archived projects', () => {
+    const ps = [proj('a'), proj('b', { archived: true }), proj('c')];
+    expect(filterOrder(ps, true)).toEqual([ALL, 'a', 'c', UNASSIGNED]);
+    expect(filterOrder(ps, false)).toEqual([ALL, 'a', 'c']);
+    // Stepping from the archived id (no longer in the order) restarts at an end.
+    expect(stepFilter(filterOrder(ps, false), 'b', 1)).toBe(ALL);
+  });
+
+  it('Agents bound to an archived project stay bound and counted', () => {
+    const ps = [proj('live'), proj('old', { archived: true })];
+    const rs = [row('x', 'old', 'working'), row('y', 'live', 'finished'), row('z', null, 'working')];
+    expect(allAgentsCount(rs)).toBe(3); // the archived project's agent still counts
+    expect(unassignedCount(rs)).toBe(1); // ...and is NOT in the "No project" bucket
+    const counts = projectCounts(rs, ps);
+    expect(counts.map((c) => [c.project.id, c.count])).toEqual([['live', 1], ['old', 1]]);
+    expect(filterRowsByProject(rs, 'old').map((r) => r.paneId)).toEqual(['x']);
+  });
+
+  it('Archiving the selected project resets the filter to All agents', () => {
+    expect(nextFilterAfterArchive('a', 'a')).toBe(ALL);
+    expect(nextFilterAfterArchive('b', 'a')).toBe('b');
+    expect(nextFilterAfterArchive(ALL, 'a')).toBe(ALL);
+    expect(nextFilterAfterArchive(UNASSIGNED, 'a')).toBe(UNASSIGNED);
   });
 });

@@ -19,13 +19,21 @@
   } from '$lib/settings/openWith.svelte';
   import { voice } from '$lib/settings/voice.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
-  import { compactMode } from '$lib/settings/compactMode.svelte';
+  import { shortcuts } from '$lib/settings/shortcuts.svelte';
+  import { SHORTCUT_DEFS } from './keybindings';
+  import ShortcutRecorder from './ShortcutRecorder.svelte';
+  import { compactMode, type Density } from '$lib/settings/compactMode.svelte';
+  import { sessionGrouping, type GroupingMode } from '$lib/settings/sessionGrouping.svelte';
+  import { uiPrefs, type TerminalsPlacement } from '$lib/settings/uiPrefs.svelte';
   import { shellSettings } from '$lib/settings/shell.svelte';
+  import { agentSettings } from '$lib/settings/agent.svelte';
+  import { AGENT_KINDS, backendFor, type AgentKind } from '$lib/agent/backends';
   import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
   import { notifications, type AlertMode } from '$lib/settings/notifications.svelte';
   import { ensureDesktopPermission } from '$lib/overview/alerts.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
   import { appVersionLabel } from '$lib/settings/version';
+  import { whatsNew } from '$lib/changelog/whatsNewStore.svelte';
   import { updateStore } from '$lib/updates/updateStore.svelte';
   import { runUpdateCheck } from '$lib/updates/checkForUpdate';
   import {
@@ -83,6 +91,12 @@
   });
 
   // The buckets, in display order, with human labels.
+  /** Agent-backend choices for the "Agent for new sessions" dropdown. */
+  const agentOptions: DropdownOption[] = AGENT_KINDS.map((k) => ({
+    value: k,
+    label: backendFor(k).displayName
+  }));
+
   const ROWS: { bucket: FileBucket; label: string }[] = [
     { bucket: 'code', label: 'Code files' },
     { bucket: 'html', label: 'HTML files and URLs' },
@@ -109,7 +123,17 @@
   // Static option lists for the non-app dropdowns (no icons).
   const DENSITY_OPTIONS: DropdownOption[] = [
     { value: 'default', label: 'Default' },
-    { value: 'compact', label: 'Compact' }
+    { value: 'compact', label: 'Compact' },
+    { value: 'minimal', label: 'Minimal' }
+  ];
+  const TERMINALS_PLACEMENT_OPTIONS: DropdownOption[] = [
+    { value: 'panel', label: 'Separate right panel' },
+    { value: 'combined', label: 'In the sessions list' }
+  ];
+  const GROUPING_OPTIONS: DropdownOption[] = [
+    { value: 'status', label: 'Status' },
+    { value: 'date', label: 'Date' },
+    { value: 'none', label: 'None' }
   ];
   const QUALITY_OPTIONS: DropdownOption[] = [
     { value: 'accurate', label: 'Accurate (large-v3-turbo)' },
@@ -214,11 +238,35 @@
             <div class="control">
               <!-- Focus the first setting control on open (skips the header ×). -->
               <Dropdown
-                value={compactMode.prefs.enabled ? 'compact' : 'default'}
+                value={compactMode.prefs.density}
                 options={DENSITY_OPTIONS}
-                onChange={(v) => compactMode.setEnabled(v === 'compact')}
+                onChange={(v) => compactMode.setDensity(v as Density)}
                 ariaLabel="Density"
                 autofocusTrigger
+              />
+            </div>
+          </li>
+          <li class="row">
+            <span class="desc">Terminals</span>
+            <div class="control">
+              <!-- Where plain terminals (task runs + ⌘Y shells) live: the right-docked
+                   panel, or listed with the sessions and statused like them. -->
+              <Dropdown
+                value={uiPrefs.data.terminalsPlacement}
+                options={TERMINALS_PLACEMENT_OPTIONS}
+                onChange={(v) => uiPrefs.setTerminalsPlacement(v as TerminalsPlacement)}
+                ariaLabel="Terminals placement"
+              />
+            </div>
+          </li>
+          <li class="row">
+            <span class="desc">Group by</span>
+            <div class="control">
+              <Dropdown
+                value={sessionGrouping.mode}
+                options={GROUPING_OPTIONS}
+                onChange={(v) => sessionGrouping.setMode(v as GroupingMode)}
+                ariaLabel="Group by"
               />
             </div>
           </li>
@@ -232,6 +280,32 @@
               />
             </div>
           </li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <span class="label">Agent</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Agent for new sessions</span>
+            <div class="control">
+              <Dropdown
+                ariaLabel="Agent for new sessions"
+                options={agentOptions}
+                value={agentSettings.prefs.kind}
+                onChange={(v: string) => agentSettings.setKind(v as AgentKind)}
+              />
+            </div>
+          </li>
+          {#if agentSettings.installed === false}
+            <li class="row hint-row">
+              <span class="desc hint">
+                {backendFor(agentSettings.prefs.kind).displayName} CLI not found —
+                install with
+                <code>{backendFor(agentSettings.prefs.kind).installHint}</code>
+              </span>
+            </li>
+          {/if}
         </ul>
       </section>
 
@@ -378,6 +452,28 @@
       </section>
 
       <section class="group">
+        <span class="label labelrow">
+          Keyboard shortcuts
+          {#if Object.keys(shortcuts.prefs.overrides).length > 0}
+            <button type="button" class="linkbtn" onclick={() => shortcuts.resetAll()}>Reset all</button>
+          {/if}
+        </span>
+        <ul class="rows">
+          {#each SHORTCUT_DEFS as def (def.id)}
+            <li class="row">
+              <span class="desc">{def.label}</span>
+              <div class="control">
+                <ShortcutRecorder id={def.id} />
+              </div>
+            </li>
+          {/each}
+          <li class="row hint-row">
+            <span class="desc hint">Click a shortcut and press the new keys. Esc cancels.</span>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group">
         <span class="label">Notifications</span>
         <ul class="rows">
           <li class="row">
@@ -432,7 +528,12 @@
         <span class="label">Software update</span>
         <ul class="rows">
           <li class="row">
-            <span class="desc">Agent Desktop {versionLabel}</span>
+            <span class="desc">
+              Agent Desktop
+              <button type="button" class="version-link" onclick={() => whatsNew.show()} title="What's new">
+                {versionLabel}
+              </button>
+            </span>
             <div class="control">
               {#if updateStore.status === 'downloading'}
                 <span class="model-status">
@@ -468,7 +569,11 @@
         </ul>
       </section>
 
-      <footer class="version">{versionLabel}</footer>
+      <footer class="version">
+        <button type="button" class="version-link" onclick={() => whatsNew.show()} title="What's new">
+          {versionLabel}
+        </button>
+      </footer>
     </div>
   </div>
 {/if}
@@ -545,6 +650,25 @@
     color: var(--fg-3);
   }
 
+  .labelrow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .linkbtn {
+    border: none;
+    background: transparent;
+    padding: 0;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    color: var(--fg-3);
+    cursor: pointer;
+  }
+  .linkbtn:hover {
+    color: var(--fg-1);
+  }
+
   .rows {
     list-style: none;
     margin: 0;
@@ -567,6 +691,19 @@
     font-size: 13px;
     color: var(--fg-1);
     min-width: 0;
+  }
+
+  /* Quiet install-detection hint under the agent dropdown (agent-backends):
+     informational only — the selection is never blocked. */
+  .hint-row {
+    padding-top: 0;
+  }
+  .desc.hint {
+    color: var(--fg-3);
+  }
+  .desc.hint code {
+    font-family: var(--font-mono);
+    color: var(--fg-2);
   }
 
   .control {
@@ -655,6 +792,21 @@
     font-size: 11px;
     letter-spacing: 0.04em;
     color: var(--fg-3);
-    user-select: text;
+  }
+  /* The version label doubles as the "What's new" entry point: an unstyled
+     inline button that reads as text until hovered. */
+  .version-link {
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    cursor: pointer;
+    text-decoration: underline dotted;
+    text-underline-offset: 2px;
+  }
+  .version-link:hover {
+    color: var(--fg-1);
   }
 </style>

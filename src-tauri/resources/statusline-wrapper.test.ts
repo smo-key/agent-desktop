@@ -22,8 +22,16 @@
 // is confirmed live in-app (MANUAL) and is asserted here only for the weaker
 // "delegation never crashes the wrapper" property.
 
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -99,9 +107,9 @@ describe('statusline-wrapper snapshot write', () => {
 
     const snap = readSnapshot();
     // The exact field set from the spec/design: pane_id, session_id, model,
-    // model_id, effort, task, context_pct, rate_limits, cost, git, ts.
+    // model_id, effort, task, context_pct, rate_limits, cost, git, cwd, ts.
     expect(Object.keys(snap).sort()).toEqual(
-      ['context_pct', 'cost', 'effort', 'git', 'model', 'model_id', 'pane_id', 'rate_limits', 'session_id', 'task', 'ts'].sort()
+      ['context_pct', 'cost', 'cwd', 'effort', 'git', 'model', 'model_id', 'pane_id', 'rate_limits', 'session_id', 'task', 'ts'].sort()
     );
     expect(snap.pane_id).toBe(PANE_ID);
     expect(snap.session_id).toBe('sess-abc-123');
@@ -123,6 +131,7 @@ describe('statusline-wrapper snapshot write', () => {
     expect(snap.git).toHaveProperty('modified');
     expect(snap.git).toHaveProperty('ahead');
     expect(snap.git).toHaveProperty('behind');
+    expect(snap.git).toHaveProperty('worktree');
     expect((snap.git as Record<string, unknown>).ahead).toBeNull();
     expect((snap.git as Record<string, unknown>).behind).toBeNull();
     // ts is a unix-SECONDS integer (not ms).
@@ -284,6 +293,116 @@ describe('statusline-wrapper snapshot write', () => {
       expect(readSnapshot().pane_id).toBe(PANE_ID);
     } finally {
       rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+});
+
+// usage-dashboard: "Snapshot git status names the session's worktree". Builds a
+// real throwaway repo with one linked worktree and runs the wrapper with each
+// directory as the workspace dir. Titles are the exact scenario names.
+describe('statusline-wrapper git worktree detection', () => {
+  let repo: string;
+  let linked: string;
+
+  function git(cwd: string, ...args: string[]): string {
+    return execFileSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 't',
+        GIT_AUTHOR_EMAIL: 't@example.com',
+        GIT_COMMITTER_NAME: 't',
+        GIT_COMMITTER_EMAIL: 't@example.com',
+      },
+    }).trim();
+  }
+
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), 'agent-desktop-wt-repo-'));
+    git(repo, 'init', '-q', '-b', 'main');
+    writeFileSync(join(repo, 'README.md'), 'hi\n');
+    git(repo, 'add', 'README.md');
+    git(repo, 'commit', '-q', '-m', 'init');
+    linked = join(repo, '.claude', 'worktrees', 'feature-x');
+    git(repo, 'worktree', 'add', '-q', '-b', 'feature-x', linked);
+  });
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  function payloadIn(dir: string): string {
+    const base = JSON.parse(basePayload()) as Record<string, unknown>;
+    base.workspace = { current_dir: dir, project_dir: dir };
+    return JSON.stringify(base);
+  }
+
+  it('Snapshot reports the worktree root exactly', () => {
+    // git's worktree ADMIN name gains a counter on a basename collision, so the
+    // name is not reliably a path segment of the dir — the root is reported
+    // directly, and it is the ROOT even when the session sits in a subdir.
+    expect(runWrapper(payloadIn(linked)).status).toBe(0);
+    const g = readSnapshot().git as Record<string, unknown>;
+    // git canonicalizes (on macOS /var is a symlink to /private/var), so compare
+    // the tail — the app cuts the SESSION's own path at this dir's name rather
+    // than adopting git's text, precisely because the two forms differ.
+    expect(String(g.worktree_root).endsWith('/.claude/worktrees/feature-x')).toBe(true);
+
+    const sub = join(linked, 'src');
+    mkdirSync(sub, { recursive: true });
+    expect(runWrapper(payloadIn(sub)).status).toBe(0);
+    const gSub = readSnapshot().git as Record<string, unknown>;
+    // Reported from a SUBDIR, it is still the worktree's root.
+    expect(gSub.worktree_root).toBe(g.worktree_root);
+
+    // The main checkout is not a linked worktree: no name, no root.
+    expect(runWrapper(payloadIn(repo)).status).toBe(0);
+    const gMain = readSnapshot().git as Record<string, unknown>;
+    expect(gMain.worktree).toBeNull();
+    expect(gMain.worktree_root).toBeUndefined();
+  });
+
+  it('Snapshot reports the dir the session is in', () => {
+    // session-launcher: the app spawns a `--worktree` pane in the project folder,
+    // so the linked worktree it ends up in is only knowable from this report.
+    expect(runWrapper(payloadIn(linked)).status).toBe(0);
+    const inWorktree = readSnapshot();
+    expect(inWorktree.cwd).toBe(linked);
+    expect((inWorktree.git as Record<string, unknown>).worktree).toBe('feature-x');
+    // The main checkout reports itself, with no worktree.
+    expect(runWrapper(payloadIn(repo)).status).toBe(0);
+    const inMain = readSnapshot();
+    expect(inMain.cwd).toBe(repo);
+    expect((inMain.git as Record<string, unknown>).worktree).toBeNull();
+  });
+
+  it('Snapshot names a linked worktree', () => {
+    const res = runWrapper(payloadIn(linked));
+    expect(res.status).toBe(0);
+    const g = readSnapshot().git as Record<string, unknown>;
+    expect(g.worktree).toBe('feature-x');
+    expect(g.branch).toBe('feature-x');
+  });
+
+  it('Snapshot reports no worktree in a main checkout', () => {
+    const res = runWrapper(payloadIn(repo));
+    expect(res.status).toBe(0);
+    const g = readSnapshot().git as Record<string, unknown>;
+    expect(g.worktree).toBeNull();
+    expect(g.branch).toBe('main');
+  });
+
+  it('Snapshot reports no worktree off-repo', () => {
+    const off = mkdtempSync(join(tmpdir(), 'agent-desktop-wt-off-'));
+    try {
+      const res = runWrapper(payloadIn(off));
+      expect(res.status).toBe(0);
+      const g = readSnapshot().git as Record<string, unknown>;
+      expect(g.worktree).toBeNull();
+      expect(g.branch).toBeNull();
+    } finally {
+      rmSync(off, { recursive: true, force: true });
     }
   });
 });

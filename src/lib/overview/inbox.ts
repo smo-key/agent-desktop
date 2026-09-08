@@ -273,7 +273,10 @@ export function deleteAllArchivedRequest(
     setSelected: (paneId: string | null) => void;
   }
 ): ConfirmOptions | null {
-  const ids = archivedPaneIds(rows);
+  // Only AGENT sessions are archived sessions: a stopped plain-terminal row (combined
+  // terminals placement) sits in the Archived lane too, but it is a dock slot, not a
+  // resumable session — closing it is the row's own Kill/Close action.
+  const ids = archivedPaneIds(rows.filter((r) => r.kind !== 'terminal'));
   if (ids.length === 0) return null;
   const noun = ids.length === 1 ? 'agent' : 'agents';
   return {

@@ -1,14 +1,14 @@
 //! Per-project on-disk store under `<project_path>/.agent-desktop/` for the
-//! project-scoped `tasks.json` and `config.json` documents.
+//! project-scoped `tasks.json` document.
 //!
 //! Unlike the legacy USER-level store (the `tasks.json` under `<app_data_dir>`,
 //! handled by `tasks_load`/`tasks_save` in `lib.rs`), this store lives BESIDE the
-//! project's own files, so a project's tasks and config travel with the repo. It
-//! is split the same way as [`crate::specialists`]:
+//! project's own files, so a project's tasks travel with the repo. It is split the
+//! same way as [`crate::specialists`]:
 //!
 //!   1. A PURE core over a given `project_path: &Path` — path resolution
-//!      ([`agent_desktop_dir`]) and the load/save/clear operations for the two
-//!      documents — all testable WITHOUT Tauri (temp-dir tests below).
+//!      ([`agent_desktop_dir`]) and the load/save/clear operations for the tasks
+//!      document — all testable WITHOUT Tauri (temp-dir tests below).
 //!
 //!   2. Thin `#[tauri::command]` wrappers (in `lib.rs`) over that core.
 //!
@@ -75,17 +75,6 @@ pub fn save_tasks(project_path: &Path, json: &str) -> Result<(), String> {
     save_file(project_path, "tasks.json", json)
 }
 
-/// Load the project's `.agent-desktop/config.json`, or `Ok(None)` when it (or the
-/// dir) does not exist yet. See [`load_file`].
-pub fn load_config(project_path: &Path) -> Result<Option<String>, String> {
-    load_file(project_path, "config.json")
-}
-
-/// Atomically persist the project's `.agent-desktop/config.json`. See [`save_file`].
-pub fn save_config(project_path: &Path, json: &str) -> Result<(), String> {
-    save_file(project_path, "config.json", json)
-}
-
 /// Remove the project's `.agent-desktop/tasks.json`. Deleting a nonexistent file
 /// is a NO-OP. Provided for parity/migration symmetry with the user-level clear
 /// (a separate `tasks_clear` command in `lib.rs`). See [`clear_file`].
@@ -125,7 +114,6 @@ mod tests {
     }
 
     const TASKS_JSON: &str = r#"{"tasks":[{"id":"a","label":"Build"}]}"#;
-    const CONFIG_JSON: &str = r#"{"autoWorktree":true,"branchPrefix":"feat/"}"#;
 
     /// Loading tasks from a project with no `.agent-desktop/` dir yields `None`
     /// (Ok(None)), not an error. (Scenario: Load missing file.)
@@ -133,13 +121,6 @@ mod tests {
     fn load_missing_file() {
         let tmp = TempDir::new("tasks-missing");
         assert_eq!(load_tasks(tmp.path()).unwrap(), None);
-    }
-
-    /// Loading config from a project with no `.agent-desktop/` dir yields `None`.
-    #[test]
-    fn load_config_missing_is_none() {
-        let tmp = TempDir::new("config-missing");
-        assert_eq!(load_config(tmp.path()).unwrap(), None);
     }
 
     /// Save-then-load round-trips the EXACT JSON string for tasks.
@@ -212,20 +193,5 @@ mod tests {
     fn clear_tasks_on_missing_dir_is_a_no_op() {
         let tmp = TempDir::new("clear-missing");
         clear_tasks(tmp.path()).unwrap();
-    }
-
-    /// The config document round-trips INDEPENDENTLY of tasks — writing config
-    /// doesn't disturb tasks and vice versa.
-    #[test]
-    fn config_round_trips_independently_of_tasks() {
-        let tmp = TempDir::new("independent");
-        save_tasks(tmp.path(), TASKS_JSON).unwrap();
-        save_config(tmp.path(), CONFIG_JSON).unwrap();
-        assert_eq!(load_config(tmp.path()).unwrap().as_deref(), Some(CONFIG_JSON));
-        assert_eq!(load_tasks(tmp.path()).unwrap().as_deref(), Some(TASKS_JSON));
-        // Clearing tasks leaves config untouched.
-        clear_tasks(tmp.path()).unwrap();
-        assert_eq!(load_tasks(tmp.path()).unwrap(), None);
-        assert_eq!(load_config(tmp.path()).unwrap().as_deref(), Some(CONFIG_JSON));
     }
 }

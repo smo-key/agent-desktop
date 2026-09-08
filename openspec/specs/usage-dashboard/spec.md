@@ -3,6 +3,7 @@
 ## Purpose
 TBD - created by archiving change add-agent-desktop. Update Purpose after archive.
 ## Requirements
+
 ### Requirement: Per-Session Statusline Override Without Touching Global Config
 
 The system SHALL launch every Claude session with `claude --settings '{"statusLine":{"type":"command","command":"<abs>/statusline-wrapper.js"}}'` plus `AGENT_DESKTOP_PANE=<uuid>` and `AGENT_DESKTOP_SNAPSHOT_DIR=<app-support>/snapshots` in the process environment, and SHALL NEVER read, write, or modify the user's global `~/.claude/settings.json` or config dir.
@@ -128,9 +129,12 @@ The system SHALL derive context from `used_percentage`/`remaining_percentage`/`c
 The footer SHALL display the focused session's MODEL and reasoning EFFORT as two
 NON-INTERACTIVE pills on its right side, derived from that session's latest snapshot.
 The model pill SHALL show a human-readable, VERSIONED model label (e.g. "Opus 4.6")
-derived from the snapshot model id, falling back to the snapshot's model display name.
-The effort pill SHALL show the effort level (e.g. "High"); WHEN the snapshot reports no
-effort (the model does not support it), the effort pill SHALL be OMITTED. Neither pill
+derived from the snapshot model id by the session's BACKEND-DECLARED label
+formatter (a Copilot session's model ids — e.g. `gpt-5`, `claude-sonnet-5` — are
+formatted by the Copilot backend's formatter), falling back to the snapshot's model
+display name, then to the raw id. The effort pill SHALL show the effort level (e.g.
+"High"); WHEN the snapshot reports no effort (the model does not support it, or the
+backend does not report effort), the effort pill SHALL be OMITTED. Neither pill
 SHALL be clickable.
 
 #### Scenario: Model and effort pills shown for the focused session
@@ -144,6 +148,10 @@ SHALL be clickable.
 #### Scenario: Pills are display-only
 - **WHEN** the user clicks a footer model or effort pill
 - **THEN** nothing happens (the pills are not interactive)
+
+#### Scenario: Copilot model label formatted by its backend
+- **WHEN** the focused pane is a Copilot session whose snapshot model id is `gpt-5`
+- **THEN** the model pill shows the Copilot backend's formatted label for `gpt-5` and no effort pill is shown unless the snapshot reports effort
 
 ### Requirement: Footer usage tooltips show when each window resets
 
@@ -167,3 +175,38 @@ timezone and locale.
 - **WHEN** a rate-limit window's reset time is unknown
 - **THEN** its tooltip shows only the percent used, with no reset clause
 
+### Requirement: Snapshots from non-statusline backends render without Claude-only fields
+The usage pipeline SHALL accept snapshots produced by backend adapters other
+than the Claude statusline wrapper. A snapshot lacking Claude-only fields
+(context percentage, rate limits, effort) SHALL render its pane's card and
+footer presence without those elements rather than showing empty meters or
+misleading zeros, and agent-pane detection in usage surfaces SHALL consult
+the backend registry rather than comparing against the literal `claude`.
+
+#### Scenario: Copilot snapshot joins the dashboard
+- **WHEN** the Copilot events adapter writes a snapshot for pane `P` with a model id and token totals but no context or rate-limit fields
+- **THEN** `P` appears in usage surfaces with its model and activity, with the context bar and rate-limit areas absent
+
+#### Scenario: Non-agent filtering uses the registry
+- **WHEN** the footer decides which panes are agent sessions
+- **THEN** a `copilot` pane counts as an agent session and a plain shell pane does not
+
+### Requirement: Snapshot git status names the session's worktree
+
+The statusline wrapper's per-pane snapshot `git` object SHALL carry a `worktree` field: the linked worktree's name (the basename of its git dir) when the session's workspace directory is inside a linked git worktree — one whose `git-dir` differs from its `git-common-dir` — and `null` for a main checkout or a non-git directory. For a linked worktree it SHALL also carry `worktree_root`, the worktree's top-level directory, reported even when the session sits in a subdirectory — the name alone is git's ADMIN name, which gains a counter suffix when another worktree already claimed that basename, and so cannot be relied on to appear in the path. The Rust snapshot model SHALL tolerate both fields' absence.
+
+#### Scenario: Snapshot names a linked worktree
+- **WHEN** the statusline runs with a workspace directory that is a linked worktree named `feature-x`
+- **THEN** the snapshot's `git.worktree` is `feature-x`
+
+#### Scenario: Snapshot reports the worktree root exactly
+- **WHEN** the statusline runs inside a linked worktree, and again from a subdirectory of it
+- **THEN** both snapshots report the same worktree root, and a main checkout reports none
+
+#### Scenario: Snapshot reports no worktree in a main checkout
+- **WHEN** the statusline runs with a workspace directory that is a repository's main checkout
+- **THEN** the snapshot's `git.worktree` is `null`
+
+#### Scenario: Snapshot reports no worktree off-repo
+- **WHEN** the statusline runs with a workspace directory that is not inside a git repository
+- **THEN** the snapshot's `git.worktree` is `null`

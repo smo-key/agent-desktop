@@ -28,6 +28,9 @@ export interface FooterView {
   model_id: string | null;
   /** The focused pane's reasoning effort level (e.g. "high"), or null. */
   effort: string | null;
+  /** The linked git worktree the focused session runs in (footer-actions:
+   *  worktree pill), or null outside a worktree / with no focused snapshot. */
+  worktree: string | null;
   /** Account-wide 5-hour rate-limit window. */
   fiveHour: RateWindow;
   /** Account-wide 7-day rate-limit window. */
@@ -82,6 +85,7 @@ export function footerView(
   const model = focused ? (focused.model ?? null) : null;
   const model_id = focused ? (focused.model_id ?? null) : null;
   const effort = focused ? (focused.effort ?? null) : null;
+  const worktree = git?.worktree || null;
   const account = accountSummary(map, git);
   return {
     project: projectForId(projects, projectId),
@@ -92,6 +96,7 @@ export function footerView(
     model,
     model_id,
     effort,
+    worktree,
     fiveHour: account.fiveHour,
     sevenDay: account.sevenDay,
   };

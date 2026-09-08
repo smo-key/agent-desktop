@@ -4,8 +4,9 @@
   confirm it appears as `[Image #N]`. If it does NOT, switch images to the
   temp-file-path fallback before considering the change done.
 - [x] 1.2 Set `dragDropEnabled: true` in `src-tauri/tauri.conf.json`.
-- [ ] 1.2a Verify whether project/task drag-to-reorder still works under the new
-  config — decides whether section 8 (reorder rewrite) is needed.
+- [x] 1.2a Verify whether project/task drag-to-reorder still works under the new
+  config — decides whether section 8 (reorder rewrite) is needed. (It does not:
+  native drag-drop swallows every in-page `dragstart`; section 8 is required.)
 
 ## 2. Backend: clipboard image command
 
@@ -53,15 +54,16 @@
   non-image inserts its quoted path; dropping over chrome/outside does nothing;
   the app is never replaced.
 
-## 8. Preserve reorder (only if 1.2a showed it broke)
+## 8. Preserve reorder (1.2a showed it broke)
 
-- [ ] 8.1 Re-implement `ProjectPanel.svelte` drag-to-reorder with pointer events
+- [x] 8.1 Re-implement `ProjectPanel.svelte` drag-to-reorder with pointer events
   calling the existing `projects.reorder`, preserving the highlight; remove the
   inert HTML5 `draggable`/`ondrag*` wiring.
-- [ ] 8.2 Re-implement `TasksLauncher.svelte` drag-to-reorder with pointer events
+- [x] 8.2 Re-implement `TasksLauncher.svelte` drag-to-reorder with pointer events
   calling `projectTasks.reorder`, preserving the highlight; remove the HTML5 DnD
   wiring.
-- [ ] 8.3 Verify projects and tasks still reorder and persist.
+- [x] 8.3 Verify projects and tasks still reorder and persist (headless: pure
+  `reorderGesture` + jsdom `pointerReorder` tests; live in-app drag is MANUAL).
 
 ## 9. Close-out
 

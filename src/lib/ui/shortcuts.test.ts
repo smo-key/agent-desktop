@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { SHORTCUTS, type Shortcut } from './shortcuts';
+import { SHORTCUTS, shortcutGroups, type Shortcut } from './shortcuts';
+import { resolveBindings } from './keybindings';
 
-// Tests for the keyboard-shortcut REGISTRY — the single source of truth the help
-// modal renders. These guard the registry's shape so a malformed entry (an empty
-// label, a shortcut with no keys, a duplicate combo) is caught at test time rather
-// than rendering a blank/garbled row.
+// Tests for the keyboard-shortcut REGISTRY — what the help modal renders. It is
+// derived from the rebindable definitions (keybindings.ts) plus the fixed keys, so
+// these guard both the registry's shape and that every functional binding is
+// documented at its default chord.
 
-const allItems = (): Shortcut[] => SHORTCUTS.flatMap((g) => g.items);
+const allItems = (groups = SHORTCUTS): Shortcut[] => groups.flatMap((g) => g.items);
+const has = (keys: string[], groups = SHORTCUTS): boolean =>
+  allItems(groups).some((s) => s.keys.length === keys.length && s.keys.every((k, i) => k === keys[i]));
+const section = (title: string, groups = SHORTCUTS) => groups.find((g) => g.title === title);
 
 describe('shortcuts registry', () => {
   it('has at least one group, each with a non-empty title and items', () => {
@@ -38,40 +42,58 @@ describe('shortcuts registry', () => {
   });
 });
 
-// The help modal must show EVERY shortcut a user can actually trigger. This pins
-// each functional binding registered by a handler (the global onKeydown in
-// +page.svelte, the inbox nav in Inbox.svelte, the launcher's keys) so the
-// registry can't silently drift out of sync with them. Inert grid-only bindings
-// (⌘[, ⌘], Alt+Arrow, the grid ⌘W) are excluded on purpose — `if (!view.isGrid)
-// return;` never passes in the inbox view, so they never fire.
-describe('shortcuts registry covers every functional binding', () => {
-  const FUNCTIONAL: Array<{ keys: string[]; where: string }> = [
-    { keys: ['⌘', 'N'], where: 'new session' },
-    { keys: ['⌘', 'T'], where: 'create task' },
-    { keys: ['⌘', 'J'], where: 'toggle terminals panel' },
-    { keys: ['⌘', 'Y'], where: 'new terminal' },
-    { keys: ['⌘', 'Tab'], where: 'cycle focus' },
-    { keys: ['⌘', '/'], where: 'show shortcuts' },
-    { keys: ['?'], where: 'show shortcuts (bare ?)' },
-    { keys: ['Esc'], where: 'close dialog' },
-    { keys: ['⌘', '↓'], where: 'next agent' },
-    { keys: ['⌘', '↑'], where: 'previous agent' },
-    { keys: ['⌘', '⇧', '↓'], where: 'next project filter' },
-    { keys: ['⌘', '⇧', '↑'], where: 'previous project filter' },
-    { keys: ['⌘', 'W'], where: 'archive session' },
-    { keys: ['⌘', '.'], where: 'pause / resume session' },
-    { keys: ['⌘', 'O'], where: 'insert file path into terminal' },
-    { keys: ['⌘', 'Enter'], where: 'confirm and launch' }
-  ];
+// The help modal must show EVERY shortcut a user can actually trigger, at its
+// current chord. Inert grid-only bindings (⌘[, ⌘], Alt+Arrow, the grid ⌘W) are
+// excluded on purpose — `if (!view.isGrid) return;` never passes in the inbox view.
+describe('help modal lists every functional keyboard shortcut', () => {
+  it('Global shortcuts are listed', () => {
+    const g = section('Global');
+    expect(g).toBeDefined();
+    const labels = g!.items.map((i) => [i.keys.join(''), i.label]);
+    expect(labels).toContainEqual(['⌘N', 'New session']);
+    expect(labels).toContainEqual(['⌘⇧N', 'New session in a git worktree']);
+    expect(labels).toContainEqual(['⌘T', 'Create task']);
+    expect(labels).toContainEqual(['⌘J', 'Toggle Terminals panel']);
+    expect(labels).toContainEqual(['⌘Y', 'New terminal']);
+    expect(labels).toContainEqual(['⌘Tab', 'Cycle focus (agent / terminals)']);
+    expect(labels).toContainEqual(['⌘/', 'Show keyboard shortcuts']);
+    expect(has(['?'], [g!])).toBe(true);
+    expect(has(['Esc'], [g!])).toBe(true);
+  });
 
-  const has = (keys: string[]): boolean =>
-    allItems().some(
-      (s) => s.keys.length === keys.length && s.keys.every((k, i) => k === keys[i])
+  it('Inbox shortcuts are listed', () => {
+    const g = section('Inbox')!;
+    expect(has(['⌘', '↓'], [g])).toBe(true);
+    expect(has(['⌘', '↑'], [g])).toBe(true);
+    expect(has(['⌘', '⇧', '↓'], [g])).toBe(true);
+    expect(has(['⌘', '⇧', '↑'], [g])).toBe(true);
+  });
+
+  it('Session and launcher shortcuts are listed', () => {
+    const s = section('Session')!;
+    expect(has(['⌘', 'W'], [s])).toBe(true);
+    expect(has(['⌘', '.'], [s])).toBe(true);
+    expect(has(['⌘', 'O'], [s])).toBe(true);
+    expect(has(['⌘', 'I'], [s])).toBe(false);
+    const l = section('Launcher')!;
+    expect(has(['⌘', 'Enter'], [l])).toBe(true);
+    expect(has(['Esc'], [l])).toBe(true);
+  });
+
+  it('Inert grid-only bindings are not listed', () => {
+    expect(has(['⌘', '['])).toBe(false);
+    expect(has(['⌘', ']'])).toBe(false);
+    for (const arrow of ['↑', '↓', '←', '→']) expect(has(['⌥', arrow])).toBe(false);
+    // ⌘W appears once (the inbox archive), never as the grid close-pane.
+    expect(allItems().filter((s) => s.keys.join('') === '⌘W')).toHaveLength(1);
+  });
+
+  it('Help modal reflects a custom binding', () => {
+    const groups = shortcutGroups(
+      resolveBindings({ newSession: { key: 'K', meta: true, ctrl: false, alt: false, shift: true } })
     );
-
-  for (const { keys, where } of FUNCTIONAL) {
-    it(`lists ${keys.join('')} (${where})`, () => {
-      expect(has(keys)).toBe(true);
-    });
-  }
+    const row = section('Global', groups)!.items.find((i) => i.label === 'New session')!;
+    expect(row.keys).toEqual(['⌘', '⇧', 'K']);
+    expect(has(['⌘', 'N'], groups)).toBe(false);
+  });
 });

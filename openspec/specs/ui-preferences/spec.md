@@ -3,13 +3,15 @@
 ## Purpose
 TBD - created by archiving change durable-ui-preferences. Update Purpose after archive.
 ## Requirements
+
 ### Requirement: Remembered UI-layout preferences persist durably
 
 The application SHALL persist its remembered UI-layout preferences — project-pane
 collapse state, terminals-panel width, tasks-launcher split fraction, selected
-project filter, and the manual order of the draggable lanes — in the durable
-`ui` slice of `settings.json`, so they survive an application restart including an
-abrupt or unclean exit. These preferences SHALL NOT be stored in `localStorage`.
+project filter, the manual order of the draggable lanes, the list of pinned
+sessions, and the terminals placement — in the durable `ui` slice of
+`settings.json`, so they survive an application restart including an abrupt or
+unclean exit. These preferences SHALL NOT be stored in `localStorage`.
 
 #### Scenario: A layout preference survives an abrupt restart
 
@@ -27,7 +29,7 @@ abrupt or unclean exit. These preferences SHALL NOT be stored in `localStorage`.
 - **AND** the persisted `ui` slice is loaded once on mount and the preferences are
   corrected to the stored values
 - **AND** on a fresh install (no `settings.json`, or an absent/corrupt `ui` slice)
-  the documented defaults apply without error
+  the defaults remain in effect
 
 #### Scenario: Out-of-range or malformed stored values are normalized
 
@@ -44,6 +46,12 @@ abrupt or unclean exit. These preferences SHALL NOT be stored in `localStorage`.
   seeded
 - **AND** a returning agent keeps its saved slot rather than being reordered by
   mount order
+
+#### Scenario: Pinned ids persist in the ui slice and non-string ids are dropped
+
+- **WHEN** the persisted `ui` slice carries a `pinned` list
+- **THEN** its string pane ids are restored in order, non-string entries are
+  dropped, and a missing or malformed list defaults to empty
 
 ### Requirement: localStorage is reserved for regenerable caches
 
@@ -65,3 +73,14 @@ allowlist accesses `localStorage`.
   transcript) uses `localStorage`
 - **THEN** the gate passes, because those files are on the allowlist
 
+### Requirement: Terminals placement preference
+
+The `ui` slice SHALL carry a `terminalsPlacement` of `panel` (terminals in the separate right-docked panel) or `combined` (terminals listed with sessions), defaulting to `panel`; any other persisted value SHALL fall back to the default. Settings SHALL expose it under the Sessions panel section as a "Terminals" dropdown.
+
+#### Scenario: Terminals placement defaults to the separate panel
+- **WHEN** the `ui` slice has no `terminalsPlacement`
+- **THEN** the placement is `panel`
+
+#### Scenario: An unknown placement value falls back to the default
+- **WHEN** the persisted `terminalsPlacement` is not `panel` or `combined`
+- **THEN** the placement is `panel`

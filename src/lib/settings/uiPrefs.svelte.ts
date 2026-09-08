@@ -36,6 +36,13 @@ const TASKS_FRAC_DEFAULT = 0.33;
  *  as a literal so this settings module stays free of a projects dependency). */
 const PROJECT_FILTER_DEFAULT = 'all';
 
+/** Where plain terminals (task runs + bare shells) live: the separate right-docked
+ *  panel (default) or combined into the sessions list (ui-preferences:
+ *  "Terminals placement preference"). */
+export type TerminalsPlacement = 'panel' | 'combined';
+export const TERMINALS_PLACEMENTS: ReadonlyArray<TerminalsPlacement> = ['panel', 'combined'];
+const TERMINALS_PLACEMENT_DEFAULT: TerminalsPlacement = 'panel';
+
 /** Persisted order of the two manually-reorderable lanes. The non-draggable
  *  lanes (flight/done) re-derive newest-first each session and are never stored. */
 export interface LaneOrderPrefs {
@@ -50,6 +57,11 @@ export interface UiPrefs {
   tasksLauncherFrac: number;
   projectFilter: string;
   laneOrder: LaneOrderPrefs;
+  /** Sessions pinned to the top of the roster (pane ids, most recently pinned
+   *  first). A pinned session renders above every lane regardless of status. */
+  pinned: string[];
+  /** Terminals placement: separate right panel (default) or combined with sessions. */
+  terminalsPlacement: TerminalsPlacement;
 }
 
 /** Defaults for a fresh install. */
@@ -58,8 +70,15 @@ export const DEFAULT_UI_PREFS: UiPrefs = {
   terminalsWidth: TERMINALS_WIDTH_DEFAULT,
   tasksLauncherFrac: TASKS_FRAC_DEFAULT,
   projectFilter: PROJECT_FILTER_DEFAULT,
-  laneOrder: { attn: [], paused: [] }
+  laneOrder: { attn: [], paused: [] },
+  pinned: [],
+  terminalsPlacement: TERMINALS_PLACEMENT_DEFAULT
 };
+
+/** PURE: a valid placement, else the default. */
+export function parseTerminalsPlacement(v: unknown): TerminalsPlacement {
+  return v === 'panel' || v === 'combined' ? v : TERMINALS_PLACEMENT_DEFAULT;
+}
 
 /** Clamp a terminals-panel width into [MIN, MAX] (rounded). */
 export function clampTerminalsWidth(px: number): number {
@@ -108,7 +127,9 @@ export function parseUiPrefs(raw: unknown): UiPrefs {
       typeof o.projectFilter === 'string' && o.projectFilter !== ''
         ? o.projectFilter
         : PROJECT_FILTER_DEFAULT,
-    laneOrder: { attn: stringIds(laneRaw.attn), paused: stringIds(laneRaw.paused) }
+    laneOrder: { attn: stringIds(laneRaw.attn), paused: stringIds(laneRaw.paused) },
+    pinned: stringIds(o.pinned),
+    terminalsPlacement: parseTerminalsPlacement(o.terminalsPlacement)
   };
 }
 
@@ -169,6 +190,35 @@ export class UiPrefsStore {
   /** Set the manual lane order (attn + paused) and persist (best-effort). */
   setLaneOrder(order: LaneOrderPrefs): void {
     this.data = { ...this.data, laneOrder: { attn: [...order.attn], paused: [...order.paused] } };
+    void this.save();
+  }
+
+  /** Set where terminals live (separate panel / combined) and persist. */
+  setTerminalsPlacement(placement: TerminalsPlacement): void {
+    this.data = { ...this.data, terminalsPlacement: parseTerminalsPlacement(placement) };
+    void this.save();
+  }
+
+  /** Whether a session is pinned to the top of the roster. */
+  isPinned(paneId: string): boolean {
+    return this.data.pinned.includes(paneId);
+  }
+
+  /** Pin (to the front — most recently pinned on top) or unpin a session, and
+   *  persist (best-effort). */
+  togglePinned(paneId: string): void {
+    const pinned = this.isPinned(paneId)
+      ? this.data.pinned.filter((id) => id !== paneId)
+      : [paneId, ...this.data.pinned];
+    this.data = { ...this.data, pinned };
+    void this.save();
+  }
+
+  /** Drop a session from the pinned list when it is deleted for good. A no-op
+   *  (no write) when it was not pinned. */
+  forgetPinned(paneId: string): void {
+    if (!this.isPinned(paneId)) return;
+    this.data = { ...this.data, pinned: this.data.pinned.filter((id) => id !== paneId) };
     void this.save();
   }
 

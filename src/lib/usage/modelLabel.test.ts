@@ -72,3 +72,17 @@ describe('effortLabel', () => {
     expect(effortLabel('turbo')).toBe('Turbo');
   });
 });
+
+describe('non-Claude model ids (usage-dashboard: backend-formatted labels)', () => {
+  it('Copilot model label formatted by its backend', () => {
+    // A copilot snapshot carries only the model id (no display name); the label
+    // pipeline renders it readably instead of an em-dash.
+    expect(modelLabel('gpt-5', null)).toBe('GPT 5');
+    expect(modelLabel('o4-mini', null)).toBe('O4 Mini');
+    expect(modelLabel('gemini-2.5-pro', null)).toBe('Gemini 2.5 Pro');
+    // Claude ids and display-name fallbacks are unchanged.
+    expect(modelLabel('claude-sonnet-5', null)).toBe('Sonnet 5');
+    expect(modelLabel('weird', 'Display')).toBe('Display');
+    expect(modelLabel(null, null)).toBe('—');
+  });
+});

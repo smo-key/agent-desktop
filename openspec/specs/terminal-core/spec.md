@@ -3,6 +3,7 @@
 ## Purpose
 TBD - created by archiving change add-agent-desktop. Update Purpose after archive.
 ## Requirements
+
 ### Requirement: PTY-Backed Process Spawning
 The system SHALL spawn each pane as a real PTY via `portable-pty`'s `native_pty_system().openpty(PtySize{rows, cols, ..})`, run the configured program (`claude` or a shell) in a given `cwd` using `CommandBuilder`, seed the environment with `TERM=xterm-256color`, `COLORTERM=truecolor`, and `PATH`/`HOME`/`LANG`, and drop the PTY slave (`drop(pair.slave)`) immediately after `spawn_command` so the kernel will deliver EOF to the master reader.
 
@@ -72,15 +73,43 @@ The system SHALL detect child exit by reading EOF on the PTY master, then call `
 - **THEN** the read loop detects the send failure and terminates instead of looping or panicking
 
 ### Requirement: Process Lifecycle And No Orphans
-The system SHALL kill a pane's child process on pane close via `child.clone_killer()` / `ChildKiller::kill` (callable from another thread), and SHALL kill all pane processes on app quit (Tauri `CloseRequested`), reaping every child so that no zombie or orphan processes remain.
+The system SHALL terminate a pane's entire process tree on pane close — the direct child plus every descendant, including processes that ignore SIGHUP or run in a different process group — and SHALL do the same for every live pane on app quit (Tauri `CloseRequested`), reaping each direct child so that no zombie or orphan processes remain. Termination SHALL escalate: hangup/terminate signals first, a short grace period, then a forced kill of any survivor found by re-walking the tree. The tree's members and their process groups SHALL be recorded, and the graceful signals sent, before the pane's PTY is released, so jobs an exiting shell leaves behind are still found. When the child has already exited on its own, the system SHALL still terminate anything it left behind that is provably part of the pane's session (processes in the child's process group, and their descendants), and SHALL NOT signal a pid that is not ours: any live process holding the pid of a child that was already reaped, or whose parent is not the app, is a recycled pid; the app's own process and process group are never targets.
 
 #### Scenario: Closing a pane kills its process
 - **WHEN** a pane is closed in the UI
-- **THEN** `pty_kill(id)` invokes the pane's cloned killer to terminate the child, and the child is reaped
+- **THEN** `pty_kill(id)` terminates the pane's child process, and the child is reaped
+
+#### Scenario: Closing a pane kills descendants that ignore hangup
+- **WHEN** a pane is closed while its child has spawned a grandchild that ignores SIGHUP (e.g. via `nohup`)
+- **THEN** the grandchild is terminated as well, and the direct child is reaped
+
+#### Scenario: Closing a pane kills a child that traps hangup
+- **WHEN** a pane is closed while its direct child (and what it spawned) ignores SIGHUP
+- **THEN** the child and its descendants are still terminated — forcibly after the grace period if necessary — and the child is reaped
+
+#### Scenario: Closing a pane force-kills a job in its own process group
+- **WHEN** a pane is closed while its child runs a job under job control (own process group) that ignores both SIGTERM and SIGHUP, and the child itself exits on hangup
+- **THEN** the job is still force-killed after the grace period even though it was reparented to init, and the child is reaped
+
+#### Scenario: Closing a pane kills an interactive shell's background jobs
+- **WHEN** a pane running an interactive shell with a background job is closed
+- **THEN** the job is terminated along with the shell, and the shell is reaped
+
+#### Scenario: Closing a pane kills orphans left by an exited child
+- **WHEN** a pane is closed after its child exited on its own, leaving a job that ignores SIGHUP running in the child's process group
+- **THEN** the orphaned job is terminated, and the pane's channel receives the child's exit
 
 #### Scenario: App quit reaps all children
 - **WHEN** the window receives `CloseRequested`
 - **THEN** every live pane's child process is killed and reaped before the app exits, leaving no zombie or orphan processes
+
+#### Scenario: App quit kills orphans left by an exited child
+- **WHEN** the window receives `CloseRequested` while a pane's child has exited on its own leaving a job that ignores SIGHUP
+- **THEN** the orphaned job is terminated by the time `kill_all` returns
+
+#### Scenario: App quit kills descendants that ignore hangup
+- **WHEN** the window receives `CloseRequested` while a pane's child has spawned a grandchild that ignores SIGHUP
+- **THEN** the grandchild is terminated by the time `kill_all` returns, and the pane's child is reaped
 
 ### Requirement: WebGL Renderer With DOM Fallback
 The system SHALL render each visible pane with the `@xterm/addon-webgl@0.19` renderer and SHALL fall back to xterm's DOM renderer on WebGL context loss, never installing or using `@xterm/addon-canvas` (removed in xterm 6), while keeping live WebGL contexts within the ~16-context-per-page ceiling by enabling WebGL only on visible panes.
@@ -124,3 +153,18 @@ The system SHALL translate the macOS line-edge chords ⌘← and ⌘→, pressed
 - **WHEN** the user presses ⌘← (or ⌘→) while a terminal pane holds focus
 - **THEN** the pane's custom key handler writes the mapped byte (`\x01` / `\x05`) to that pane's PTY and consumes the keydown (preventDefault + returns false), so the running program (a shell or Claude's TUI) moves the cursor to the beginning/end of the current line and the chord does not echo or fire a webview accelerator
 
+### Requirement: Foreground Job Query
+
+The PTY manager SHALL answer whether a live pane's terminal is currently owned by a foreground job: on Unix, the terminal's foreground process group differs from the pane's direct child (the shell), meaning a job it launched holds the terminal; when the platform cannot answer (Windows, or no child pid) the result is unknown (`null`) rather than a guess. An unknown pane id SHALL be an error. The query is exposed to the frontend as the `pty_foreground_busy` command.
+
+#### Scenario: Idle shell reports no foreground job
+- **WHEN** an interactive shell pane sits at its prompt
+- **THEN** the query answers `false`
+
+#### Scenario: Running foreground command reports a job
+- **WHEN** an interactive shell pane is running a foreground command such as `sleep`
+- **THEN** the query answers `true`
+
+#### Scenario: Unknown pane yields an error
+- **WHEN** the query names a pane id that does not exist
+- **THEN** it returns an error

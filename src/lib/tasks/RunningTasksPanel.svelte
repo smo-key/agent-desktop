@@ -22,6 +22,7 @@
   import TerminalPane from '../TerminalPane.svelte';
   import Icon from '../icons/Icon.svelte';
   import { tooltip } from '../ui/tooltip';
+  import { shortcuts } from '$lib/settings/shortcuts.svelte';
   import { workspace } from '../layout/workspace.svelte';
   import { projects } from '../projects/projects.svelte';
   import { projectForId, projectLabel } from '../projects/projects';
@@ -30,6 +31,18 @@
   import { taskSpawnSpec } from './projectTasks';
   import { projectFilter } from '../projects/projectFilter.svelte';
   import { ALL, UNASSIGNED } from '../projects/projectRollup';
+  import { uiPrefs } from '../settings/uiPrefs.svelte';
+  import { terminalsCombined } from './placement';
+  import { terminalSlot } from '../layout/terminalSlot.svelte';
+  import { portal } from '../layout/portal';
+
+  // Combined placement (tasks-panel: "Terminals can be combined into the sessions
+  // list"): the dock is hidden by the parent but stays MOUNTED as every terminal's
+  // PTY home. The entry the inbox focused (`terminalSlot`) has its body relocated
+  // into the inbox focus pane with the `portal` action — never remounted — and is
+  // sent home when the selection moves on. Bare shells are probed for a foreground
+  // job so their row reads In flight / Needs input like an agent.
+  const combined = $derived(terminalsCombined(uiPrefs.data.terminalsPlacement));
 
   // A concrete project chosen in the overview's project filter (null on All /
   // Unassigned). When set it pins the panel to that project even with no agent
@@ -44,7 +57,7 @@
   // project (null ⇒ empty state).
   const activeId = $derived(
     activeProjectId({
-      focusedId: workspace.active ? workspace.focusedId : '',
+      focusedId: workspace.focusedPaneId ?? '', // the PANE id (registry key), not the leaf id
       projectIdOf: (id) => workspace.session(id).projectId,
       selectedProjectId
     })
@@ -191,7 +204,7 @@
         if (activeId) projectTasks.launchBareTerminal(activeId);
       }}
       disabled={!activeId}
-      use:tooltip={'New terminal (⌘Y)'}
+      use:tooltip={`New terminal (${shortcuts.text('newTerminal')})`}
       aria-label="New terminal"
     >＋</button>
   </header>
@@ -229,7 +242,10 @@
                 </button>
               </div>
             </div>
-            <div class="tp-term-body">
+            <div
+              class="tp-term-body"
+              use:portal={combined ? terminalSlot.targetFor(entry.paneId) : null}
+            >
               <!-- Keep the pane MOUNTED while running OR after the process exited on
                    its own (`exitCode != null`) — a self-exit leaves no live process to
                    kill, so we keep the dead pane's scrollback visible (the user must be
@@ -244,10 +260,11 @@
                     args={entry.args}
                     cwd={entry.cwd}
                     active={false}
-                    visible={pid === activeId}
+                    visible={combined ? terminalSlot.paneId === entry.paneId : pid === activeId}
                     initialInput={entry.initialInput}
                     onExit={entry.onExit}
                     onTitle={entry.onTitle}
+                    probeForeground={combined && entry.kind === 'bare'}
                   />
                 {/key}
               {:else}

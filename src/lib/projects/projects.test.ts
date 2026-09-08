@@ -12,6 +12,9 @@ import {
   serializeProjects,
   slugify,
   contrastText,
+  setProjectArchived,
+  activeProjects,
+  archivedProjects,
   type Project
 } from './projects';
 
@@ -159,8 +162,8 @@ describe('logo field — persistence', () => {
 
 describe('autoWorktree no longer lives on the record', () => {
   it('Not stored in the registry', () => {
-    // autoWorktree moved to <project>/.agent-desktop/config.json; a legacy record
-    // that still carries the flag loses it on parse (a migration lifts the value).
+    // The auto-worktree feature was removed; a legacy record that still carries
+    // the flag loses it on parse (normalize strips it as a one-time cleanup).
     const raw = JSON.stringify([{ ...p({ id: 'a' }), autoWorktree: true }]);
     const back = parseProjects(raw);
     expect(back).toHaveLength(1);
@@ -190,5 +193,53 @@ describe('contrastText', () => {
   it('falls back to white for an unparseable hex', () => {
     expect(contrastText('not-a-color')).toBe('#ffffff');
     expect(contrastText('')).toBe('#ffffff');
+  });
+});
+
+describe('projects — Archive And Unarchive A Project', () => {
+  it('Archiving a project marks it archived and persists', () => {
+    const list = [p({ id: 'a', path: '/a' }), p({ id: 'b', path: '/b' })];
+    const next = setProjectArchived(list, 'a', true);
+    expect(next.map((x) => x.id)).toEqual(['a', 'b']); // same position
+    expect(next[0]).toMatchObject({ id: 'a', archived: true });
+    expect(next[1].archived).toBeUndefined();
+    // Survives the persistence round-trip.
+    expect(parseProjects(serializeProjects(next))[0].archived).toBe(true);
+    // Pure: input untouched; unknown id is a no-op copy.
+    expect(list[0].archived).toBeUndefined();
+    expect(setProjectArchived(list, 'nope', true)).toEqual(list);
+  });
+
+  it('Unarchiving a project restores it in place', () => {
+    const list = [p({ id: 'a', path: '/a', archived: true }), p({ id: 'b', path: '/b' })];
+    const next = setProjectArchived(list, 'a', false);
+    expect(next.map((x) => x.id)).toEqual(['a', 'b']);
+    expect('archived' in next[0]).toBe(false); // the key is dropped, not set false
+    expect(next[0]).toMatchObject({ id: 'a', name: 'Payments', path: '/a' });
+  });
+
+  it('A missing archived flag parses as active', () => {
+    const raw = JSON.stringify([
+      p({ id: 'a', path: '/a' }),
+      { ...p({ id: 'b', path: '/b' }), archived: 'yes' }, // non-boolean -> active
+      { ...p({ id: 'c', path: '/c' }), archived: false },
+      { ...p({ id: 'd', path: '/d' }), archived: true }
+    ]);
+    const back = parseProjects(raw);
+    expect(back.map((x) => x.archived)).toEqual([undefined, undefined, undefined, true]);
+    // Re-serializing writes `archived` only for the archived project.
+    const again = JSON.parse(serializeProjects(back)).projects as Record<string, unknown>[];
+    expect(again.map((x) => 'archived' in x)).toEqual([false, false, false, true]);
+  });
+
+  it('Archived projects are omitted from the active list', () => {
+    const list = [
+      p({ id: 'a', path: '/a' }),
+      p({ id: 'b', path: '/b', archived: true }),
+      p({ id: 'c', path: '/c' })
+    ];
+    expect(activeProjects(list).map((x) => x.id)).toEqual(['a', 'c']);
+    expect(archivedProjects(list).map((x) => x.id)).toEqual(['b']);
+    expect(activeProjects([])).toEqual([]);
   });
 });

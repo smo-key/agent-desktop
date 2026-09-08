@@ -21,7 +21,7 @@
 //! different targets — proceed concurrently.
 //!
 //! Socket-path convention matches the events socket (a basename under the app-data
-//! dir; see `lib.rs`). The path is exported to a launched coordinator session via
+//! dir; see `lib.rs`). The path is exported to a launched agenator session via
 //! the [`CONTROL_SOCKET_ENV`] environment variable so the bundled adapter can find
 //! it (the events socket uses `AGENT_DESKTOP_SOCKET_PATH`; this is its sibling).
 
@@ -42,7 +42,7 @@ use serde_json::{json, Value};
 pub const REQUEST_EVENT: &str = "orchestration://request";
 
 /// Environment variable carrying the absolute control-socket path into a launched
-/// coordinator session (so the bundled MCP adapter can connect). Sibling of the
+/// agent session (so the bundled MCP adapter can connect). Sibling of the
 /// event hook's `AGENT_DESKTOP_SOCKET_PATH`.
 pub const CONTROL_SOCKET_ENV: &str = "AGENT_DESKTOP_CONTROL_SOCKET";
 
@@ -275,7 +275,7 @@ impl Drop for ControlServer {
 /// back over the same connection. Per-target ops are serialized.
 ///
 /// `address` MUST come from [`crate::ipc::control_address`] — the same call that
-/// produces the value exported to a coordinator as `AGENT_DESKTOP_CONTROL_SOCKET`,
+/// produces the value exported to an agent as `AGENT_DESKTOP_CONTROL_SOCKET`,
 /// so the bound socket and the advertised one cannot disagree.
 ///
 /// `on_request` runs on a per-connection serving thread and must be `Send + Sync`.

@@ -1,10 +1,11 @@
 name: Release
 
 # Releases on a version bump to main: when package.json's version is higher than
-# the latest v* tag, the gate job syncs the manifests, regenerates CHANGELOG.md,
-# commits `chore(release): v<version> [skip ci]`, tags v<version>, and the build
-# matrix produces + publishes signed installers for all four targets to a single
-# GitHub Release.
+# the latest v* tag, the gate job syncs the manifests, extracts this version's
+# hand-written CHANGELOG.md section as the release notes (failing if it is
+# missing), commits `chore(release): v<version> [skip ci]`, tags v<version>, and
+# the build matrix produces + publishes signed installers for all four targets to
+# a single GitHub Release whose body is that CHANGELOG section.
 #
 # Manual workflow_dispatch inputs:
 #   bundle_test   — build the Windows installer end-to-end and upload it as a
@@ -108,21 +109,14 @@ jobs:
         if: steps.decide.outputs.should_release == 'true'
         run: bash scripts/sync-version.sh "${{ steps.decide.outputs.version }}"
 
-      # Install the pinned git-cliff and regenerate the FULL changelog plus the
-      # since-last-tag release notes (saved for the Release body).
-      - name: Install git-cliff
-        if: steps.decide.outputs.should_release == 'true'
-        uses: taiki-e/install-action@v2
-        with:
-          tool: git-cliff@2.13.1
-
-      - name: Generate changelog + release notes
+      # Release notes = this version's hand-written CHANGELOG.md section (authored
+      # by the Release task before the bump landed). Runs BEFORE the commit + tag
+      # step and fails when the section is missing, so a forgotten changelog
+      # never burns a version number.
+      - name: Extract release notes from CHANGELOG.md
         if: steps.decide.outputs.should_release == 'true'
         run: |
-          # Full changelog (committed alongside the sync commit).
-          git-cliff --tag "${{ steps.decide.outputs.tag }}" -o CHANGELOG.md
-          # Release body: just the commits since the previous tag, header stripped.
-          git-cliff --unreleased --tag "${{ steps.decide.outputs.tag }}" --strip header -o RELEASE_NOTES.md
+          node scripts/release-notes.mjs "${{ steps.decide.outputs.version }}" > RELEASE_NOTES.md
           echo "----- RELEASE_NOTES.md -----"
           cat RELEASE_NOTES.md
 
@@ -134,7 +128,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock CHANGELOG.md
+          git add src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
           if git diff --cached --quiet; then
             echo "No manifest changes to commit (already in sync)."
           else

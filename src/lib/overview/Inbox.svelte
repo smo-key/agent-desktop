@@ -19,21 +19,22 @@
   import { launcher } from '$lib/launcher/launcherStore.svelte';
   import { startNewSession } from '$lib/launcher/newSession';
   import { surfaceSlot } from '$lib/layout/surfaceSlot.svelte';
-  import { focusTerminal, scrollTerminalToBottom } from '$lib/layout/terminals';
+  import { focusTerminal, getTerminal, scrollTerminalToBottom } from '$lib/layout/terminals';
   import {
     buildRoster,
-    groupByLane,
     needsAttention,
-    isArchivedCoordinator,
     showContext,
     LANE_ORDER,
     laneForRow,
     reorderLane,
     orderRowsByLane,
+    pinRowsToTop,
     type AgentLane,
     type AgentRow,
     type AgentStatus
   } from './roster';
+  import { buildRosterGroups } from './grouping';
+  import { sessionGrouping } from '$lib/settings/sessionGrouping.svelte';
   import {
     isAttention,
     attentionQueue,
@@ -55,7 +56,7 @@
   import { focusRequest } from './focusRequest.svelte';
   import { activity } from './activity.svelte';
   import { events } from './events.svelte';
-  import { titles } from './titles.svelte';
+  import { shouldCommitRename, titles } from './titles.svelte';
   import { summaries } from './summaries.svelte';
   import { costs } from './costs.svelte';
   import { subagents } from './subagents.svelte';
@@ -82,22 +83,26 @@
   import StatusBar from '$lib/usage/StatusBar.svelte';
   import { tooltip } from '$lib/ui/tooltip';
   import { friendlyTime } from './friendlyTime';
-  import { rowModelLabel } from './inbox';
   import ContextMenu, { type MenuItem } from '$lib/ui/ContextMenu.svelte';
   import TasksLauncher from '$lib/tasks/TasksLauncher.svelte';
   // import SpecialistsPanel from '$lib/specialists/SpecialistsPanel.svelte'; // temporarily hidden
   import { ALL, UNASSIGNED } from '$lib/projects/projectRollup';
-  import {
-    resolveCoordinatorPin,
-    coordinatorStartId,
-    coordinatorStartProject,
-    coordinatorNavOrder
-  } from './coordinatorPin';
-  import CoordinatorStart from '$lib/orchestration/CoordinatorStart.svelte';
-  import { coordinatorNeedsInput } from '$lib/orchestration/coordinatorNeedsInput.svelte';
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
   import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
+  import { shortcuts } from '$lib/settings/shortcuts.svelte';
+  import { projectTasks } from '$lib/tasks/projectTasks.svelte';
+  import { terminalsCombined } from '$lib/tasks/placement';
+  import { terminalSlot } from '$lib/layout/terminalSlot.svelte';
+  import {
+    buildTerminalRows,
+    collectTerminalRowInputs,
+    isTerminalRow,
+    persistedLaneOrder,
+    terminalFocusActions,
+    terminalTitleKey,
+    terminalTitleRefs
+  } from './terminalRows';
 
   // --- Sessions / Tasks split (Sessions roster on top / Tasks bottom) ----------
   // The `.col-list` column splits into the Sessions roster (top, resizable) and
@@ -143,31 +148,58 @@
   const rosterWorkspaces = $derived(toRosterWorkspaces(workspace.workspaces));
   const navWorkspaces = $derived(toNavWorkspaces(workspace.workspaces));
 
-  // The set of coordinator paneIds that explicitly called `request_user_input`
-  // (tasks 10.11–10.12). A coordinator in this set surfaces "needs you" even with no
-  // pending AskUserQuestion; the default keep-working heuristic never flags it.
-  const coordNeedsInputSet = $derived(new Set(Object.keys(coordinatorNeedsInput.all())));
-  const allRows = $derived(
-    buildRoster(
+  // Combined terminals placement (tasks-panel: "Terminals can be combined into the
+  // sessions list"): every active plain terminal (task run / bare shell) becomes a
+  // roster row after the agents, statused like them (terminalRows.ts). Terminal
+  // rows have no workspace/transcript/events, so the session-only effects below
+  // skip them (`isTerminalRow`), and their per-process ids are never persisted
+  // (lane order / pins).
+  const combinedTerminals = $derived(terminalsCombined(uiPrefs.data.terminalsPlacement));
+  const terminalInputs = $derived(
+    combinedTerminals
+      ? collectTerminalRowInputs({
+          byProject: projectTasks.byProject,
+          runtime: projectTasks.runtime,
+          bareByProject: projectTasks.bareByProject,
+          projectPaths: Object.fromEntries(projects.list.map((p) => [p.id, p.path]))
+        })
+      : []
+  );
+
+  const allRows = $derived.by(() => {
+    const runtime = runtimeMap();
+    const agents = buildRoster(
       snapshots.byPane,
       rosterWorkspaces,
-      runtimeMap(),
+      runtime,
       nowMs,
       activity.bySession,
       undefined,
-      events.activityMap(),
-      coordNeedsInputSet
-    )
-  );
+      events.activityMap()
+    );
+    return combinedTerminals ? [...agents, ...buildTerminalRows(terminalInputs, runtime, nowMs)] : agents;
+  });
+  const terminalIds = $derived(new Set(allRows.filter(isTerminalRow).map((r) => r.paneId)));
 
-  // CLEAR the explicit coordinator needs-input flag once the coordinator RESUMES (its
-  // effective status is `working` again) — the documented clear trigger: the user
-  // delivered input and the coordinator is back to work. Runs off the same per-second
-  // roster recompute. `coordinatorNeedsInput` is the orchestration store (read above),
-  // not the roster's pure `coordinatorNeedsInput` helper.
+  // Terminal-row titles (`session-titles`: "Bare terminal rows are titled from the
+  // activity the shell reports"). Runs on the roster's own per-second clock: each
+  // bare shell's reported-title list (from its live terminal handle) is the change
+  // key, so a title is generated only when the shell reports something NEW — never
+  // from streaming output. Task rows pass `activity: null` (their command is
+  // already the name) but still hydrate, so a restarted task terminal recovers its
+  // custom title. Skipped outside the combined placement: nothing displays them.
+  $effect(() => {
+    if (!combinedTerminals) return;
+    // Called even with no terminals: the store reclaims the entries of terminals
+    // that have gone away (a bare shell's pane id dies with its process).
+    titles.refreshTerminals(
+      terminalTitleRefs(allRows, (paneId) => getTerminal(paneId)?.recentActivity() ?? null),
+      nowMs
+    );
+  });
+
   $effect(() => {
     for (const r of allRows) {
-      if (r.role === 'coordinator') coordinatorNeedsInput.clearOnWorking(r.paneId, r.status);
       // Record each row's FINAL (post-override) status as the hysteresis memory for the
       // next derivation: a pane shown `working` holds In flight through a brief silence
       // instead of bouncing to `waiting` (see deriveStatus / IDLE_GRACE_MS). The runtime
@@ -214,7 +246,13 @@
   /** Persist ONLY the manually-reorderable lanes (attn + paused); flight/done are
    *  re-derived newest-first each session, so they are never stored. */
   function saveLaneOrder() {
-    uiPrefs.setLaneOrder({ attn: laneOrder.attn, paused: laneOrder.paused });
+    // Terminal rows are per-process (their pane ids never survive a restart), so
+    // they keep their in-session slot but are never written to the durable order —
+    // and a bare shell flipping lanes on every command must not cost a settings
+    // write when the persisted (agent-only) order is unchanged.
+    const prev = uiPrefs.data.laneOrder;
+    const next = persistedLaneOrder(laneOrder, terminalIds, ['attn', 'paused'] as const, prev);
+    if (next !== prev) uiPrefs.setLaneOrder(next);
   }
 
   // Reconcile every lane's order against the live roster. Computed over `allRows`
@@ -247,7 +285,26 @@
     }
   });
 
-  const viewRows = $derived(orderRowsByLane(rows, laneOrder));
+  // Pinned sessions (durable `ui.pinned`, most recently pinned first) lift above
+  // every lane; the rest keep their lane-grouped order. That lane-ordered list is
+  // then SECTIONED by the user's grouping mode (Settings → Group by: status lanes /
+  // date buckets / one flat list — `buildRosterGroups`), always pinned-first and
+  // archived-last. `viewRows` is the flattening of those sections, so the attention
+  // queue, auto-advance, keyboard stepping, and the rendered list share ONE order in
+  // every mode. `nowMs` only matters to the date buckets (a section boundary moves
+  // at local midnight); in status mode it is read but changes nothing.
+  const groups = $derived(
+    buildRosterGroups(
+      pinRowsToTop(orderRowsByLane(rows, laneOrder), uiPrefs.data.pinned),
+      sessionGrouping.mode,
+      uiPrefs.data.pinned,
+      nowMs
+    )
+  );
+  const viewRows = $derived(groups.flatMap((g) => g.rows));
+  const pinnedSet = $derived(new Set(uiPrefs.data.pinned));
+  /** The Archived section's rows (newest-first), or [] when nothing is archived. */
+  const archivedRows = $derived(groups.find((g) => g.kind === 'archived')?.rows ?? []);
 
   const queue = $derived(attentionQueue(viewRows));
 
@@ -282,40 +339,11 @@
     attnSeeded = true;
   });
 
-  // The active project for the coordinator pin: the concrete project chosen in the
-  // project filter (null on All / Unassigned). Only with a concrete project does the
-  // roster pin a coordinator / show the Start affordance (tasks 10.2–10.4).
-  const activeCoordProjectId = $derived(
-    projectFilter.selected === ALL || projectFilter.selected === UNASSIGNED
-      ? null
-      : projectFilter.selected
-  );
-  const activeCoordProject = $derived(projectForId(projects.list, activeCoordProjectId));
-  // Pull the live coordinator out of the lanes (pinned atop the list) and decide
-  // whether to show the not-started "Start coordinator" affordance.
-  const pin = $derived(resolveCoordinatorPin(viewRows, activeCoordProjectId));
-  // Lanes rendered BELOW the rule exclude the pinned coordinator (it never renders
-  // twice). Keyboard nav uses `coordinatorNavOrder` (coordinator/affordance first),
-  // not these render lanes, so the pinned coordinator stays reachable. `pin.rest`
-  // is already lane-grouped + within-lane ordered (viewRows → orderRowsByLane), so
-  // groupByLane just re-partitions it — including the Archived (done) lane, already
-  // newest-first via `laneOrder` (no extra reverse needed).
-  const renderGrouped = $derived(groupByLane(pin.rest));
-
   // The Archived lane collapses to its latest 2 rows (newest-first via `laneOrder`
   // — see above; no reverse — so the first 2 ARE the most recent) with a "Show all /
   // Collapse" toggle below; long archives don't bury the live lanes. Default collapsed.
   const ARCHIVED_PREVIEW = 2;
   let showAllArchived = $state(false);
-
-  // Group metadata (label) for the left list, in attn -> flight -> paused -> done
-  // order. `done` is the Archived lane (closed sessions); `paused` sits above it.
-  const LANES: Record<AgentLane, { title: string }> = {
-    attn: { title: 'Needs you' },
-    flight: { title: 'In flight' },
-    paused: { title: 'Paused' },
-    done: { title: 'Archived' }
-  };
 
   // The user's explicit pin (a watched agent), or null to let attention drive.
   let userSelected = $state<string | null>(null);
@@ -396,6 +424,8 @@
   // STICKY — auto-generation stops for that session and it persists across restart.
   let editingTitle = $state(false);
   let titleDraft = $state('');
+  // The title the editor was OPENED with — the baseline a commit compares against.
+  let titleSeed = '';
   let titleInput = $state<HTMLInputElement | null>(null);
   // The paneId the header edit belongs to, so switching to a DIFFERENT agent
   // abandons the rename (but selecting THIS agent — e.g. the menu "Rename" path —
@@ -406,7 +436,16 @@
    *  resolved against the row's OWN workspace so it's correct even when the focused
    *  agent lives in a non-active workspace. Null for a non-claude/shell pane. */
   function sessionIdOf(r: AgentRow): string | null {
+    if (isTerminalRow(r)) return null;
     return workspace.sessionIn(r.workspaceId, r.paneId).sessionId ?? null;
+  }
+
+  /** The DURABLE key a row's title cache is persisted under: a session's id, or a
+   *  terminal row's task id (a bare shell has none — per-process, like its lane
+   *  order entry). Distinct from `sessionIdOf`, which stays null for terminals
+   *  because subagents / summaries / costs are session-only. */
+  function titleKeyOf(r: AgentRow): string | null {
+    return isTerminalRow(r) ? terminalTitleKey(r) : sessionIdOf(r);
   }
 
   /** The workflow → phase groups of LIVE subagents to nest under a row (every
@@ -432,11 +471,18 @@
   }
 
   /** Enter header edit mode for the focused session, seeding the draft with the
-   *  currently-shown title. The coordinator's title is pinned ("Coordinator") and
-   *  is not user-renamable, so editing is suppressed for it. */
+   *  currently-shown title. The seed is REMEMBERED (`titleSeed`): the shown title
+   *  can move while the editor is open — a generated title resolving, or a task
+   *  terminal's live OSC title changing — and the commit must compare against what
+   *  the user was given, not against whatever the row says a few seconds later. */
   async function startTitleEdit(target: AgentRow | null = focus) {
-    if (!target || isCoordinator(target)) return;
+    if (!target) return;
+    // An advance armed just before the editor opened would still fire and yank
+    // focus (discarding the draft), so it is cancelled here rather than only being
+    // prevented from re-arming.
+    clearAdvance();
     titleDraft = focusTitle(target);
+    titleSeed = titleDraft;
     editingPaneId = target.paneId;
     editingTitle = true;
     await tick();
@@ -447,16 +493,25 @@
   /** Commit the header edit: a non-empty draft becomes the session's custom title
    *  (sticky + persisted); an empty/whitespace draft is dropped (keeps the prior
    *  title). Idempotent — safe to call from both Enter and blur. Commits against the
-   *  pane the edit was started on (not whatever is shown now). */
-  function commitTitleEdit() {
+   *  pane the edit was started on (not whatever is shown now). `explicit` is set
+   *  only by Enter: an UNCHANGED draft pins the shown name (see
+   *  `shouldCommitRename`), which must not happen when the editor merely lost
+   *  focus. */
+  function commitTitleEdit(explicit = false) {
     if (!editingTitle) return;
     editingTitle = false;
-    const row = viewRows.find((r) => r.paneId === editingPaneId);
-    if (row && titleDraft.trim() !== focusTitle(row)) {
-      titles.setManualTitle(row.paneId, sessionIdOf(row), titleDraft);
+    // `allRows`, not the project-filtered `viewRows`: a row that left the active
+    // filter mid-edit must still receive the rename the user typed.
+    const row = allRows.find((r) => r.paneId === editingPaneId);
+    // Compared against the SEED (what the editor was opened with), never against
+    // the row's live title: a title that resolved while the editor sat open must
+    // not turn an untouched draft into a rename on blur.
+    if (row && shouldCommitRename(titleDraft, titleSeed, titles.isManual(row.paneId), explicit)) {
+      titles.setManualTitle(row.paneId, titleKeyOf(row), titleDraft);
     }
     editingPaneId = null;
     titleDraft = '';
+    titleSeed = '';
   }
 
   /** Cancel the header edit (Esc): discard the draft, keep the prior title. */
@@ -464,12 +519,14 @@
     editingTitle = false;
     editingPaneId = null;
     titleDraft = '';
+    titleSeed = '';
   }
 
   function onTitleKey(e: KeyboardEvent) {
     if (e.key === 'Enter') {
       e.preventDefault();
-      commitTitleEdit();
+      // Enter is the DELIBERATE commit: it may pin a name that is already shown.
+      commitTitleEdit(true);
     } else if (e.key === 'Escape') {
       e.preventDefault();
       cancelTitleEdit();
@@ -487,17 +544,20 @@
   // Switching to a DIFFERENT agent (or the edited one going away) abandons an
   // in-progress rename rather than committing it to the wrong agent. Selecting the
   // edited agent itself — the menu "Rename" path — leaves the edit intact.
+  //
+  // It also ends when the edited row's header stops OFFERING an editor: an
+  // archived (closed, non-preview) row renders a plain title, so its input
+  // unmounts while `editingTitle` would otherwise stay true — which would freeze
+  // focus reconciliation on the guard below with no editor on screen.
   $effect(() => {
-    if (editingTitle && shownId !== editingPaneId) cancelTitleEdit();
+    if (!editingTitle) return;
+    if (shownId !== editingPaneId) {
+      cancelTitleEdit();
+      return;
+    }
+    const row = allRows.find((r) => r.paneId === editingPaneId) ?? null;
+    if (row && row.closed && !row.preview) cancelTitleEdit();
   });
-
-  // When `shownId` is the coordinator-start SENTINEL (not a real pane), the main
-  // pane shows the Start empty-state for that project instead of a terminal (10.4).
-  // Resolved to a concrete project, else null (a stale sentinel falls through to the
-  // normal empty panel).
-  const startProject = $derived(
-    projectForId(projects.list, coordinatorStartProject(shownId))
-  );
 
   // Reconcile the SHOWN agent toward what attention wants (resolveFocus = pin >
   // attention queue, arrival-ordered). First focus / the shown agent being closed
@@ -506,12 +566,6 @@
   // input). Once it stops needing you, focus advances to the earliest waiting agent
   // after the grace; if nobody else needs you, the current agent stays.
   $effect(() => {
-    // The coordinator-start sentinel is a deliberate, sticky main-pane selection
-    // (no underlying pane) — never auto-resolve it away to an attention agent.
-    if (coordinatorStartProject(shownId) !== null) {
-      clearAdvance();
-      return;
-    }
     const shownRow = viewRows.find((r) => r.paneId === shownId) ?? null;
     // The agent we're on just LEFT attention (handled / went Working)?
     const sameAgent = shownId !== null && shownId === lastShownId;
@@ -525,11 +579,24 @@
     lastShownStatus = shownRow?.status ?? null;
 
     // First focus, or the shown agent was closed -> switch immediately to the
-    // focus target (earliest waiting agent, or none).
+    // focus target (earliest waiting agent, or none). This runs even mid-rename:
+    // it is the ONLY path that recovers when the edited row disappears on its own
+    // (a terminal exits and its runtime is dropped), and moving `shownId` here is
+    // what makes the cancel-on-switch effect above discard the now-orphaned edit.
     if (shownId === null || shownRow === null) {
       clearAdvance();
       userSelected = null;
       shownId = resolveFocus(viewRows, null)?.paneId ?? null;
+      return;
+    }
+
+    // A rename in progress holds the focus from here on: an AUTO advance would
+    // flip `shownId` and the cancel-on-switch effect would silently discard what
+    // the user typed. The bookkeeping above still runs, so `lastShownStatus` keeps
+    // tracking the row and a transition that happened during the edit can't fire a
+    // stale advance the moment it commits.
+    if (editingTitle) {
+      clearAdvance();
       return;
     }
 
@@ -575,6 +642,9 @@
     advanceTimer = setTimeout(() => {
       advanceTimer = undefined;
       pendingTarget = null;
+      // A rename opened during the grace holds the focus (belt-and-braces with the
+      // `clearAdvance()` in `startTitleEdit`): advancing here would discard it.
+      if (editingTitle) return;
       userSelected = null;
       shownId = next;
     }, ADVANCE_DELAY_MS);
@@ -596,6 +666,9 @@
   // entry. With no shown agent, clear the target so the surface goes home (hidden)
   // and the empty panel shows.
   let focusSlot = $state<HTMLDivElement | null>(null);
+  // The teleport target for a focused TERMINAL row (combined placement): the dock
+  // relocates that terminal's body in here via `terminalSlot` + the portal action.
+  let terminalFocusSlot = $state<HTMLDivElement | null>(null);
   let lastFocusId: string | null = null;
   // Bumped on every explicit switch (click / keyboard / queue-nav) so the effect
   // re-focuses the terminal even when re-selecting the same agent.
@@ -609,16 +682,25 @@
     // closed panel, so send the surface home rather than teleporting it.
     if (!f || f.closed || !focusSlot) {
       surfaceSlot.clear();
+      terminalSlot.clear();
       lastFocusId = null;
       lastFocusNonce = nonce;
       return;
     }
-    const target = navigateTarget(navWorkspaces, f.paneId);
-    if (target) {
-      workspace.setActiveWorkspace(target.workspaceId);
-      workspace.setFocusIn(target.workspaceId, target.leafId);
+    if (isTerminalRow(f)) {
+      // A plain terminal: send the agent surface home and teleport the terminal's
+      // dock body into the terminal slot instead (never respawned).
+      surfaceSlot.clear();
+      if (terminalFocusSlot) terminalSlot.set(f.paneId, terminalFocusSlot);
+    } else {
+      terminalSlot.clear();
+      const target = navigateTarget(navWorkspaces, f.paneId);
+      if (target) {
+        workspace.setActiveWorkspace(target.workspaceId);
+        workspace.setFocusIn(target.workspaceId, target.leafId);
+      }
+      surfaceSlot.set(focusSlot);
     }
-    surfaceSlot.set(focusSlot);
 
     // Focus the terminal + pin to the bottom whenever we SWITCH to a Claude window
     // (the shown agent changed, or the user re-selected it) — after the display
@@ -640,6 +722,7 @@
   $effect(() => () => {
     clearAdvance();
     surfaceSlot.clear();
+    terminalSlot.clear();
   });
 
   /** Select (watch) an agent: show it immediately, pin it, and focus its terminal. */
@@ -648,21 +731,6 @@
     userSelected = paneId;
     shownId = paneId;
     focusNonce += 1;
-  }
-
-  /** Focus the not-started coordinator affordance: select the start SENTINEL so the
-   *  main pane shows the Start empty-state for `projectId` (task 10.4). It isn't a
-   *  real pane, so we pin it like a selection but don't bump the terminal nonce. */
-  function selectCoordinatorStart(projectId: string) {
-    clearAdvance();
-    userSelected = null;
-    shownId = coordinatorStartId(projectId);
-  }
-
-  /** The coordinator was launched from the main-pane Start state — focus the now-real
-   *  coordinator pane (reuses the normal select path). */
-  function onCoordinatorStarted(paneId: string) {
-    selectAgent(paneId);
   }
 
   /** PREVIEW an archived session: respawn `claude --resume` so its transcript shows
@@ -679,8 +747,31 @@
   /** A roster row was clicked: an archived (closed) session resumes for preview;
    *  everything else (live / paused / already-previewing) is just selected. */
   function onRowClick(r: AgentRow) {
-    if (r.closed) startPreview(r.paneId);
+    if (r.closed && !isTerminalRow(r)) startPreview(r.paneId);
     else selectAgent(r.paneId);
+  }
+
+  // --- Terminal rows (combined placement) ------------------------------------
+  /** Kill (running) / Close (stopped) a terminal row: drops its dock entry, whose
+   *  TerminalPane teardown kills + reaps a live process. Advances focus like an
+   *  archive would, and forgets any pin (its id is per-process). */
+  function dismissTerminal(r: AgentRow) {
+    advanceAfterDismiss(r.paneId);
+    if (userSelected === r.paneId) userSelected = null;
+    uiPrefs.forgetPinned(r.paneId);
+    const key = r.terminalKey ?? '';
+    if (key.startsWith('task:')) projectTasks.dismiss(key.slice('task:'.length));
+    else if (key.startsWith('bare:')) projectTasks.removeBareTerminal(key.slice('bare:'.length));
+  }
+
+  /** Restart a task terminal row (a fresh pane id → the new row is selected). */
+  function restartTerminal(r: AgentRow) {
+    const key = r.terminalKey ?? '';
+    if (!key.startsWith('task:')) return;
+    const id = key.slice('task:'.length);
+    projectTasks.restart(id);
+    const next = projectTasks.runtime[id]?.paneId;
+    if (next) selectAgent(next);
   }
 
   /** Step through the attention queue from the header ↑/↓ controls (immediate). */
@@ -731,6 +822,9 @@
     if (archiveDecision(activity.forPane(paneId).userHash) === 'delete') {
       workspace.deleteAgent(paneId);
     } else {
+      // Archiving UNPINS: a pinned row belongs to the live top of the list, and an
+      // archived session must land under "Archived" like every other one.
+      uiPrefs.forgetPinned(paneId);
       workspace.closeAgent(paneId);
     }
   }
@@ -770,6 +864,7 @@
     if (!ok) return;
     advanceAfterDismiss(paneId);
     if (userSelected === paneId) userSelected = null;
+    uiPrefs.forgetPinned(paneId);
     workspace.deleteAgent(paneId);
   }
 
@@ -778,8 +873,11 @@
    *  Archived/done lane shown under the header) and returns null when nothing is
    *  archived; we just feed it the live deps and show the modal. */
   function deleteAllArchived() {
-    const req = deleteAllArchivedRequest(pin.rest, {
-      deleteAgent: (id) => workspace.deleteAgent(id),
+    const req = deleteAllArchivedRequest(viewRows, {
+      deleteAgent: (id) => {
+        uiPrefs.forgetPinned(id);
+        workspace.deleteAgent(id);
+      },
       getSelected: () => userSelected,
       setSelected: (v) => (userSelected = v)
     });
@@ -796,9 +894,16 @@
   // matching the manual "Archive session" decision.
   $effect(() => {
     for (const r of allRows) {
+      if (isTerminalRow(r)) continue; // a terminal row is never archived/deleted here
       const action = autoArchiveAction(r, activity.forPane(r.paneId).userHash);
-      if (action === 'delete') workspace.deleteAgent(r.paneId);
-      else if (action === 'archive') workspace.closeAgent(r.paneId);
+      if (action === 'delete') {
+        uiPrefs.forgetPinned(r.paneId);
+        workspace.deleteAgent(r.paneId);
+      }
+      else if (action === 'archive') {
+        uiPrefs.forgetPinned(r.paneId); // archiving unpins (see performArchive)
+        workspace.closeAgent(r.paneId);
+      }
     }
   });
 
@@ -834,6 +939,7 @@
   // as "the user replied".
   $effect(() => {
     for (const r of allRows) {
+      if (isTerminalRow(r)) continue;
       const liveCount = activity.forPane(r.paneId).userMsgCount;
       if (r.paused) {
         if (r.pausedCount == null && typeof liveCount === 'number') {
@@ -860,6 +966,7 @@
   // overwrites the message it had while live. Runs off the same ~1s roster re-derive.
   $effect(() => {
     for (const r of allRows) {
+      if (isTerminalRow(r)) continue; // no transcript to cache
       if (r.closed || r.preview) continue; // a closed/previewing pane has no fresh live message
       if (r.summary) summaries.record(sessionIdOf(r), r.summary);
       costs.record(sessionIdOf(r), r.cost); // freeze cost before snapshot resets on reopen
@@ -909,52 +1016,61 @@
     previewTimers.clear();
   });
 
-  /** Whether a row is the project COORDINATOR. The coordinator follows the SAME
-   *  archive/delete rules as ordinary sessions (coordinator-lifecycle), so it is no
-   *  longer special-cased in the archive/pause paths. It IS still excluded from inline
-   *  rename (its title is pinned "Coordinator"), so the menu drops the Rename item for
-   *  it. Normal rows are unaffected. */
-  function isCoordinator(r: AgentRow | null): boolean {
-    return r?.role === 'coordinator';
-  }
-
   /** Right-click a roster row. An Archived agent — closed OR being previewed (it's
    *  still presented as archived until you reply) — offers only Delete (restore is the
    *  focus-header Resume / a row click); a paused agent offers Open / Resume / Archive;
    *  a live agent offers Open / Pause / Archive. An EMPTY live/paused session presents
-   *  its archive action as Delete instead. The COORDINATOR follows the SAME rules: a
-   *  LIVE/paused coordinator gets Open / Pause / Archive routed through `archiveAgent`
-   *  (so an empty coordinator DELETES and a non-empty one ARCHIVES); only Rename is
-   *  omitted (its title is pinned). An ARCHIVED coordinator offers Delete (and Restore
-   *  via the header), like any archived session. */
+   *  its archive action as Delete instead. */
   function openAgentMenu(e: MouseEvent, row: AgentRow, name: string) {
     e.preventDefault();
+    if (isTerminalRow(row)) {
+      const acts = terminalFocusActions(row);
+      const items: MenuItem[] = [
+        { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
+        { label: 'Rename', icon: 'pencil', onClick: () => renameAgent(row) },
+        ...(acts.restart
+          ? [{ label: 'Restart', icon: 'rotate-ccw', onClick: () => restartTerminal(row) } as MenuItem]
+          : []),
+        {
+          label: acts.primary === 'Kill' ? 'Kill terminal' : 'Close terminal',
+          icon: 'trash-2',
+          danger: true,
+          onClick: () => dismissTerminal(row)
+        }
+      ];
+      menu = { open: true, x: e.clientX, y: e.clientY, items };
+      return;
+    }
     // The archive action for a live/paused row: an empty session deletes (nothing to
-    // keep) and reads as "Delete"; a session with messages archives (restorable). This
-    // is the SAME decision for the coordinator — `archiveAgent` runs its userHash
-    // through `archiveDecision` just like any other row.
+    // keep) and reads as "Delete"; a session with messages archives (restorable).
     const archiveItem: MenuItem = isEmptySession(row.paneId)
       ? { label: 'Delete', icon: 'trash-2', danger: true, onClick: () => archiveAgent(row.paneId) }
       : { label: 'Archive session', icon: 'archive', danger: true, onClick: () => archiveAgent(row.paneId) };
-    // The coordinator's title is pinned ("Coordinator"), so inline rename is suppressed
-    // — drop the Rename item for it (it would be a no-op) while keeping everything else.
-    const renameItem: MenuItem[] = isCoordinator(row)
-      ? []
-      : [{ label: 'Rename', icon: 'pencil', onClick: () => renameAgent(row) }];
+    const renameItem: MenuItem[] = [
+      { label: 'Rename', icon: 'pencil', onClick: () => renameAgent(row) }
+    ];
+    // Pin/unpin is offered on every row: a pinned session sits in the Pinned group
+    // above the lanes whatever its status.
+    const pinItem: MenuItem = uiPrefs.isPinned(row.paneId)
+      ? { label: 'Unpin', icon: 'pin-off', onClick: () => uiPrefs.togglePinned(row.paneId) }
+      : { label: 'Pin to top', icon: 'pin', onClick: () => uiPrefs.togglePinned(row.paneId) };
     const items: MenuItem[] = row.closed || row.preview
       ? [
+          pinItem,
           { label: 'Delete', icon: 'trash-2', danger: true, onClick: () => deleteAgent(row.paneId, name) }
         ]
       : row.paused
         ? [
             { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
             ...renameItem,
+            pinItem,
             { label: 'Resume', icon: 'play', onClick: () => resumeAgent(row.paneId) },
             archiveItem
           ]
         : [
             { label: 'Open terminal', icon: 'terminal', onClick: () => selectAgent(row.paneId) },
             ...renameItem,
+            pinItem,
             { label: 'Pause', icon: 'pause', onClick: () => pauseAgent(row.paneId) },
             archiveItem
           ];
@@ -966,27 +1082,20 @@
     return titles.titleFor(paneId) ?? fallback;
   }
 
-  /** Title shown in the focus-pane header. The coordinator always reads
-   *  "Coordinator" — matching its pinned row title — instead of its underlying
-   *  workspace name ("Session N"); everything else uses its generated session
-   *  title, falling back to its name. */
+  /** Title shown in the focus-pane header: the generated session title, falling
+   *  back to the row's name. */
   function focusTitle(r: AgentRow): string {
-    return isCoordinator(r) ? 'Coordinator' : displayName(r.paneId, r.name);
+    return displayName(r.paneId, r.name);
   }
 
   /** New session: when a project is already selected, launch straight into it (no
    *  dialog); otherwise open the launcher to pick/create a project. */
   function newAgent() {
-    // Fire-and-forget: startNewSession is async (it may create a worktree first).
-    void startNewSession();
+    startNewSession();
   }
 
-  // Flat ⌘↑/↓ cycling order: the project's COORDINATOR (its running row, or — when
-  // not started — its Start affordance, a `start` sentinel target) FIRST, then the
-  // rest in lane order. So the coordinator/affordance is always keyboard-reachable,
-  // including when it's the ONLY entry (task 10.8). Built from the same pin decision
-  // the render uses, so nav and render agree.
-  const navTargets = $derived(coordinatorNavOrder(viewRows, activeCoordProjectId));
+  // Flat ⌘↑/↓ cycling order: the lane-ordered rows.
+  const navTargets = $derived(viewRows.map((r) => ({ kind: 'row' as const, paneId: r.paneId })));
 
   // The scrollable session-list container; the reveal effect scrolls the selected
   // row into view within it on keyboard navigation.
@@ -998,7 +1107,7 @@
   // plain non-reactive tracker like `lastShownId`), NOT continuously: re-asserting
   // expansion every time the effect re-runs would defeat the manual "Collapse" button
   // while a hidden archived row stays selected, and would re-evaluate every second
-  // (since `renderGrouped` recomputes on the roster's 1s clock). The early return on an
+  // (since `groups` recomputes on the roster's 1s clock). The early return on an
   // unchanged selection also shrinks this effect's tracked deps to just `shownId`.
   let lastNavExpandId: string | null = null;
   $effect(() => {
@@ -1008,7 +1117,7 @@
     if (
       archivedNavNeedsExpand(
         id,
-        renderGrouped.done.map((r) => r.paneId),
+        archivedRows.map((r) => r.paneId),
         ARCHIVED_PREVIEW,
         showAllArchived
       )
@@ -1021,7 +1130,7 @@
   // brings a hidden row into the DOM) changes, scroll the `.sel` row into view within
   // the list after the DOM updates. `block: 'nearest'` no-ops when the row is already
   // fully visible, so clicks / auto-advance to a visible row never jump the list. The
-  // `.sel` class covers lane rows AND the pinned-coordinator / start-affordance slot.
+  // `.sel` class covers the lane rows.
   $effect(() => {
     void shownId; // re-run when the selection changes
     void showAllArchived; // and after an auto-expand renders a newly-visible row
@@ -1032,74 +1141,67 @@
     });
   });
 
-  /** Focus a nav target: a real pane selects normally (a closed/archived one is then
-   *  auto-previewed by the focus effect, as before); the not-started `start` sentinel
-   *  does exactly what clicking the affordance does (shows the Start empty-state). */
-  function focusNavTarget(t: { kind: 'pane'; paneId: string } | { kind: 'start'; projectId: string }) {
-    if (t.kind === 'start') selectCoordinatorStart(t.projectId);
-    else selectAgent(t.paneId);
+  /** Focus a nav target: select its pane (a closed/archived one is then
+   *  auto-previewed by the focus effect, as before). */
+  function focusNavTarget(t: { kind: 'row'; paneId: string }) {
+    selectAgent(t.paneId);
   }
 
-  /** The index of the currently-shown target within `navTargets`: a `start` sentinel
-   *  matches the shown start-project; a `pane` matches `shownId`. -1 when off-list. */
+  /** The index of the currently-shown target within `navTargets` (-1 off-list). */
   function currentNavIndex(): number {
-    const startProj = coordinatorStartProject(shownId);
-    return navTargets.findIndex((t) =>
-      t.kind === 'start' ? t.projectId === startProj : t.paneId === shownId
-    );
+    return navTargets.findIndex((t) => t.paneId === shownId);
   }
 
-  /** Keyboard shortcuts on the inbox, all ⌘-modified so plain keys still reach the
-   *  PTY: ⌘↑/↓ step the roster; ⌘W archives the focused session (delete-if-empty);
-   *  ⌘. pauses/resumes it. */
+  /** Keyboard shortcuts on the inbox. Every binding is user-customizable (the
+   *  `shortcuts` store; defaults in parentheses) and defaults to a ⌘-modified chord
+   *  so plain keys still reach the PTY: prevProject/nextProject (⌘⇧↑/↓) cycle the
+   *  project filter; archiveSession (⌘W) archives the focused session
+   *  (delete-if-empty); pauseSession (⌘.) pauses/resumes it; prevAgent/nextAgent
+   *  (⌘↑/↓) step the roster. */
   function onNavKey(e: KeyboardEvent) {
     if (launcher.open) return;
+    // The rename input owns the keyboard while it is open: cycling the project
+    // filter (or stepping rows) from under it would unmount the editor and
+    // discard what the user typed. Esc / Enter still reach it via its own handler.
+    if (editingTitle) return;
 
-    // ⌘⇧↑/↓ — cycle the project filter up/down the panel's order. Handled before
-    // the ⌘-only guard below since this one intentionally uses Shift; ⌘↑/↓ (no
-    // shift) still steps the agent roster.
-    if (
-      e.metaKey &&
-      e.shiftKey &&
-      !e.altKey &&
-      !e.ctrlKey &&
-      (e.key === 'ArrowUp' || e.key === 'ArrowDown')
-    ) {
+    // Project-filter cycling. Checked BEFORE the agent stepping since the default
+    // chords differ only by ⇧ (an exact chord match keeps them apart either way).
+    const projectStep = shortcuts.matches(e, 'nextProject')
+      ? 1
+      : shortcuts.matches(e, 'prevProject')
+        ? -1
+        : 0;
+    if (projectStep !== 0) {
       e.preventDefault();
       const order = filterOrder(projects.list, unassignedCount(allRows) > 0);
-      const dir = e.key === 'ArrowDown' ? 1 : -1;
-      projectFilter.select(stepFilter(order, projectFilter.selected, dir));
+      projectFilter.select(stepFilter(order, projectFilter.selected, projectStep));
       return;
     }
 
-    // All remaining inbox shortcuts use ⌘ alone (no alt/ctrl/shift), so a literal
-    // key still reaches the terminal.
-    if (!e.metaKey || e.altKey || e.ctrlKey || e.shiftKey) return;
-
-    // ⌘W — archive (or delete-if-empty) the focused session. preventDefault also
-    // stops ⌘W from closing the app window via the webview. The COORDINATOR follows the
-    // SAME archive/delete rule (coordinator-lifecycle) — no longer excluded here.
-    if (e.key === 'w' || e.key === 'W') {
+    // Archive (or delete-if-empty) the focused session. preventDefault also stops
+    // the default ⌘W from closing the app window via the webview.
+    if (shortcuts.matches(e, 'archiveSession')) {
       if (!focus || focus.closed) return;
       e.preventDefault();
-      archiveAgent(focus.paneId);
+      if (isTerminalRow(focus)) dismissTerminal(focus); // Kill / Close the terminal row
+      else archiveAgent(focus.paneId);
       return;
     }
 
-    // ⌘. — pause the focused session, or resume it if already paused. The COORDINATOR
-    // follows the SAME pause rule (coordinator-lifecycle) — no longer excluded here.
-    if (e.key === '.') {
-      if (!focus || focus.closed) return;
+    // Pause the focused session, or resume it if already paused (no-op for a terminal row).
+    if (shortcuts.matches(e, 'pauseSession')) {
+      if (!focus || focus.closed || isTerminalRow(focus)) return;
       e.preventDefault();
       if (focus.paused) resumeAgent(focus.paneId);
       else pauseAgent(focus.paneId);
       return;
     }
 
-    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    const dir = shortcuts.matches(e, 'nextAgent') ? 1 : shortcuts.matches(e, 'prevAgent') ? -1 : 0;
+    if (dir === 0) return;
     if (navTargets.length === 0) return;
     e.preventDefault();
-    const dir = e.key === 'ArrowDown' ? 1 : -1;
     const i = currentNavIndex();
     const ni =
       i < 0
@@ -1153,60 +1255,37 @@
 
 <svelte:window onkeydown={onNavKey} />
 
-<!-- One roster row — shared by the pinned coordinator (top slot) and the lane lists
-     below the rule, so the markup never diverges. `lane` only drives the row's
-     selection accent class. `isCoordPin` marks the row as the project's OWN pinned
-     coordinator: its title is forced to "Coordinator" and its own coordinator badge
-     is suppressed (task 10.5) — only that single pinned row, not the agents it
-     spawned (which keep their "coordinated" attribution). -->
-{#snippet sessionRow(r: AgentRow, lane: AgentLane, isCoordPin = false)}
+<!-- One roster row. `lane` only drives the row's selection accent class. -->
+{#snippet sessionRow(r: AgentRow, lane: AgentLane)}
   <button
     type="button"
     class="row {lane}"
+    class:minimal={compactMode.minimal}
     class:sel={focus?.paneId === r.paneId}
     class:flash-attn={flashPanes.has(r.paneId)}
     onclick={() => onRowClick(r)}
     oncontextmenu={(e) => openAgentMenu(e, r, displayName(r.paneId, r.name))}
   >
-    <ProjectIcon {...projAvatar(r.projectId)} size={30} />
+    <ProjectIcon {...projAvatar(r.projectId)} size={compactMode.minimal ? 20 : 30} />
     <span class="nm">
       <span class="t">
-        {isCoordPin ? 'Coordinator' : (titles.titleFor(r.paneId) ?? r.name)}
-        {#if isCoordPin}
-          <!-- The pinned coordinator's own row carries no role badge (task 10.5). -->
-        {:else if isArchivedCoordinator(r)}
-          <!-- An ARCHIVED (closed) coordinator is labeled with the bot "Coordinator"
-               badge (agent-roster-display) so its archived roster row is identifiable.
-               A LIVE coordinator's presentation (below) is unchanged. -->
-          <span
-            class="spec-badge coord-badge"
-            use:tooltip={'Archived project coordinator'}
-          >
-            <Icon name="bot" size={9} />Coordinator
-          </span>
-        {:else if r.role === 'coordinator'}
-          <span
-            class="spec-badge coord-badge"
-            use:tooltip={'Project coordinator (orchestrates other agents)'}
-          >
-            <Icon name="bot" size={9} />coordinator
-          </span>
-        {:else if r.coordinatorPaneId}
-          <span
-            class="spec-badge coord-badge coord-badge-icon"
-            use:tooltip={'Spawned by the project coordinator'}
-          >
-            <Icon name="compass" size={9} />
-          </span>
+        {#if pinnedSet.has(r.paneId)}
+          <span class="pin" use:tooltip={'Pinned to top'}><Icon name="pin" size={10} /></span>
         {/if}
+        {#if isTerminalRow(r)}
+          <span class="term-glyph" use:tooltip={'Terminal'}><Icon name="terminal" size={11} /></span>
+        {/if}
+        {titles.titleFor(r.paneId) ?? r.name}
         {#if r.specialist}
           <span class="spec-badge" use:tooltip={`Spawned as specialist “${r.specialist}”`}>
             <Icon name="bot" size={9} />{r.specialist}
           </span>
         {/if}
       </span>
-      <span class="s" class:q={needsAttention(r)} use:tooltip={rowSub(r)}>{rowSub(r)}</span>
-      {#if !compactMode.prefs.enabled}
+      {#if !compactMode.minimal}
+        <span class="s" class:q={needsAttention(r)} use:tooltip={rowSub(r)}>{rowSub(r)}</span>
+      {/if}
+      {#if !compactMode.enabled}
         <span class="meta">
           {#if showContext(r)}
             <span class="m ctx" use:tooltip={'Context window used by this agent'}>
@@ -1214,9 +1293,11 @@
               {ctxLabel(r.contextPct)}
             </span>
           {/if}
-          <span class="m" use:tooltip={'Model'}>
-            <Icon name="cpu" size={11} />{rowModelLabel(r)}
-          </span>
+          {#if r.worktree}
+            <span class="m" use:tooltip={'Git worktree this session runs in'}>
+              <Icon name="git-branch" size={11} />{r.worktree}
+            </span>
+          {/if}
           <span class="m" use:tooltip={'Time since last activity'}>
             <Icon name="clock" size={11} />{friendlyTime(r.lastTs, nowMs)}
           </span>
@@ -1224,7 +1305,7 @@
       {/if}
     </span>
     <!-- Status dot: orange when it needs you, flashing blue while actively In flight.
-         An `idle` row (a quiet engaged coordinator, or a not-yet-wired pane) is in the
+         An `idle` row (a quiet pane, or a not-yet-wired pane) is in the
          flight lane but NOT running, so it shows no dot rather than a misleading flash. -->
     {#if needsAttention(r) || (lane === 'flight' && r.status !== 'idle')}
       <span class="badge {badgeClass(r)} dotonly"><span class="dot"></span></span>
@@ -1273,62 +1354,38 @@
       <div class="lh">
         <img class="logo" src="/logomark.svg" alt="" aria-hidden="true" />
         <h1>Sessions <span class="count">{rows.length}</span></h1>
-        <button type="button" class="launch" onclick={newAgent} aria-label="New session" use:tooltip={'New session (⌘N)'}>＋</button>
+        <button type="button" class="launch" onclick={newAgent} aria-label="New session" use:tooltip={`New session (${shortcuts.text('newSession')})`}>＋</button>
       </div>
 
       <!-- Middle region: the agent roster (or its empty state). Flexes to fill
            the space left between the header and the bottom Tasks launcher. -->
       <div class="agent-region">
         <div class="list-scroll" bind:this={listScrollEl}>
-          <!-- Coordinator TOP SLOT (tasks 10.2–10.3, 10.6): the project's live
-               coordinator pinned above all sessions, OR — when none is running —
-               a focusable "Start coordinator" affordance. A rule separates it from
-               the rest. This renders FIRST, even with no other sessions, so the
-               coordinator/affordance + rule always head the list and the "No sessions
-               yet" empty state sits BELOW them (task 10.6). -->
-          {#if pin.coordinator}
-            {@render sessionRow(pin.coordinator, laneForRow(pin.coordinator), true)}
-            {@render subagentBlock(pin.coordinator)}
-            <hr class="coord-rule" />
-          {:else if pin.showStart && activeCoordProject}
-            <button
-              type="button"
-              class="row coord-start"
-              class:sel={coordinatorStartProject(shownId) === activeCoordProjectId}
-              onclick={() => selectCoordinatorStart(activeCoordProject.id)}
-            >
-              <ProjectIcon {...projAvatar(activeCoordProject.id)} size={30} />
-              <span class="nm">
-                <!-- No "not started" badge on the affordance (task 10.5); the
-                     "Start to orchestrate" subline + play CTA convey the state. -->
-                <span class="t">Coordinator</span>
-                <span class="s">Start to orchestrate this project</span>
-              </span>
-              <span class="start-cta"><Icon name="play" size={13} /></span>
-            </button>
-            <hr class="coord-rule" />
-          {/if}
-
-          {#if pin.rest.length === 0}
-            <!-- No NON-coordinator sessions — shown BELOW the coordinator + rule
-                 (tasks 10.6, 10.10). Gated on `pin.rest` (the lane rows after the
-                 pinned coordinator is removed), NOT the total row count, so the box
-                 still appears when the only session is the pinned coordinator. With
-                 no concrete project (All / Unassigned) the coordinator isn't pinned,
-                 so `pin.rest` is just `rows` and this matches "zero rows" as before. -->
+          {#if viewRows.length === 0}
             <div class="empty-list">
               <p>No sessions yet.</p>
               <button type="button" class="btn-primary" onclick={newAgent}>＋ New session</button>
             </div>
           {:else}
-            {#each LANE_ORDER as lane (lane)}
-              {@const items = renderGrouped[lane]}
-              {@const collapsedArchive = lane === 'done' && !showAllArchived}
+            <!-- Sections come pre-ordered from buildRosterGroups: Pinned first, then
+                 the grouping-mode body (status lanes / date buckets / a headerless
+                 flat list), then Archived last. Empty sections are already dropped. -->
+            {#each groups as g, gi (g.key)}
+              {@const items = g.rows}
+              {@const isArchive = g.kind === 'archived'}
+              {@const collapsedArchive = isArchive && !showAllArchived}
               {@const visible = collapsedArchive ? items.slice(0, ARCHIVED_PREVIEW) : items}
-              {#if items.length > 0}
-                <div class="group-h {lane}">
-                  {LANES[lane].title} <span class="gn">· {items.length}</span><span class="rule"></span>
-                  {#if lane === 'done'}
+              {#if g.kind === 'flat'}
+                {#if gi > 0}
+                  <!-- The headerless flat list (Group by: None) still needs a visual
+                       break from a preceding Pinned section, or its rows read as
+                       part of "Pinned · N". A bare rule, no title. -->
+                  <div class="group-h flat" aria-hidden="true"><span class="rule"></span></div>
+                {/if}
+              {:else}
+                <div class="group-h {g.lane ?? g.kind}">
+                  {g.title} <span class="gn">· {items.length}</span><span class="rule"></span>
+                  {#if isArchive}
                     <button
                       type="button"
                       class="group-action"
@@ -1339,19 +1396,19 @@
                     </button>
                   {/if}
                 </div>
-                {#each visible as r (r.paneId)}
-                  {@render sessionRow(r, lane)}
-                  {@render subagentBlock(r)}
-                {/each}
-                {#if lane === 'done' && items.length > ARCHIVED_PREVIEW}
-                  <button
-                    type="button"
-                    class="show-all"
-                    onclick={() => (showAllArchived = !showAllArchived)}
-                  >
-                    {showAllArchived ? 'Collapse' : `Show all (${items.length})`}
-                  </button>
-                {/if}
+              {/if}
+              {#each visible as r (r.paneId)}
+                {@render sessionRow(r, laneForRow(r))}
+                {@render subagentBlock(r)}
+              {/each}
+              {#if isArchive && items.length > ARCHIVED_PREVIEW}
+                <button
+                  type="button"
+                  class="show-all"
+                  onclick={() => (showAllArchived = !showAllArchived)}
+                >
+                  {showAllArchived ? 'Collapse' : `Show all (${items.length})`}
+                </button>
               {/if}
             {/each}
           {/if}
@@ -1373,12 +1430,47 @@
 
     <!-- RIGHT: focus pane (header + teleported live TUI / Archived / All clear) -->
     <div class="col-focus">
-      {#if startProject}
-        <!-- The not-started coordinator affordance is focused: the main pane invites
-             starting the orchestrator (task 10.4). On Start, the now-real coordinator
-             pane is focused via onStarted. -->
-        <CoordinatorStart project={startProject} onStarted={onCoordinatorStarted} />
-        <!-- Slot kept bound (hidden) so the teleport target survives this state. -->
+      {#if focus && isTerminalRow(focus)}
+        {@const av = projAvatar(focus.projectId)}
+        {@const acts = terminalFocusActions(focus)}
+        <!-- A plain-terminal row (combined placement): its dock body is teleported
+             into the terminal slot below — never respawned. -->
+        <div class="fhead">
+          <ProjectIcon {...av} size={26} />
+          {#if editingTitle}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              class="ttl-edit"
+              bind:this={titleInput}
+              bind:value={titleDraft}
+              onkeydown={onTitleKey}
+              onblur={() => commitTitleEdit()}
+              aria-label="Rename terminal"
+              autofocus
+            />
+          {:else}
+            <button
+              type="button"
+              class="ttl ttl-btn"
+              onclick={() => startTitleEdit()}
+              use:tooltip={focus.summary ?? 'Rename terminal'}
+            >{focusTitle(focus)}</button>
+          {/if}
+          <span class="spc"></span>
+          {#if acts.restart}
+            <button type="button" class="hbtn" onclick={() => restartTerminal(focus)} use:tooltip={'Restart this task terminal'}>Restart</button>
+          {/if}
+          <button
+            type="button"
+            class="hbtn danger"
+            onclick={() => dismissTerminal(focus)}
+            use:tooltip={acts.primary === 'Kill'
+              ? `Kill terminal and close (${shortcuts.text('archiveSession')})`
+              : `Close terminal (${shortcuts.text('archiveSession')})`}
+          >{acts.primary}</button>
+        </div>
+        <div class="focus-slot term-slot" class:attn={needsAttention(focus)} bind:this={terminalFocusSlot}></div>
+        <!-- Agent slot stays bound (hidden) so the agent surface can teleport back without a remount. -->
         <div class="focus-slot hidden" bind:this={focusSlot}></div>
       {:else if focus && !focus.closed}
         {@const av = projAvatar(focus.projectId)}
@@ -1391,12 +1483,10 @@
               bind:this={titleInput}
               bind:value={titleDraft}
               onkeydown={onTitleKey}
-              onblur={commitTitleEdit}
+              onblur={() => commitTitleEdit()}
               aria-label="Rename session"
               autofocus
             />
-          {:else if isCoordinator(focus)}
-            <span class="ttl">{focusTitle(focus)}</span>
           {:else}
             <button
               type="button"
@@ -1422,23 +1512,23 @@
               use:tooltip={'Delete session'}
             >Delete</button>
           {:else}
-            <!-- The COORDINATOR follows the SAME archive/delete rules as ordinary
-                 sessions (coordinator-lifecycle): Pause + Archive (non-empty) / Delete
+            <!-- Pause + Archive (non-empty) / Delete
                  (empty), routed through the same handlers — no longer delete-only. -->
             {#if focus.paused}
-              <button type="button" class="hbtn" onclick={() => resumeAgent(focus.paneId)} use:tooltip={'Resume (⌘.)'}>Resume</button>
+              <button type="button" class="hbtn" onclick={() => resumeAgent(focus.paneId)} use:tooltip={`Resume (${shortcuts.text('pauseSession')})`}>Resume</button>
             {:else}
-              <button type="button" class="hbtn" onclick={() => pauseAgent(focus.paneId)} use:tooltip={'Pause / defer for later (⌘.)'}>Pause</button>
+              <button type="button" class="hbtn" onclick={() => pauseAgent(focus.paneId)} use:tooltip={`Pause / defer for later (${shortcuts.text('pauseSession')})`}>Pause</button>
             {/if}
             {#if isEmptySession(focus.paneId)}
-              <button type="button" class="hbtn danger" onclick={() => archiveAgent(focus.paneId)} use:tooltip={'Delete empty session (⌘W)'}>Delete</button>
+              <button type="button" class="hbtn danger" onclick={() => archiveAgent(focus.paneId)} use:tooltip={`Delete empty session (${shortcuts.text('archiveSession')})`}>Delete</button>
             {:else}
-              <button type="button" class="hbtn danger" onclick={() => archiveAgent(focus.paneId)} use:tooltip={'Archive session (⌘W)'}>Archive</button>
+              <button type="button" class="hbtn danger" onclick={() => archiveAgent(focus.paneId)} use:tooltip={`Archive session (${shortcuts.text('archiveSession')})`}>Archive</button>
             {/if}
           {/if}
         </div>
         <!-- The single mounted workspace surface is teleported in here. -->
         <div class="focus-slot" class:attn={needsAttention(focus)} bind:this={focusSlot}></div>
+        <div class="focus-slot hidden" bind:this={terminalFocusSlot}></div>
       {:else if focus && focus.closed}
         {@const av = projAvatar(focus.projectId)}
         <div class="fhead">
@@ -1460,6 +1550,7 @@
         </div>
         <!-- Slot stays bound (hidden) so the teleport target survives this state. -->
         <div class="focus-slot hidden" bind:this={focusSlot}></div>
+        <div class="focus-slot hidden" bind:this={terminalFocusSlot}></div>
       {:else}
         <div class="empty">
           <div class="ring">✓</div>
@@ -1468,6 +1559,7 @@
         </div>
         <!-- Slot still bound so a fresh attention agent can teleport in without a remount. -->
         <div class="focus-slot hidden" bind:this={focusSlot}></div>
+        <div class="focus-slot hidden" bind:this={terminalFocusSlot}></div>
       {/if}
     </div>
   </section>
@@ -1511,6 +1603,9 @@
   .launch-pane.sp { border-top: 1px solid var(--line-subtle); }
 
   .group-h { display: flex; align-items: center; gap: 8px; padding: 14px 16px 6px; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: var(--tracking-label); }
+  .group-h.pinned { color: var(--fg-3); }
+  .group-h.date { color: var(--fg-3); }
+  .group-h.flat { padding-bottom: 2px; }
   .group-h.attn { color: var(--orange-300); }
   .group-h.flight { color: var(--blue-300); }
   .group-h.done { color: var(--fg-4); }
@@ -1553,6 +1648,9 @@
 
   .row { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 10px 16px; cursor: pointer; border: none; border-left: 2px solid transparent; background: none; transition: background var(--dur-fast); }
   .row:hover { background: rgba(255,255,255,0.025); }
+  /* Minimal density: a single title line beside a smaller icon, tighter padding. */
+  .row.minimal { padding: 6px 16px; gap: 9px; }
+  .row.minimal .nm .t { font-size: 12.5px; }
   .row.sel { background: rgba(61,123,255,0.10); border-left-color: var(--blue-500); }
   .row.attn.sel { background: var(--orange-tint); border-left-color: var(--orange-500); }
   /* When an agent JUST enters "needs you", flash its card from 50% of the orange
@@ -1575,26 +1673,15 @@
   @media (prefers-reduced-motion: reduce) {
     .row.flash-attn::after { animation: none; opacity: 0; }
   }
-  /* The coordinator top slot: a rule separating the pinned coordinator / Start
-     affordance from the rest of the sessions (tasks 10.2–10.3). */
-  .coord-rule { margin: 4px 16px 2px; border: none; border-top: 1px solid var(--line-default); }
-  /* The not-started "Start coordinator" affordance reuses the row layout with a
-     play-cta on the right; its coordinator badge reads in the orange accent. */
-  .row.coord-start .start-cta { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: var(--r-sm); background: var(--orange-tint); color: var(--orange-200); }
-  .row.coord-start:hover .start-cta { color: var(--orange-300); }
   .row .nm { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .row .nm .t { font-weight: 600; font-size: 13px; color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
   /* Specialist attribution: a compact blue-tinted pill (icon + name) next to the
      agent's title, marking a pane spawned AS a specialist (task 5.4). */
   .row .nm .t .spec-badge { flex: none; display: inline-flex; align-items: center; gap: 3px; max-width: 120px; padding: 1px 6px 1px 5px; border-radius: var(--r-full); background: var(--blue-tint); color: var(--blue-200); font-family: var(--font-mono); font-size: 9.5px; font-weight: 500; letter-spacing: 0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row .nm .t .spec-badge :global(.mc-icon) { opacity: 0.85; }
-  /* Coordinator badges (the coordinator itself, and its coordinated agents) use a
-     distinct orange tint so an orchestration is visible at a glance (task 6.5). */
-  .row .nm .t .coord-badge { background: var(--orange-tint); color: var(--orange-200); max-width: 130px; }
-  /* The coordinated-agent badge is icon-only (a single compass glyph, no text), so
-     it collapses to a square chip: symmetric padding, no gap/max-width meant for a
-     trailing label (task 1.2). */
-  .row .nm .t .coord-badge-icon { gap: 0; max-width: none; padding: 2px; }
+  /* Pinned marker: a small pin glyph leading the title. */
+  .row .nm .t .pin { flex: none; display: inline-flex; color: var(--fg-4); }
+  .row .nm .t .term-glyph { flex: none; display: inline-flex; color: var(--fg-3); }
   .row .nm .s { font-size: 11px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
   .row .nm .s.q { color: var(--orange-300); }
   /* The tiny third row: context · cost · last activity, each an icon + value. */
@@ -1655,6 +1742,8 @@
   /* The teleported surface fills the slot. */
   .focus-slot :global(.surface),
   .focus-slot :global(.workspace) { flex: 1 1 auto; min-width: 0; min-height: 0; }
+  /* A teleported dock terminal body (combined placement) fills the slot the same way. */
+  .focus-slot :global(.tp-term-body) { flex: 1 1 auto; min-width: 0; min-height: 0; }
   .focus-slot.attn { box-shadow: inset 0 0 0 1px rgba(238,126,77,0.18); border-radius: var(--r-md); }
   .focus-slot.hidden { display: none; }
 

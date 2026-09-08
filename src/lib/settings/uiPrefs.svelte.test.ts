@@ -15,6 +15,7 @@ import {
   TERMINALS_WIDTH_MAX,
   TERMINALS_WIDTH_MIN,
   UiPrefsStore,
+  parseTerminalsPlacement,
   parseUiPrefs
 } from './uiPrefs.svelte';
 import { ALL } from '../projects/projectRollup';
@@ -37,7 +38,9 @@ describe('parseUiPrefs', () => {
       terminalsWidth: 500,
       tasksLauncherFrac: 0.4,
       projectFilter: 'proj-123',
-      laneOrder: { attn: ['a', 'b'], paused: ['c'] }
+      laneOrder: { attn: ['a', 'b'], paused: ['c'] },
+      pinned: ['p1', 'p2'],
+      terminalsPlacement: 'combined'
     };
     expect(parseUiPrefs(raw)).toEqual(raw);
   });
@@ -72,6 +75,42 @@ describe('parseUiPrefs', () => {
     expect(parsed.tasksLauncherFrac).toBe(DEFAULT_UI_PREFS.tasksLauncherFrac);
     expect(parsed.projectFilter).toBe(DEFAULT_UI_PREFS.projectFilter);
     expect(parsed.laneOrder).toEqual({ attn: ['ok', 'fine'], paused: [] });
+    expect(parsed.pinned).toEqual([]);
+  });
+
+  it('Pinned ids persist in the ui slice and non-string ids are dropped', () => {
+    expect(parseUiPrefs({ pinned: ['a', 3, null, 'b'] }).pinned).toEqual(['a', 'b']);
+    expect(parseUiPrefs({ pinned: 'nope' }).pinned).toEqual([]);
+    expect(parseUiPrefs({}).pinned).toEqual([]);
+  });
+});
+
+// ui-preferences: "Terminals placement preference" — the `ui` slice carries where
+// plain terminals live; anything but the two known values falls back to the panel.
+describe('parseUiPrefs — terminals placement', () => {
+  it('Terminals placement defaults to the separate panel', () => {
+    expect(DEFAULT_UI_PREFS.terminalsPlacement).toBe('panel');
+    expect(parseUiPrefs({}).terminalsPlacement).toBe('panel');
+    expect(parseUiPrefs({ terminalsPlacement: 'combined' }).terminalsPlacement).toBe('combined');
+    expect(parseUiPrefs({ terminalsPlacement: 'panel' }).terminalsPlacement).toBe('panel');
+  });
+
+  it('An unknown placement value falls back to the default', () => {
+    expect(parseUiPrefs({ terminalsPlacement: 'sidebar' }).terminalsPlacement).toBe('panel');
+    expect(parseUiPrefs({ terminalsPlacement: 42 }).terminalsPlacement).toBe('panel');
+    expect(parseUiPrefs({ terminalsPlacement: null }).terminalsPlacement).toBe('panel');
+    expect(parseTerminalsPlacement('')).toBe('panel');
+  });
+
+  it('setTerminalsPlacement persists the placement in the ui slice', async () => {
+    const store = new UiPrefsStore();
+    store.setTerminalsPlacement('combined');
+    expect(store.data.terminalsPlacement).toBe('combined');
+    await new Promise((r) => setTimeout(r, 0));
+    const call = invokeMock.mock.calls.find((c) => c[0] === 'settings_save');
+    expect(call).toBeDefined();
+    const saved = JSON.parse((call![1] as { json: string }).json) as { ui: { terminalsPlacement: string } };
+    expect(saved.ui.terminalsPlacement).toBe('combined');
   });
 });
 
@@ -93,6 +132,28 @@ describe('UiPrefsStore', () => {
     const store = new UiPrefsStore();
     await store.hydrate();
     expect(store.data).toEqual(DEFAULT_UI_PREFS);
+  });
+
+  it('togglePinned pins to the front, unpins, and persists the ui slice', async () => {
+    const store = new UiPrefsStore();
+    invokeMock.mockResolvedValue(null);
+    store.togglePinned('a');
+    store.togglePinned('b');
+    // Most recently pinned first.
+    expect(store.data.pinned).toEqual(['b', 'a']);
+    expect(store.isPinned('a')).toBe(true);
+    store.togglePinned('a');
+    expect(store.data.pinned).toEqual(['b']);
+    expect(store.isPinned('a')).toBe(false);
+    store.forgetPinned('b');
+    expect(store.data.pinned).toEqual([]);
+    // forgetPinned on an unpinned id is a silent no-op (no extra write). Let the
+    // earlier toggles' async saves settle first so they don't count.
+    await new Promise((r) => setTimeout(r, 0));
+    invokeMock.mockClear();
+    store.forgetPinned('zzz');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 
   it('persists a changed pref as the `ui` slice via settings_save', async () => {

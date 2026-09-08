@@ -242,6 +242,24 @@ describe('Delete all archived agents', () => {
     expect(h.sel()).toBeNull(); // selection cleared — it pointed at a deleted pane
   });
 
+  // tasks-panel (combined terminals): a stopped terminal row lands in the Archived
+  // lane but is not a session — "Delete all" neither counts nor deletes it.
+  it('Delete all archived leaves terminal rows alone', () => {
+    const rows = [
+      archived('a1'),
+      row('tpane-1', 'finished', { kind: 'terminal', terminalKind: 'task', terminalKey: 'task:t1', running: false })
+    ];
+    const h = harness('tpane-1');
+    const req = deleteAllArchivedRequest(rows, h.deps);
+    expect(req).not.toBeNull();
+    expect(req!.message).toContain('1 archived agent');
+    req!.onConfirm();
+    expect(h.deleted).toEqual(['a1']);
+    expect(h.sel()).toBe('tpane-1'); // the terminal selection is untouched
+    // Only terminal rows archived → nothing to do at all.
+    expect(deleteAllArchivedRequest([rows[1]], harness().deps)).toBeNull();
+  });
+
   it('Cancelling the confirmation keeps the archived agents', () => {
     const rows = [archived('a1'), archived('a2'), row('live', 'working')];
     const h = harness();
@@ -307,13 +325,6 @@ describe('Archiving an empty session deletes it instead', () => {
   });
 });
 
-// NOTE: The coordinator follows the SAME archive/delete rule as ordinary sessions
-// (an EMPTY coordinator deletes, a NON-empty one archives, restorable). That generic
-// rule is already covered by `archiveDecision` above; the COORDINATOR-SPECIFIC store
-// wiring — archive → restore brings it back as the project's live coordinator — is
-// exercised at the store level in `layout/workspace.svelte.test.ts` (which involves a
-// real coordinator pane), so the former tautological `archiveDecision('coord-hash')`
-// re-assertions here were redundant illusory coverage and have been removed.
 
 describe('A new message resumes a paused session', () => {
   it('resumes only when the live user-message COUNT strictly exceeds the paused-at count', () => {

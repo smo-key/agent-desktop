@@ -25,7 +25,8 @@ function fakeHandle(alive = true): TerminalHandle & { keys: string[] } {
       return true;
     },
     focus: () => {},
-    scrollToBottom: () => {}
+    scrollToBottom: () => {},
+    recentActivity: () => null
   };
 }
 

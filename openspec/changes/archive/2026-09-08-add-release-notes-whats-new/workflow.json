@@ -1,0 +1,6 @@
+{
+  "provider": "local",
+  "taskRef": "add-release-notes-whats-new",
+  "url": "",
+  "lastEvent": "done"
+}

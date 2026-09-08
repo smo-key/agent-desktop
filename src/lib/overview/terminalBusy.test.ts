@@ -57,3 +57,18 @@ describe('detectTerminalBusy — Claude Code active-work indicators', () => {
     expect(detectTerminalBusy('Waiting for dynamic workflow')).toBe(false);
   });
 });
+
+describe('per-backend busy markers (agent-status-derivation)', () => {
+  it('Busy markers resolved per backend', () => {
+    // Claude's declared markers still detect; copilot declares an EMPTY set, so
+    // the same text never reads busy for a copilot pane (its events tailer is
+    // the authoritative signal).
+    const text = 'Running… esc to interrupt';
+    expect(detectTerminalBusy(text, 'claude')).toBe(true);
+    expect(detectTerminalBusy(text, 'copilot')).toBe(false);
+    expect(detectTerminalBusy('Waiting for 2 dynamic workflows', 'claude')).toBe(true);
+    expect(detectTerminalBusy('Waiting for 2 dynamic workflows', 'copilot')).toBe(false);
+    // A non-agent program never reads busy.
+    expect(detectTerminalBusy(text, '/bin/zsh')).toBe(false);
+  });
+});

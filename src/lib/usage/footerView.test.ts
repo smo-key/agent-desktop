@@ -127,6 +127,30 @@ describe('footerView', () => {
   });
 });
 
+// footer-actions: "Footer shows the focused session's worktree" — the pill renders
+// `view.worktree`, sourced from the focused snapshot's git status.
+describe('footerView — worktree pill', () => {
+  it('Worktree pill shown for a worktree session', () => {
+    const map: SnapshotMap = {
+      a: snap({ pane_id: 'a', git: { branch: 'feature-x', dirty: false, worktree: 'feature-x' } }),
+    };
+    expect(footerView(map, 'a', null, PROJECTS).worktree).toBe('feature-x');
+  });
+
+  it('Worktree pill omitted outside a worktree', () => {
+    const map: SnapshotMap = {
+      a: snap({ pane_id: 'a', git: { branch: 'main', dirty: false, worktree: null } }),
+      b: snap({ pane_id: 'b', git: { branch: 'main', dirty: false } }),
+      c: snap({ pane_id: 'c', git: null }),
+    };
+    expect(footerView(map, 'a', null, PROJECTS).worktree).toBeNull();
+    expect(footerView(map, 'b', null, PROJECTS).worktree).toBeNull();
+    expect(footerView(map, 'c', null, PROJECTS).worktree).toBeNull();
+    expect(footerView(map, null, null, PROJECTS).worktree).toBeNull();
+    expect(footerView(map, 'missing', null, PROJECTS).worktree).toBeNull();
+  });
+});
+
 describe('footerGitProjectId', () => {
   // Titles below mirror the `projects` spec scenarios so the scenario-coverage
   // gate maps each to this resolver — the logic that decides which project's

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig } from 'vite';
+import { defaultClientConditions, defineConfig } from 'vite';
 
 // Tauri expects a fixed dev-server port it can point its webview at.
 const host = process.env.TAURI_DEV_HOST;
@@ -20,6 +20,14 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version)
   },
+
+  // Under vitest, resolve Svelte's BROWSER build so component tests can `mount()`
+  // into jsdom (the default "node" condition picks the server build, where mount
+  // is unavailable). `browser` is prepended to Vite's default client conditions
+  // rather than replacing them. Vitest sets VITEST=true; build/dev never see this.
+  resolve: process.env.VITEST
+    ? { conditions: ['browser', ...defaultClientConditions] }
+    : undefined,
 
   // Tauri requires a fixed, strict port and a clean console.
   clearScreen: false,

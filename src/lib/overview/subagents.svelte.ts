@@ -68,6 +68,9 @@ export interface SessionRef {
   sessionId: string;
   /** The session's absolute working directory, or null (then it's skipped). */
   cwd: string | null;
+  /** The session's agent backend (`claude` when absent). Copilot sessions'
+   *  subagents are derived from the copilot session event log on the Rust side. */
+  program?: string;
 }
 
 /** The whole store state: sessionId -> that session's subagents. */

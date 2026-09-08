@@ -43,6 +43,15 @@ export interface TerminalHandle {
    * alongside focus() on entry so you land on the latest output.
    */
   scrollToBottom(): void;
+  /**
+   * What this pane's shell has REPORTED doing — its OSC 0/2 window titles,
+   * newline-joined (oldest first) — or null when it has reported nothing
+   * meaningful. Drives a terminal row's generated title (`session-titles`) and
+   * doubles as its change key: unlike screen text it changes only per command,
+   * and unlike the keystroke stream it never carries what a program reads from
+   * stdin (a password, a heredoc body, a token).
+   */
+  recentActivity(): string | null;
 }
 
 const handles = new Map<string, TerminalHandle>();
