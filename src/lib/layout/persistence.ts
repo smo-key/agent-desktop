@@ -214,7 +214,11 @@ function projectRegistry(
       ...(Array.isArray(src?.extraArgs) && src.extraArgs.length > 0
         ? { extraArgs: src.extraArgs }
         : {}),
-
+      // Persist the ADOPTED worktree dir (session-launcher): unlike `launchArgs`,
+      // which must never be re-applied (it would create a SECOND worktree), this
+      // is the dir the session already lives in — a resumed pane has to respawn
+      // there, and its subagents are located by it.
+      ...(src?.worktreeCwd ? { worktreeCwd: src.worktreeCwd } : {}),
     };
   }
   return out;
@@ -354,7 +358,10 @@ function sanitizeRegistry(
         raw.extraArgs.length > 0
           ? { extraArgs: raw.extraArgs as string[] }
           : {}),
-
+        // Restore the adopted worktree dir so the resumed pane respawns in it.
+        ...(typeof raw.worktreeCwd === 'string' && raw.worktreeCwd
+          ? { worktreeCwd: raw.worktreeCwd }
+          : {}),
       };
     } else {
       out[leafNode.paneId] = { program: defaultShell(), cwd: null };

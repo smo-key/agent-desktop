@@ -62,15 +62,21 @@ Releases are automated by [`.github/workflows/release.yml`](.github/workflows/re
 `package.json`'s `version` is the single source of truth: **bump it and push to
 `main`**, and CI does the rest.
 
-1. Bump `version` in `package.json` (e.g. `0.1.0` → `0.1.1`) and push to `main`.
-2. The workflow detects the bump (the version is higher than the latest `v*`
+1. Write the release notes: add a `## X.Y.Z — YYYY-MM-DD` section at the top of
+   `CHANGELOG.md` (format in the file's header). The **Release** task in Agent
+   Desktop (`.agent-desktop/tasks.json`) does this for you — it runs the quality
+   gate, drafts the section from the commits since the last tag, bumps the
+   version, commits and pushes.
+2. Bump `version` in `package.json` (e.g. `0.1.0` → `0.1.1`) and push to `main`.
+3. The workflow detects the bump (the version is higher than the latest `v*`
    tag), syncs the version into `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`,
-   and `Cargo.lock`, regenerates `CHANGELOG.md` from the conventional commits, and
-   commits that back as `chore(release): vX.Y.Z [skip ci]`, then tags `vX.Y.Z`.
-3. A five-target native matrix (macOS arm64 + Intel, Windows x86_64, Linux x86_64
-   + arm64) builds the app, provisions its own-arch sidecars, runs `check:gate`,
-   and publishes signed installers to a single GitHub Release whose notes are the
-   grouped conventional-commit changelog.
+   and `Cargo.lock`, extracts the `## X.Y.Z` section with
+   `scripts/release-notes.mjs` (failing the release if it is missing), commits the
+   manifests back as `chore(release): vX.Y.Z [skip ci]`, then tags `vX.Y.Z`.
+4. A native matrix (macOS arm64, Windows x86_64, Linux x86_64 + arm64) builds the
+   app, provisions its own-arch sidecars, runs `check:gate`, and publishes signed
+   installers to a single GitHub Release whose body is that CHANGELOG section.
+   The app shows the same notes in a "What's new" dialog after it updates.
 
 Pushing a commit that does **not** raise the version publishes nothing. You can
 also trigger a manual build from the Actions tab (`workflow_dispatch`).

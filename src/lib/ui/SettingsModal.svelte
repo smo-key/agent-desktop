@@ -33,6 +33,7 @@
   import { ensureDesktopPermission } from '$lib/overview/alerts.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
   import { appVersionLabel } from '$lib/settings/version';
+  import { whatsNew } from '$lib/changelog/whatsNewStore.svelte';
   import { updateStore } from '$lib/updates/updateStore.svelte';
   import { runUpdateCheck } from '$lib/updates/checkForUpdate';
   import {
@@ -527,7 +528,12 @@
         <span class="label">Software update</span>
         <ul class="rows">
           <li class="row">
-            <span class="desc">Agent Desktop {versionLabel}</span>
+            <span class="desc">
+              Agent Desktop
+              <button type="button" class="version-link" onclick={() => whatsNew.show()} title="What's new">
+                {versionLabel}
+              </button>
+            </span>
             <div class="control">
               {#if updateStore.status === 'downloading'}
                 <span class="model-status">
@@ -563,7 +569,11 @@
         </ul>
       </section>
 
-      <footer class="version">{versionLabel}</footer>
+      <footer class="version">
+        <button type="button" class="version-link" onclick={() => whatsNew.show()} title="What's new">
+          {versionLabel}
+        </button>
+      </footer>
     </div>
   </div>
 {/if}
@@ -782,6 +792,21 @@
     font-size: 11px;
     letter-spacing: 0.04em;
     color: var(--fg-3);
-    user-select: text;
+  }
+  /* The version label doubles as the "What's new" entry point: an unstyled
+     inline button that reads as text until hovered. */
+  .version-link {
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    cursor: pointer;
+    text-decoration: underline dotted;
+    text-underline-offset: 2px;
+  }
+  .version-link:hover {
+    color: var(--fg-1);
   }
 </style>

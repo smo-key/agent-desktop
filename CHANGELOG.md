@@ -1,9 +1,15 @@
 # Changelog
 
-All notable changes to this project are documented here.
-This file is generated from the conventional-commit history by [git-cliff](https://git-cliff.org).
+Release notes for Agent Desktop. Each version gets one `## <version> — <date>`
+section, written by the Release task before the version bump lands on `main`;
+the GitHub Release body and the in-app "What's new" dialog both come from the
+matching section here. Newest first.
 
-## [0.3.1] - 2026-07-23
+Format: short `### New` / `### Improved` / `### Fixed` / `### Removed` sections,
+bullets, one bold title per notable change —
+`- **Feature title**: a short, impactful description and use case.`
+
+## 0.3.1 — 2026-07-23
 
 ### Bug Fixes
 
@@ -17,7 +23,7 @@ This file is generated from the conventional-commit history by [git-cliff](https
 
 - Bump version to 0.3.1
 
-## [0.3.0] - 2026-07-22
+## 0.3.0 — 2026-07-22
 
 ### Features
 
@@ -75,7 +81,7 @@ delta; svelte-check, vitest, and adversarial review all pass.)
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 
-## [0.2.4] - 2026-06-14
+## 0.2.4 — 2026-06-14
 
 ### Miscellaneous
 
@@ -84,7 +90,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 
 Updated Windows or Intel Mac installation instructions.
 
-## [0.2.3] - 2026-06-14
+## 0.2.3 — 2026-06-14
 
 ### Bug Fixes
 
@@ -102,7 +108,7 @@ Updated Windows or Intel Mac installation instructions.
 - Bump version to 0.2.3
 - **openspec**: Sync + archive projects-panel-working-indicator
 
-## [0.2.2] - 2026-06-14
+## 0.2.2 — 2026-06-14
 
 ### Features
 
@@ -126,13 +132,13 @@ Updated Windows or Intel Mac installation instructions.
 - **tasks**: Clarify Release task to bump patch version explicitly
 - Bump version to 0.2.2
 
-## [0.2.1] - 2026-06-14
+## 0.2.1 — 2026-06-14
 
 ### Miscellaneous
 
 - Bump version to 0.2.1
 
-## [0.2.0] - 2026-06-14
+## 0.2.0 — 2026-06-14
 
 ### Features
 
@@ -172,44 +178,44 @@ Updated Windows or Intel Mac installation instructions.
 
 - **tasks**: Reorder tasks and add Openspec Status watcher
 
-## [0.1.10] - 2026-06-14
+## 0.1.10 — 2026-06-14
 
 ### Bug Fixes
 
 - **ci**: Normalize paths in localStorage gate for Windows
 
-## [0.1.9] - 2026-06-14
+## 0.1.9 — 2026-06-14
 
 ### Bug Fixes
 
 - **test**: Make event-hook delivery test work on Windows (named pipe)
 
-## [0.1.8] - 2026-06-14
+## 0.1.8 — 2026-06-14
 
 ### Bug Fixes
 
 - **ci**: Order-independent Windows sidecar format check
 
-## [0.1.7] - 2026-06-14
+## 0.1.7 — 2026-06-14
 
 ### Bug Fixes
 
 - **ci**: Patch llama <chrono> include in-source, not via force-include flag
 
-## [0.1.6] - 2026-06-14
+## 0.1.6 — 2026-06-14
 
 ### Bug Fixes
 
 - **ci**: Correct Windows chrono flag form and macOS unsigned fallback
 
-## [0.1.5] - 2026-06-14
+## 0.1.5 — 2026-06-14
 
 ### Bug Fixes
 
 - **ci**: Unblock Windows llama build and macOS signing fallback
 - **test**: Use a fast-failing unwritable snapshot dir, not /proc
 
-## [0.1.4] - 2026-06-13
+## 0.1.4 — 2026-06-13
 
 ### Bug Fixes
 
@@ -224,13 +230,13 @@ Updated Windows or Intel Mac installation instructions.
 
 - **release**: Drop Intel-mac leg, bump actions to latest majors, Node 22
 
-## [0.1.3] - 2026-06-13
+## 0.1.3 — 2026-06-13
 
 ### Bug Fixes
 
 - **ci**: Build llama with LLAMA_BUILD_EXAMPLES=ON so llama-server target exists
 
-## [0.1.2] - 2026-06-13
+## 0.1.2 — 2026-06-13
 
 ### Bug Fixes
 
@@ -245,7 +251,7 @@ Updated Windows or Intel Mac installation instructions.
 
 - **release**: Install JS deps with Yarn instead of npm ci
 
-## [0.1.0] - 2026-06-13
+## 0.1.0 — 2026-06-13
 
 ### Features
 

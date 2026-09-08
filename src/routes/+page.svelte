@@ -9,6 +9,9 @@
   import { help } from '$lib/ui/helpStore.svelte';
   import SettingsModal from '$lib/ui/SettingsModal.svelte';
   import ConfirmModal from '$lib/ui/ConfirmModal.svelte';
+  import WhatsNewModal from '$lib/changelog/WhatsNewModal.svelte';
+  import { whatsNew } from '$lib/changelog/whatsNewStore.svelte';
+  import { loadSettings } from '$lib/settings/persist';
   import { confirmModal } from '$lib/ui/confirmStore.svelte';
   import { settingsModal } from '$lib/ui/settingsStore.svelte';
   import { openWith } from '$lib/settings/openWith.svelte';
@@ -118,6 +121,10 @@
     // background-staging path as launch, surfaced only via the title-bar pill. The
     // returned stop fn (a no-op outside Tauri) is cleared on teardown below.
     const stopUpdatePolling = startUpdatePolling();
+    // Release notes: open the What's new dialog once per version after an update
+    // (whats-new-dialog spec). Reads settings.json for the `whatsNew.seenVersion`
+    // slice; a fresh install or a dev build stays quiet. Best-effort, non-blocking.
+    void loadSettings().then((settings) => whatsNew.maybeShowOnLaunch(settings));
     // Load the user's open-with preferences (seeds defaults on first run).
     void openWith.load();
     // Load session-title preferences (the opt-in cloud title fallback).
@@ -1066,6 +1073,7 @@
 <HelpModal />
 <SettingsModal />
 <ConfirmModal />
+<WhatsNewModal />
 <!-- Voice input (the bottom-center mic FAB + the dictation panel) sits above the
      onboarding gate's z-index, so hide it entirely while the first-launch gate is
      up: the models it needs aren't downloaded yet and the takeover owns the screen. -->
