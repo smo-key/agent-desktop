@@ -28,8 +28,9 @@ function normalize(md) {
 export function sectionFor(md, version) {
   const v = String(version ?? '').trim().replace(/^v/, '');
   if (!md || !v) return '';
+  // Heading may be `## 1.2.3`, `## v1.2.3`, or the legacy `## [1.2.3]`.
   const re = new RegExp(
-    '^## ' + escapeRe(v) + '(?=\\s|$)[^\\n]*\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))',
+    '^## \\[?v?' + escapeRe(v) + '\\]?(?=\\s|$)[^\\n]*\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))',
     'm'
   );
   const m = normalize(md).match(re);
@@ -43,7 +44,7 @@ export function sectionFor(md, version) {
  * @returns {{ version: string, body: string } | null}
  */
 export function newestSection(md) {
-  const m = normalize(md).match(/^## (\S+)/m);
+  const m = normalize(md).match(/^## \[?v?([^\s\]]+)\]?/m);
   if (!m) return null;
   return { version: m[1], body: sectionFor(md, m[1]) };
 }
@@ -92,7 +93,10 @@ export function parseNotes(body) {
   /** @type {string[] | null} */
   let bullet = null;
   const flushBullet = () => {
-    if (bullet) current.items.push(parseInline(bullet.join(' ')));
+    if (bullet) {
+      const runs = parseInline(bullet.join(' '));
+      if (runs.length) current.items.push(runs); // a bare `- ` renders nothing
+    }
     bullet = null;
   };
   const flushGroup = () => {
@@ -112,7 +116,10 @@ export function parseNotes(body) {
       bullet = [b[1].trim()];
       continue;
     }
-    if (bullet && /^\s+\S/.test(raw)) {
+    // Continuation of the open bullet: an indented line, or (Markdown lazy
+    // continuation, how an 80-column hard wrap comes out) any non-blank line
+    // directly following it. A blank line ends the bullet.
+    if (bullet && raw.trim()) {
       bullet.push(raw.trim());
       continue;
     }

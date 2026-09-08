@@ -21,4 +21,6 @@
 
 ## 4. Verify
 
+- [x] 4.0 Adversarial review fixes: `## 0.3.2` CHANGELOG section (package.json was already bumped; the gate would have failed), lazy-continuation + `v`/bracket heading tolerance in the parser, global keydown gating + focus hand-back while the dialog is open, dialog held back behind onboarding, vitest conditions extend (not replace) Vite's defaults.
+
 - [x] 4.1 `yarn check:gate` green (the one red test, statusline-wrapper `cwd`, belongs to another session's uncommitted WIP in this shared worktree). The plain web build cannot stand in for the Tauri runtime, so the dialog's rendering is confirmed by the jsdom component test rather than a live `tauri dev` click; a live click of the version button remains a release-time smoke check.

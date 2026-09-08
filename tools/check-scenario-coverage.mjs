@@ -456,6 +456,14 @@ const MANUAL_SCENARIOS = {
     'permission_denied',
     'non_desktop_context',
   ]),
+  // whats-new-dialog: the two scenarios that are +page.svelte wiring — the
+  // `{#if !onboarding.visible}` mount gate and the global-keydown ownership
+  // (shortcut blocking + Esc + focus hand-back to Settings) — need the live
+  // page; everything else is unit/jsdom-tested.
+  'whats-new-dialog': new Set([
+    'held_back_while_onboarding_is_up',
+    'dialog_owns_the_keyboard_while_open',
+  ]),
 };
 
 // --- helpers -----------------------------------------------------------------

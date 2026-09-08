@@ -9,8 +9,16 @@
   import { whatsNew } from './whatsNewStore.svelte';
   import { autofocus } from '$lib/ui/autofocus';
 
+  // On close, hand focus back to the dialog beneath (the Settings dialog when the
+  // notes were opened from its version button): its Esc handler only fires with
+  // focus inside it, and unmounting the focused "Got it" button would otherwise
+  // drop focus to <body>, leaving Esc dead and the app shortcuts firing under it.
   function close() {
     whatsNew.close();
+    queueMicrotask(() => {
+      const below = document.querySelector<HTMLElement>('[role="dialog"]');
+      if (below && document.activeElement === document.body) below.focus();
+    });
   }
 
   // Esc closes. Scoped to the modal so it doesn't fight the global app shortcuts.

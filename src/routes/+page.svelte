@@ -745,6 +745,19 @@
       return;
     }
 
+    // What's new modal (release notes): like confirm/help, it owns the keyboard
+    // while open — Esc closes it (covered here so it works with focus anywhere)
+    // and every shortcut beneath is blocked. It reopens from Settings, so it can
+    // sit over the Settings dialog; on close, hand focus back to that dialog so
+    // its own Esc handler keeps working (it only fires with focus inside it).
+    if (whatsNew.open) {
+      if (key === 'Escape') {
+        e.preventDefault();
+        whatsNew.close();
+      }
+      return;
+    }
+
     // Help overlay: Cmd-/ toggles it from anywhere; bare ? opens it too, but only
     // when NOT typing into a field/terminal, so a literal "?" still reaches prompts
     // and the xterm terminal (Cmd-/ is the always-safe path). Handled before the
@@ -1097,7 +1110,11 @@
 <HelpModal />
 <SettingsModal />
 <ConfirmModal />
-<WhatsNewModal />
+<!-- Release notes modal. Held back while the first-launch model gate is up (the
+     store keeps `open` set, so it appears as soon as the gate is dismissed). -->
+{#if !onboarding.visible}
+  <WhatsNewModal />
+{/if}
 <!-- Voice input (the bottom-center mic FAB + the dictation panel) sits above the
      onboarding gate's z-index, so hide it entirely while the first-launch gate is
      up: the models it needs aren't downloaded yet and the takeover owns the screen. -->

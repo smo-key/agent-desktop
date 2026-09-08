@@ -19,6 +19,11 @@ The app SHALL bundle `CHANGELOG.md` at build time and SHALL resolve the notes fo
 - **WHEN** the app runs under a dev server
 - **THEN** the resolved notes are the first `## ` section of the changelog
 
+#### Scenario: Matches v-prefixed and legacy bracketed headings
+
+- **WHEN** a section heading is written as `## v1.0.0 — …` or the legacy `## [0.9.0] - …`
+- **THEN** lookups for `1.0.0` / `v0.9.0` resolve it, and the newest-section version carries no `v` or brackets
+
 ### Requirement: Notes parsed into structured content
 
 The app SHALL parse a section body into headings (`### …`) each holding bullet items, where an item's text is split into plain, bold, inline-code and link runs, so the dialog renders markup without injecting HTML.
@@ -32,6 +37,11 @@ The app SHALL parse a section body into headings (`### …`) each holding bullet
 
 - **WHEN** a section body has bullets before its first `### ` heading
 - **THEN** they are grouped under an unnamed heading
+
+#### Scenario: Keeps a wrapped bullet as one item, lazily or indented, until a blank line
+
+- **WHEN** a bullet's text continues on following lines, indented or not
+- **THEN** the continuation lines join the bullet until a blank line, and a bare `- ` yields no item
 
 ### Requirement: Dialog opens once after an update
 
@@ -62,6 +72,11 @@ On launch the app SHALL compare the running version with the `whatsNew.seenVersi
 - **WHEN** the app runs under a dev server
 - **THEN** the launch check neither opens the dialog nor saves a seen version
 
+#### Scenario: Held back while onboarding is up
+
+- **WHEN** the launch check opens the dialog while the first-launch model gate is showing
+- **THEN** the dialog is not rendered until the gate is dismissed, and then appears
+
 #### Scenario: No notes for the new version
 
 - **WHEN** the seen version differs from the running version and the changelog has no section for it
@@ -75,6 +90,11 @@ The version label in Settings (the footer and the update row) SHALL be a button 
 
 - **WHEN** the user clicks the version label in Settings
 - **THEN** the What's new dialog opens with the running version's notes
+
+#### Scenario: Dialog owns the keyboard while open
+
+- **WHEN** the dialog is open and the user presses an app shortcut (e.g. ⌘N) or Escape with focus anywhere
+- **THEN** the shortcut does not fire beneath it and Escape closes it; if it was opened over Settings, focus returns to the Settings dialog
 
 #### Scenario: Dialog closes
 

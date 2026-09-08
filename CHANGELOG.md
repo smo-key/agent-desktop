@@ -9,6 +9,32 @@ Format: short `### New` / `### Improved` / `### Fixed` / `### Removed` sections,
 bullets, one bold title per notable change —
 `- **Feature title**: a short, impactful description and use case.`
 
+## 0.3.2 — 2026-09-08
+
+### New
+
+- **What's new dialog**: release notes open once after each update so you see what changed; click the version number in Settings to read them again. Release notes are now hand-written per version and shared with the GitHub release.
+- **GitHub Copilot as an agent backend**: pick Claude Code or Copilot per session; Copilot sessions report status, usage, titles and subagents from their events log, and specialists launch on Copilot via generated custom agents.
+- **Worktree sessions**: start a session in a fresh git worktree from the launcher; the worktree shows on the session row and in the footer.
+- **Customizable keyboard shortcuts**: rebind any app shortcut in Settings.
+- **Roster grouping and pinning**: group sessions by Status, Date or None, pin sessions to the top, and choose a Minimal density that shows only the title.
+- **Terminal titles and renames**: terminal rows title themselves from the commands you run and can be renamed; optionally list terminals alongside sessions with the same status treatment as agents.
+- **Project archiving**: archive and unarchive projects; archived projects stay out of ⌘N, voice and the footer git controls.
+
+### Improved
+
+- **Drag to reorder**: projects and tasks reorder with a pointer-based drag that works under the native drag-drop layer.
+- **Voice dictation recovery**: model downloads are serialized, a stalled download no longer wedges the readiness check, the mic is released on every teardown, and a failed dictation always has a way out.
+
+### Fixed
+
+- **Closing a pane kills its whole process tree**: on close and on quit, child processes no longer outlive their pane, with stale or recycled pids never mistaken for ours.
+- **Terminal title privacy**: only echoed commands are recorded, titles stay on-device, and `-p` is redacted only when it is a password flag.
+
+### Removed
+
+- **Coordinator**: the coordinator feature and the Worktrees dialog are gone; worktrees are started from the launcher instead.
+
 ## 0.3.1 — 2026-07-23
 
 ### Bug Fixes

@@ -47,6 +47,13 @@ describe('sectionFor', () => {
     expect(sectionFor(MD, 'v0.3.2')).toBe('- **Older**: older note');
   });
 
+  it('matches v-prefixed and legacy bracketed headings', () => {
+    const md = '## v1.0.0 — x\n- a\n\n## [0.9.0] - y\n- b\n';
+    expect(sectionFor(md, '1.0.0')).toBe('- a');
+    expect(sectionFor(md, 'v0.9.0')).toBe('- b');
+    expect(newestSection(md)).toEqual({ version: '1.0.0', body: '- a' });
+  });
+
   it('tolerates CRLF line endings', () => {
     expect(sectionFor(MD.replace(/\n/g, '\r\n'), '0.3.2')).toBe('- **Older**: older note');
   });
@@ -96,13 +103,16 @@ describe('parseNotes', () => {
     ]);
   });
 
-  it('keeps a wrapped bullet as one item and ignores stray prose', () => {
-    const groups = parseNotes('### New\n- **Long**: line one\n  continues here\nstray prose');
+  it('keeps a wrapped bullet as one item, lazily or indented, until a blank line', () => {
+    const groups = parseNotes(
+      '### New\n- **Long**: line one\n  continues here\nand lazily here\n\nstray prose\n- \n- next'
+    );
     expect(groups[0].items).toEqual([
       [
         { kind: 'bold', text: 'Long' },
-        { kind: 'text', text: ': line one continues here' }
-      ]
+        { kind: 'text', text: ': line one continues here and lazily here' }
+      ],
+      [{ kind: 'text', text: 'next' }]
     ]);
   });
 
