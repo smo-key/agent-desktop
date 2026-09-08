@@ -3,6 +3,7 @@
 ## Purpose
 TBD - created by archiving change agent-session-ux-improvements. Update Purpose after archive.
 ## Requirements
+
 ### Requirement: The status line always shows the last message or question
 
 The agent-card status sub-line SHALL show, in priority order: the agent's pending
@@ -30,22 +31,19 @@ Restore and delete actions remain available via the row's context menu.
 
 ### Requirement: The agent card shows the model, not the cost
 
-An agent card SHALL display the agent's MODEL — a human-readable, versioned label
-such as "Opus 4.6", derived from the latest snapshot's model id and falling back to
-the snapshot's model display name — in place of a dollar cost. The card SHALL NOT show
-the per-agent dollar amount (cost remains tracked and surfaced in the aggregate total).
+An agent card SHALL display the agent's git WORKTREE name on its meta line, left of the time since last activity, when the session is running inside a linked git worktree (from the latest snapshot's `git.worktree`), and SHALL omit that slot otherwise. The card SHALL NOT show the model label (it remains in the footer) and SHALL NOT show the per-agent dollar amount (cost remains tracked and surfaced in the aggregate total).
 
-#### Scenario: Card shows the versioned model label
-- **WHEN** an agent card renders for an agent whose latest snapshot has a model
-- **THEN** the card shows the versioned model label (e.g. "Opus 4.6") and not a dollar amount
+#### Scenario: Card shows the worktree name
+- **WHEN** an agent card renders for an agent whose latest snapshot reports worktree `feature-x`
+- **THEN** the card's meta line shows `feature-x` left of the time since last activity
 
-#### Scenario: Falls back to the display name
-- **WHEN** the snapshot's model id cannot be parsed into a versioned label
-- **THEN** the card shows the snapshot's model display name
+#### Scenario: Card omits the worktree slot outside a worktree
+- **WHEN** an agent card renders for an agent whose snapshot reports no worktree
+- **THEN** the meta line shows no worktree entry (just context and time)
 
-#### Scenario: No per-agent cost on the card
+#### Scenario: No per-agent cost or model on the card
 - **WHEN** an agent card renders
-- **THEN** no per-agent dollar cost is shown on the card
+- **THEN** neither a dollar cost nor a model label is shown on the card
 
 ### Requirement: The agent card hides context until a size is known
 
@@ -144,7 +142,7 @@ The sessions panel SHALL offer a density preference, exposed in Settings as a
 "Default" / "Compact" / "Minimal" dropdown shown as the FIRST setting, and
 persisted across restarts. The preference SHALL default to "Default". WHEN
 "Compact" is selected, every roster row SHALL omit its third content line — the
-meta line carrying the context-window measure, the model label, and the time
+meta line carrying the context-window measure, the worktree name, and the time
 since last activity — leaving the title and status sub-line. WHEN "Minimal" is
 selected, every roster row SHALL keep only its title beside a smaller project
 icon, omitting both the status sub-line and the meta line. WHEN "Default" is
@@ -155,7 +153,7 @@ persisted `{ enabled: true }` compact-mode slice SHALL be read as "Compact".
 
 - **WHEN** a roster row renders while compact mode is enabled
 - **THEN** the row shows its title and status sub-line but not the
-  context/model/time meta line
+  context/worktree/time meta line
 
 #### Scenario: Minimal density keeps only the title and a smaller icon
 
