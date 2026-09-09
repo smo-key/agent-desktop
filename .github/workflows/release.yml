@@ -3,20 +3,27 @@ name: Release
 # Releases on a version bump to main: when package.json's version is higher than
 # the latest v* tag, the gate job syncs the manifests, extracts this version's
 # hand-written CHANGELOG.md section as the release notes (failing if it is
-# missing), commits `chore(release): v<version> [skip ci]`, tags v<version>, and
-# the build matrix produces + publishes signed installers for all four targets to
-# a single GitHub Release whose body is that CHANGELOG section.
+# missing) and commits `chore(release): v<version> [skip ci]`. The build matrix
+# then produces signed installers for all four targets and uploads them to a
+# single draft GitHub Release whose body is that CHANGELOG section. Only once
+# EVERY target has built does `publish-release` create the annotated v<version>
+# tag on the sync commit and undraft the Release.
+#
+# The tag is deliberately the LAST thing the pipeline creates. It is the
+# idempotency marker release-gate.sh keys on, so a failed build leg must not
+# leave it behind: with no tag, the next push to main (or a manual dispatch)
+# simply retries the release for the same version instead of burning it.
 #
 # Manual workflow_dispatch inputs:
 #   bundle_test   — build the Windows installer end-to-end and upload it as a
-#                   workflow artifact. No tag, no Release. Use this to prove the
-#                   packaging BEFORE a version bump, since `gate` pushes the tag
-#                   before any build runs and a packaging failure would otherwise
-#                   burn the version number.
+#                   workflow artifact. No commit, no tag, no Release. Use this
+#                   to prove the packaging before a version bump.
 #   force_publish — force a release build without a version bump. NOTE: this only
-#                   works for a version whose tag does NOT yet exist; otherwise it
-#                   overrides the gate's idempotency decision and then fails at
-#                   `git tag -a`. Prefer `bundle_test` for testing a build.
+#                   works for a version whose tag does NOT yet exist; the tag is
+#                   the record that a version shipped, so a tagged version can
+#                   never be re-released. Bump the version instead. Retrying a
+#                   FAILED release needs no flag: its tag was never created, so
+#                   the gate re-releases it on its own.
 
 on:
   push:
@@ -54,6 +61,8 @@ jobs:
       should_release: ${{ steps.decide.outputs.should_release }}
       version: ${{ steps.decide.outputs.version }}
       tag: ${{ steps.decide.outputs.tag }}
+      # The commit every downstream job builds, releases, and finally tags.
+      release_sha: ${{ steps.commit.outputs.release_sha }}
     steps:
       - name: Checkout (full history + tags)
         uses: actions/checkout@v6
@@ -72,7 +81,8 @@ jobs:
       # (without [skip ci]) is allowed to drive a release. Loop safety for the
       # gate's own sync commit still holds via two independent layers: it carries
       # [skip ci] (caught here), and release-gate.sh refuses to re-release once
-      # tag v<version> exists (idempotency backstop).
+      # tag v<version> exists (idempotency backstop — the tag is created by
+      # publish-release, so this backstop only engages after a full success).
       - name: Skip-ci guard
         id: skipci
         run: |
@@ -110,9 +120,9 @@ jobs:
         run: bash scripts/sync-version.sh "${{ steps.decide.outputs.version }}"
 
       # Release notes = this version's hand-written CHANGELOG.md section (authored
-      # by the Release task before the bump landed). Runs BEFORE the commit + tag
-      # step and fails when the section is missing, so a forgotten changelog
-      # never burns a version number.
+      # by the Release task before the bump landed). Runs BEFORE the sync commit
+      # is pushed and fails when the section is missing, so a forgotten changelog
+      # never leaves a half-done release behind.
       - name: Extract release notes from CHANGELOG.md
         if: steps.decide.outputs.should_release == 'true'
         run: |
@@ -120,7 +130,12 @@ jobs:
           echo "----- RELEASE_NOTES.md -----"
           cat RELEASE_NOTES.md
 
-      - name: Commit sync + tag
+      # Commit the manifest sync (no tag — see the header: the tag is created by
+      # publish-release only after every target has built) and record the exact
+      # sha the rest of the pipeline builds from, so a push to main that lands
+      # while the matrix runs cannot shift what gets released.
+      - name: Commit sync
+        id: commit
         if: steps.decide.outputs.should_release == 'true'
         env:
           VERSION: ${{ steps.decide.outputs.version }}
@@ -135,9 +150,8 @@ jobs:
             git commit -m "chore(release): ${TAG} [skip ci]"
           fi
           git push origin HEAD:main
-          # Annotated tag on the (possibly just-committed) release commit.
-          git tag -a "${TAG}" -m "Release ${TAG}"
-          git push origin "${TAG}"
+          echo "release_sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+          echo "release commit: $(git rev-parse HEAD)"
 
       - name: Upload release notes artifact
         if: steps.decide.outputs.should_release == 'true'
@@ -148,7 +162,10 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # create-release: make ONE draft Release up front so the parallel matrix jobs
-  # upload to a known release id instead of racing to create it.
+  # upload to a known release id instead of racing to create it. The draft points
+  # at gate's release_sha; its tag does not exist yet (a draft never creates one),
+  # so a failed attempt leaves only a stale draft — which the next attempt for
+  # the same version deletes here before creating a fresh one.
   # ---------------------------------------------------------------------------
   create-release:
     needs: gate
@@ -167,17 +184,41 @@ jobs:
         uses: actions/github-script@v9
         env:
           TAG: ${{ needs.gate.outputs.tag }}
+          RELEASE_SHA: ${{ needs.gate.outputs.release_sha }}
         with:
           result-encoding: string
           script: |
             const fs = require('fs');
+            const { owner, repo } = context.repo;
+            const tag = process.env.TAG;
+
+            // A previous attempt at this version that failed mid-build leaves
+            // its draft (with partial assets) behind. Remove every such draft so
+            // this attempt owns exactly one Release for the tag. A PUBLISHED
+            // release for the tag means the tag exists and the gate should have
+            // refused — never touch it; fail loudly instead.
+            const existing = await github.paginate(github.rest.repos.listReleases, {
+              owner, repo, per_page: 100,
+            });
+            for (const r of existing.filter((r) => r.tag_name === tag)) {
+              if (!r.draft) {
+                core.setFailed(`Release ${tag} is already published (id ${r.id}); refusing to re-release.`);
+                return '';
+              }
+              core.info(`Deleting stale draft release ${tag} (id ${r.id}) from a previous attempt`);
+              await github.rest.repos.deleteRelease({ owner, repo, release_id: r.id });
+            }
+
             let body = '';
             try { body = fs.readFileSync('RELEASE_NOTES.md', 'utf8'); } catch (e) {}
             const { data } = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: process.env.TAG,
-              name: process.env.TAG,
+              owner,
+              repo,
+              tag_name: tag,
+              // Pin the draft to the sync commit so that, when publish-release
+              // undrafts it, GitHub resolves the tag to that exact commit.
+              target_commitish: process.env.RELEASE_SHA,
+              name: tag,
               body,
               draft: true,
               prerelease: false,
@@ -245,15 +286,14 @@ jobs:
   # ARTIFACT — no version bump, no tag, no GitHub Release.
   #
   # Why this exists: the Windows bundle path had never completed even once (its
-  # leg was continue-on-error and failed every release), while `gate` pushes the
-  # release tag BEFORE any build runs. Discovering a Windows packaging failure
-  # during a real release therefore burns the version number and leaves a stuck
-  # draft that release-gate.sh's idempotency guard refuses to retry. This proves
-  # the packaging first. It also produces a downloadable installer for the manual
-  # on-Windows validation that no CI job can perform.
+  # leg was continue-on-error and failed every release). A real release only
+  # tags once every target has built, so a packaging failure no longer burns the
+  # version — but it still costs a full matrix run and leaves a stale draft.
+  # This proves the packaging first, on its own, and produces a downloadable
+  # installer for the manual on-Windows validation that no CI job can perform.
   #
-  # `force_publish` cannot serve this purpose: it forces should_release=true for a
-  # version whose tag already exists, and the `git tag -a` step then fails.
+  # `force_publish` cannot serve this purpose: it drives the full release path
+  # (sync commit, draft Release, and on success a tag), not a throwaway build.
   # ---------------------------------------------------------------------------
   windows-bundle:
     if: github.event_name == 'workflow_dispatch' && inputs.bundle_test
@@ -359,10 +399,12 @@ jobs:
     # non-compiling unnoticed. `fail-fast: false` still lets every other target
     # finish and upload, so one failure never hides another.
     steps:
-      - name: Checkout release tag
+      # The tag does not exist yet (publish-release creates it), so build the
+      # exact sync commit gate pushed.
+      - name: Checkout release commit
         uses: actions/checkout@v6
         with:
-          ref: ${{ needs.gate.outputs.tag }}
+          ref: ${{ needs.gate.outputs.release_sha }}
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -532,11 +574,13 @@ jobs:
           args: --target ${{ matrix.triple }}
 
   # ---------------------------------------------------------------------------
-  # publish-release: flip the draft to published once the build matrix finishes.
-  # Every target is required, so `build` succeeds — and this job runs — only when
-  # all four built and uploaded. If ANY leg fails (Windows included), `build`
-  # fails, this job is skipped, and the release stays a draft rather than being
-  # published with a platform's installer missing.
+  # publish-release: tag the release commit, then flip the draft to published,
+  # once the build matrix finishes. Every target is required, so `build`
+  # succeeds — and this job runs — only when all four built and uploaded. If ANY
+  # leg fails (Windows included), `build` fails, this job is skipped, no tag is
+  # created, and the release stays a draft rather than being published with a
+  # platform's installer missing. Because the tag is what release-gate.sh treats
+  # as "already released", that failed version can simply be retried.
   # ---------------------------------------------------------------------------
   publish-release:
     # `windows-check` runs in parallel with the (much longer) build matrix, so
@@ -546,6 +590,24 @@ jobs:
     if: needs.gate.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.gate.outputs.release_sha }}
+          fetch-depth: 0
+
+      # Annotated tag on the sync commit. This is the point of no return: from
+      # here on release-gate.sh treats this version as shipped.
+      - name: Tag release commit
+        env:
+          TAG: ${{ needs.gate.outputs.tag }}
+          RELEASE_SHA: ${{ needs.gate.outputs.release_sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}" "${RELEASE_SHA}"
+          git push origin "${TAG}"
+
       - name: Publish (undraft) the release
         uses: actions/github-script@v9
         env:

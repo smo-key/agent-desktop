@@ -1,0 +1,6 @@
+{
+  "provider": "local",
+  "taskRef": "tag-release-after-build",
+  "url": "",
+  "lastEvent": "started"
+}

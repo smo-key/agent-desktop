@@ -71,12 +71,19 @@ Releases are automated by [`.github/workflows/release.yml`](.github/workflows/re
 3. The workflow detects the bump (the version is higher than the latest `v*`
    tag), syncs the version into `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`,
    and `Cargo.lock`, extracts the `## X.Y.Z` section with
-   `scripts/release-notes.mjs` (failing the release if it is missing), commits the
-   manifests back as `chore(release): vX.Y.Z [skip ci]`, then tags `vX.Y.Z`.
+   `scripts/release-notes.mjs` (failing the release if it is missing), and
+   commits the manifests back as `chore(release): vX.Y.Z [skip ci]`.
 4. A native matrix (macOS arm64, Windows x86_64, Linux x86_64 + arm64) builds the
-   app, provisions its own-arch sidecars, runs `check:gate`, and publishes signed
-   installers to a single GitHub Release whose body is that CHANGELOG section.
-   The app shows the same notes in a "What's new" dialog after it updates.
+   app, provisions its own-arch sidecars, runs `check:gate`, and uploads signed
+   installers to a single draft GitHub Release whose body is that CHANGELOG
+   section. The app shows the same notes in a "What's new" dialog after it
+   updates.
+5. Only once **every** target has built does the workflow tag `vX.Y.Z` on the
+   sync commit and publish the Release. The tag is created last on purpose: it
+   is what marks a version as shipped, so a failed build leaves no tag behind and
+   the same version is simply retried on the next push to `main` (or a manual
+   run from the Actions tab). A version whose tag exists is never re-released —
+   bump the version instead.
 
 Pushing a commit that does **not** raise the version publishes nothing. You can
 also trigger a manual build from the Actions tab (`workflow_dispatch`).

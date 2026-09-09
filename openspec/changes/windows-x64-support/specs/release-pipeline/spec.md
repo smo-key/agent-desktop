@@ -46,22 +46,39 @@ stop the release rather than silently publishing without the Windows installer.)
 ### Requirement: Single GitHub Release with all platform artifacts
 
 The pipeline SHALL create exactly one GitHub Release per version, tagged
-`v<version>`, as a **draft** up front, attach every successful target's
-installers to it, and then **publish (undraft)** it once the build matrix
-completes successfully for **all four targets**. If any target fails the release
-SHALL remain a draft.
+`v<version>`, as a **draft** up front pinned to the sync commit, attach every
+successful target's installers to it, and then **publish (undraft)** it once the
+build matrix completes successfully for **all four targets** and the tag has
+been pushed. If any target fails the release SHALL remain a draft with no tag.
+When creating the draft, the pipeline SHALL delete any stale draft Release for
+the same tag left by a previous failed attempt, and SHALL fail without touching
+it if a published Release for that tag already exists.
 
 #### Scenario: Release published with attachments
 
 - **WHEN** the build matrix completes for version `X` with all four targets
   succeeding
-- **THEN** the single GitHub Release `vX` is flipped from draft to published with
-  every platform's installer(s) attached, including the Windows installer
+- **THEN** the tag `vX` is pushed and the single GitHub Release `vX` is flipped
+  from draft to published with every platform's installer(s) attached, including
+  the Windows installer
 
 #### Scenario: Release stays a draft when a target fails
 
 - **WHEN** any target fails to build for version `X`
-- **THEN** the release `vX` remains a draft and is not published
+- **THEN** the release `vX` remains a draft, is not published, and no `vX` tag
+  exists
+
+#### Scenario: Stale draft from a failed attempt is replaced
+
+- **WHEN** a release attempt for version `X` starts and a draft Release `vX`
+  from an earlier failed attempt still exists
+- **THEN** the stale draft (and its partial assets) is deleted and a fresh draft
+  `vX` is created, so exactly one Release exists for the version
+
+#### Scenario: Published release is never clobbered
+
+- **WHEN** a release attempt for version `X` finds a **published** Release `vX`
+- **THEN** the attempt fails before creating or deleting anything
 
 ## ADDED Requirements
 
