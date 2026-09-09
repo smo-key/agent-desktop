@@ -33,7 +33,7 @@ import {
   writeFileSync
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -346,8 +346,11 @@ describe('statusline-wrapper git worktree detection', () => {
     const g = readSnapshot().git as Record<string, unknown>;
     // git canonicalizes (on macOS /var is a symlink to /private/var), so compare
     // the tail — the app cuts the SESSION's own path at this dir's name rather
-    // than adopting git's text, precisely because the two forms differ.
-    expect(String(g.worktree_root).endsWith('/.claude/worktrees/feature-x')).toBe(true);
+    // than adopting git's text, precisely because the two forms differ. The
+    // wrapper resolves the root to a NATIVE path (backslashes on Windows, like
+    // `cwd`), so the expected tail is built with the platform separator.
+    const tail = join(sep, '.claude', 'worktrees', 'feature-x');
+    expect(String(g.worktree_root).endsWith(tail)).toBe(true);
 
     const sub = join(linked, 'src');
     mkdirSync(sub, { recursive: true });
