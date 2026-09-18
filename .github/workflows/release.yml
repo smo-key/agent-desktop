@@ -6,13 +6,16 @@ name: Release
 #            and the GitHub Release is a normal release, so it becomes
 #            `releases/latest` — what stable installs and the one-line installers
 #            both resolve.
-#   beta  -> the `beta` channel. package.json carries a semver PRERELEASE
-#            (0.4.0-beta.1) and the GitHub Release is marked `prerelease: true`,
-#            which keeps it out of `releases/latest` entirely. After it
-#            publishes, its `latest.json` is republished as the sole asset of a
-#            pinned `beta-channel` prerelease — the stable URL the app's beta
-#            update endpoint points at, since GitHub offers no "latest
-#            prerelease" download path.
+#   beta  -> the `beta` channel. package.json carries a semver PRERELEASE whose
+#            identifier is a single integer (0.4.0-1 — the Windows MSI bundler
+#            rejects anything else), and the GitHub Release is marked
+#            `prerelease: true`, which keeps it out of `releases/latest`
+#            entirely. After it publishes, its `latest.json` is repointed at its
+#            own tag and committed to `beta-latest.json` on the `beta` branch,
+#            which raw.githubusercontent serves as the beta update endpoint —
+#            GitHub offers no "latest prerelease" download path, and a pinned
+#            release cannot serve one here because releases are immutable and a
+#            used tag name is burned permanently.
 #
 # scripts/release-gate.sh partitions the tag space by channel (stable ignores
 # prerelease tags; a beta must outrank BOTH lanes) so neither lane can stall the

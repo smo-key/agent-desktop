@@ -31,11 +31,18 @@ numeric-only prerelease identifier ≤ 65535, so betas are `-1`, `-2`, `-3`.
 1. **Pick the lane** from what is being released. If the request is ambiguous
    ("cut a release"), ask — the lanes are not interchangeable.
 
-2. **Run the quality gate** — `yarn check:gate`. Stop on any failure. CI runs
-   this again on every build leg, so a failure here is a failure there, 20
-   minutes later.
+2. **On the beta lane, merge `main` into `beta` first** — and treat that as part
+   of the release, not housekeeping. CI runs **the workflow from the pushed
+   branch**, so a `beta` that is behind `main` releases with `main`'s *old*
+   pipeline code, not the current one. Check with
+   `git log origin/beta..origin/main --oneline`.
 
-3. **Choose the version, then PROVE it** before writing it anywhere:
+3. **Run the quality gate** — `yarn check:gate`. Stop on any failure. CI runs
+   this again on every build leg, so a failure here is a failure there, 20
+   minutes later. Run it in the release worktree (step 7), which is a clean
+   checkout of exactly what you are shipping.
+
+4. **Choose the version, then PROVE it** before writing it anywhere:
 
    ```bash
    DRY_RUN=1 VERSION=<version> CHANNEL=<stable|beta> ./scripts/release-gate.sh
@@ -47,7 +54,7 @@ numeric-only prerelease identifier ≤ 65535, so betas are `-1`, `-2`, `-3`.
    the refusals below are the ones it catches, and each costs a full CI round
    trip to discover any other way.
 
-4. **Write the release notes** — a new `## <version> — <YYYY-MM-DD>` section at
+5. **Write the release notes** — a new `## <version> — <YYYY-MM-DD>` section at
    the top of `CHANGELOG.md`, above the previous one. Short `### New` / `### Improved` /
    `### Fixed` / `### Removed` groups; one bullet per notable change, bold title
    then a short user-facing description:
@@ -59,10 +66,10 @@ numeric-only prerelease identifier ≤ 65535, so betas are `-1`, `-2`, `-3`.
    The section is used verbatim as the GitHub Release body and shown in-app in
    "What's new", and **CI hard-fails if it is missing**.
 
-5. **Bump `package.json` only.** CI's `sync-version.sh` propagates the version
+6. **Bump `package.json` only.** CI's `sync-version.sh` propagates the version
    into `tauri.conf.json`, `Cargo.toml` and `Cargo.lock`.
 
-6. **Commit and push to the lane's branch.**
+7. **Commit and push to the lane's branch.**
    - Subject: `chore(release): prepare v<version>`. No `[skip ci]` — that would
      suppress the release.
    - **Never open a PR from `beta` to `main`.** `beta` is a long-lived release
@@ -74,7 +81,7 @@ numeric-only prerelease identifier ≤ 65535, so betas are `-1`, `-2`, `-3`.
      targets have built. That is what makes a failed run retryable on the same
      version.
 
-7. **Watch the run** (`gh run list --workflow=release.yml --branch <branch>`).
+8. **Watch the run** (`gh run list --workflow=release.yml --branch <branch>`).
    It is not released until it is green. See "Verify after the run".
 
 ## What CI does after the push
