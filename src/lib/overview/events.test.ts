@@ -163,6 +163,77 @@ describe('deriveEventActivity', () => {
     expect(a.currentAction).toBeNull();
   });
 
+  it('Stop with running background tasks stays working', () => {
+    // A `run_in_background` Agent returns immediately (PostToolUse at launch) and the
+    // parent ends its turn — but its `Stop` still lists the subagent as running. The
+    // session will resume on its own, so it is NOT awaiting the user: no Needs-you lane,
+    // no needs-input alert. The current action names the background work.
+    const a = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('PreToolUse', { toolName: 'Agent', summary: 'Agent' }),
+      ev('PostToolUse', { toolName: 'Agent' }),
+      ev('Stop', {
+        backgroundTasks: [
+          { id: 'a1', type: 'subagent', status: 'running', description: 'Reply with PONG' }
+        ]
+      })
+    ]);
+    expect(a.status).toBe('working');
+    expect(a.currentAction).toBe('Background: Reply with PONG');
+
+    // Several running → a count; a missing description → generic label.
+    const b = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('Stop', {
+        backgroundTasks: [
+          { id: 'a1', status: 'running', description: 'one' },
+          { id: 'a2', status: 'done', description: 'finished' },
+          { id: 'a3', status: 'running' }
+        ]
+      })
+    ]);
+    expect(b.status).toBe('working');
+    expect(b.currentAction).toBe('2 background tasks');
+    const c = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('Stop', { backgroundTasks: [{ status: 'running' }] })
+    ]);
+    expect(c.currentAction).toBe('Background task');
+  });
+
+  it('Background task finishing returns the session to waiting', () => {
+    // The background agent's SubagentStop still lists it running (claude reports the
+    // list mid-completion) — the skip-back keeps the parent working — then the parent is
+    // re-invoked and its next Stop carries an empty list → genuinely idle → waiting.
+    const running = [{ id: 'a1', type: 'subagent', status: 'running', description: 'd' }];
+    const events = [
+      ev('UserPromptSubmit'),
+      ev('PreToolUse', { toolName: 'Agent', summary: 'Agent' }),
+      ev('PostToolUse', { toolName: 'Agent' }),
+      ev('Stop', { backgroundTasks: running }),
+      ev('SubagentStop', { backgroundTasks: running })
+    ];
+    expect(deriveEventActivity(events).status).toBe('working');
+    const done = deriveEventActivity([...events, ev('Stop', { backgroundTasks: [] })]);
+    expect(done.status).toBe('waiting');
+    expect(done.currentAction).toBeNull();
+  });
+
+  it('Stop without a background task list classifies as before', () => {
+    // Older claude / other backends / synthetic interrupts: no field → waiting. So do an
+    // empty list, a list with nothing running, and a malformed (non-array) value.
+    const base = [ev('UserPromptSubmit'), ev('PreToolUse', { toolName: 'Bash' }), ev('PostToolUse', { toolName: 'Bash' })];
+    expect(deriveEventActivity([...base, ev('Stop')]).status).toBe('waiting');
+    expect(deriveEventActivity([...base, ev('Stop', { backgroundTasks: [] })]).status).toBe('waiting');
+    expect(
+      deriveEventActivity([...base, ev('Stop', { backgroundTasks: [{ id: 'x', status: 'done' }] })]).status
+    ).toBe('waiting');
+    expect(
+      deriveEventActivity([...base, ev('Stop', { backgroundTasks: 'nope' as unknown as [] })]).status
+    ).toBe('waiting');
+    expect(deriveEventActivity([...base, ev('Stop', { backgroundTasks: null })]).status).toBe('waiting');
+  });
+
   it('Fallback when no events', () => {
     // No events → no event-sourced status (the roster falls back to the PTY heuristic).
     const a = deriveEventActivity([]);

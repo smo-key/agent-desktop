@@ -121,6 +121,73 @@ describe('event-hook pure core', () => {
     const stop = hook.normalize({ session_id: 's', hook_event_name: 'Stop' }, PANE_ID, 3000);
     expect(stop.reason).toBeUndefined();
   });
+
+  it('Background tasks carried on a turn end', () => {
+    // A `Stop` (and `SubagentStop`) hook input carries `background_tasks`: the session's
+    // still-running background subagents/tasks. Forward a compact projection so the
+    // overview can tell "turn ended, but work continues" from a genuinely idle prompt.
+    const stop = hook.normalize(
+      {
+        session_id: 's',
+        hook_event_name: 'Stop',
+        background_tasks: [
+          {
+            id: 'a4c1',
+            type: 'subagent',
+            status: 'running',
+            description: 'Reply with PONG',
+            agent_type: 'general-purpose',
+            extra: 'dropped'
+          },
+          { id: 'b2', type: 'subagent', status: 'done', description: 'x' }
+        ]
+      },
+      PANE_ID,
+      1
+    );
+    expect(stop.backgroundTasks).toEqual([
+      { id: 'a4c1', type: 'subagent', status: 'running', description: 'Reply with PONG' },
+      { id: 'b2', type: 'subagent', status: 'done', description: 'x' }
+    ]);
+
+    const sub = hook.normalize(
+      {
+        session_id: 's',
+        hook_event_name: 'SubagentStop',
+        agent_id: 'a4c1',
+        background_tasks: [{ id: 'a4c1', type: 'subagent', status: 'running' }]
+      },
+      PANE_ID,
+      1
+    );
+    expect(sub.backgroundTasks).toEqual([{ id: 'a4c1', type: 'subagent', status: 'running' }]);
+
+    // Absent / non-array / empty payloads → the field is omitted; malformed entries dropped.
+    expect(hook.normalize({ session_id: 's', hook_event_name: 'Stop' }, PANE_ID, 1).backgroundTasks).toBeUndefined();
+    expect(
+      hook.normalize({ session_id: 's', hook_event_name: 'Stop', background_tasks: 'nope' }, PANE_ID, 1)
+        .backgroundTasks
+    ).toBeUndefined();
+    expect(
+      hook.normalize({ session_id: 's', hook_event_name: 'Stop', background_tasks: [] }, PANE_ID, 1)
+        .backgroundTasks
+    ).toEqual([]);
+    expect(
+      hook.normalize(
+        { session_id: 's', hook_event_name: 'Stop', background_tasks: [null, 42, { status: 'running' }] },
+        PANE_ID,
+        1
+      ).backgroundTasks
+    ).toEqual([{ status: 'running' }]);
+    // Only turn-end events carry it.
+    expect(
+      hook.normalize(
+        { session_id: 's', hook_event_name: 'PostToolUse', tool_name: 'Agent', background_tasks: [{ status: 'running' }] },
+        PANE_ID,
+        1
+      ).backgroundTasks
+    ).toBeUndefined();
+  });
 });
 
 describe('event-hook delivery', () => {

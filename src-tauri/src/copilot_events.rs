@@ -219,6 +219,7 @@ impl Translator {
             question: None,
             notification: None,
             reason: None,
+            background_tasks: None,
         };
         match kind {
             "user.message" => {

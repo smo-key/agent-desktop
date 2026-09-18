@@ -5,7 +5,8 @@
 // It generalizes the old question-hook: instead of only surfacing a pending
 // AskUserQuestion via a sidecar, it normalizes EVERY hook lifecycle event
 // (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop,
-// SubagentStop, SessionEnd) into one compact JSON event and delivers it over the
+// SubagentStop, SessionEnd) into one compact JSON event (a turn end also carries the
+// session's still-running `background_tasks`) and delivers it over the
 // app-hosted Unix-domain socket at $AGENT_DESKTOP_SOCKET_PATH.
 //
 // Why a socket (design D2): the app is what spawns claude, so it is always
@@ -116,6 +117,27 @@ function extractQuestions(toolInput) {
 }
 
 /**
+ * Project a hook's `background_tasks` array to the four fields the overview reads
+ * (`id`, `type`, `status`, `description`), dropping malformed entries. Returns
+ * `null` when the payload carries no array at all (older claude), so the field is
+ * omitted rather than emitted empty — an EMPTY array is meaningful ("nothing left
+ * running") and is forwarded as `[]`.
+ */
+function compactBackgroundTasks(raw) {
+  if (!Array.isArray(raw)) return null;
+  const out = [];
+  for (const t of raw) {
+    if (!t || typeof t !== 'object') continue;
+    const entry = {};
+    for (const k of ['id', 'type', 'status', 'description']) {
+      if (typeof t[k] === 'string') entry[k] = t[k];
+    }
+    out.push(entry);
+  }
+  return out;
+}
+
+/**
  * Normalize a raw hook stdin object into the compact event the socket carries.
  * `paneId` comes from the env (the app stamps it at spawn); `nowMs` is the
  * receive timestamp. Always returns an object with at least
@@ -144,6 +166,16 @@ function normalize(evt, paneId, nowMs) {
   if (out.hookEventName === 'Notification') {
     const msg = typeof e.message === 'string' ? e.message : '';
     if (msg) out.notification = msg;
+  }
+
+  // A turn end (`Stop`, and a `SubagentStop`) carries `background_tasks`: the session's
+  // still-running background subagents/tasks (a `run_in_background` Agent, a workflow).
+  // A `Stop` with a running entry is NOT an idle prompt — the session resumes on its
+  // own when the work reports back — so forward a compact projection and let the
+  // overview keep such a session In flight instead of alerting "needs you".
+  if (out.hookEventName === 'Stop' || out.hookEventName === 'SubagentStop') {
+    const tasks = compactBackgroundTasks(e.background_tasks);
+    if (tasks) out.backgroundTasks = tasks;
   }
 
   // SessionEnd carries a `reason` (clear / logout / prompt_input_exit / other). Forward

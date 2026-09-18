@@ -77,6 +77,13 @@ pub struct AgentEvent {
     /// place), so the overview must NOT treat that SessionEnd as a finished session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// The session's still-running background tasks on a `Stop` / `SubagentStop`
+    /// (compact `{id, type, status, description}` entries, as the hook projects claude's
+    /// `background_tasks`). Stored and forwarded opaquely — like `question`, the
+    /// backend never interprets it; the frontend keeps a `Stop` that still lists a
+    /// `running` task In flight rather than flipping it to Needs you.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_tasks: Option<Value>,
 }
 
 /// Parse one socket payload (the hook writes exactly one newline-terminated JSON
@@ -365,6 +372,7 @@ pub fn backfill_from_transcript(transcript: &Path, pane_id: &str, session_id: &s
                         question: None,
                         notification: None,
                         reason: None,
+                        background_tasks: None,
                     });
                 }
                 Some("tool_result") => {
@@ -378,6 +386,7 @@ pub fn backfill_from_transcript(transcript: &Path, pane_id: &str, session_id: &s
                         question: None,
                         notification: None,
                         reason: None,
+                        background_tasks: None,
                     });
                 }
                 _ => {}
@@ -511,6 +520,7 @@ mod tests {
             question: None,
             notification: None,
             reason: None,
+            background_tasks: None,
         }
     }
 
@@ -571,6 +581,36 @@ mod tests {
         let persisted = state.sink_for("s1");
         assert_eq!(persisted.len(), 1);
         assert_eq!(persisted[0].reason.as_deref(), Some("clear"));
+    }
+
+    /// A `Stop` line's `backgroundTasks` (the session's still-running background
+    /// subagents) is parsed off the wire and survives the ring + durable-sink
+    /// round-trip untouched, so the overview can keep such a session In flight —
+    /// including after a resume re-seeds the timeline.
+    #[test]
+    fn background_tasks_survive_the_durable_sink() {
+        let parsed = parse_event(
+            r#"{"paneId":"p1","sessionId":"s1","hookEventName":"Stop","ts":7,"backgroundTasks":[{"id":"a1","type":"subagent","status":"running","description":"Reply with PONG"}]}"#,
+        )
+        .expect("well-formed");
+        let tasks = parsed.background_tasks.clone().expect("carried");
+        assert_eq!(tasks[0]["status"], "running");
+        assert_eq!(tasks[0]["description"], "Reply with PONG");
+
+        let tmp = TempDir::new("bgtasks");
+        let state = EventState::new(tmp.path().join("events"));
+        state.record(&parsed);
+        let ring = state.ring_for("p1");
+        assert_eq!(ring[0].background_tasks, parsed.background_tasks);
+        let persisted = state.sink_for("s1");
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].background_tasks, parsed.background_tasks);
+
+        // Absent on the wire → absent (and NOT serialized) after the round-trip.
+        let plain = parse_event(r#"{"paneId":"p1","sessionId":"s1","hookEventName":"Stop","ts":8}"#)
+            .expect("well-formed");
+        assert!(plain.background_tasks.is_none());
+        assert!(!serde_json::to_string(&plain).unwrap().contains("backgroundTasks"));
     }
 
     /// A malformed line fires no callback and the accept loop keeps serving.

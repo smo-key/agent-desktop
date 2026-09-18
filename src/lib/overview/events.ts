@@ -14,6 +14,14 @@
 
 import type { AgentStatus, PendingQuestion, QuestionOption } from './roster';
 
+/** One still-running (or finished) background task as a turn-end event lists it. */
+export interface BackgroundTask {
+  id?: string;
+  type?: string;
+  status?: string;
+  description?: string;
+}
+
 /** One normalized hook event, mirroring the JSON `events.rs` serializes. */
 export interface AgentEvent {
   /** The frontend pane id (the store key / roster row). */
@@ -36,6 +44,11 @@ export interface AgentEvent {
    *  `other`). `clear` keeps the process alive (the conversation restarts), so it is not
    *  a finished session. */
   reason?: string | null;
+  /** On a `Stop` / `SubagentStop`: the session's background tasks (a `run_in_background`
+   *  Agent, a workflow, …) as claude reported them at that moment. A `Stop` that still
+   *  lists a `running` entry is NOT an idle prompt — the session resumes on its own
+   *  when the work reports back. Absent on older claude / other backends. */
+  backgroundTasks?: BackgroundTask[] | null;
   /** Frontend-only marker: a SYNTHETIC turn-end injected by `markInterrupt` (the user
    *  pressed Esc), NOT a real hook event. Never sent to Rust or the durable sink. Lets
    *  consumers (e.g. task auto-archive) distinguish a user interrupt from a genuine
@@ -126,7 +139,9 @@ function questionText(questions: PendingQuestion[]): string | null {
  *  - a pending `AskUserQuestion` in flight        → `waiting` (+ the question)
  *  - any other tool in flight (Pre w/o its Post)  → `working` (+ currentAction)
  *  - last event `UserPromptSubmit`/`PostToolUse` → `working`
- *  - last event `Stop`                            → `waiting` (turn done, your move)
+ *  - last event `Stop`                            → `waiting` (turn done, your move) —
+ *      UNLESS it still lists a `running` background task → `working` (the session
+ *      resumes on its own when that work reports back; not your move yet)
  *  - a `SubagentStop` is NOT a turn end for the host pane — an in-process Task
  *    subagent finished while the parent is still mid-turn. It neither clears the
  *    in-flight tool nor forces `waiting`; with a Task still in flight the parent stays
@@ -216,6 +231,25 @@ export function deriveEventActivity(
   if (!last) {
     return { status: null, currentAction: null, question: null, questions: null, everPrompted };
   }
+  // A `Stop` that still lists RUNNING background tasks is not a completed turn: the
+  // agent launched background work (a `run_in_background` Agent returns at launch, so
+  // its PostToolUse and the parent's Stop arrive within seconds) and will be re-invoked
+  // when it reports back. Read it as working — NOT Needs you, so no needs-input alert
+  // fires — until a later Stop restates the list with nothing running. Only a real
+  // `Stop` decides: a trailing SubagentStop (skipped above) also carries the list, but
+  // claude reports the finishing agent as still running there, so it must not classify.
+  if (last.hookEventName === 'Stop') {
+    const running = runningBackgroundTasks(last);
+    if (running.length > 0) {
+      return {
+        status: 'working',
+        currentAction: backgroundLabel(running),
+        question: null,
+        questions: null,
+        everPrompted
+      };
+    }
+  }
   let status: AgentStatus | null;
   switch (last.hookEventName) {
     case 'UserPromptSubmit':
@@ -244,6 +278,24 @@ export function deriveEventActivity(
       status = null;
   }
   return { status, currentAction: null, question: null, questions: null, everPrompted };
+}
+
+/** PURE: the `running` entries of an event's background-task list (tolerates a missing
+ *  or malformed list → none). */
+export function runningBackgroundTasks(ev: AgentEvent): BackgroundTask[] {
+  const list = ev.backgroundTasks;
+  if (!Array.isArray(list)) return [];
+  return list.filter((t) => t != null && typeof t === 'object' && t.status === 'running');
+}
+
+/** PURE: the current-action label for running background work: the task's description
+ *  when there is exactly one, else a count. */
+function backgroundLabel(running: BackgroundTask[]): string {
+  if (running.length === 1) {
+    const d = running[0].description;
+    return d ? `Background: ${d}` : 'Background task';
+  }
+  return `${running.length} background tasks`;
 }
 
 /** PURE: append an event to a pane's list, bounded to the ring cap (oldest dropped). */
