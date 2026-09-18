@@ -163,9 +163,6 @@ const BACKENDS: Record<AgentKind, AgentBackend> = {
 export interface LaunchContext {
   /** Launched INSIDE a WSL distro (see `wsl-agent-launch`). */
   wsl?: boolean;
-  /** Whether `node` exists where the session runs. The statusline wrapper is
-   *  invoked as `node "<path>"`, so without it that pipeline cannot run. */
-  nodeAvailable?: boolean;
 }
 
 /**
@@ -175,22 +172,26 @@ export interface LaunchContext {
  * With no context (or a non-WSL one) this returns the backend's declared
  * capabilities unchanged, so every existing caller keeps its current behavior.
  *
- * Under WSL two flags are cleared, for DIFFERENT and specific reasons:
+ * Under WSL every observability flag is cleared, and the reason is ONE thing
+ * rather than several: the app addresses these pipelines through environment
+ * variables (`AGENT_DESKTOP_PANE`, `AGENT_DESKTOP_SNAPSHOT_DIR`,
+ * `AGENT_DESKTOP_SOCKET_PATH`), and Windows environment variables do NOT
+ * propagate into a distro unless they are named in `WSLENV`. Nothing sets it,
+ * so none of them arrive.
  *
- *  - `hooks` — the event hook delivers over `AGENT_DESKTOP_SOCKET_PATH`, which
- *    on Windows is a `\\.\pipe\…` name. A process inside the distro cannot open
- *    it. Configuring the hooks anyway would be worse than omitting them: a hook
- *    that fails to run is SILENT, so the session would look healthy while
- *    spawning a node process per lifecycle event to fail into the void.
- *  - `statusline` — only when `node` is absent inside the distro. This pipeline
- *    writes a FILE into a `/mnt/c/…`-reachable directory, so it does work across
- *    the boundary — but it is invoked as `node "<path>"`, and that is the
- *    distro's node. VERIFIED absent on the machine this was written for, where
- *    the agent CLIs are self-contained binaries.
+ *  - `hooks` additionally could not work even if they did arrive:
+ *    `AGENT_DESKTOP_SOCKET_PATH` is a `\\.\pipe\…` name no Linux process can open.
+ *  - `statusline` writes a FILE, which IS reachable as `/mnt/c/…` — but the
+ *    wrapper writes nothing at all unless both `AGENT_DESKTOP_PANE` and
+ *    `AGENT_DESKTOP_SNAPSHOT_DIR` are set (`statusline-wrapper.cjs`), so it too
+ *    produces nothing. Configuring it would cost a node process per render for
+ *    no output.
+ *  - `contextPct` and `tasksDir` are fed by the event pipeline and the host-side
+ *    `~/.claude` tree, neither of which reaches a session inside the distro.
  *
- * `contextPct` and `tasksDir` follow the hooks: both are fed by the event
- * pipeline and the host-side `~/.claude` tree, neither of which reaches a
- * session running inside the distro.
+ * Restoring the statusline is a real possibility, not a dead end: set `WSLENV`
+ * (with the `/p` flag so the snapshot dir is path-translated automatically).
+ * That needs verification on real WSL, so it is deliberately not done here.
  */
 export function capabilitiesFor(
   backend: AgentBackend,
@@ -200,9 +201,9 @@ export function capabilitiesFor(
   return {
     ...backend.capabilities,
     hooks: false,
+    statusline: false,
     contextPct: false,
-    tasksDir: false,
-    statusline: backend.capabilities.statusline && context.nodeAvailable !== false
+    tasksDir: false
   };
 }
 

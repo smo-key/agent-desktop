@@ -53,12 +53,11 @@ holding a path, on its own, does not make this error go away.
   `AGENT_DESKTOP_SOCKET_PATH` — a `\\.\pipe\…` name a process inside the distro
   cannot reach. Per the `agent-backends` degradation mechanism (design D1), the
   surfaces gated on that flag are OMITTED rather than rendered dead. The
-  `statusLine` pipeline is KEPT WHERE IT CAN RUN: it writes a *file* into
-  `AGENT_DESKTOP_SNAPSHOT_DIR`, reachable from inside the distro as `/mnt/c/…`
-  once translated — but it is invoked as `node "<path>"`, so it is retained only
-  when `node` is present INSIDE the distro. On the reporting user's machine it is
-  not (the agent CLIs are self-contained binaries), so their WSL panes get
-  neither pipeline.
+  `statusLine` pipeline is omitted too, for the SAME underlying reason rather
+  than a different one: both pipelines are addressed through environment
+  variables, and Windows environment variables do not propagate into a distro
+  without `WSLENV`. The snapshot directory is reachable as `/mnt/c/…`, but the
+  session is never told where it is, and the wrapper writes nothing without it.
 - **MODIFIED: the pane's `program` stays the backend kind.** `backendForProgram`
   is a literal `=== 'claude'` comparison that layout persistence, status
   derivation, subagent rows and `isAgentProgram` all key on. The resolved
@@ -86,6 +85,12 @@ holding a path, on its own, does not make this error go away.
 Recorded deliberately, so the change is not mistaken for full WSL support. Each
 is a real gap that this change does NOT close:
 
+- **The environment does not cross the VM boundary.** Both observability
+  pipelines are addressed by environment variables the distro never receives
+  (`WSLENV` is not set). This is the root cause of the two entries below rather
+  than a separate issue, and it is also the most tractable: setting `WSLENV`
+  with the `/p` flag would deliver — and path-translate — the snapshot
+  directory, restoring the statusline. Unverified on real WSL, so not done here.
 - **The event socket does not cross the VM boundary.** `AGENT_DESKTOP_SOCKET_PATH`
   is a Windows named pipe; a Linux process cannot open it with
   `net.createConnection({ path })`. WSL panes therefore produce no lifecycle
@@ -111,10 +116,9 @@ A user whose shell is a WSL distro launcher, opening a project under
 without editing a file.
 
 This change does NOT claim WSL is fully supported, and the gap is wider than
-"some surfaces degrade". On the reporting user's machine, where the distro has no
-`node`, a WSL pane has NO observability: it launches and is fully usable as a
-session, but its overview row shows no status, no last message, no context % and
-no tool timeline. The honest summary of what ships here is **"WSL launches"**,
+"some surfaces degrade". A WSL pane has NO observability at all: it launches and is fully
+usable as a session, but its overview row shows no status, no last message, no
+context % and no tool timeline. The honest summary of what ships here is **"WSL launches"**,
 not "WSL works". The limitations above bound that claim, and `design.md` D5
 records a concrete avenue (WSL binfmt interop, invoking `node.exe` so the hook
 runs as a Windows process able to reach the named pipe) for closing it in a

@@ -36,7 +36,7 @@ describe('wsl-agent-launch', () => {
       for (const program of [
         'wsl.exe',
         'wsl',
-        'bash.exe', // the Windows WSL bash shim
+        'C:\\Windows\\System32\\bash.exe', // the legacy WSL shim, by FULL PATH only
         'ubuntu.exe',
         'Ubuntu.exe',
         'ubuntu-24.04.exe',
@@ -44,7 +44,7 @@ describe('wsl-agent-launch', () => {
         'debian.exe',
         'kali-linux.exe',
         'opensuse-tumbleweed.exe',
-        'SLES-15.exe',
+        'sles-15.exe',
         'oracle-linux-9.exe',
         'fedoraremix.exe',
         // The real-world case from the field report: a full WindowsApps path.
@@ -52,6 +52,27 @@ describe('wsl-agent-launch', () => {
         'C:/Program Files/WindowsApps/Canonical.../ubuntu.exe'
       ]) {
         expect(isWslShell(program), `${JSON.stringify(program)}`).toBe(true);
+      }
+    });
+
+    it('does not mistake a lookalike Windows program for a launcher', () => {
+      // The matcher was prefix-anchored (`^(…|mint|arch)`) and matched
+      // `mintty.exe` — the Git Bash / Cygwin terminal — and `archive.exe`.
+      // A false positive spawns `wsl.exe` for someone who may have no WSL at
+      // all, inflicting the very os error 2 this capability exists to fix.
+      for (const program of [
+        'mintty.exe',
+        'C:\\Program Files\\Git\\usr\\bin\\mintty.exe',
+        'archive.exe',
+        'ubuntupreview.exe',
+        // Git Bash / MSYS2 / Cygwin: by far the most common bash.exe on Windows.
+        'C:\\Program Files\\Git\\bin\\bash.exe',
+        'C:\\msys64\\usr\\bin\\bash.exe',
+        'C:\\cygwin64\\bin\\bash.exe',
+        'bash.exe'
+      ]) {
+        expect(isWslShell(program), `${JSON.stringify(program)}`).toBe(false);
+        expect(distroFromShell(program)).toBe(null);
       }
     });
 
@@ -165,7 +186,7 @@ describe('wsl-agent-launch', () => {
         '--',
         'sh',
         '-lc',
-        'cd "$1" || exit 1; shift; exec "$@"',
+        '[ -n "$1" ] || exit 1; cd "$1" || exit 1; shift; exec "$@"',
         'sh',
         '/home/u/app',
         'claude',
@@ -202,7 +223,7 @@ describe('wsl-agent-launch', () => {
         '--',
         'sh',
         '-lc',
-        'cd "$1" || exit 1; shift; exec "$@"',
+        '[ -n "$1" ] || exit 1; cd "$1" || exit 1; shift; exec "$@"',
         'sh',
         '/home/u/my project',
         'claude',
@@ -212,8 +233,17 @@ describe('wsl-agent-launch', () => {
       ]);
       // The script text is a FIXED constant: no input reaches it.
       const script = args[5];
-      expect(script).toBe('cd "$1" || exit 1; shift; exec "$@"');
+      expect(script).toBe('[ -n "$1" ] || exit 1; cd "$1" || exit 1; shift; exec "$@"');
       expect(script).not.toContain('my project');
+    });
+
+    it('A launch with no working directory is refused', () => {
+      // `cd ""` is a SILENT NO-OP in POSIX sh (verified on sh, dash and bash) —
+      // it exits 0 and leaves the inherited directory. Without the `-n` guard an
+      // empty cwd would start the agent in the distro's $HOME, which is exactly
+      // the silent wrong-directory outcome `|| exit 1` exists to prevent.
+      const { args } = wslInvocation({ distro: 'Ubuntu', cwd: '', exe: 'claude', args: [] });
+      expect(args).toContain('[ -n "$1" ] || exit 1; cd "$1" || exit 1; shift; exec "$@"');
     });
 
     it('omits -d when no distro is known', () => {
@@ -237,7 +267,7 @@ describe('wsl-agent-launch', () => {
         exe: 'claude',
         args: []
       });
-      const scriptIdx = args.indexOf('cd "$1" || exit 1; shift; exec "$@"');
+      const scriptIdx = args.indexOf('[ -n "$1" ] || exit 1; cd "$1" || exit 1; shift; exec "$@"');
       expect(args[scriptIdx + 1]).toBe('sh'); // $0
       expect(args[scriptIdx + 2]).toBe('/home/u'); // $1 — the cwd
       expect(args[scriptIdx + 3]).toBe('claude'); // $2 — the command

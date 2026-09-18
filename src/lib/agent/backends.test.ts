@@ -120,34 +120,36 @@ describe('capabilitiesFor — launch context', () => {
     // Claude supports hooks in general; a session inside a WSL distro cannot
     // reach the \\.\pipe\ socket they deliver over, so for THAT session the
     // flag is cleared and its surfaces degrade by omission.
-    const caps = capabilitiesFor(backendFor('claude'), { wsl: true, nodeAvailable: true });
+    const caps = capabilitiesFor(backendFor('claude'), { wsl: true });
     expect(caps.hooks).toBe(false);
     expect(caps.contextPct).toBe(false);
     expect(caps.tasksDir).toBe(false);
-    // The statusline writes a file, so it survives when node is there.
-    expect(caps.statusline).toBe(true);
+    expect(caps.statusline).toBe(false);
     // The pane is still a first-class agent pane in every other respect.
     expect(caps.subagents).toBe(true);
     expect(caps.specialists).toBe(true);
     expect(caps.askUserDriving).toBe(true);
   });
 
-  it('clears the statusline when the distro has no node', () => {
-    const caps = capabilitiesFor(backendFor('claude'), { wsl: true, nodeAvailable: false });
+  it('clears the statusline too, because env does not cross the boundary', () => {
+    // Windows env vars do not reach a distro without WSLENV, and the wrapper
+    // writes nothing without AGENT_DESKTOP_PANE + AGENT_DESKTOP_SNAPSHOT_DIR.
+    // So the file-based pipeline is no more viable than the socket-based one.
+    const caps = capabilitiesFor(backendFor('claude'), { wsl: true });
     expect(caps.statusline).toBe(false);
     expect(caps.hooks).toBe(false);
   });
 
   it('never turns a capability ON', () => {
     // Copilot declares no statusline; a launch context must not grant one.
-    const caps = capabilitiesFor(backendFor('copilot'), { wsl: true, nodeAvailable: true });
+    const caps = capabilitiesFor(backendFor('copilot'), { wsl: true });
     expect(caps.statusline).toBe(false);
     expect(caps.hooks).toBe(false);
   });
 
   it('does not mutate the backend descriptor', () => {
     const before = { ...backendFor('claude').capabilities };
-    capabilitiesFor(backendFor('claude'), { wsl: true, nodeAvailable: false });
+    capabilitiesFor(backendFor('claude'), { wsl: true });
     expect(backendFor('claude').capabilities).toEqual(before);
   });
 });

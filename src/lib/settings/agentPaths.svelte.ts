@@ -28,8 +28,10 @@ import type { AgentKind } from '$lib/agent/backends';
 interface DetectResult {
   claude: string | null;
   copilot: string | null;
-  /** Present inside the distro? The statusline is invoked as `node <path>`, so
-   *  its retention under WSL depends on this. */
+  /** Present inside the distro? Reported by the probe and currently UNUSED: the
+   *  statusline is omitted under WSL regardless, because its env never crosses
+   *  the boundary (no WSLENV). Kept because restoring that pipeline would need
+   *  exactly this signal. */
   node: string | null;
 }
 
@@ -44,14 +46,19 @@ export class AgentPathsStore {
   /** What detection found, shown as each input's placeholder. */
   detected = $state<DetectedAgentPaths>({});
 
-  /** Whether `node` exists where the agent runs. Gates the statusline (design D5). */
-  nodeAvailable = $state(true);
-
   /** True once `load()` has resolved. */
   loaded = $state(false);
 
   /** The shell the current detection was performed against. */
   private detectedForShell: string | null = null;
+
+  /** The distro the current detection was performed against (`null` off WSL). */
+  private detectedForDistro: string | null = null;
+
+  /** Monotonic probe id. A slow probe that resolves AFTER a newer one must not
+   *  overwrite it — a cold distro takes seconds while a host probe is instant,
+   *  so out-of-order completion is the normal case, not a rare race. */
+  private generation = 0;
 
   /**
    * Probe for the agent executables against `shell`, then load the persisted
@@ -77,24 +84,30 @@ export class AgentPathsStore {
    * worse than showing none.
    */
   async redetect(shell: string): Promise<void> {
-    this.detectedForShell = shell;
+    const gen = ++this.generation;
     const wsl = isWslShell(shell);
+    const distro = wsl ? distroFor(shell, null) : null;
+    // Cleared UP FRONT, not just on failure. A probe of a cold distro blocks for
+    // seconds, and during that window `executableFor` would otherwise still hand
+    // out the PREVIOUS shell's path — e.g. a Windows `claude.cmd` fed to a distro
+    // as its in-distro executable, which dies with "No such file or directory".
+    this.detected = {};
+    this.detectedForShell = shell;
+    this.detectedForDistro = distro;
     try {
       // The heuristic lives in ONE place (the tested `$lib/shell/wsl` module);
       // Rust just executes the probe it is told to.
       const found = await invoke<DetectResult>('detect_agent_executables', {
         wsl,
-        distro: wsl ? distroFor(shell, null) : null
+        distro
       });
+      if (gen !== this.generation) return; // superseded by a newer probe
       this.detected = { claude: found.claude, copilot: found.copilot };
-      // Outside WSL the app's own node is the one that runs hooks, and that has
-      // always been assumed present; only the in-distro case is conditional.
-      this.nodeAvailable = wsl ? Boolean(found.node) : true;
     } catch {
       // Non-Tauri/dev context or command failure. Detection is ADVISORY: an
       // empty result falls through to the bare backend program at spawn time.
+      if (gen !== this.generation) return;
       this.detected = {};
-      this.nodeAvailable = !wsl;
     }
   }
 
@@ -103,9 +116,21 @@ export class AgentPathsStore {
     return this.detectedForShell;
   }
 
-  /** The executable that would be spawned for `kind` right now. */
-  executableFor(kind: AgentKind): string {
-    return resolveAgentExecutable(kind, this.prefs, this.detected);
+  /**
+   * The executable that would be spawned for `kind` right now.
+   *
+   * `launchDistro` guards a real mismatch: detection probes the distro the SHELL
+   * names, but a launch targets the distro the CWD names, and the cwd wins by
+   * design. With shell `ubuntu.exe` and a project under `\\wsl.localhost\Debian\…`
+   * we would otherwise hand Debian an absolute path that only exists in Ubuntu.
+   * When they disagree, the DETECTED path is dropped and the bare backend name
+   * is used, which the login shell resolves inside whichever distro is targeted.
+   * An explicit user preference always wins — it is not a guess.
+   */
+  executableFor(kind: AgentKind, launchDistro?: string | null): string {
+    const sameDistro =
+      launchDistro === undefined || (launchDistro ?? null) === this.detectedForDistro;
+    return resolveAgentExecutable(kind, this.prefs, sameDistro ? this.detected : {});
   }
 
   /** Set an agent's executable (empty clears back to the detected value). */

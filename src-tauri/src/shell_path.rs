@@ -317,13 +317,22 @@ pub fn detect_agent_executables(wsl: bool, distro: Option<String>) -> AgentExecu
             return hit.clone();
         }
     }
-    let found = if wsl {
-        probe_in_distro(distro.as_deref()).unwrap_or_default()
+    let (found, cacheable) = if wsl {
+        // A FAILED probe is never cached. Caching it would poison the entry for
+        // the process lifetime: one cold-distro timeout on the first launch after
+        // boot and the placeholder shows nothing for the rest of the session,
+        // with no user-reachable way to refresh short of restarting the app.
+        match probe_in_distro(distro.as_deref()) {
+            Some(found) => (found, true),
+            None => (AgentExecutables::default(), false),
+        }
     } else {
-        probe_on_host()
+        (probe_on_host(), true)
     };
-    if let Ok(mut cache) = agent_exe_cache().lock() {
-        cache.insert(key, found.clone());
+    if cacheable {
+        if let Ok(mut cache) = agent_exe_cache().lock() {
+            cache.insert(key, found.clone());
+        }
     }
     found
 }
