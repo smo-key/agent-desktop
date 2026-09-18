@@ -53,9 +53,12 @@ holding a path, on its own, does not make this error go away.
   `AGENT_DESKTOP_SOCKET_PATH` — a `\\.\pipe\…` name a process inside the distro
   cannot reach. Per the `agent-backends` degradation mechanism (design D1), the
   surfaces gated on that flag are OMITTED rather than rendered dead. The
-  `statusLine` pipeline is KEPT: it writes a *file* into
-  `AGENT_DESKTOP_SNAPSHOT_DIR`, which is reachable from inside the distro as
-  `/mnt/c/…` once the path is translated.
+  `statusLine` pipeline is KEPT WHERE IT CAN RUN: it writes a *file* into
+  `AGENT_DESKTOP_SNAPSHOT_DIR`, reachable from inside the distro as `/mnt/c/…`
+  once translated — but it is invoked as `node "<path>"`, so it is retained only
+  when `node` is present INSIDE the distro. On the reporting user's machine it is
+  not (the agent CLIs are self-contained binaries), so their WSL panes get
+  neither pipeline.
 - **MODIFIED: the pane's `program` stays the backend kind.** `backendForProgram`
   is a literal `=== 'claude'` comparison that layout persistence, status
   derivation, subagent rows and `isAgentProgram` all key on. The resolved
@@ -105,5 +108,14 @@ is a real gap that this change does NOT close:
 A user whose shell is a WSL distro launcher, opening a project under
 `\\wsl.localhost\<distro>\…`, gets a working agent session instead of
 `os error 2` — and can correct a mis-detected executable from the settings modal
-without editing a file. This change does NOT claim WSL is fully supported; the
-limitations above bound that claim.
+without editing a file.
+
+This change does NOT claim WSL is fully supported, and the gap is wider than
+"some surfaces degrade". On the reporting user's machine, where the distro has no
+`node`, a WSL pane has NO observability: it launches and is fully usable as a
+session, but its overview row shows no status, no last message, no context % and
+no tool timeline. The honest summary of what ships here is **"WSL launches"**,
+not "WSL works". The limitations above bound that claim, and `design.md` D5
+records a concrete avenue (WSL binfmt interop, invoking `node.exe` so the hook
+runs as a Windows process able to reach the named pipe) for closing it in a
+follow-up.

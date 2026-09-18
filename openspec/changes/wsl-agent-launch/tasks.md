@@ -10,6 +10,9 @@
 - [ ] 1.3 `distroFromShell(program)`: `ubuntu-24.04.exe` → `Ubuntu-24.04`;
   `wsl.exe` / `bash.exe` → `null` (use the default distro).
 - [ ] 1.4 `distroFor(shell, cwd)`: cwd wins, then shell, then `null` (design D3).
+- [ ] 1.4a `isPseudoDistro(name)`: `docker-desktop` / `docker-desktop-data` are
+  never valid launch targets. VERIFIED: the reporter's `wsl.exe -l -q` lists
+  `Ubuntu` and `docker-desktop`, so multi-distro is ordinary.
 - [ ] 1.5 `toWslPath(p)`: UNC → `/…`; `C:\Users\X` and `C:/Users/X` →
   `/mnt/c/Users/X`; an already-POSIX path unchanged. Backslashes normalized.
 - [ ] 1.6 `wslInvocation({ distro, cwd, exe, args })` → `{ program, args }`
@@ -98,12 +101,17 @@
 - [ ] 6.3 **Requires a Windows+WSL machine — cannot be done in-session.** Verify:
   `wsl.exe -l -q` lists the distro; a session launches in a
   `\\wsl.localhost\<distro>\…` folder; the detected executable appears as the
-  settings placeholder; an explicit override takes effect; and the statusline
-  snapshot file is written. ALSO confirm the three assumptions this change could
-  not test from macOS: that the arg vector survives `wsl.exe` re-splitting the
-  Win32 command line intact (a cwd containing a space still lands correctly),
-  that `node` is present in the distro, and that a login profile which changes
-  directory does not defeat the `cd`.
+  settings placeholder; and an explicit override takes effect.
+
+  Three assumptions were VERIFIED on the reporter's machine before implementation:
+  the distro list (`Ubuntu`, `docker-desktop`); that the agent CLIs resolve inside
+  the distro only via the login profile (`/home/v-patel/.local/bin/{claude,copilot}`);
+  and that `node` is ABSENT there, so the statusline is omitted alongside the hooks.
+
+  STILL UNVERIFIED — confirm on the Windows box: that the arg vector survives
+  `wsl.exe` re-splitting the Win32 command line and lands in the right directory
+  (`… 'cd "$1" || exit 1; shift; exec "$@"' sh /tmp pwd` must print `/tmp`),
+  including a cwd containing a space.
 - [ ] 6.4 Run the `adversarial-code-review` skill over the implementation diff and
   resolve every CRITICAL finding (or prove it a false positive) before archiving.
 - [ ] 6.5 Run `openspec validate wsl-agent-launch` and reconcile any conversation

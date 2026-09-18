@@ -100,9 +100,27 @@ Two signals disagree in general, and the stronger one should win:
 So `distroFor(shell, cwd)` prefers the cwd when it is a WSL UNC path (both the
 current `\\wsl.localhost\` and the legacy `\\wsl$\` forms), falls back to the
 shell basename, and otherwise omits `-d` entirely and lets `wsl.exe` pick the
-user's default distro. Omitting `-d` is a better failure mode than guessing wrong:
-a wrong `-d` fails outright, while no `-d` works for the overwhelmingly common
-single-distro install.
+user's default distro.
+
+**Verified on the reporter's machine**, which corrected the reasoning here.
+`wsl.exe -l -q` returned:
+
+```
+Ubuntu
+docker-desktop
+```
+
+Multi-distro installs are ordinary, not exotic — Docker Desktop registers a
+`docker-desktop` pseudo-distro on every machine it is installed on. The original
+justification for omitting `-d` ("the overwhelmingly common single-distro
+install") is therefore wrong, and omitting `-d` is a weaker fallback than it
+looked: it stakes the launch on which distro happens to be marked default.
+
+This does not change the resolution ORDER — the reporter's own case resolves from
+the shell basename (`ubuntu.exe` → `Ubuntu`) and never reaches the fallback. What
+changes is the fallback's confidence. It stays last-resort, and `isPseudoDistro`
+excludes the known non-interactive entries (`docker-desktop`,
+`docker-desktop-data`) so they can never be chosen as a target.
 
 ### D4. The pane's `program` must not become the executable
 
@@ -155,6 +173,28 @@ omitted, never rendered empty or broken).
 
 `remoteControlAtStartup: false` and `disableAgentView: true` stay unconditional —
 they are correctness settings, not observability.
+
+**Verified on the reporter's machine: `node` is NOT present in the distro.** The
+probe found `/home/v-patel/.local/bin/claude` and
+`/home/v-patel/.local/bin/copilot` but printed nothing for `node` — the agent
+CLIs ship as self-contained binaries and do not imply a node install. So for this
+user the conditional resolves to OMIT, and a WSL pane gets neither hooks nor
+statusline.
+
+That is worth stating without softening: **on the machine this change was written
+for, WSL panes have no observability at all.** They launch and are fully usable
+as sessions, but the overview row shows no status, no last message, no context %
+and no tool timeline. The statusline retention in D5 is not dead code — it is the
+right behavior for a distro that does have node — but it should not be described
+as the expected outcome.
+
+A promising avenue for closing the gap properly, recorded but NOT pursued here:
+WSL's binfmt interop lets a Linux process execute Windows executables, so the
+hook could be invoked as `/mnt/c/.../node.exe`. Because that child would be a
+genuine WINDOWS process, it could open the `\\.\pipe\…` event socket — which
+would close the socket limitation rather than work around it. This needs its own
+verification and its own change; it is noted so the limitation is not mistaken
+for a dead end.
 
 This makes `capabilities` a function of launch context rather than kind alone,
 which is the one genuinely new idea in `agent-backends`. It is expressed as a
