@@ -9,6 +9,28 @@ Format: short `### New` / `### Improved` / `### Fixed` / `### Removed` sections,
 bullets, one bold title per notable change —
 `- **Feature title**: a short, impactful description and use case.`
 
+## 0.4.0-beta.1 — 2026-09-18
+
+First build on the new **Beta** channel. Betas arrive before stable releases and
+get less testing; switch back to Stable any time in Settings → Software update.
+
+### New
+
+- **Beta release channel**: choose Stable or Beta at the bottom of Settings → Software update. On Beta you get new builds first, and a newer stable release still wins — so opting in never holds you back. Switching channels re-checks for updates straight away.
+- **Keep computer awake**: stop the machine sleeping never, while any agent is running, or for as long as the app is open.
+
+### Improved
+
+- **Much lighter on the machine**: the overview polls only live panes, pauses entirely while the window is hidden, and shares one clock instead of a timer per row. Terminal output crosses to the UI in coalesced binary frames, and the subagents watcher updates incrementally rather than rescanning.
+- **Faster status line**: an agent's git status is reused for 10 seconds instead of re-running up to eight git commands per tick, per agent.
+- **Wakes up properly from sleep**: the app notices it was suspended and refreshes rather than sitting on stale state.
+
+### Fixed
+
+- **Long task prompts arrive whole**: an agent's initial prompt is delivered as a bracketed paste, so a long prompt is no longer truncated on the way in.
+- **"Needs you" is accurate again**: an agent with background work still running stays In flight, idle teammates never count, and pressing Esc behind an idle notification no longer flips a working pane to Needs you.
+- **Sleep inhibitor on Linux** is tied to the app's own process, so it is released when the app exits.
+
 ## 0.3.2 — 2026-09-08
 
 ### New
