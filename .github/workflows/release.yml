@@ -666,13 +666,27 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # A re-run may find the tag already local (same runner) or already
+          # remote (fresh runner, tag pushed by the failed attempt). Neither is an
+          # error when it points at the commit we are releasing; a tag pointing
+          # somewhere ELSE is a real problem and must still fail the job.
+          REMOTE_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | cut -f1)"
+          if [ -z "$REMOTE_SHA" ]; then
+            REMOTE_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}" | cut -f1)"
+          fi
+          if [ -n "$REMOTE_SHA" ]; then
+            if [ "$REMOTE_SHA" = "$RELEASE_SHA" ]; then
+              echo "Tag ${TAG} is already pushed at ${RELEASE_SHA} (re-run); nothing to do."
+              exit 0
+            fi
+            echo "::error::Tag ${TAG} already exists on origin at ${REMOTE_SHA}, but this release builds ${RELEASE_SHA}. Refusing to move a published tag."
+            exit 1
+          fi
           if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-            echo "Tag ${TAG} already exists locally (re-run); not recreating."
+            echo "Tag ${TAG} already exists locally; not recreating."
           else
             git tag -a "${TAG}" -m "Release ${TAG}" "${RELEASE_SHA}"
           fi
-          # Already-up-to-date is success; a tag that exists REMOTELY on a
-          # different commit is a real error and must still fail the job.
           git push origin "${TAG}"
 
       - name: Publish (undraft) the release
@@ -747,15 +761,22 @@ jobs:
           # it this release, being the newest, would become `releases/latest` and
           # serve the BETA manifest to every stable user and to the one-line
           # installers.
+          # `gh release view`'s exit code is the existence probe, but a network
+          # blip also reads as "missing" — which would send us into `gh release
+          # create` and a 422. So a failed create is NOT fatal here: fall through
+          # and let the upload be the thing that decides. If the release genuinely
+          # does not exist, the upload fails loudly, which is the right place for
+          # the job to stop.
           if gh release view beta-channel >/dev/null 2>&1; then
             echo "beta-channel release exists; replacing its manifest in place."
           else
-            echo "Creating the beta-channel release."
+            echo "beta-channel release not found; creating it."
             gh release create beta-channel \
               --title "Beta channel manifest" \
               --notes "Update manifest for the newest beta release. Refreshed by the release pipeline on every beta publish; not a downloadable build." \
               --prerelease \
-              --target "$RELEASE_SHA"
+              --target "$RELEASE_SHA" \
+              || echo "::warning::gh release create beta-channel failed (it may already exist); continuing to the upload."
           fi
 
           gh release upload beta-channel "$work/latest.json" --clobber
