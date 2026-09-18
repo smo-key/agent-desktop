@@ -1,0 +1,6 @@
+{
+  "provider": "local",
+  "taskRef": "fix-long-initial-prompt-truncation",
+  "url": "",
+  "lastEvent": "done"
+}
