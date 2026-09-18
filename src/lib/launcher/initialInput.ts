@@ -46,6 +46,22 @@ export function encodeInitialText(input: string | null | undefined): number[] | 
   return Array.from(new TextEncoder().encode(input));
 }
 
+/** xterm bracketed-paste delimiters (DECSET 2004). */
+const PASTE_START = '\x1b[200~';
+const PASTE_END = '\x1b[201~';
+
+/**
+ * The prompt text wrapped in bracketed-paste markers, or `null` when there is no
+ * prompt. The text is otherwise verbatim; an embedded paste-END marker is stripped
+ * so the prompt cannot close the paste early and spill its remainder as keystrokes.
+ */
+export function encodePastedText(input: string | null | undefined): number[] | null {
+  if (typeof input !== 'string') return null;
+  if (input.trim() === '') return null;
+  const body = input.split(PASTE_END).join('');
+  return Array.from(new TextEncoder().encode(`${PASTE_START}${body}${PASTE_END}`));
+}
+
 /**
  * The one-shot launch prompt a pane should deliver ON MOUNT, gated on whether this
  * spawn is a RESUME. The initial prompt belongs to the FRESH launch only: a resumed
@@ -226,8 +242,15 @@ export class InitialInputSender {
   private delivered = false;
   private readonly text: number[] | null;
 
-  constructor(input: string | null | undefined) {
-    this.text = encodeInitialText(input);
+  /**
+   * `bracketedPaste` wraps the text in xterm paste markers so an agent TUI takes it
+   * as ONE paste. Required for long prompts: a raw write over ~1 KB reaches the TUI
+   * as a 1024-byte tty chunk plus a remainder, and the TUI drops the first chunk —
+   * only the prompt's TAIL is submitted. Off by default: a shell pane's line editor
+   * may not have paste mode on, and would echo the markers as garbage.
+   */
+  constructor(input: string | null | undefined, opts: { bracketedPaste?: boolean } = {}) {
+    this.text = opts.bracketedPaste ? encodePastedText(input) : encodeInitialText(input);
   }
 
   /** Whether there is a non-empty prompt to deliver. */

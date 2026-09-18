@@ -514,7 +514,11 @@
     // (archive→restore / preview re-mounts this component with the registry's
     // initialInput still set) must NOT re-send the launch prompt — its transcript
     // already has it — so the prompt is gated on `resume` here.
-    initialInputSender = new InitialInputSender(initialInputForMount(initialInput, resume));
+    // Agent TUIs take the prompt as a bracketed paste (a long raw write arrives
+    // truncated to its tail); a shell pane's command stays a raw write.
+    initialInputSender = new InitialInputSender(initialInputForMount(initialInput, resume), {
+      bracketedPaste: isAgentProgram(program)
+    });
 
     // Arm the launch spinner from the same launch-time values: agent panes
     // (claude) show it; a prompt-bearing pane holds it until the prompt lands.

@@ -353,3 +353,44 @@ describe('backend-declared readiness timing (agent-backends)', () => {
     r.dispose();
   });
 });
+
+describe('InitialInputSender bracketed paste (long prompts arrive whole)', () => {
+  // A raw un-bracketed write >~1 KB reaches the agent TUI as a 1024-byte tty chunk
+  // plus a remainder, and the TUI drops the first chunk — only the prompt's tail
+  // is submitted. Bracketed paste delivers it as ONE paste regardless of chunking.
+  const START = [0x1b, 0x5b, 0x32, 0x30, 0x30, 0x7e]; // ESC [ 2 0 0 ~
+  const END = [0x1b, 0x5b, 0x32, 0x30, 0x31, 0x7e]; // ESC [ 2 0 1 ~
+
+  it('A long initial prompt is delivered whole', () => {
+    const long = 'step '.repeat(400);
+    const writes: number[][] = [];
+    const scheduled: Array<() => void> = [];
+    const sender = new InitialInputSender(long, { bracketedPaste: true });
+    sender.deliver(
+      (d) => writes.push(d),
+      (run) => scheduled.push(run)
+    );
+    const text = Array.from(new TextEncoder().encode(long));
+    expect(writes).toEqual([[...START, ...text, ...END]]);
+    scheduled[0]();
+    expect(writes[1]).toEqual(SUBMIT_BYTES);
+  });
+
+  it('strips an embedded paste-end marker so the prompt cannot close the paste early', () => {
+    const writes: number[][] = [];
+    new InitialInputSender('a\x1b[201~b', { bracketedPaste: true }).deliver(
+      (d) => writes.push(d),
+      () => {}
+    );
+    expect(writes[0]).toEqual([...START, 0x61, 0x62, ...END]);
+  });
+
+  it('Shell pane initial command is written raw', () => {
+    const writes: number[][] = [];
+    new InitialInputSender('ls').deliver(
+      (d) => writes.push(d),
+      () => {}
+    );
+    expect(writes[0]).toEqual([0x6c, 0x73]);
+  });
+});
