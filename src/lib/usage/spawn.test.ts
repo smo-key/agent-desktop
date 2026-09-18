@@ -503,8 +503,7 @@ describe('buildSpawnOverride — WSL launch (wsl-agent-launch)', () => {
       sessionId: 'sid-1',
       usagePaths: WIN_PATHS,
       cwd: WSL_CWD,
-      shell: WSL_SHELL,
-      nodeAvailable: true
+      shell: WSL_SHELL
     });
     const settings = JSON.parse(out.args[out.args.indexOf('--settings') + 1]);
     // No hooks at all — a hook that cannot reach its socket fails SILENTLY,
@@ -515,7 +514,12 @@ describe('buildSpawnOverride — WSL launch (wsl-agent-launch)', () => {
     expect(envKeys).not.toContain('AGENT_DESKTOP_SOCKET_PATH');
   });
 
-  it('File-delivered status is retained', () => {
+  it('Env-addressed pipelines are omitted, not broken', () => {
+    // The correction an adversarial review forced: Windows environment variables
+    // do NOT cross into a distro without WSLENV, which nothing sets. The
+    // statusline wrapper writes NOTHING unless both AGENT_DESKTOP_PANE and
+    // AGENT_DESKTOP_SNAPSHOT_DIR are set, so retaining it would have cost a node
+    // process per render to produce nothing. `node` was never the constraint.
     const out = buildSpawnOverride({
       program: 'claude',
       args: [],
@@ -523,39 +527,54 @@ describe('buildSpawnOverride — WSL launch (wsl-agent-launch)', () => {
       sessionId: 'sid-1',
       usagePaths: WIN_PATHS,
       cwd: WSL_CWD,
-      shell: WSL_SHELL,
-      nodeAvailable: true
-    });
-    const settings = JSON.parse(out.args[out.args.indexOf('--settings') + 1]);
-    // Kept, with its path translated so the distro can actually reach it.
-    expect(settings.statusLine.command).toBe(
-      'node "/mnt/c/Users/VedanshPatel/AppData/Roaming/com.arthur.agent-desktop/bin/statusline-wrapper.js"'
-    );
-    const env = Object.fromEntries(out.env ?? []);
-    expect(env.AGENT_DESKTOP_SNAPSHOT_DIR).toBe(
-      '/mnt/c/Users/VedanshPatel/AppData/Roaming/com.arthur.agent-desktop/snapshots'
-    );
-  });
-
-  it('The distro lacks the required interpreter', () => {
-    // VERIFIED on the reporting user's box: no `node` in the distro. The
-    // statusline is then omitted too, rather than pointing at a command that
-    // cannot run.
-    const out = buildSpawnOverride({
-      program: 'claude',
-      args: [],
-      paneId: 'p1',
-      sessionId: 'sid-1',
-      usagePaths: WIN_PATHS,
-      cwd: WSL_CWD,
-      shell: WSL_SHELL,
-      nodeAvailable: false
+      shell: WSL_SHELL
     });
     const settings = JSON.parse(out.args[out.args.indexOf('--settings') + 1]);
     expect(settings.statusLine).toBeUndefined();
     expect(settings.hooks).toBeUndefined();
-    // The session still launches.
+    const envKeys = (out.env ?? []).map(([k]) => k);
+    expect(envKeys).not.toContain('AGENT_DESKTOP_SNAPSHOT_DIR');
+    expect(envKeys).not.toContain('AGENT_DESKTOP_SOCKET_PATH');
+    // The session still launches — that is the whole point.
     expect(out.program).toBe('wsl.exe');
+  });
+
+  it('A WSL launch carries no Windows cwd', () => {
+    // The directory is applied by the `cd` INSIDE the distro. Handing
+    // CreateProcessW the original \\wsl.localhost\… UNC path as wsl.exe's own
+    // cwd is what produces os error 3, so the override must say "no cwd"
+    // explicitly rather than leave the caller to fall back to it.
+    const out = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'p1',
+      sessionId: 'sid-1',
+      usagePaths: WIN_PATHS,
+      cwd: WSL_CWD,
+      shell: WSL_SHELL
+    });
+    expect(out.cwd).toBeUndefined();
+    expect(out.args).toContain('/home/v-patel/source/data-flow-central');
+  });
+
+  it('honours an explicit executable off the WSL path', () => {
+    // The setting is offered on every platform, so discarding it off-WSL made
+    // the field silently inert — worse than not offering it at all.
+    const out = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'p1',
+      sessionId: 'sid-1',
+      usagePaths: PATHS,
+      cwd: '/Users/me/src',
+      shell: '/bin/zsh',
+      executable: '/opt/homebrew/bin/claude'
+    });
+    expect(out.program).toBe('/opt/homebrew/bin/claude');
+    expect(out.cwd).toBe('/Users/me/src');
+    // Still a fully-wired claude launch.
+    const settings = JSON.parse(out.args[out.args.indexOf('--settings') + 1]);
+    expect(settings.hooks).toEqual(expectedHooks(PATHS.eventHookPath));
   });
 
   it('Correctness settings are unconditional', () => {
@@ -566,8 +585,7 @@ describe('buildSpawnOverride — WSL launch (wsl-agent-launch)', () => {
       sessionId: 'sid-1',
       usagePaths: WIN_PATHS,
       cwd: WSL_CWD,
-      shell: WSL_SHELL,
-      nodeAvailable: false
+      shell: WSL_SHELL
     });
     const settings = JSON.parse(out.args[out.args.indexOf('--settings') + 1]);
     // These keep the transcript local and stop an arrow key archiving the
@@ -591,8 +609,7 @@ describe('buildSpawnOverride — WSL launch (wsl-agent-launch)', () => {
       ...base,
       cwd: '/Users/me/src',
       shell: '/bin/zsh',
-      executable: 'claude',
-      nodeAvailable: true
+      executable: 'claude'
     });
     expect(after.args).toEqual(before.args);
     expect(after.env).toEqual(before.env);

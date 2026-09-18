@@ -20,6 +20,7 @@
   import { backendFor, backendForProgram, isAgentProgram, type AgentKind } from './agent/backends';
   import { agentPathsSettings } from './settings/agentPaths.svelte';
   import { defaultShell } from './shell/defaultShell';
+  import { distroFor } from './shell/wsl';
   import { noteOutput, noteExit, noteBusy, noteResize, noteForeground, clearRuntime } from './overview/runtime';
   import { detectTerminalBusy } from './overview/terminalBusy';
   import {
@@ -696,22 +697,30 @@
         // come from the detection the settings store performed against it.
         cwd,
         shell: defaultShell(),
+        // The launch distro (cwd wins over shell) is passed so a path detected
+        // in a DIFFERENT distro is not handed to this one.
         executable: isAgentProgram(program)
-          ? agentPathsSettings.executableFor(program as AgentKind)
-          : null,
-        nodeAvailable: agentPathsSettings.nodeAvailable
+          ? agentPathsSettings.executableFor(
+              program as AgentKind,
+              distroFor(defaultShell(), cwd)
+            )
+          : null
       });
 
       // Spawn the PTY-backed process. Arg name `onEvent` is the camelCase of the
       // Rust param `on_event`; the command name stays verbatim. `env` is omitted
       // for shell panes (undefined → backend default empty), set only for claude.
-      // NOTE `spawnProgram`/`spawnCwd`, not `program`/`cwd`: a WSL launch
-      // executes `wsl.exe` with a translated directory. The pane's REGISTRY
-      // entry keeps the agent kind — see buildSpawnOverride's `program` doc.
+      // NOTE `spawnProgram`/`spawnCwd`, not `program`/`cwd`. A WSL launch runs
+      // `wsl.exe` and deliberately spawns with NO cwd — the directory is applied
+      // by a `cd` inside the distro, and giving CreateProcessW the original
+      // `\\wsl.localhost\…` UNC path as its own cwd invites os error 3. So these
+      // are used VERBATIM, with no `??` fallback that would resurrect it.
+      // The pane's REGISTRY entry keeps the agent kind — see the `program` doc
+      // on buildSpawnOverride's return type.
       const id = await invoke<number>('pty_spawn', {
-        program: spawnProgram ?? program,
+        program: spawnProgram,
         args: spawnArgs,
-        cwd: spawnCwd ?? cwd,
+        cwd: spawnCwd,
         cols: term.cols,
         rows: term.rows,
         env: spawnEnv,

@@ -67,7 +67,7 @@ There are two release branches, one per update channel:
 | Branch | Channel | Version form | GitHub Release |
 | --- | --- | --- | --- |
 | `main` | `stable` (the default) | `0.4.0` | normal — becomes `releases/latest` |
-| `beta` | `beta` (opt in from Settings) | `0.4.0-beta.1` | marked **prerelease** — never `releases/latest` |
+| `beta` | `beta` (opt in from Settings) | `0.4.0-1` | marked **prerelease** — never `releases/latest` |
 
 The steps below describe the stable lane; the beta lane is identical except for
 the branch and the prerelease version. See **Cutting a beta** below.
@@ -102,8 +102,15 @@ also trigger a manual build from the Actions tab (`workflow_dispatch`).
 
 1. Merge or rebase what you want to ship onto the `beta` branch.
 2. Set `version` in `package.json` to a semver **prerelease** of the next stable
-   version — `0.4.0-beta.1`, then `0.4.0-beta.2`, and so on.
-3. Add the matching `## 0.4.0-beta.1 — YYYY-MM-DD` section to `CHANGELOG.md`; the
+   version, numbered `0.4.0-1`, then `0.4.0-2`, and so on.
+
+   The identifier must be a **single number** (not `-beta.1`). That is a hard
+   constraint of the Windows MSI bundler — WiX encodes the prerelease into a
+   16-bit field — and `tauri build` only discovers it ~12 minutes into the
+   Windows leg, after the other three platforms have already built. The release
+   gate now refuses such a version up front, in seconds, with a message saying
+   exactly this.
+3. Add the matching `## 0.4.0-1 — YYYY-MM-DD` section to `CHANGELOG.md`; the
    release fails without it, exactly as on the stable lane.
 4. Push `beta`.
 

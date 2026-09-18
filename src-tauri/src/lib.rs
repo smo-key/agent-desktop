@@ -310,7 +310,10 @@ fn default_shell() -> String {
 ///
 /// `wsl`/`distro` come from the frontend's tested `$lib/shell/wsl` module rather
 /// than being re-derived here, so the launcher heuristic has ONE implementation.
-#[tauri::command]
+/// `async` because this SPAWNS `wsl.exe` and waits up to `SHELL_TIMEOUT` (5s) —
+/// a cold distro has to boot first. On the main thread that would freeze the
+/// window on every startup and every shell change.
+#[tauri::command(async)]
 fn detect_agent_executables(
     wsl: bool,
     distro: Option<String>,

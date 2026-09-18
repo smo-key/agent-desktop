@@ -111,13 +111,27 @@
 - [x] 8.8 Added the missing `channelCheck.ts` tests, and took the emitted
   version/tag from the decision so `VERSION=v1.2.3` cannot yield `tag=vv1.2.3`.
 
-## 9. Cut the first beta
+## 9. Windows MSI rejects a non-numeric prerelease identifier
 
-- [ ] 9.1 Land the change on `main`.
-- [ ] 9.2 Create the `beta` branch at `main`'s HEAD.
-- [ ] 9.3 Bump `package.json` to `0.4.0-beta.1` on `beta` and write its
+Discovered by the first real beta run: `0.4.0-beta.1` built on macOS and both
+Linux targets, then failed the Windows leg with *"optional pre-release identifier
+in app version must be numeric-only and cannot be greater than 65535 for msi
+target"* — after compiling the binary, ~12 minutes in. No tag was created and
+nothing was published, so the safe failure mode held.
+
+- [x] 9.1 Number betas `0.4.0-1`, `0.4.0-2`, … instead of `-beta.N`.
+- [x] 9.2 Add `isMsiCompatibleVersion` to the gate so this fails in seconds, with
+  a message naming the required form, instead of minutes into the Windows build.
+- [x] 9.3 Update the proposal, design, release-pipeline and release-channels
+  specs, and the README, to the numeric scheme.
+
+## 10. Cut the first beta
+
+- [ ] 10.1 Land the change on `main`.
+- [ ] 10.2 Create the `beta` branch at `main`'s HEAD.
+- [ ] 10.3 Bump `package.json` to `0.4.0-1` on `beta` and write its
   `CHANGELOG.md` section (the pipeline hard-fails without one).
-- [ ] 9.4 Push `beta`; confirm the run gates, builds all four targets, publishes
+- [ ] 10.4 Push `beta`; confirm the run gates, builds all four targets, publishes
   a prerelease, and refreshes `beta-channel`.
-- [ ] 9.5 **Manual, not verifiable in-session:** install the beta build, switch a
+- [ ] 10.5 **Manual, not verifiable in-session:** install the beta build, switch a
   stable install to the beta channel, and confirm it picks the prerelease up.

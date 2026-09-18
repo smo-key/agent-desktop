@@ -23,6 +23,12 @@ this requirement changes agent panes only.
 - **AND** the session's working directory is the chosen folder as seen from
   inside the distro
 
+#### Scenario: A launch with no working directory is refused
+
+- **WHEN** a WSL launch is attempted with no working directory
+- **THEN** the launch fails rather than silently starting the agent in an
+  arbitrary default directory
+
 #### Scenario: The agent CLI is only on the login PATH
 
 - **WHEN** the agent executable is installed at a location that only the distro's
@@ -129,12 +135,29 @@ SHALL expose one control per supported agent, and SHALL show the currently
 detected executable as the control's placeholder, so the user can see what they
 would get before choosing.
 
-A stored preference SHALL take effect for agent sessions launched afterwards.
+A stored preference SHALL take effect for agent sessions launched afterwards, on
+EVERY platform — not only for sessions launched inside a distro. A control that
+is offered everywhere but honoured only in one launch context would silently
+discard what the user typed.
+
+A detected executable SHALL be used only when the location it was detected in is
+the location the session will run in. Where a launch targets a different distro
+than detection probed, the detected path SHALL be disregarded in favour of the
+plain program name; an explicit user preference is never disregarded.
 
 #### Scenario: Correcting a mis-detected executable
 
 - **WHEN** the user enters an explicit path for an agent and launches a session
 - **THEN** that path is used instead of the detected one
+- **AND** this holds on every platform, including when no distro is involved
+
+#### Scenario: A launch targets a different distro than detection probed
+
+- **WHEN** the configured shell names one distro but the session's folder is
+  inside another
+- **THEN** the executable detected in the first distro is not used for that
+  launch
+- **AND** the session launches with the plain program name instead
 
 #### Scenario: The detected value is visible when unset
 
@@ -154,13 +177,15 @@ A stored preference SHALL take effect for agent sessions launched afterwards.
 ### Requirement: Observability degrades honestly for a WSL-launched session
 The system SHALL NOT configure an observability pipeline that cannot function across the VM boundary, and SHALL instead declare the affected capability unsupported for that session.
 
-A pipeline that delivers over a host-local socket address SHALL be omitted from a
-WSL-launched session's configuration, because a process inside the distro cannot
-reach it. A pipeline that delivers by writing to a file SHALL be RETAINED, with
-its paths translated, because the host filesystem is reachable from inside the
-distro — but ONLY when the interpreter that pipeline's command requires is
-present inside the distro. Where it is not, that pipeline SHALL be omitted on the
-same terms as one that cannot reach its destination.
+Every such pipeline the system ADDRESSES THROUGH THE ENVIRONMENT — passing a
+destination to the agent as an environment variable — SHALL be omitted from a
+WSL-launched session, because host environment variables are not propagated into
+a distro unless explicitly exported for it, and a pipeline whose destination
+never arrives produces nothing while still costing a process per invocation.
+
+This holds regardless of whether the destination itself would be reachable: a
+file-writing pipeline whose directory IS reachable from inside the distro is
+still omitted, because the session is never told where that directory is.
 
 Settings that govern correctness rather than observability SHALL be applied
 unconditionally.
@@ -173,18 +198,12 @@ unconditionally.
 - **AND** the surfaces gated on that capability are omitted from the pane rather
   than rendered empty or in error
 
-#### Scenario: File-delivered status is retained
+#### Scenario: Env-addressed pipelines are omitted, not broken
 
-- **WHEN** an agent session is launched inside a distro that has the interpreter
-  the status pipeline's command requires
-- **THEN** the file-writing status pipeline is configured with translated paths
-  and continues to function
-
-#### Scenario: The distro lacks the required interpreter
-
-- **WHEN** an agent session is launched inside a distro where the interpreter the
-  status pipeline requires is absent
-- **THEN** that pipeline is omitted rather than configured to fail silently
+- **WHEN** an agent session is launched inside a distro
+- **THEN** no pipeline whose destination is communicated through the environment
+  is configured, including one that writes to an otherwise-reachable file
+- **AND** the destination values are not passed to the session at all
 - **AND** the session still launches
 
 #### Scenario: Correctness settings are unconditional

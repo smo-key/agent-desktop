@@ -68,6 +68,12 @@ the exit status to carry the failure while the shell continues parsing, and the
 cost of getting that wrong is executing the agent in the wrong directory — a
 silent, confusing failure rather than a loud one.
 
+The `[ -n "$1" ]` guard is not belt-and-braces. `cd ""` is a silent NO-OP in
+POSIX sh — verified on sh, dash and bash, where it exits 0 and leaves the
+inherited directory — so an empty cwd sails straight past `cd "$1" || exit 1` and
+starts the agent in `$HOME`. An earlier version of this design asserted the
+opposite in a comment; the guard makes the claim true.
+
 Profile ordering works in our favor here, and it is worth recording why. A login
 shell sources `/etc/profile` and `~/.profile` BEFORE it executes the `-c` command
 string, so a profile that changes directory cannot defeat the `cd` in our script:
@@ -138,68 +144,51 @@ value; the pane's registry entry is untouched. The existing test asserting
 `resolveProgram('claude') === 'claude'` confirms bare kinds already pass through
 the shell resolver unharmed.
 
-### D5. Degrade hooks, keep the statusline
+### D5. Omit every env-addressed pipeline under WSL
 
-The two observability pipelines fail for different reasons, and collapsing them
-into one flag would discard a pipeline that still works.
+**This decision was wrong twice before it was right, so the reasoning is recorded
+in full.**
 
-| Pipeline | Delivery | Under WSL |
+*First version:* drop the hooks (socket unreachable), keep the statusline (writes
+a file, which `/mnt/c/…` reaches). *Second version, after probing the real box:*
+keep the statusline only when the distro has `node`, since the wrapper runs as
+`node "<path>"` — and that box has no `node`. *Final version, after an
+adversarial review:* omit the statusline unconditionally, because `node` was
+never the binding constraint.
+
+The constraint is the ENVIRONMENT. The app tells each pipeline where to deliver
+by passing `AGENT_DESKTOP_PANE`, `AGENT_DESKTOP_SNAPSHOT_DIR` and
+`AGENT_DESKTOP_SOCKET_PATH` to the spawned process. Windows environment variables
+do **not** propagate into a distro unless they are named in `WSLENV`, and nothing
+here sets it. `statusline-wrapper.cjs` writes no snapshot at all unless BOTH
+`AGENT_DESKTOP_PANE` and `AGENT_DESKTOP_SNAPSHOT_DIR` are present. So the
+retained statusline would have burned a node process per render to produce
+nothing — precisely the cost used to justify dropping the hooks.
+
+The tell was visible in the code without knowing any WSL semantics: the second
+version translated `AGENT_DESKTOP_SNAPSHOT_DIR` to `/mnt/c/…` (treating env as
+crossing) while dropping `AGENT_DESKTOP_SOCKET_PATH` (reasoning the in-distro
+process could not use it). The delivery mechanism for the two is identical, so
+one of those decisions had to be wrong.
+
+| Pipeline | Addressed by | Under WSL |
 | --- | --- | --- |
-| Event hook | `AGENT_DESKTOP_SOCKET_PATH`, a `\\.\pipe\…` name | **Cannot work.** A Linux process cannot open a Windows named pipe. |
-| Statusline wrapper | Writes a file into `AGENT_DESKTOP_SNAPSHOT_DIR` | **Works**, once the path is translated to `/mnt/c/…`. |
-
-The statusline's survival depends on one thing that must be PROBED, not assumed:
-the wrapper is invoked as `node "<path>"`, and that is `node` **inside the
-distro** — a different install from any Windows one. So D5 is conditional:
-retain `statusLine` when `node` is present in the distro, and omit it like the
-hooks when it is not. Task 2.2's probe therefore covers `node` alongside the
-agent CLIs.
-
-What does NOT threaten it, having checked the wrapper's source: the delegation to
-the user's real `~/.claude/hooks/statusline.js` resolves against the LINUX home
-under WSL, where it will usually be absent. That is harmless. `delegate()` returns
-early when the hook is missing (`statusline-wrapper.cjs:113`) and `main()`
-documents the snapshot half as *"entirely independent of (a)"* — so a missing
-user statusline costs an empty in-pane bar, never the snapshot the dashboard
-reads.
-
-Emitting the hooks anyway would be worse than omitting them: `spawn.ts` already
-warns that a hook which fails to run is silent, so the session would *look*
-healthy while spawning a `node` process per lifecycle event to fail into the
-void. Instead the `hooks` key is omitted from `--settings` for a WSL pane and the
-backend declares `hooks: false`, which routes through the `agent-backends`
-degradation mechanism (design D1: a feature gated on an undeclared flag is
-omitted, never rendered empty or broken).
+| Event hook | `AGENT_DESKTOP_SOCKET_PATH` | **Omitted.** Never arrives; and a `\\.\pipe\…` name is unopenable from Linux even if it did. |
+| Statusline | `AGENT_DESKTOP_SNAPSHOT_DIR` | **Omitted.** The directory is reachable, but the session is never told where it is. |
 
 `remoteControlAtStartup: false` and `disableAgentView: true` stay unconditional —
 they are correctness settings, not observability.
 
-**Verified on the reporter's machine: `node` is NOT present in the distro.** The
-probe found `/home/v-patel/.local/bin/claude` and
-`/home/v-patel/.local/bin/copilot` but printed nothing for `node` — the agent
-CLIs ship as self-contained binaries and do not imply a node install. So for this
-user the conditional resolves to OMIT, and a WSL pane gets neither hooks nor
-statusline.
+This is a real avenue rather than a dead end: setting `WSLENV` (with the `/p`
+flag, which path-translates a value automatically) would deliver both variables
+and could restore the statusline without any manual translation. It needs
+verification on real WSL, so it is deliberately not done here. The `node` probe
+is kept for exactly that follow-up.
 
-That is worth stating without softening: **on the machine this change was written
-for, WSL panes have no observability at all.** They launch and are fully usable
-as sessions, but the overview row shows no status, no last message, no context %
-and no tool timeline. The statusline retention in D5 is not dead code — it is the
-right behavior for a distro that does have node — but it should not be described
-as the expected outcome.
-
-A promising avenue for closing the gap properly, recorded but NOT pursued here:
-WSL's binfmt interop lets a Linux process execute Windows executables, so the
-hook could be invoked as `/mnt/c/.../node.exe`. Because that child would be a
-genuine WINDOWS process, it could open the `\\.\pipe\…` event socket — which
-would close the socket limitation rather than work around it. This needs its own
-verification and its own change; it is noted so the limitation is not mistaken
-for a dead end.
-
-This makes `capabilities` a function of launch context rather than kind alone,
-which is the one genuinely new idea in `agent-backends`. It is expressed as a
-`capabilitiesFor(backend, context)` function so the static `backend.capabilities`
-remains the no-context default and every existing caller keeps working.
+A further avenue for the hooks, recorded but NOT pursued: WSL's binfmt interop
+can execute Windows binaries, so invoking the hook as `/mnt/c/.../node.exe` would
+make it a real Windows process able to open the `\\.\pipe\…` socket. That needs
+its own verification and its own change.
 
 ### D6. Detection is advisory, and cached by shell
 

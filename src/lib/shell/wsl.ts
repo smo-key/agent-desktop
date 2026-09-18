@@ -23,12 +23,17 @@ const WSL_EXE = 'wsl.exe';
  * The script run inside the distro. A FIXED constant — no caller input is ever
  * interpolated into it (see `wslInvocation`).
  *
- * `cd "$1" || exit 1` rather than `cd "$1" && …`: a failed `cd` must ABORT. With
- * `&&` the shell carries on parsing and the cost of getting it wrong is running
- * the agent in the wrong directory, which is a silent, confusing failure rather
- * than a loud one.
+ * `|| exit 1` rather than `&&`: a failed `cd` must ABORT. With `&&` the shell
+ * carries on and the cost is running the agent in the wrong directory — a
+ * silent, confusing failure rather than a loud one.
+ *
+ * The `[ -n "$1" ]` guard is NOT redundant: `cd ""` is a silent no-op in POSIX
+ * sh (verified on sh, dash and bash — it exits 0 and leaves the directory
+ * inherited), so an empty cwd would sail past a bare `cd "$1" || exit 1` and
+ * start the agent in the distro's `$HOME`. That is exactly the silent
+ * wrong-directory outcome the `|| exit 1` exists to prevent.
  */
-const SCRIPT = 'cd "$1" || exit 1; shift; exec "$@"';
+const SCRIPT = '[ -n "$1" ] || exit 1; cd "$1" || exit 1; shift; exec "$@"';
 
 /**
  * The `$0` placeholder. POSIX assigns the FIRST operand after `sh -c <script>`
@@ -39,12 +44,20 @@ const SCRIPT = 'cd "$1" || exit 1; shift; exec "$@"';
 const ARGV0 = 'sh';
 
 /**
- * Distro launchers registered by the common distributions. An open set — a name
- * missing here is a ONE-LINE fix, and the failure mode is benign: an
- * unrecognized launcher means the app behaves exactly as it does today.
+ * Distro launchers registered by the common distributions.
+ *
+ * FULLY ANCHORED, and deliberately so. An earlier prefix-only form (`^(…|mint|arch)`)
+ * matched `mintty.exe` — the Git Bash / Cygwin terminal — and `archive.exe`,
+ * which would have rerouted a perfectly good shell through a VM. The optional
+ * tail allows the real version suffixes (`ubuntu-24.04`, `ubuntu2404`,
+ * `opensuse-leap-15.5`) without opening the prefix back up.
+ *
+ * An open set — a missing name is a ONE-LINE fix, and the failure mode is
+ * benign: an unrecognized launcher means the app behaves exactly as it does
+ * today. A FALSE POSITIVE is not benign, which is why this errs narrow.
  */
 const DISTRO_LAUNCHERS =
-  /^(ubuntu|debian|kali-linux|opensuse|suse|sles|oracle-linux|fedora|alpine|arch|mint|pengwin|whitewater|clearlinux)/i;
+  /^(ubuntu|debian|kali-linux|opensuse(-(leap|tumbleweed))?|sles|oracle-linux|fedora(remix)?|alpine|archlinux|linuxmint|pengwin|whitewater|clear-linux)([-_]?[0-9][0-9.\-_]*)?$/i;
 
 /**
  * Registered WSL entries that are NOT interactive distributions. Docker Desktop
@@ -70,21 +83,29 @@ export function isPseudoDistro(name: string | null | undefined): boolean {
  * Whether the configured shell launches a WSL distro — the single signal that
  * routes an agent pane through WSL.
  *
- * Covers the generic launchers (`wsl.exe`, and the `bash.exe` shim) and the
+ * Covers `wsl.exe`, the System32 `bash.exe` shim (by full path only), and the
  * per-distro App Execution Aliases (`ubuntu.exe`, `ubuntu-24.04.exe`,
  * `debian.exe`, …), including the full `C:\Program Files\WindowsApps\…\ubuntu.exe`
  * spelling the field report arrived with.
  *
- * Deliberately does NOT match a bare `bash` or `/bin/bash`: on Unix that is an
- * ordinary shell, and treating it as a WSL launcher would reroute every Linux
- * user's agent panes through a VM that does not exist.
+ * Deliberately does NOT match a bare `bash`, `/bin/bash`, or any `bash.exe`
+ * outside System32: on Unix that is an ordinary shell, and on Windows it is
+ * almost always Git Bash. Either false positive would reroute a working pane
+ * through a VM.
  */
 export function isWslShell(program: string | null | undefined): boolean {
   if (typeof program !== 'string') return false;
   const name = basename(program.trim()).toLowerCase();
   if (!name) return false;
   if (name === 'wsl' || name === 'wsl.exe') return true;
-  if (name === 'bash.exe') return true;
+  // NOT `bash.exe` by name. The legacy WSL shim lives at
+  // C:\Windows\System32\bash.exe, but on a Windows dev box the overwhelmingly
+  // common bash.exe is Git for Windows (C:\Program Files\Git\bin\bash.exe),
+  // with MSYS2 and Cygwin close behind. Treating those as WSL launchers would
+  // spawn `wsl.exe` for a user who may have no WSL at all — inflicting the exact
+  // os error 2 this capability exists to fix on a setup that worked. Only the
+  // System32 shim qualifies, and only by its full path.
+  if (/[\\/]system32[\\/]bash\.exe$/i.test(program.trim())) return true;
   if (!name.endsWith('.exe')) return false;
   return DISTRO_LAUNCHERS.test(name.slice(0, -'.exe'.length));
 }
@@ -119,7 +140,7 @@ export function distroFromCwd(cwd: string | null | undefined): string | null {
 
 /**
  * The distro named by the shell launcher, or `null` for a generic launcher
- * (`wsl.exe` / `bash.exe`), where the user's own default distro should apply.
+ * (`wsl.exe` / the `bash.exe` shim), where the user's own default distro applies.
  *
  * `ubuntu-24.04.exe` → `Ubuntu-24.04`: the alias name is the registered distro
  * name lowercased, so only the first letter has to be restored.
@@ -129,6 +150,7 @@ export function distroFromShell(program: string | null | undefined): string | nu
   const name = basename((program as string).trim());
   const lower = name.toLowerCase();
   if (lower === 'wsl' || lower === 'wsl.exe' || lower === 'bash.exe') return null;
+  if (!DISTRO_LAUNCHERS.test(name.slice(0, -'.exe'.length))) return null;
   const stem = name.slice(0, -'.exe'.length);
   if (!stem) return null;
   if (isPseudoDistro(stem)) return null;

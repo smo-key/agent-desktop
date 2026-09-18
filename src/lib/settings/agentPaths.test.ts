@@ -55,6 +55,24 @@ describe('wsl-agent-launch agent paths', () => {
     expect(resolveAgentExecutable('copilot', null, {})).toBe('copilot');
   });
 
+  it('A launch targets a different distro than detection probed', () => {
+    // Detection probes the distro the SHELL names; a launch targets the distro
+    // the CWD names, and the cwd wins by design. Handing Debian an absolute path
+    // that only exists in Ubuntu would fail — so the detected value is dropped
+    // and the bare name is used, which the login shell resolves in either.
+    const detected = { claude: '/home/u/.local/bin/claude', copilot: null };
+    // Same distro: the detected path applies.
+    expect(resolveAgentExecutable('claude', null, detected)).toBe(
+      '/home/u/.local/bin/claude'
+    );
+    // Different distro: callers pass `{}` instead, falling back to the bare name.
+    expect(resolveAgentExecutable('claude', null, {})).toBe('claude');
+    // But an explicit preference is never a guess, so it still wins.
+    expect(resolveAgentExecutable('claude', { claude: '/opt/c', copilot: '' }, {})).toBe(
+      '/opt/c'
+    );
+  });
+
   it('tolerates a malformed persisted slice', () => {
     for (const bad of [null, undefined, 42, 'x', [], { claude: 42 }, { nope: 'x' }]) {
       expect(parseAgentPaths(bad)).toEqual(defaultAgentPaths());

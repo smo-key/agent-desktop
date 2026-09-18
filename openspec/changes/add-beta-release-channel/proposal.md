@@ -29,7 +29,7 @@ A beta channel needs three things that do not exist today:
 
 - **NEW: a `beta` release channel.** `beta` becomes a release branch alongside
   `main`. A push to it releases when `package.json` carries a **prerelease**
-  version (`0.4.0-beta.1`), producing the same four signed installers and a
+  version (`0.4.0-1`), producing the same four signed installers and a
   GitHub Release marked `prerelease: true` — which keeps it out of
   `releases/latest`, so stable users are untouched.
 - **Channel-partitioned release gate.** `scripts/release-gate.sh` delegates its
@@ -68,17 +68,19 @@ A beta channel needs three things that do not exist today:
   to `stable` sees no update until a stable release exceeds `0.4.0-beta.3`. The
   updater's default comparator never downgrades, and this change deliberately
   does not add a downgrade path.
-- **Beta versions are semver prereleases of the next stable version**
-  (`0.4.0-beta.1` precedes `0.4.0`). This is what makes "highest wins" a single
-  semver comparison across both channels, and it is also why the version must
-  carry the suffix everywhere — the updater compares a manifest against the
-  app's own compiled version, so `package.json`, `tauri.conf.json`, `Cargo.toml`
-  and the tag must all agree.
-- **Windows MSI ProductVersion cannot express a prerelease** (it is
-  `major.minor.patch` only), so two betas of the same base version share an MSI
-  ProductVersion. This does not affect in-app updating: Tauri's Windows updater
-  uses the NSIS installer, which overwrites rather than relying on an MSI upgrade
-  code. Recorded as a known limitation, not fixed here.
+- **Beta versions are semver prereleases of the next stable version, numbered
+  with a single integer** (`0.4.0-1` precedes `0.4.0`). The prerelease form is
+  what makes "highest wins" a single semver comparison across both channels, and
+  it is why the suffix must appear everywhere — the updater compares a manifest
+  against the app's own compiled version, so `package.json`, `tauri.conf.json`,
+  `Cargo.toml` and the tag must all agree.
+
+  The identifier is a bare number rather than `-beta.N` because the Windows MSI
+  bundler requires it: `tauri build` fails with *"optional pre-release identifier
+  in app version must be numeric-only and cannot be greater than 65535 for msi
+  target"*. It discovers this only after compiling the whole binary, ~12 minutes
+  into the Windows leg and after the other three platforms have built and
+  uploaded — so the release gate refuses such a version up front instead.
 
 ## Capabilities
 

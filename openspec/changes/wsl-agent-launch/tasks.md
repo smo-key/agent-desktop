@@ -100,9 +100,15 @@
 
 ## 6. Verification
 
-- [ ] 6.1 `yarn test` green; `yarn check` and `cargo clippy` clean.
-- [ ] 6.2 Confirm on macOS that agent sessions still launch and events still
-  arrive — the non-WSL path must be untouched.
+- [x] 6.1 `yarn test` green (1485 passing, 150 files); `svelte-check` 0 errors over
+  692 files; `cargo test --lib` 339 passing; `cargo clippy` introduces no new
+  warnings; scenario-coverage gate PASS with wsl-agent-launch now ENFORCED (23/23,
+  none headless-exempt).
+- [ ] 6.2 Confirm on macOS IN THE APP that agent sessions still launch and events
+  still arrive. NOT yet done live. Evidence so far is static: a regression test
+  asserts the non-WSL `buildSpawnOverride` output (args AND env) is byte-identical
+  to the pre-change output, and the full hook set is still emitted — but that is
+  not a substitute for a real launch.
 - [ ] 6.3 **Requires a Windows+WSL machine — cannot be done in-session.** Verify:
   `wsl.exe -l -q` lists the distro; a session launches in a
   `\\wsl.localhost\<distro>\…` folder; the detected executable appears as the
@@ -119,5 +125,50 @@
   including a cwd containing a space.
 - [ ] 6.4 Run the `adversarial-code-review` skill over the implementation diff and
   resolve every CRITICAL finding (or prove it a false positive) before archiving.
-- [ ] 6.5 Run `openspec validate wsl-agent-launch` and reconcile any conversation
+- [x] 6.5a Conversation drift reconciled into the artifacts: the `isPseudoDistro`
+  exclusion (1.4a) and the verified probe findings (D3/D5, proposal limitations)
+  were folded in when the Windows results arrived.
+- [x] 6.5b Register `wsl-agent-launch` in the scenario-coverage gate's
+  ENFORCED_CAPABILITIES (`tools/check-scenario-coverage.mjs`) so its scenarios
+  are gated rather than listed as pending. 23/23 covered, none headless-exempt.
+- [x] 6.5c Resolved: the real defect behind the unused `clear_agent_executable_cache`
+  was that a FAILED probe was cached forever, so one cold-distro timeout poisoned
+  detection for the whole session. Failures are now never cached, which removes
+  the need to clear. The command stays registered as the manual escape hatch.
+
+## 7. Adversarial-review follow-ups (CLAUDE.md gate)
+
+- [x] 7.1 C1 — the launcher matcher was prefix-anchored, so `mintty.exe` matched
+  `mint` and `archive.exe` matched `arch`; and every `bash.exe` was treated as
+  the WSL shim when on Windows it is almost always Git Bash. Both would spawn
+  `wsl.exe` for a user who may have no WSL — inflicting the very error this
+  change fixes. Matcher fully anchored; `bash.exe` accepted only at its System32
+  path.
+- [x] 7.2 C2 — `input.executable` was read only inside the WSL branch while the
+  settings field rendered on every platform, so the setting was inert off-WSL.
+  Now honoured on every platform.
+- [x] 7.3 C3 — the retained statusline could never have worked: its env never
+  crosses the boundary. Omitted unconditionally under WSL; see design D5.
+- [x] 7.4 W1 — `redetect` now clears `detected` up front and carries a generation
+  token, so a slow cold-distro probe cannot hand out the previous shell's path
+  mid-flight or overwrite a newer result.
+- [x] 7.5 W2 — a WSL launch now returns `cwd: undefined` explicitly and the call
+  site uses it verbatim, instead of falling back to the untranslated UNC path.
+- [x] 7.6 W3 — `cd ""` is a silent no-op, not an error; added the `[ -n "$1" ]`
+  guard so an empty cwd aborts rather than starting the agent in `$HOME`.
+- [x] 7.7 W4 — failed probes are no longer cached.
+- [x] 7.8 W5 — `detect_agent_executables` is `#[tauri::command(async)]`; it
+  blocks up to 5s and was freezing the main thread.
+- [x] 7.9 W6 — a path detected in one distro is no longer handed to a launch
+  targeting a different one.
+- [ ] 7.10 W8 (accepted, not fixed) — `probe_in_distro` waits for exit before
+  draining stdout, so a login profile emitting more than the pipe buffer would
+  deadlock until the timeout. This exactly mirrors the existing
+  `login_shell_path` in the same file; fixing one and not the other would be
+  inconsistent, and with 7.7 the blast radius is one slow probe rather than a
+  poisoned cache. Fix both together in a follow-up.
+- [ ] 7.11 W9 — confirm on the Windows box whether `wsl -d` matches
+  case-insensitively. `distroFromShell` reconstructs `Kali-linux` from
+  `kali-linux.exe`, which is not the registered spelling.
+- [ ] 6.5 Run `openspec validate wsl-agent-launch` and reconcile any remaining
   drift into the artifacts.
