@@ -250,7 +250,13 @@ describe('deriveEventActivity', () => {
       ev('Stop', { backgroundTasks: [{ id: 'm1', type: 'monitor', status: 'running' }, { id: 'd', type: 'dream', status: 'running' }] })
     ]);
     expect(monitor.status).toBe('waiting');
-    for (const type of ['subagent', 'workflow', 'teammate', 'cloud session']) {
+    // An in-process TEAMMATE stays `running` while merely idle (claude tracks idleness in
+    // a separate flag it does not forward) and is evicted without any hook, so it would
+    // pin the lead In flight for the team's whole lifetime — it must not count.
+    expect(
+      deriveEventActivity([...base, ev('Stop', { backgroundTasks: [{ id: 't1', type: 'teammate', status: 'running', description: 'w' }] })]).status
+    ).toBe('waiting');
+    for (const type of ['subagent', 'workflow', 'cloud session']) {
       const a = deriveEventActivity([...base, ev('Stop', { backgroundTasks: [{ id: 'x', type, status: 'running', description: 'd' }] })]);
       expect(a.status, type).toBe('working');
     }
@@ -300,6 +306,38 @@ describe('deriveEventActivity', () => {
       ev('Notification', { notification: 'x' })
     ]);
     expect(b.status).toBe('working');
+    // The background subagent's OWN tool events land in the parent's ring (same pane,
+    // indistinguishable). They must not sever the Notification from the Stop.
+    const c = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('Stop', { backgroundTasks: running }),
+      ev('PreToolUse', { toolName: 'Read', summary: 'Read:x' }),
+      ev('PostToolUse', { toolName: 'Read' }),
+      ev('PreToolUse', { toolName: 'Grep', summary: 'Grep:y' }),
+      ev('PostToolUse', { toolName: 'Grep' }),
+      ev('Notification', { notification: 'Claude is waiting for your input' })
+    ]);
+    expect(c.status).toBe('working');
+    expect(c.currentAction).toBe('Background: d');
+    // …but once that agent has reported SubagentStop, nothing is outstanding → waiting.
+    const d = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('Stop', { backgroundTasks: running }),
+      ev('PreToolUse', { toolName: 'Read', summary: 'Read:x' }),
+      ev('PostToolUse', { toolName: 'Read' }),
+      ev('SubagentStop', { agentId: 'a1' }),
+      ev('Notification', { notification: 'Claude is waiting for your input' })
+    ]);
+    expect(d.status).toBe('waiting');
+    // A new prompt between them is a real turn restart: no inheritance.
+    expect(
+      deriveEventActivity([
+        ev('UserPromptSubmit'),
+        ev('Stop', { backgroundTasks: running }),
+        ev('UserPromptSubmit'),
+        ev('Notification')
+      ]).status
+    ).toBe('waiting');
     expect(deriveEventActivity([ev('UserPromptSubmit'), ev('Stop'), ev('Notification')]).status).toBe('waiting');
     expect(deriveEventActivity([ev('UserPromptSubmit'), ev('Notification')]).status).toBe('waiting');
   });

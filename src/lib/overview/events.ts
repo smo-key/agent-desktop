@@ -244,14 +244,18 @@ export function deriveEventActivity(
   // The idle-prompt `Notification` can also fire while the prompt sits idle awaiting a
   // background agent; it inherits the preceding Stop's running list rather than flipping
   // the row to Needs you. (A `Notification` with no such Stop behind it is unchanged.)
-  const turnEnd =
-    last.hookEventName === 'Stop'
-      ? last
-      : last.hookEventName === 'Notification'
-        ? precedingStop(events)
-        : null;
-  if (turnEnd) {
-    const running = runningBackgroundTasks(turnEnd);
+  let running: BackgroundTask[] = [];
+  if (last.hookEventName === 'Stop') {
+    running = runningBackgroundTasks(last);
+  } else if (last.hookEventName === 'Notification') {
+    // A background subagent's OWN tool events land in this pane's ring (same process,
+    // same pane id), so look back past tool traffic and SubagentStops to the Stop that
+    // ended the parent's turn — a `UserPromptSubmit` is the only real turn restart — and
+    // count only the agents that have not reported SubagentStop since.
+    const stop = precedingStop(events);
+    if (stop) running = outstandingBackgroundTasks(events, stop);
+  }
+  {
     if (running.length > 0) {
       return {
         status: 'working',
@@ -295,14 +299,12 @@ export function deriveEventActivity(
 /** The background-task `type`s that count as "an agent is still working": each wakes the
  *  session when it finishes and then TERMINATES. claude lists every backgrounded task on a
  *  Stop — also `shell` (a `run_in_background` Bash such as a dev server that never exits),
- *  `monitor`, `dream` / `auto-mode scan` housekeeping, `MCP task` — which would pin a row
- *  In flight forever, so those are deliberately NOT counted. */
-export const AGENT_TASK_TYPES: ReadonlySet<string> = new Set([
-  'subagent',
-  'workflow',
-  'teammate',
-  'cloud session'
-]);
+ *  `monitor`, `dream` / `auto-mode scan` housekeeping, `MCP task`, `teammate` — which
+ *  would pin a row In flight forever, so those are deliberately NOT counted. */
+export const AGENT_TASK_TYPES: ReadonlySet<string> = new Set(['subagent', 'workflow', 'cloud session']);
+// NOT `teammate`: an in-process teammate stays `running` while merely idle (idleness is a
+// separate flag claude does not forward) and is evicted with no hook, so it would pin the
+// lead In flight for the team's whole lifetime even while the lead awaits you.
 
 /** The task `status`es that mean the work is still ahead of us: `pending` (queued behind a
  *  busy concurrency slot — no hook fires when it flips to running) as well as `running`. */
@@ -326,18 +328,18 @@ export function runningBackgroundTasks(ev: AgentEvent): BackgroundTask[] {
 
 /**
  * PURE: the running background work still outstanding for a pane: the last REAL `Stop`'s
- * live agent-like entries, minus any whose agent has since reported `SubagentStop`. Empty
- * when there is no such Stop. Background agents span user turns, so a later prompt does
+ * live agent-like entries (or of the given `stop`), minus any whose agent has since
+ * reported `SubagentStop`. Empty when there is no such Stop. Background agents span user turns, so a later prompt does
  * not invalidate the list — the next real Stop restates it. Used by the interrupt path, which must not carry a finished
  * agent forward; status classification deliberately keeps the coarser "the Stop listed
  * running work" reading so the wake-up gap after a `SubagentStop` never flickers to
  * Needs you.
  */
-export function outstandingBackgroundTasks(events: AgentEvent[]): BackgroundTask[] {
+export function outstandingBackgroundTasks(events: AgentEvent[], stop?: AgentEvent): BackgroundTask[] {
   let stopIdx = -1;
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
-    if (e.hookEventName === 'Stop' && !e.synthetic) {
+    if (stop ? e === stop : e.hookEventName === 'Stop' && !e.synthetic) {
       stopIdx = i;
       break;
     }
@@ -351,13 +353,23 @@ export function outstandingBackgroundTasks(events: AgentEvent[]): BackgroundTask
   return runningBackgroundTasks(events[stopIdx]).filter((t) => !(t.id && finished.has(t.id)));
 }
 
-/** The real `Stop` immediately behind a trailing `Notification` (skipping `SubagentStop`s),
- *  or null when something else — a prompt, a tool — sits between them. */
+/** The real `Stop` behind a trailing `Notification`, looking back past `SubagentStop`s,
+ *  other `Notification`s and tool traffic (a background subagent's tool events share this
+ *  pane's ring); null when a prompt or session boundary sits between them. */
 function precedingStop(events: AgentEvent[]): AgentEvent | null {
   for (let i = events.length - 2; i >= 0; i--) {
     const e = events[i];
-    if (e.hookEventName === 'SubagentStop' || e.hookEventName === 'Notification') continue;
-    return e.hookEventName === 'Stop' ? e : null;
+    switch (e.hookEventName) {
+      case 'SubagentStop':
+      case 'Notification':
+      case 'PreToolUse':
+      case 'PostToolUse':
+        continue;
+      case 'Stop':
+        return e.synthetic ? null : e;
+      default:
+        return null;
+    }
   }
   return null;
 }

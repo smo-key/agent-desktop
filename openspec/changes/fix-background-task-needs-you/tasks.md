@@ -21,6 +21,8 @@
 - [x] 4.2 Forward `agentId` on `SubagentStop` (hook + Rust `agent_id`) and make `markInterrupt` use `outstandingBackgroundTasks` (last real Stop's agents minus finished) — tests "Subagent id carried on a subagent stop", "Interrupt after the background agent finished returns to waiting"
 - [x] 4.3 A trailing `Notification` inherits the preceding Stop's running work; clip the background label — tests "Idle notification inherits running background work", "Long background descriptions are clipped in the current action"
 
+- [x] 4.4 Second adversarial pass: drop `teammate` (idle teammates never stop); the idle-`Notification` look-back skips the background subagent's own tool traffic and subtracts stopped agents; Esc behind that Notification is a no-op too
+
 ## 5. Verify
 
 - [x] 5.1 Run `yarn check`, `yarn test`, `yarn coverage`, and `cargo test` in `src-tauri`; confirm all pass
