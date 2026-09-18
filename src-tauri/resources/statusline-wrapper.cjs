@@ -281,7 +281,57 @@ function gitStatus(workspaceDir) {
  * Build the snapshot object from parsed statusline stdin. Every field is
  * defensively derived; absent inputs yield null (never throws).
  */
-function buildSnapshot(paneId, data) {
+/**
+ * How long (seconds) a snapshot's git status is reused before git is asked again.
+ * claude re-runs the statusline on every update (several times a second while
+ * streaming), and a fresh status costs up to EIGHT `git` process spawns — per
+ * agent. The app already polls each project's git state itself, so the snapshot's
+ * copy only needs to be roughly current. `AGENT_DESKTOP_GIT_TTL_SECS` overrides
+ * it (0 disables the cache; used by the tests).
+ */
+function gitTtlSecs() {
+  const raw = process.env.AGENT_DESKTOP_GIT_TTL_SECS;
+  if (raw === undefined || raw === '') return 10;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 10;
+}
+
+/**
+ * The git status for `workspaceDir`, reusing the one in this pane's PREVIOUS
+ * snapshot while it is for the same dir and younger than the TTL (its
+ * `checked_at`, epoch seconds, stamped when git was actually run). Any doubt —
+ * no prior snapshot, another dir, a clock that went backwards, unreadable JSON —
+ * falls through to a fresh status. Fully guarded.
+ */
+function gitStatusCached(snapshotDir, paneId, workspaceDir) {
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    const ttl = gitTtlSecs();
+    const dir = str(snapshotDir);
+    const pane = safeSessionId(paneId);
+    if (ttl > 0 && dir && pane) {
+      const prior = JSON.parse(fs.readFileSync(path.join(dir, `${pane}.json`), 'utf8'));
+      const g = prior && prior.git;
+      if (
+        g &&
+        typeof g === 'object' &&
+        prior.cwd === workspaceDir &&
+        typeof g.checked_at === 'number' &&
+        now >= g.checked_at &&
+        now - g.checked_at < ttl
+      ) {
+        return g;
+      }
+    }
+  } catch {
+    // no / unreadable prior snapshot -> compute fresh
+  }
+  const fresh = gitStatus(workspaceDir);
+  fresh.checked_at = now;
+  return fresh;
+}
+
+function buildSnapshot(paneId, data, snapshotDir) {
   const sessionId = data ? safeSessionId(data.session_id) : null;
   const model = data && data.model ? str(data.model.display_name) : null;
   const model_id = data && data.model ? str(data.model.id) : null;
@@ -307,7 +357,7 @@ function buildSnapshot(paneId, data) {
     context_pct: contextPct(data),
     rate_limits: rateLimits,
     cost: rawCost,
-    git: gitStatus(workspaceDir),
+    git: gitStatusCached(snapshotDir, paneId, workspaceDir),
     // The dir the SESSION is actually in. For a `claude --worktree` session that
     // is the linked worktree claude created for itself — the app spawned the pane
     // in the project folder and has no other way to learn it (session-launcher:
@@ -360,7 +410,7 @@ function main() {
     const snapshotDir = str(process.env.AGENT_DESKTOP_SNAPSHOT_DIR);
     if (paneId && snapshotDir) {
       const data = safeParse(stdinText); // may be null on unparseable stdin
-      const snapshot = buildSnapshot(paneId, data);
+      const snapshot = buildSnapshot(paneId, data, snapshotDir);
       writeSnapshotAtomic(snapshotDir, paneId, snapshot);
     }
   } catch {

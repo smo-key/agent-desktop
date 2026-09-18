@@ -338,6 +338,31 @@ describe('statusline-wrapper git worktree detection', () => {
     return JSON.stringify(base);
   }
 
+  it('Git status is reused within the TTL and refreshed after it', () => {
+    // First tick computes git and stamps `checked_at`.
+    expect(runWrapper(payloadIn(repo), { AGENT_DESKTOP_GIT_TTL_SECS: '60' }).status).toBe(0);
+    const first = readSnapshot().git as Record<string, unknown>;
+    expect(first.branch).toBe('main');
+    // (the linked worktree dir under the repo already counts as one change)
+    const baseline = first.modified as number;
+    expect(typeof first.checked_at).toBe('number');
+
+    // The tree changes, but a tick inside the TTL reuses the prior status (no git run).
+    writeFileSync(join(repo, 'new.txt'), 'x\n');
+    expect(runWrapper(payloadIn(repo), { AGENT_DESKTOP_GIT_TTL_SECS: '60' }).status).toBe(0);
+    const cached = readSnapshot().git as Record<string, unknown>;
+    expect(cached.modified).toBe(baseline);
+    expect(cached.checked_at).toBe(first.checked_at);
+
+    // TTL 0 disables the cache: the change is seen.
+    expect(runWrapper(payloadIn(repo), { AGENT_DESKTOP_GIT_TTL_SECS: '0' }).status).toBe(0);
+    expect((readSnapshot().git as Record<string, unknown>).modified).toBe(baseline + 1);
+
+    // A different dir never reuses another dir's status, even inside the TTL.
+    expect(runWrapper(payloadIn(linked), { AGENT_DESKTOP_GIT_TTL_SECS: '60' }).status).toBe(0);
+    expect((readSnapshot().git as Record<string, unknown>).branch).toBe('feature-x');
+  });
+
   it('Snapshot reports the worktree root exactly', () => {
     // git's worktree ADMIN name gains a counter on a basename collision, so the
     // name is not reliably a path segment of the dir — the root is reported
