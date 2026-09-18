@@ -38,8 +38,9 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::collections::HashMap as StdHashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
@@ -51,6 +52,17 @@ use serde_json::Value;
 /// tail has scrolled out (old) and is treated as finished. Bounds the per-recompute
 /// read cost the way [`crate::activity`] bounds its own transcript tail.
 const PARENT_TAIL_BYTES: u64 = 1 << 20; // 1 MiB
+
+/// How many bytes of a subagent transcript's HEAD and TAIL to read when deriving
+/// its time span (first / last `timestamp`). The first stamped line is at the head
+/// and the last at the tail, so the whole file (often many MiB) never needs to be
+/// read or parsed. Both windows are re-read only when the file's size or mtime
+/// changes (see [`span_cache`]).
+const SPAN_WINDOW_BYTES: u64 = 64 * 1024;
+
+/// Upper bound on cached transcript spans before the cache is reset wholesale
+/// (a crude bound; the working set is the live sessions' subagent files).
+const SPAN_CACHE_MAX: usize = 8192;
 
 /// The Tauri event name the subagents watcher emits the per-session map on. The
 /// frontend listens on exactly this name.
@@ -98,7 +110,7 @@ impl SubagentUsage {
 /// always present (an entry with neither a usable id nor any label is dropped);
 /// `label`/`status`/`model`/`usage` are best-effort and may be `null` when the
 /// source record omits them. Serialized camelCase for the JS side.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Subagent {
     /// The subagent agent id (e.g. `a45490d0ade2c7a7c`), matching the
@@ -451,31 +463,83 @@ fn standalone_from_meta(
 /// entries — the span used for "duration alive". Returns `(None, None)` for an
 /// unreadable/empty file. Lines that aren't JSON or carry no parseable timestamp
 /// are skipped.
-fn jsonl_span(path: &Path) -> (Option<i64>, Option<i64>) {
-    let Ok(text) = std::fs::read_to_string(path) else {
+/// Cache key: a file's size + mtime. Same key => same first/last timestamps.
+type SpanKey = (u64, Option<SystemTime>);
+type Span = (Option<i64>, Option<i64>);
+
+/// Process-wide `path -> (size+mtime, span)` cache so an unchanged subagent
+/// transcript is never re-read on the next recompute.
+fn span_cache() -> &'static Mutex<StdHashMap<PathBuf, (SpanKey, Span)>> {
+    static CACHE: OnceLock<Mutex<StdHashMap<PathBuf, (SpanKey, Span)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(StdHashMap::new()))
+}
+
+/// The `timestamp` (epoch ms) of one JSONL line, if it parses and carries one.
+fn line_timestamp(line: &str) -> Option<i64> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    let v: Value = serde_json::from_str(line).ok()?;
+    v.get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(crate::activity::parse_iso_millis)
+}
+
+/// Read `[start, start+len)` of a file as lossy UTF-8.
+fn read_range(path: &Path, start: u64, len: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    f.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = Vec::with_capacity(len as usize);
+    f.take(len).read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// First and last `timestamp` (epoch ms) of a JSONL transcript, from a bounded
+/// head + tail window (see [`SPAN_WINDOW_BYTES`]). A truncated line at a window
+/// edge simply fails to parse and is skipped. Missing/unreadable -> `(None, None)`.
+fn compute_jsonl_span(path: &Path, size: u64) -> Span {
+    let Some(head) = read_range(path, 0, SPAN_WINDOW_BYTES) else {
         return (None, None);
     };
-    let mut first = None;
-    let mut last = None;
-    for line in text.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<Value>(line) else {
-            continue;
+    let first = head.lines().find_map(line_timestamp);
+    let last = if size <= SPAN_WINDOW_BYTES {
+        head.lines().rev().find_map(line_timestamp)
+    } else {
+        let start = size - SPAN_WINDOW_BYTES;
+        let Some(tail) = read_range(path, start, SPAN_WINDOW_BYTES) else {
+            return (first, first);
         };
-        if let Some(ms) = v
-            .get("timestamp")
-            .and_then(Value::as_str)
-            .and_then(crate::activity::parse_iso_millis)
-        {
-            if first.is_none() {
-                first = Some(ms);
+        // The first tail line is (almost surely) cut mid-line; `line_timestamp`
+        // rejects it as unparsable, so no explicit skip is needed.
+        tail.lines().rev().find_map(line_timestamp).or(first)
+    };
+    (first, last)
+}
+
+/// First / last timestamps of a subagent transcript, served from the size+mtime
+/// cache when the file is unchanged since the last call.
+fn jsonl_span(path: &Path) -> Span {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return (None, None);
+    };
+    let key: SpanKey = (meta.len(), meta.modified().ok());
+    if let Ok(cache) = span_cache().lock() {
+        if let Some((k, span)) = cache.get(path) {
+            if *k == key {
+                return *span;
             }
-            last = Some(ms);
         }
     }
-    (first, last)
+    let span = compute_jsonl_span(path, meta.len());
+    if let Ok(mut cache) = span_cache().lock() {
+        if cache.len() >= SPAN_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(path.to_path_buf(), (key, span));
+    }
+    span
 }
 
 /// Scan the parent session transcript (`<project>/<session_id>.jsonl`, a bounded
@@ -680,6 +744,33 @@ pub fn default_projects_base() -> Option<PathBuf> {
 /// the `subagents_for` command can update it without restarting the watch.
 pub type WatchedSessions = Arc<Mutex<Vec<SessionRef>>>;
 
+/// The last computed `session_id -> subagents` map, shared between the watcher
+/// (which patches only the sessions a change touched) and the `subagents_for`
+/// seed (which replaces it wholesale). Emitted in full on every change so the
+/// frontend can keep its replace-the-map semantics.
+pub type SubagentsCache = Arc<Mutex<HashMap<String, Vec<Subagent>>>>;
+
+/// PURE: which watched sessions a batch of changed paths belongs to. A path
+/// belongs to a session when one of its directory components IS the session id
+/// (`<project>/<session>/subagents/...`, the copilot session-state tree) or its
+/// file stem is (`<project>/<session>.jsonl`, the parent transcript). Each session
+/// is returned at most once, in watched order. Changes elsewhere in the (large,
+/// recursively watched) projects tree map to nothing, so they cost no IO.
+pub fn sessions_touched(sessions: &[SessionRef], paths: &[PathBuf]) -> Vec<SessionRef> {
+    sessions
+        .iter()
+        .filter(|s| {
+            let sid = s.session_id.as_str();
+            !sid.is_empty()
+                && paths.iter().any(|p| {
+                    p.iter().any(|c| c == sid)
+                        || p.file_stem().and_then(|f| f.to_str()) == Some(sid)
+                })
+        })
+        .cloned()
+        .collect()
+}
+
 /// Owns the live `notify` watcher for the projects base. Dropping it stops the
 /// watch (its own `Drop` tears down the platform backend + thread); held in
 /// Tauri-managed state for the app's lifetime.
@@ -720,6 +811,7 @@ struct EmitState {
 pub fn start_subagents_watcher<F>(
     projects_base: &Path,
     sessions: WatchedSessions,
+    cache: SubagentsCache,
     launch_time_ms: i64,
     on_change: F,
 ) -> Result<SubagentsWatcher, String>
@@ -744,9 +836,26 @@ where
         ) {
             return;
         }
-        // Snapshot the shared session set, then recompute against the filesystem.
+        // Snapshot the shared session set, then recompute ONLY the sessions this
+        // batch of paths touched (a change elsewhere in the tree costs no IO), and
+        // patch the shared map so untouched sessions keep their last rows.
         let sess = lock_sessions(&sessions);
-        let map = subagents_for_sessions(&base_owned, &sess, launch_time_ms);
+        let touched = sessions_touched(&sess, &event.paths);
+        if touched.is_empty() {
+            return;
+        }
+        let partial = subagents_for_sessions(&base_owned, &touched, launch_time_ms);
+        let map = {
+            let mut cached = match cache.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            for (sid, subs) in partial {
+                cached.insert(sid, subs);
+            }
+            cached.retain(|sid, _| sess.iter().any(|s| &s.session_id == sid));
+            cached.clone()
+        };
         drop(sess);
         // Coalesce: suppress an identical map re-emitted within the window.
         let mut guard = match emit.lock() {
@@ -1422,7 +1531,7 @@ mod tests {
         let (tx, rx) = mpsc::channel::<HashMap<String, Vec<Subagent>>>();
         // launch_time 0: the fixture agent carries no `startedAt`, so the
         // pre-launch filter is a no-op here (this test is about the watch).
-        let watcher = start_subagents_watcher(base, watched, 0, move |map| {
+        let watcher = start_subagents_watcher(base, watched, Arc::new(Mutex::new(HashMap::new())), 0, move |map| {
             let _ = tx.send(map);
         })
         .expect("watcher starts");
@@ -1456,5 +1565,153 @@ mod tests {
         assert_eq!(map["sess-W"][0].usage.unwrap().tokens, Some(9));
 
         drop(watcher); // stops the watch cleanly.
+    }
+
+    // ── Incremental recompute (performance) ─────────────────────────────────
+
+    fn sref(id: &str) -> SessionRef {
+        SessionRef {
+            session_id: id.into(),
+            cwd: Some("/work/w".into()),
+            ..Default::default()
+        }
+    }
+
+    /// A change under a watched session's dir (or to its parent transcript) touches
+    /// ONLY that session; a change elsewhere in the projects tree touches none.
+    #[test]
+    fn sessions_touched_maps_paths_to_their_session_only() {
+        let sessions = vec![sref("sess-A"), sref("sess-B")];
+        let under_a = PathBuf::from("/base/proj/sess-A/subagents/agent-1.jsonl");
+        let parent_b = PathBuf::from("/base/proj/sess-B.jsonl");
+        let other = PathBuf::from("/base/proj/sess-Z/subagents/agent-9.jsonl");
+
+        let got = sessions_touched(&sessions, &[under_a.clone()]);
+        assert_eq!(got.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(), ["sess-A"]);
+
+        let got = sessions_touched(&sessions, &[parent_b]);
+        assert_eq!(got.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(), ["sess-B"]);
+
+        assert!(sessions_touched(&sessions, &[other]).is_empty());
+
+        // Two paths for the same session yield it once.
+        let got = sessions_touched(&sessions, &[under_a.clone(), under_a]);
+        assert_eq!(got.len(), 1);
+    }
+
+    /// The transcript span reads a bounded head + tail rather than the whole file:
+    /// a file far larger than both windows still yields the first and last
+    /// timestamps, and the result is served from the size/mtime cache thereafter.
+    #[test]
+    fn jsonl_span_reads_bounded_head_and_tail() {
+        let tmp = TempDir::new("span");
+        let path = tmp.path().join("agent-big.jsonl");
+        let filler = "x".repeat(4096);
+        let mut body = String::new();
+        body.push_str(r#"{"timestamp":"2025-01-01T00:00:00.000Z","type":"user"}"#);
+        body.push('\n');
+        // ~1 MiB of timestamp-less middle lines, well past SPAN_WINDOW_BYTES on each side.
+        for _ in 0..256 {
+            body.push_str(&format!(r#"{{"type":"noise","pad":"{filler}"}}"#));
+            body.push('\n');
+        }
+        body.push_str(r#"{"timestamp":"2025-01-01T00:10:00.000Z","type":"assistant"}"#);
+        body.push('\n');
+        std::fs::write(&path, &body).unwrap();
+        assert!(body.len() as u64 > 2 * SPAN_WINDOW_BYTES, "fixture must exceed both windows");
+
+        let first = crate::activity::parse_iso_millis("2025-01-01T00:00:00.000Z");
+        let last = crate::activity::parse_iso_millis("2025-01-01T00:10:00.000Z");
+        assert_eq!(jsonl_span(&path), (first, last));
+        // Second call: served from the cache (same size + mtime), same answer.
+        assert_eq!(jsonl_span(&path), (first, last));
+        assert!(span_cache().lock().unwrap().contains_key(&path));
+    }
+
+    /// A small file (both windows overlap) still yields first/last correctly and a
+    /// missing file yields no span.
+    #[test]
+    fn jsonl_span_small_and_missing_files() {
+        let tmp = TempDir::new("span-small");
+        let path = tmp.path().join("agent-small.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2025-01-01T00:00:00.000Z\"}\n",
+                "{\"type\":\"noise\"}\n",
+                "{\"timestamp\":\"2025-01-01T00:00:05.000Z\"}\n"
+            ),
+        )
+        .unwrap();
+        let first = crate::activity::parse_iso_millis("2025-01-01T00:00:00.000Z");
+        let last = crate::activity::parse_iso_millis("2025-01-01T00:00:05.000Z");
+        assert_eq!(jsonl_span(&path), (first, last));
+        assert_eq!(jsonl_span(&tmp.path().join("nope.jsonl")), (None, None));
+    }
+
+    /// A write under an UNWATCHED session never triggers a recompute/emit, and a
+    /// write under a watched one recomputes only that session while the cached map
+    /// keeps the other watched sessions' rows.
+    #[test]
+    fn watcher_recomputes_only_the_touched_session() {
+        let tmp = TempDir::new("watch-incr");
+        let base = tmp.path();
+        let cwd = "/work/w";
+        let proj = project_dir_for_cwd(cwd);
+        let session_a = make_session(base, &proj, "sess-A");
+        let _session_b = make_session(base, &proj, "sess-B");
+        let _session_z = make_session(base, &proj, "sess-Z");
+
+        let watched: WatchedSessions = Arc::new(Mutex::new(vec![sref("sess-A"), sref("sess-B")]));
+        // Pre-populate the cache as the `subagents_for` seed would: B already has a row.
+        let cache: SubagentsCache = Arc::new(Mutex::new(HashMap::from([(
+            "sess-B".to_string(),
+            vec![Subagent {
+                id: "b-cached".into(),
+                ..Default::default()
+            }],
+        )])));
+
+        let (tx, rx) = mpsc::channel::<HashMap<String, Vec<Subagent>>>();
+        let watcher = start_subagents_watcher(base, watched, cache, 0, move |map| {
+            let _ = tx.send(map);
+        })
+        .expect("watcher starts");
+
+        // Unwatched session write: no emit at all.
+        write_workflow(
+            &base.join(&proj).join("sess-Z"),
+            "wf_z",
+            r#"[{"type":"workflow_agent","label":"sub","agentId":"az","state":"done","tokens":1}]"#,
+        );
+        assert!(
+            rx.recv_timeout(Duration::from_millis(700)).is_err(),
+            "an unwatched session's write must not emit"
+        );
+
+        // Watched session A write: emits a map with A recomputed and B's cached row kept.
+        write_workflow(
+            &session_a,
+            "wf_a",
+            r#"[{"type":"workflow_agent","label":"sub","agentId":"aa","state":"done","tokens":2}]"#,
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut got = None;
+        while std::time::Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_millis(500)) {
+                Ok(map) if map.get("sess-A").map(|v| !v.is_empty()).unwrap_or(false) => {
+                    got = Some(map);
+                    break;
+                }
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+        let map = got.expect("watcher must push a map with session A's new subagent");
+        assert_eq!(map["sess-A"][0].id, "aa");
+        assert_eq!(map["sess-B"][0].id, "b-cached", "untouched session keeps its cached rows");
+        assert!(!map.contains_key("sess-Z"), "unwatched sessions never appear");
+
+        drop(watcher);
     }
 }

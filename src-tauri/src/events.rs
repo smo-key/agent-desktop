@@ -117,15 +117,27 @@ fn safe_component(s: &str) -> Option<&str> {
 pub struct EventState {
     ring: Mutex<HashMap<String, VecDeque<AgentEvent>>>,
     events_dir: PathBuf,
+    /// `path -> (size+mtime, parsed events)` for the durable sink files and
+    /// transcript backfills, so the periodic `events_for` re-seed never re-reads
+    /// a file that has not changed (a closed session's whole transcript, say).
+    file_cache: Mutex<HashMap<PathBuf, (FileKey, Vec<AgentEvent>)>>,
 }
+
+/// A file's size + mtime: the same key means the same parsed contents.
+type FileKey = (u64, Option<SystemTime>);
+
+/// Upper bound on cached files before the cache is reset wholesale.
+const FILE_CACHE_MAX: usize = 4096;
 
 impl EventState {
     /// Create the state rooted at `events_dir` (created if missing).
     pub fn new(events_dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(&events_dir);
+        let file_cache = Mutex::new(HashMap::new());
         EventState {
             ring: Mutex::new(HashMap::new()),
             events_dir,
+            file_cache,
         }
     }
 
@@ -171,10 +183,48 @@ impl EventState {
         let Some(path) = self.sink_path(session_id) else {
             return Vec::new();
         };
-        let Ok(body) = std::fs::read_to_string(&path) else {
+        self.cached_file(&path, |p| {
+            let Ok(body) = std::fs::read_to_string(p) else {
+                return Vec::new();
+            };
+            body.lines().filter_map(parse_event).collect()
+        })
+    }
+
+    /// [`backfill_from_transcript`] served from the size+mtime cache, so an
+    /// unchanged transcript (a closed session's, typically many MiB) is parsed once.
+    pub fn backfill_cached(&self, transcript: &Path, pane_id: &str, session_id: &str) -> Vec<AgentEvent> {
+        self.cached_file(transcript, |p| backfill_from_transcript(p, pane_id, session_id))
+    }
+
+    /// Run `parse` over `path` unless the cache holds a result for its current
+    /// size + mtime. A missing file yields an empty list and is never cached.
+    fn cached_file(&self, path: &Path, parse: impl FnOnce(&Path) -> Vec<AgentEvent>) -> Vec<AgentEvent> {
+        let Ok(meta) = std::fs::metadata(path) else {
             return Vec::new();
         };
-        body.lines().filter_map(parse_event).collect()
+        let key: FileKey = (meta.len(), meta.modified().ok());
+        if let Ok(cache) = self.file_cache.lock() {
+            if let Some((k, events)) = cache.get(path) {
+                if *k == key {
+                    return events.clone();
+                }
+            }
+        }
+        let events = parse(path);
+        if let Ok(mut cache) = self.file_cache.lock() {
+            if cache.len() >= FILE_CACHE_MAX {
+                cache.clear();
+            }
+            cache.insert(path.to_path_buf(), (key, events.clone()));
+        }
+        events
+    }
+
+    /// How many files the size+mtime cache currently holds (tests).
+    #[cfg(test)]
+    pub fn cached_file_count(&self) -> usize {
+        self.file_cache.lock().map(|c| c.len()).unwrap_or(0)
     }
 
     /// Prune the durable sink on boot: remove logs older than [`RETENTION`] and
@@ -843,5 +893,39 @@ mod tests {
     fn filetime_set(path: &Path, when: SystemTime) {
         let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
         f.set_modified(when).unwrap();
+    }
+
+    /// The durable sink and the transcript backfill are parsed once per file
+    /// version: a second read with the file unchanged is served from the cache,
+    /// and an appended event invalidates it (size changed).
+    #[test]
+    fn sink_and_backfill_are_cached_by_size_and_mtime() {
+        let tmp = TempDir::new("cache");
+        let state = EventState::new(tmp.path().join("events"));
+        state.record(&ev("p1", "s1", "Stop", 10));
+        let first = state.sink_for("s1");
+        assert_eq!(first.len(), 1);
+        assert_eq!(state.cached_file_count(), 1);
+        assert_eq!(state.sink_for("s1"), first, "unchanged file: same answer from cache");
+
+        state.record(&ev("p1", "s1", "Stop", 11));
+        assert_eq!(state.sink_for("s1").len(), 2, "a grown file is re-read");
+
+        // Backfill: a transcript with one tool_use is parsed, then cached.
+        let transcript = tmp.path().join("t.jsonl");
+        std::fs::write(
+            &transcript,
+            r#"{"type":"assistant","timestamp":"2025-01-01T00:00:00.000Z","message":{"content":[{"type":"tool_use","id":"tu1","name":"Read","input":{"file_path":"/x"}}]}}
+"#,
+        )
+        .unwrap();
+        let bf = state.backfill_cached(&transcript, "p1", "s1");
+        assert_eq!(bf, backfill_from_transcript(&transcript, "p1", "s1"));
+        assert_eq!(state.cached_file_count(), 2);
+        assert_eq!(state.backfill_cached(&transcript, "p1", "s1"), bf);
+
+        // A missing file is empty and never cached.
+        assert!(state.backfill_cached(&tmp.path().join("nope.jsonl"), "p1", "s1").is_empty());
+        assert_eq!(state.cached_file_count(), 2);
     }
 }

@@ -528,6 +528,50 @@ fn context_pct_from(entry: &Value) -> Option<f64> {
 ///
 /// Tail-reads the file; tolerant of malformed lines; never panics.
 pub fn summarize_transcript(path: &Path) -> Activity {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return Activity::default();
+    };
+    let key: SummaryKey = (meta.len(), meta.modified().ok());
+    if let Ok(cache) = summary_cache().lock() {
+        if let Some((k, act)) = cache.get(path) {
+            if *k == key {
+                return act.clone();
+            }
+        }
+    }
+    let out = summarize_transcript_uncached(path);
+    if let Ok(mut cache) = summary_cache().lock() {
+        if cache.len() >= SUMMARY_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(path.to_path_buf(), (key, out.clone()));
+    }
+    out
+}
+
+/// A transcript's size + mtime: the same key means the same summary.
+type SummaryKey = (u64, Option<std::time::SystemTime>);
+
+/// Upper bound on cached summaries before the cache is reset wholesale.
+const SUMMARY_CACHE_MAX: usize = 4096;
+
+/// Process-wide `transcript path -> (size+mtime, Activity)` cache, so the
+/// periodic activity poll (and every event-driven read) re-parses a transcript
+/// tail only when the file actually changed.
+fn summary_cache() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, (SummaryKey, Activity)>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, (SummaryKey, Activity)>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Whether the summary cache holds `path` (tests).
+#[cfg(test)]
+pub fn summary_cached(path: &Path) -> bool {
+    summary_cache().lock().map(|c| c.contains_key(path)).unwrap_or(false)
+}
+
+fn summarize_transcript_uncached(path: &Path) -> Activity {
     let mut out = Activity::default();
     let Some(body) = read_tail(path, TAIL_BYTES) else {
         return out;
@@ -1174,5 +1218,28 @@ mod tests {
             "user_msg_count must be invariant under assistant-only appends (no new \
              user message)"
         );
+    }
+
+    /// The summary is parsed once per transcript version: an unchanged file is
+    /// served from the size+mtime cache, and an appended line re-parses.
+    #[test]
+    fn summary_is_cached_until_the_transcript_changes() {
+        let tmp = TempDir::new("cache");
+        let path = write_transcript(
+            tmp.path(),
+            "-work-c",
+            "sess-c",
+            &[assistant(serde_json::json!([{"type":"text","text":"first"}]))],
+        );
+        assert!(!summary_cached(&path));
+        let a = summarize_transcript(&path);
+        assert_eq!(a.summary.as_deref(), Some("first"));
+        assert!(summary_cached(&path));
+        assert_eq!(summarize_transcript(&path), a);
+
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        use std::io::Write;
+        writeln!(f, "{}", assistant(serde_json::json!([{"type":"text","text":"second"}]))).unwrap();
+        assert_eq!(summarize_transcript(&path).summary.as_deref(), Some("second"));
     }
 }

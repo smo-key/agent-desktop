@@ -1178,7 +1178,7 @@ fn usage_paths(app: AppHandle) -> Result<UsagePaths, String> {
 /// any fs event fires). Reads `<app_data_dir>/snapshots/*.json`, skipping any
 /// malformed/partial files; a missing dir yields an empty list. Never errors on
 /// snapshot content — only on resolving the app-data dir.
-#[tauri::command]
+#[tauri::command(async)]
 fn usage_snapshots(app: AppHandle) -> Result<Vec<Snapshot>, String> {
     let dir = app_data_dir(&app)?.join(SNAPSHOT_DIR);
     Ok(usage::read_all_snapshots(&dir))
@@ -1209,6 +1209,13 @@ fn start_usage_watcher(app: &AppHandle) -> Result<SnapshotWatcher, String> {
 #[derive(Default)]
 struct WatchedSessionsState(subagents::WatchedSessions);
 
+/// The shared last-computed subagents map (see [`subagents::SubagentsCache`]):
+/// the watcher patches only the sessions a change touched and the `subagents_for`
+/// seed replaces it wholesale, so a partial recompute never drops another
+/// session's rows from the emitted map.
+#[derive(Default)]
+struct SubagentsCacheState(subagents::SubagentsCache);
+
 /// The app's launch time (Unix epoch MILLISECONDS), captured once at startup and
 /// held in managed state. The subagents seed (`subagents_for`) and the watcher use
 /// it to drop subagents that predate this run (see [`subagents::filter_pre_launch`]):
@@ -1226,9 +1233,10 @@ struct AppLaunchTime(i64);
 /// app's session set changes (subsequent live updates arrive over the
 /// `overview://subagents` event). A session with no subagents maps to an empty
 /// list; a missing projects dir yields an empty map, never an error.
-#[tauri::command]
+#[tauri::command(async)]
 fn subagents_for(
     state: State<'_, WatchedSessionsState>,
+    cache: State<'_, SubagentsCacheState>,
     launch: State<'_, AppLaunchTime>,
     sessions: Vec<SessionRef>,
 ) -> Result<HashMap<String, Vec<Subagent>>, String> {
@@ -1242,11 +1250,13 @@ fn subagents_for(
     }
     let projects_base =
         subagents::default_projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
-    Ok(subagents::subagents_for_sessions(
-        &projects_base,
-        &sessions,
-        launch.0,
-    ))
+    let map = subagents::subagents_for_sessions(&projects_base, &sessions, launch.0);
+    // Replace the shared map so the watcher's next partial patch starts from
+    // exactly this seed (and never re-emits rows for sessions no longer watched).
+    if let Ok(mut cached) = cache.0.lock() {
+        *cached = map.clone();
+    }
+    Ok(map)
 }
 
 /// Start the subagents watcher over `~/.claude/projects/`, emitting the
@@ -1258,12 +1268,13 @@ fn subagents_for(
 fn start_subagents_watcher(
     app: &AppHandle,
     sessions: subagents::WatchedSessions,
+    cache: subagents::SubagentsCache,
     launch_time_ms: i64,
 ) -> Result<SubagentsWatcher, String> {
     let projects_base =
         subagents::default_projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
     let handle = app.clone();
-    subagents::start_subagents_watcher(&projects_base, sessions, launch_time_ms, move |map| {
+    subagents::start_subagents_watcher(&projects_base, sessions, cache, launch_time_ms, move |map| {
         if let Err(e) = handle.emit(SUBAGENTS_EVENT, &map) {
             log::warn!("emit {SUBAGENTS_EVENT} failed: {e}");
         }
@@ -1276,7 +1287,7 @@ fn start_subagents_watcher(
 /// `~/.claude/projects/<encoded-cwd>/`), so this is INDEPENDENT of the statusline
 /// snapshot — the frontend polls it on a short clock. A pane with no cwd or no
 /// transcript is simply absent from the map.
-#[tauri::command]
+#[tauri::command(async)]
 fn activity_for(panes: Vec<PaneRef>) -> Result<HashMap<String, Activity>, String> {
     // Route per backend: copilot panes derive activity from their session event
     // log (`copilot-observability`); everything else reads the Claude transcript.
@@ -1415,7 +1426,7 @@ async fn repo_web_url(repo_path: String) -> Result<Option<String>, String> {
 /// timeline, then — for a session predating the event pipeline (no sink) — a
 /// completed-tool timeline reconstructed from its transcript. A pane with no
 /// session id, or no events anywhere, maps to an empty list.
-#[tauri::command]
+#[tauri::command(async)]
 fn events_for(
     state: State<'_, Arc<EventState>>,
     panes: Vec<PaneRef>,
@@ -1433,7 +1444,7 @@ fn events_for(
         if timeline.is_empty() {
             if let Some(base) = projects_base.as_ref() {
                 if let Some(transcript) = activity::find_transcript(base, pane) {
-                    timeline = events::backfill_from_transcript(&transcript, &pane.pane_id, sid);
+                    timeline = state.backfill_cached(&transcript, &pane.pane_id, sid);
                 }
             }
         }
@@ -1556,7 +1567,8 @@ pub fn run() {
             // non-fatal — the frontend still seeds via `subagents_for` and simply
             // won't receive live `overview://subagents` pushes.
             let watched = app.state::<WatchedSessionsState>().0.clone();
-            match start_subagents_watcher(app.handle(), watched, launch_time_ms) {
+            let cache = app.state::<SubagentsCacheState>().0.clone();
+            match start_subagents_watcher(app.handle(), watched, cache, launch_time_ms) {
                 Ok(watcher) => {
                     app.manage(watcher);
                 }
@@ -1648,6 +1660,7 @@ pub fn run() {
         })
         .manage(Arc::new(PtyManager::new()))
         .manage(WatchedSessionsState::default())
+        .manage(SubagentsCacheState::default())
         .manage(AppLaunchTime(launch_time_ms))
         // The single transcript-polish llama-server manager (lazy-started by
         // `voice_polish`). Held in managed state so it lives for the app's
