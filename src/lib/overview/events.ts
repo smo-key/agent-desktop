@@ -252,8 +252,10 @@ export function deriveEventActivity(
     // same pane id), so look back past tool traffic and SubagentStops to the Stop that
     // ended the parent's turn — a `UserPromptSubmit` is the only real turn restart — and
     // count only the agents that have not reported SubagentStop since.
+    // Only SubagentStops BEFORE the Notification are subtracted: a trailing one is the
+    // wake-up gap, which keeps the settled reading (as the skip-back above does).
     const stop = precedingStop(events);
-    if (stop) running = outstandingBackgroundTasks(events, stop);
+    if (stop) running = outstandingBackgroundTasks(events.slice(0, events.indexOf(last) + 1), stop);
   }
   {
     if (running.length > 0) {
@@ -355,7 +357,8 @@ export function outstandingBackgroundTasks(events: AgentEvent[], stop?: AgentEve
 
 /** The real `Stop` behind a trailing `Notification`, looking back past `SubagentStop`s,
  *  other `Notification`s and tool traffic (a background subagent's tool events share this
- *  pane's ring); null when a prompt or session boundary sits between them. */
+ *  pane's ring); null when a prompt or session boundary sits between them. A synthetic
+ *  (interrupt) Stop counts. */
 function precedingStop(events: AgentEvent[]): AgentEvent | null {
   for (let i = events.length - 2; i >= 0; i--) {
     const e = events[i];
@@ -366,7 +369,10 @@ function precedingStop(events: AgentEvent[]): AgentEvent | null {
       case 'PostToolUse':
         continue;
       case 'Stop':
-        return e.synthetic ? null : e;
+        // A synthetic (Esc) Stop counts too: markInterrupt stamps the outstanding list
+        // on it so the row stays In flight on real background work; a listless one
+        // yields no running tasks → waiting, the same as before.
+        return e;
       default:
         return null;
     }

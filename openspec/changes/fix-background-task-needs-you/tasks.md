@@ -23,6 +23,8 @@
 
 - [x] 4.4 Second adversarial pass: drop `teammate` (idle teammates never stop); the idle-`Notification` look-back skips the background subagent's own tool traffic and subtracts stopped agents; Esc behind that Notification is a no-op too
 
+- [x] 4.5 Third adversarial pass: the idle-Notification look-back accepts a synthetic interrupt Stop carrying the outstanding list, and subtracts only `SubagentStop`s that precede the notification
+
 ## 5. Verify
 
 - [x] 5.1 Run `yarn check`, `yarn test`, `yarn coverage`, and `cargo test` in `src-tauri`; confirm all pass

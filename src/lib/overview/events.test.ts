@@ -329,6 +329,26 @@ describe('deriveEventActivity', () => {
       ev('Notification', { notification: 'Claude is waiting for your input' })
     ]);
     expect(d.status).toBe('waiting');
+    // A SYNTHETIC Stop (Esc mid-subagent-tool) that carries the outstanding list is a
+    // valid turn end for the look-back too — discarding it re-created the false alert.
+    const e = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('Stop', { backgroundTasks: running }),
+      ev('PreToolUse', { toolName: 'Read', summary: 'Read:x' }),
+      ev('Stop', { synthetic: true, backgroundTasks: running }),
+      ev('PostToolUse', { toolName: 'Read' }),
+      ev('Notification', { notification: 'Claude is waiting for your input' })
+    ]);
+    expect(e.status).toBe('working');
+    // A SubagentStop that arrives AFTER the Notification is trailing (skipped) — the
+    // settled reading survives the wake-up gap, exactly as it does without the Notification.
+    const f = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('Stop', { backgroundTasks: running }),
+      ev('Notification', { notification: 'Claude is waiting for your input' }),
+      ev('SubagentStop', { agentId: 'a1' })
+    ]);
+    expect(f.status).toBe('working');
     // A new prompt between them is a real turn restart: no inheritance.
     expect(
       deriveEventActivity([
