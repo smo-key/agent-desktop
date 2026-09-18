@@ -156,6 +156,10 @@ export function channelForBranch(branch) {
  * @property {string} tag       `v<version>`.
  * @property {'stable'|'beta'} channel
  * @property {string|null} baseline  The tag this version had to beat, if any.
+ * @property {boolean} tagExists  Whether `v<version>` is already tagged, i.e. this
+ *   version has SHIPPED. Reported separately from `shouldRelease` because the
+ *   workflow's `force_publish` override may overrule "no version bump" but must
+ *   never overrule "already shipped".
  * @property {string} reason    Human-readable explanation, logged by the gate.
  */
 
@@ -179,7 +183,7 @@ export function channelForBranch(branch) {
 export function decideRelease({ version, channel, tags }) {
   const v = String(version ?? '').trim().replace(/^v/, '');
   const tag = `v${v}`;
-  const base = { version: v, tag, channel, baseline: null };
+  const base = { version: v, tag, channel, baseline: null, tagExists: false };
 
   const parsed = parseVersion(v);
   if (!parsed) {
@@ -193,6 +197,7 @@ export function decideRelease({ version, channel, tags }) {
   if (all.some((t) => String(t).trim() === tag)) {
     return {
       ...base,
+      tagExists: true,
       shouldRelease: false,
       reason: `tag ${tag} already exists (idempotent: no re-release)`
     };

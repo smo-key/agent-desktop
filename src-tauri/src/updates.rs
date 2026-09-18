@@ -92,6 +92,31 @@ pub fn candidate_wins(candidate: &str, incumbent: Option<&str>) -> bool {
     }
 }
 
+/// What a completed round of endpoint checks means when NO candidate was found,
+/// decided PURELY so the aggregation rule is unit-testable without live IPC.
+///
+/// - nothing was asked -> misconfiguration.
+/// - something was asked but nothing answered -> a real check failure.
+/// - at least one endpoint answered "nothing newer" -> genuinely up to date, even
+///   if a sibling endpoint was unreachable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmptyOutcome {
+    NotConfigured,
+    Failed,
+    UpToDate,
+}
+
+/// PURE: classify a candidate-less check round. See [`EmptyOutcome`].
+pub fn classify_empty(asked: usize, answered: usize) -> EmptyOutcome {
+    if asked == 0 {
+        EmptyOutcome::NotConfigured
+    } else if answered == 0 {
+        EmptyOutcome::Failed
+    } else {
+        EmptyOutcome::UpToDate
+    }
+}
+
 /// Read the updater endpoints out of the app's own configuration, so the URLs stay
 /// single-sourced in `tauri.conf.json` rather than being duplicated here.
 fn configured_endpoints<R: Runtime>(webview: &Webview<R>) -> Vec<String> {
@@ -127,6 +152,14 @@ pub async fn updater_check<R: Runtime>(
     let mut best: Option<Update> = None;
     let mut last_error: Option<String> = None;
     let mut asked = 0usize;
+    // Endpoints that ANSWERED — a candidate or an authoritative "nothing newer".
+    // The error report below keys on this, not on `last_error`: on beta we always
+    // ask two endpoints, and one manifest being unreachable must not mask the
+    // other's successful answer. (A 404 IS an error here: the plugin's check
+    // falls through to `Err(ReleaseNotFound)` for a non-success status, so an
+    // absent beta manifest — the state of the world until the first beta ships —
+    // would otherwise make every beta check report "Couldn't check" forever.)
+    let mut answered = 0usize;
 
     for idx in endpoint_indices_for(channel) {
         let Some(raw) = endpoints.get(*idx) else {
@@ -156,8 +189,9 @@ pub async fn updater_check<R: Runtime>(
         match updater.check().await {
             // `None` = this manifest offers nothing newer than the running
             // version; the plugin's own comparator already filtered it.
-            Ok(None) => {}
+            Ok(None) => answered += 1,
             Ok(Some(update)) => {
+                answered += 1;
                 let wins = candidate_wins(&update.version, best.as_ref().map(|u| u.version.as_str()));
                 if wins {
                     best = Some(update);
@@ -191,19 +225,22 @@ pub async fn updater_check<R: Runtime>(
             };
             Ok(Some(meta))
         }
-        None => {
-            // Every endpoint we asked errored -> report it, so the manual Settings
-            // check can show "Couldn't check". Otherwise we are genuinely current.
-            if asked > 0 && last_error.is_some() {
-                Err(last_error.unwrap())
-            } else if asked == 0 {
-                Err(format!(
-                    "no updater endpoint configured for the {channel:?} channel"
-                ))
-            } else {
-                Ok(None)
+        None => match classify_empty(asked, answered) {
+            EmptyOutcome::NotConfigured => Err(format!(
+                "no updater endpoint configured for the {channel:?} channel"
+            )),
+            // NOTHING answered -> a genuine check failure (offline, every manifest
+            // unreachable), so the manual Settings check can show "Couldn't
+            // check". `last_error` is always set here: an endpoint that neither
+            // answered nor errored cannot exist.
+            EmptyOutcome::Failed => {
+                Err(last_error.unwrap_or_else(|| "update check failed".to_string()))
             }
-        }
+            // At least one manifest answered authoritatively that there is nothing
+            // newer. That is "up to date", even if a sibling endpoint was
+            // unreachable.
+            EmptyOutcome::UpToDate => Ok(None),
+        },
     }
 }
 
@@ -249,6 +286,65 @@ mod tests {
         // resource table).
         assert!(candidate_wins("0.4.0-beta.1", None));
         assert!(!candidate_wins("0.3.9", Some("0.4.0-beta.1")));
+    }
+
+    #[test]
+    fn an_unreachable_sibling_endpoint_does_not_mask_up_to_date() {
+        // Beta asks two endpoints. Until the first beta ships, the `beta-channel`
+        // manifest 404s, which the plugin surfaces as an Err — while the stable
+        // manifest answers "nothing newer". That round is UP TO DATE, not a
+        // failure; reporting a failure would pin the Settings row to
+        // "Couldn't check · retry" for every beta user, permanently.
+        assert_eq!(classify_empty(2, 1), EmptyOutcome::UpToDate);
+    }
+
+    #[test]
+    fn check_failure_stays_silent() {
+        // Nothing answered at all (offline): a genuine check error.
+        assert_eq!(classify_empty(1, 0), EmptyOutcome::Failed);
+        assert_eq!(classify_empty(2, 0), EmptyOutcome::Failed);
+    }
+
+    #[test]
+    fn no_endpoint_configured_is_reported() {
+        assert_eq!(classify_empty(0, 0), EmptyOutcome::NotConfigured);
+    }
+
+    #[test]
+    fn the_configured_endpoints_match_the_channel_indices() {
+        // The channel -> endpoint mapping is POSITIONAL against
+        // tauri.conf.json's `plugins.updater.endpoints`. Swapping those two URLs
+        // would serve the beta manifest to every stable user — the exact outcome
+        // this whole feature exists to prevent — and reordering them looks
+        // harmless, since both are just GitHub release URLs. So assert the
+        // coupling against the real config file.
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri.conf.json");
+        let endpoints = conf["plugins"]["updater"]["endpoints"]
+            .as_array()
+            .expect("plugins.updater.endpoints");
+        assert_eq!(endpoints.len(), 2, "one endpoint per channel");
+
+        let stable = endpoints[endpoint_indices_for(Channel::Stable)[0]]
+            .as_str()
+            .unwrap();
+        assert!(
+            stable.contains("/releases/latest/download/"),
+            "endpoint 0 must be the stable manifest, got {stable}"
+        );
+
+        // Beta asks its own endpoint FIRST, then stable.
+        let idx = endpoint_indices_for(Channel::Beta);
+        let beta = endpoints[idx[0]].as_str().unwrap();
+        assert!(
+            beta.contains("/releases/download/beta-channel/"),
+            "endpoint 1 must be the pinned beta manifest, got {beta}"
+        );
+        assert_eq!(
+            endpoints[idx[1]].as_str().unwrap(),
+            stable,
+            "beta must also consider the stable manifest"
+        );
     }
 
     #[test]

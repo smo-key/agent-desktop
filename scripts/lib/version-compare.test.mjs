@@ -167,6 +167,18 @@ describe('decideRelease', () => {
     });
     expect(d.shouldRelease).toBe(false);
     expect(d.reason).toMatch(/already exists/);
+    // Reported separately so the workflow's force_publish override can refuse to
+    // overrule "already shipped" while still overruling "no version bump".
+    expect(d.tagExists).toBe(true);
+  });
+
+  it('reports tagExists=false for every other refusal', () => {
+    const noBump = decideRelease({ version: '0.3.2', channel: 'stable', tags: ['v0.4.0'] });
+    expect(noBump.tagExists).toBe(false);
+    const mismatch = decideRelease({ version: '0.4.0', channel: 'beta', tags: [] });
+    expect(mismatch.tagExists).toBe(false);
+    const junk = decideRelease({ version: 'latest', channel: 'stable', tags: [] });
+    expect(junk.tagExists).toBe(false);
   });
 
   it('releases the first version when no tags exist yet', () => {

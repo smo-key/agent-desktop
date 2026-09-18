@@ -282,4 +282,68 @@ describe('UpdateStore', () => {
     expect(next.download).not.toHaveBeenCalled();
     expect(next.close).toHaveBeenCalledOnce();
   });
+
+  // discard(): used when the release channel changes, so a build staged from the
+  // channel the user just left can never be installed.
+  describe('discard', () => {
+    it('Switching back to stable does not downgrade', async () => {
+      // The Beta -> Stable case: a staged prerelease must be dropped, and the
+      // immediate re-check cannot do it (it only supersedes a staged version by
+      // finding a DIFFERENT one, and stable normally offers nothing at all).
+      const s = new UpdateStore();
+      const f = fakeUpdate('0.4.0-beta.1');
+      const p = s.beginDownload(f.update);
+      f.resolveDownload();
+      await p;
+      expect(s.status).toBe('ready');
+
+      await s.discard();
+
+      expect(s.status).toBe('idle');
+      expect(s.version).toBeNull();
+      expect(f.close).toHaveBeenCalledOnce(); // handle released, not leaked
+      await s.restartToUpdate(); // nothing staged -> must not install
+      expect(f.install).not.toHaveBeenCalled();
+    });
+
+    it('invalidates a download still in flight', async () => {
+      const s = new UpdateStore();
+      const f = fakeUpdate('0.4.0-beta.1');
+      const p = s.beginDownload(f.update);
+      expect(s.status).toBe('downloading');
+
+      await s.discard();
+      expect(s.status).toBe('idle');
+
+      // The in-flight download finishing must NOT commit 'ready' behind the
+      // discard; its handle is closed instead.
+      f.resolveDownload();
+      await p;
+      expect(s.status).toBe('idle');
+      expect(s.version).toBeNull();
+      expect(f.close).toHaveBeenCalledOnce();
+    });
+
+    it('leaves an installing update alone', async () => {
+      const s = new UpdateStore();
+      const f = fakeUpdate('4.0.0');
+      const p = s.beginDownload(f.update);
+      f.resolveDownload();
+      await p;
+      await s.restartToUpdate(); // status → 'installing'
+      expect(s.status).toBe('installing');
+
+      await s.discard();
+
+      // Seconds from relaunching into it; there is nothing left to cancel.
+      expect(s.status).toBe('installing');
+    });
+
+    it('is a safe no-op when nothing is staged', async () => {
+      const s = new UpdateStore();
+      await s.discard();
+      expect(s.status).toBe('idle');
+      expect(s.version).toBeNull();
+    });
+  });
 });

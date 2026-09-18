@@ -41,9 +41,18 @@ Consequences that shaped the code:
   from a different resource table would not resolve in `download`.
 - `date` is passed through from the manifest's `pub_date` string rather than
   re-formatted via `time`, avoiding a dependency for a field the UI does not use.
-- On the beta path two `check()`es run and each `Some` allocates an `Update`.
-  The loser is dropped explicitly, or the hourly poll leaks one handle per hour —
-  the same failure mode `closeUpdate` already guards on the JS side.
+- On the beta path two `check()`es run and each `Some` yields an `Update`. Only
+  the WINNER is registered in the resource table; the loser is dropped having
+  never been registered, so there is nothing to close and nothing to leak. (The
+  frontend still closes the winner on the `noop`/supersede/failure paths — that is
+  what `closeUpdate` guards.)
+- **One endpoint failing must not mask the other's answer.** The plugin reports a
+  non-2xx manifest as `Err(ReleaseNotFound)`, not `Ok(None)` — and the pinned
+  `beta-channel` release does not exist until the first beta ships. So the
+  aggregation keys on how many endpoints *answered*, not on whether any errored
+  (`classify_empty`): a round where one endpoint 404s and the other says "nothing
+  newer" is **up to date**, not a failure. Getting this backwards would pin the
+  Settings row to "Couldn't check · retry" for every beta user, permanently.
 
 ## 3. Highest-wins: client-side, not publish-time
 
@@ -76,9 +85,22 @@ release, and nothing equivalent for prereleases. Two options were considered:
   manifest is served by the same release-asset mechanism as the bundles, and
   freshness is controllable.
 
-Freshness is the reason the refresh **deletes and recreates** the release rather
-than re-uploading the asset: a replaced asset can be served stale from cache,
-while a new release/asset id is a new URL path segment on the CDN.
+The refresh **creates the release if missing and then clobbers its asset**. An
+earlier draft deleted and recreated the whole release, on the theory that a
+replaced asset could be served stale while a new asset id cannot. That trade was
+wrong in both directions:
+
+- the delete opens a window where the endpoint **404s** for every beta user, and
+  a 404 is not "no update" — the plugin surfaces it as a check *error*;
+- if the recreate then fails (a transient 5xx, or a 422 because the just-deleted
+  tag ref has not settled), the endpoint stays 404 with **no** previous manifest
+  to fall back on. Recovery is manual, because the tag now exists and the gate
+  refuses that version forever.
+
+A briefly-cached manifest means a beta arrives a few minutes late. A 404 means the
+beta channel is broken. `--clobber` also makes the step idempotent, which — with
+the tag step made idempotent too — is what lets "Re-run failed jobs" actually
+recover a failure anywhere after the tag is pushed.
 
 The tag is `beta-channel`, not `beta`, so it cannot be confused with the `beta`
 *branch* in `refs/` (`git checkout beta` would become ambiguous otherwise).
@@ -124,5 +146,16 @@ merged slice. `runUpdateCheck` reads the store rather than taking a parameter, s
 the launch check, the hourly poll, the `updateStore.recheck` retry seam and the
 Settings button all follow the preference with no signature changes.
 
-Switching triggers an immediate re-check — otherwise opting into beta appears to
-do nothing for up to an hour.
+Switching **discards whatever is staged** and then triggers an immediate
+re-check. Both halves are needed:
+
+- without the re-check, opting into beta appears to do nothing for up to an hour;
+- without the discard, Beta → Stable leaves a staged prerelease whose "Update
+  ready — restart" button still installs it. The re-check cannot clear it:
+  `decideCheckAction` only supersedes a staged version by finding a *different*
+  one, and a user who just opted into beta is normally already on the newest
+  stable, so the stable re-check finds nothing at all.
+
+`load()` also refuses to overwrite a choice the user made while it was in flight,
+since `setChannel` has already persisted that choice — otherwise memory and disk
+would disagree until the next restart.

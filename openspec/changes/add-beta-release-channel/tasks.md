@@ -82,13 +82,42 @@
   install tests).
 - [x] 7.4 `openspec validate add-beta-release-channel --strict` passes.
 
-## 8. Cut the first beta
+## 8. Adversarial review follow-ups
 
-- [ ] 8.1 Land the change on `main`.
-- [ ] 8.2 Create the `beta` branch at `main`'s HEAD.
-- [ ] 8.3 Bump `package.json` to `0.4.0-beta.1` on `beta` and write its
+- [x] 8.1 **CRITICAL** — `updater_check` returned an error whenever ANY endpoint
+  failed, not when all did. Since the plugin reports a 404 manifest as `Err` and
+  the pinned `beta-channel` release does not exist until the first beta ships,
+  every beta check would have reported "Couldn't check" forever. Aggregation now
+  keys on how many endpoints ANSWERED, via the pure, tested `classify_empty`.
+- [x] 8.2 **CRITICAL** — switching Beta → Stable left a staged prerelease whose
+  "Update ready — restart" button still installed it. Added `updateStore.discard()`
+  (closes the handle, invalidates any in-flight download, leaves an `installing`
+  update alone) and call it from the channel switch, with tests.
+- [x] 8.3 **CRITICAL** — the `beta-channel` refresh deleted the release before
+  recreating it, so a failure inside the step left the endpoint permanently 404
+  with no automated recovery. Now create-if-missing + `--clobber`, and the tag
+  step is idempotent so "Re-run failed jobs" can recover.
+- [x] 8.4 `force_publish` could override "tag already exists", pushing a pointless
+  sync commit before `create-release` aborted. The gate now reports `tag_exists`
+  separately and the override refuses it.
+- [x] 8.5 The gate interpolated the repo path into an `import()` specifier, which
+  broke on a checkout path containing `#` or `?`. Path now goes through argv +
+  `pathToFileURL`; verified against a `repo#1` checkout.
+- [x] 8.6 Asserted the positional channel→endpoint coupling against the real
+  `tauri.conf.json`, so reordering those two URLs (which would serve the beta
+  manifest to every stable user) fails a test instead of shipping.
+- [x] 8.7 `releaseChannel.load()` could revert a choice made while it was in
+  flight, desyncing memory from disk. Guarded and tested.
+- [x] 8.8 Added the missing `channelCheck.ts` tests, and took the emitted
+  version/tag from the decision so `VERSION=v1.2.3` cannot yield `tag=vv1.2.3`.
+
+## 9. Cut the first beta
+
+- [ ] 9.1 Land the change on `main`.
+- [ ] 9.2 Create the `beta` branch at `main`'s HEAD.
+- [ ] 9.3 Bump `package.json` to `0.4.0-beta.1` on `beta` and write its
   `CHANGELOG.md` section (the pipeline hard-fails without one).
-- [ ] 8.4 Push `beta`; confirm the run gates, builds all four targets, publishes
+- [ ] 9.4 Push `beta`; confirm the run gates, builds all four targets, publishes
   a prerelease, and refreshes `beta-channel`.
-- [ ] 8.5 **Manual, not verifiable in-session:** install the beta build, switch a
+- [ ] 9.5 **Manual, not verifiable in-session:** install the beta build, switch a
   stable install to the beta channel, and confirm it picks the prerelease up.

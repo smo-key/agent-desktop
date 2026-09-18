@@ -65,6 +65,12 @@ export class ReleaseChannelStore {
   /** True once `load()` has resolved. */
   loaded = $state(false);
 
+  /** True once the user has chosen a channel in this session. Guards against a
+   *  slow `load()` landing AFTER the choice and reverting it in memory while the
+   *  save has already written the new value to disk — which would leave the
+   *  dropdown, the checks and the file disagreeing until the next restart. */
+  private userSet = false;
+
   /** The effective channel. Reads before `load()` resolves see `stable`, which is
    *  the safe default for a check that races startup. */
   get channel(): ReleaseChannel {
@@ -76,7 +82,9 @@ export class ReleaseChannelStore {
    *  Call once on mount. */
   async load(): Promise<void> {
     const settings = await loadSettings();
-    this.prefs = parseReleaseChannelPrefs(settings.releaseChannel);
+    // A choice made while this was in flight wins: it is what the user asked for
+    // AND what `setChannel` has already persisted.
+    if (!this.userSet) this.prefs = parseReleaseChannelPrefs(settings.releaseChannel);
     this.loaded = true;
   }
 
@@ -85,6 +93,7 @@ export class ReleaseChannelStore {
    *  an immediate re-check rather than waiting for the hourly poll. */
   setChannel(channel: ReleaseChannel): boolean {
     if (!isReleaseChannel(channel) || channel === this.prefs.channel) return false;
+    this.userSet = true;
     this.prefs = { ...this.prefs, channel };
     void this.save();
     return true;

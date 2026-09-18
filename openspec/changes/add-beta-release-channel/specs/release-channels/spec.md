@@ -91,3 +91,36 @@ until a stable release exceeds it.
 - **WHEN** a user running prerelease `0.4.0-beta.3` switches to the `stable`
   channel and the newest stable release is `0.3.2`
 - **THEN** no update is offered and the app is not rolled back
+
+### Requirement: Switching channel discards a build staged from the old channel
+
+Changing the release channel SHALL discard any update that is downloading or staged, returning the app to the no-update-pending state before the new channel's check runs.
+
+This is what makes opting out of beta real. A staged prerelease otherwise remains
+installable through the "Restart to update" affordance, and the immediate
+re-check cannot clear it: a check supersedes a staged version only by finding a
+*different* one, and a user who opted into beta is normally already on the newest
+stable release, so the stable check finds nothing at all.
+
+An update that is already installing SHALL be left alone — the app is about to
+relaunch into it and there is nothing left to cancel. A discarded update's
+backend handle SHALL be released rather than leaked, and a download still in
+flight SHALL NOT complete into a staged state after being discarded.
+
+#### Scenario: A staged beta is dropped when switching to stable
+
+- **WHEN** a prerelease is staged and showing "Restart to update", and the user
+  switches the release channel to `stable`
+- **THEN** the staged update is discarded and the restart affordance disappears
+- **AND** activating a restart afterwards installs nothing
+
+#### Scenario: A download in flight is abandoned on switch
+
+- **WHEN** the user switches channel while an update is still downloading
+- **THEN** that download does not become a staged update when it finishes, and
+  its handle is released
+
+#### Scenario: An installing update is not disturbed
+
+- **WHEN** the user switches channel while an update is installing
+- **THEN** the install proceeds, because the app is already relaunching into it

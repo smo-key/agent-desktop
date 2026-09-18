@@ -24,6 +24,8 @@
 #     version=<x.y.z[-pre]>
 #     tag=v<x.y.z[-pre]>
 #     channel=stable|beta
+#     tag_exists=true|false   (this version has already SHIPPED; the workflow's
+#                              force_publish override refuses to overrule it)
 # Run locally (no `$GITHUB_OUTPUT`), it just prints them to stdout.
 #
 # Usage:
@@ -66,11 +68,16 @@ fi
 # we ask git). An unknown branch is NOT a release branch — report and no-op.
 BRANCH="${GITHUB_REF_NAME:-$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")}"
 if [[ -z "${CHANNEL:-}" ]]; then
+  # The module path goes through argv + pathToFileURL, never into the JS source:
+  # `import()` resolves its specifier as a URL, so a checkout path containing `#`
+  # or `?` would otherwise be truncated at that character (ERR_MODULE_NOT_FOUND),
+  # and one containing `'` would be a syntax error.
   CHANNEL="$(node -e "
-    import('$ROOT_DIR/scripts/lib/version-compare.mjs').then((m) => {
-      process.stdout.write(m.channelForBranch(process.argv[1]) ?? '');
+    import('node:url').then(async ({ pathToFileURL }) => {
+      const m = await import(pathToFileURL(process.argv[1]).href);
+      process.stdout.write(m.channelForBranch(process.argv[2]) ?? '');
     });
-  " "$BRANCH")"
+  " "$ROOT_DIR/scripts/lib/version-compare.mjs" "$BRANCH")"
 fi
 
 TAG="v$VERSION"
@@ -87,6 +94,7 @@ if [[ -z "$CHANNEL" ]]; then
       echo "version=$VERSION"
       echo "tag=$TAG"
       echo "channel="
+      echo "tag_exists=false"
     } >>"$GITHUB_OUTPUT"
   fi
   exit 0
@@ -100,20 +108,27 @@ DECISION="$(printf '%s' "$TAGS" | node -e "
   const chunks = [];
   process.stdin.on('data', (c) => chunks.push(c));
   process.stdin.on('end', async () => {
-    const m = await import('$ROOT_DIR/scripts/lib/version-compare.mjs');
+    const { pathToFileURL } = await import('node:url');
+    const m = await import(pathToFileURL(process.argv[1]).href);
     const tags = chunks.join('').split('\n').map((s) => s.trim()).filter(Boolean);
     const d = m.decideRelease({
-      version: process.argv[1],
-      channel: process.argv[2],
+      version: process.argv[2],
+      channel: process.argv[3],
       tags
     });
     process.stdout.write(JSON.stringify(d));
   });
-" "$VERSION" "$CHANNEL")"
+" "$ROOT_DIR/scripts/lib/version-compare.mjs" "$VERSION" "$CHANNEL")"
 
 SHOULD_RELEASE="$(node -p "JSON.parse(process.argv[1]).shouldRelease" "$DECISION")"
 REASON="$(node -p "JSON.parse(process.argv[1]).reason" "$DECISION")"
 BASELINE="$(node -p "JSON.parse(process.argv[1]).baseline ?? '<none>'" "$DECISION")"
+TAG_EXISTS="$(node -p "JSON.parse(process.argv[1]).tagExists" "$DECISION")"
+# Take the normalized version/tag from the DECISION, not from the raw input: a
+# manual `VERSION=v1.2.3` would otherwise report `tag=vv1.2.3` while the decision
+# was made on `1.2.3`.
+VERSION="$(node -p "JSON.parse(process.argv[1]).version" "$DECISION")"
+TAG="$(node -p "JSON.parse(process.argv[1]).tag" "$DECISION")"
 
 # --- Report ------------------------------------------------------------------
 echo "package version : $VERSION"
@@ -121,6 +136,7 @@ echo "branch          : ${BRANCH:-<unknown>}"
 echo "channel         : $CHANNEL"
 echo "baseline tag    : $BASELINE"
 echo "tag to create   : $TAG"
+echo "tag exists      : $TAG_EXISTS"
 echo "should_release  : $SHOULD_RELEASE"
 echo "reason          : $REASON"
 
@@ -136,6 +152,7 @@ if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     echo "version=$VERSION"
     echo "tag=$TAG"
     echo "channel=$CHANNEL"
+    echo "tag_exists=$TAG_EXISTS"
   } >>"$GITHUB_OUTPUT"
 fi
 

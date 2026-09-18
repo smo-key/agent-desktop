@@ -27,6 +27,8 @@
   import { keepAwake, type KeepAwakeMode } from '$lib/settings/keepAwake.svelte';
   import { uiPrefs, type TerminalsPlacement } from '$lib/settings/uiPrefs.svelte';
   import { shellSettings } from '$lib/settings/shell.svelte';
+  import { agentPathsSettings } from '$lib/settings/agentPaths.svelte';
+  import { placeholderFor } from '$lib/settings/agentPaths';
   import { agentSettings } from '$lib/settings/agent.svelte';
   import { AGENT_KINDS, backendFor, type AgentKind } from '$lib/agent/backends';
   import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
@@ -215,12 +217,21 @@
     if (settingsModal.open) manualStatus = 'idle';
   });
 
-  // Switching the release channel re-checks IMMEDIATELY. Without this, opting into
-  // beta looks like it did nothing until the hourly background poll comes around.
+  // Switching the release channel DISCARDS anything staged from the old channel,
+  // then re-checks IMMEDIATELY.
+  //
+  // Both halves matter. Without the re-check, opting into beta looks like it did
+  // nothing until the hourly poll comes around. Without the discard, switching
+  // Beta → Stable would leave a staged prerelease whose "Update ready — restart"
+  // button still installs it: the re-check can only supersede a staged version by
+  // finding a different one, and a user who just opted into beta is normally
+  // already on the newest stable, so the re-check finds nothing at all.
+  //
   // The check reads the store, which `setChannel` has already updated.
-  function onChannelChange(value: string) {
+  async function onChannelChange(value: string) {
     if (!releaseChannel.setChannel(value as ReleaseChannel)) return;
-    void checkForUpdates();
+    await updateStore.discard();
+    await checkForUpdates();
   }
 
   function close() {
@@ -351,6 +362,26 @@
               />
             </div>
           </li>
+          <!-- Agent executables (`wsl-agent-launch`). Driven off AGENT_KINDS so a
+               future backend needs no edit here. Empty means "use the detected
+               one", which the placeholder shows — and detection follows the shell
+               above: a WSL launcher means the CLIs are sought INSIDE the distro,
+               where a Windows-side path could never find them. -->
+          {#each AGENT_KINDS as kind (kind)}
+            <li class="row">
+              <span class="desc">{backendFor(kind).displayName} executable</span>
+              <div class="control">
+                <input
+                  class="custom"
+                  type="text"
+                  placeholder={placeholderFor(kind, agentPathsSettings.detected)}
+                  aria-label="{backendFor(kind).displayName} executable"
+                  value={agentPathsSettings.prefs[kind]}
+                  onchange={(e) => agentPathsSettings.setPath(kind, e.currentTarget.value)}
+                />
+              </div>
+            </li>
+          {/each}
         </ul>
       </section>
 
@@ -617,7 +648,7 @@
               <Dropdown
                 value={releaseChannel.channel}
                 options={RELEASE_CHANNEL_OPTIONS}
-                onChange={onChannelChange}
+                onChange={(v) => void onChannelChange(v)}
                 ariaLabel="Release channel"
                 width={140}
               />

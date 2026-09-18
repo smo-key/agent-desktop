@@ -70,6 +70,27 @@ describe('ReleaseChannelStore', () => {
     expect(saveSettingsSliceMock).not.toHaveBeenCalled();
   });
 
+  it('a choice made while load() is in flight is not reverted', async () => {
+    // The user can reach Settings before the settings_load IPC resolves. Without
+    // the guard, load()'s assignment lands after setChannel and reverts it in
+    // memory — while setChannel's save has already written the new value to disk.
+    let release!: (v: Record<string, unknown>) => void;
+    loadSettingsMock.mockReturnValue(
+      new Promise<Record<string, unknown>>((r) => {
+        release = r;
+      })
+    );
+    const store = new ReleaseChannelStore();
+    const loading = store.load();
+
+    expect(store.setChannel('beta')).toBe(true);
+    release({ releaseChannel: { channel: 'stable' } });
+    await loading;
+
+    expect(store.channel).toBe('beta');
+    expect(saveSettingsSliceMock).toHaveBeenCalledWith('releaseChannel', { channel: 'beta' });
+  });
+
   it('reads stable before load resolves', () => {
     const store = new ReleaseChannelStore();
     expect(store.channel).toBe('stable');

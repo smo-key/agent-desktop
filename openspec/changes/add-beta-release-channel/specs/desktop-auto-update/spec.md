@@ -92,9 +92,17 @@ change to their own signatures.
 - **THEN** the rejected candidate's backend resource is released, so a recurring
   hourly check does not accumulate handles
 
+#### Scenario: An unreachable manifest does not mask the other's answer
+
+- **WHEN** a beta-channel check finds one manifest unreachable (for example the
+  pinned beta manifest before any beta has been published, which the updater
+  reports as an error rather than as "no update") while the other manifest
+  answers that there is nothing newer
+- **THEN** the check reports **up to date**, not a check failure
+
 #### Scenario: Check failure stays silent
 
-- **WHEN** the channel-aware check fails (offline, a missing manifest, or the
-  command being unavailable outside the desktop runtime)
+- **WHEN** the channel-aware check fails with NO manifest answering at all
+  (offline, or the command being unavailable outside the desktop runtime)
 - **THEN** the failure is reported as a check error that background callers
   swallow silently, exactly as the previous check did

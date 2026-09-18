@@ -131,18 +131,28 @@ jobs:
           CH="$(grep -E '^channel=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)"
           VER="$(grep -E '^version=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force_publish }}" = "true" ] && [ "$SR" != "true" ]; then
-            # force_publish overrides "no version bump" ONLY. It must never
-            # override the channel partition: forcing a prerelease onto the stable
-            # lane would publish it as `releases/latest` for every stable user, and
-            # forcing a plain version onto the beta lane would tag a stable version
-            # from a branch main has never seen. (The tag-already-exists guard
-            # inside release-gate.sh still applies either way.)
+            # force_publish overrides "no version bump" ONLY.
+            #
+            # It must never override the channel partition: forcing a prerelease
+            # onto the stable lane would publish it as `releases/latest` for every
+            # stable user, and forcing a plain version onto the beta lane would tag
+            # a stable version from a branch main has never seen.
+            #
+            # Nor may it override "tag already exists" — the tag IS the record that
+            # a version shipped. Overriding it pushes a sync commit and re-extracts
+            # release notes before `create-release` finally aborts on the published
+            # Release, leaving a pointless commit behind. The gate reports that case
+            # separately (`tag_exists`) precisely so this can tell the two apart;
+            # `should_release=false` alone cannot.
+            TE="$(grep -E '^tag_exists=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)"
             IS_PRE=no
             case "$VER" in *-*) IS_PRE=yes ;; esac
             FORM_OK=no
             if [ "$CH" = "stable" ] && [ "$IS_PRE" = "no" ]; then FORM_OK=yes; fi
             if [ "$CH" = "beta" ] && [ "$IS_PRE" = "yes" ]; then FORM_OK=yes; fi
-            if [ "$FORM_OK" = "yes" ]; then
+            if [ "$TE" = "true" ]; then
+              echo "::warning::force_publish ignored: tag v$VER already exists — that version has shipped. Bump the version instead."
+            elif [ "$FORM_OK" = "yes" ]; then
               echo "force_publish set: overriding should_release=true"
               echo "should_release=true" >>"$GITHUB_OUTPUT"
             else
@@ -643,6 +653,12 @@ jobs:
 
       # Annotated tag on the sync commit. This is the point of no return: from
       # here on release-gate.sh treats this version as shipped.
+      #
+      # IDEMPOTENT on purpose. Every step after this one (undraft, and on the beta
+      # lane the `beta-channel` refresh) must be recoverable by "Re-run failed
+      # jobs": a fresh workflow run cannot help, because the gate now refuses this
+      # version precisely BECAUSE the tag exists. A blind `git tag -a` would abort
+      # the re-run with "tag already exists" before reaching the step that failed.
       - name: Tag release commit
         env:
           TAG: ${{ needs.gate.outputs.tag }}
@@ -650,7 +666,13 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${TAG}" -m "Release ${TAG}" "${RELEASE_SHA}"
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Tag ${TAG} already exists locally (re-run); not recreating."
+          else
+            git tag -a "${TAG}" -m "Release ${TAG}" "${RELEASE_SHA}"
+          fi
+          # Already-up-to-date is success; a tag that exists REMOTELY on a
+          # different commit is a real error and must still fail the job.
           git push origin "${TAG}"
 
       - name: Publish (undraft) the release
@@ -675,10 +697,20 @@ jobs:
       # `beta-channel` prerelease holding a copy of the just-published
       # `latest.json`.
       #
-      # DELETE AND RECREATE rather than replacing the asset in place: a replaced
-      # asset can be served stale from the CDN, while a fresh release+asset id is
-      # a new URL path and cannot be. The tag itself is recreated too, so nothing
-      # accumulates.
+      # CREATE-IF-MISSING, THEN CLOBBER THE ASSET. An earlier draft of this step
+      # deleted and recreated the whole release to dodge any CDN staleness on a
+      # replaced asset. That trade was wrong: the delete opens a window in which
+      # the endpoint 404s for every beta user, and if the recreate then fails
+      # (transient 5xx, or a 422 because the just-deleted tag ref has not settled)
+      # the endpoint stays 404 with NO previous manifest to fall back on, and no
+      # automated recovery. A briefly-cached manifest is a beta that arrives a few
+      # minutes late; a 404 is a beta channel that is simply broken — and, because
+      # the plugin reports a missing manifest as a check ERROR, one that reports
+      # "Couldn't check" rather than "up to date". So: never delete.
+      #
+      # `--clobber` replaces the asset in place, which is also what makes this step
+      # safe to re-run: with the tag step above now idempotent, "Re-run failed
+      # jobs" reaches it again and simply overwrites.
       #
       # Ordering is load-bearing. `latest.json` gains one platform entry per build
       # leg, so this must run AFTER the versioned Release is published (i.e. after
@@ -695,24 +727,38 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.gate.outputs.tag }}
+          RELEASE_SHA: ${{ needs.gate.outputs.release_sha }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           work="$(mktemp -d)"
-          gh release download "$TAG" --pattern latest.json --dir "$work"
+          # Not under `set -e`: gh exits non-zero when no asset matches, and the
+          # explicit check below is a far better message than a bare exit code.
+          gh release download "$TAG" --pattern latest.json --dir "$work" || true
           if [ ! -s "$work/latest.json" ]; then
-            echo "::error::$TAG has no latest.json asset; the updater artifacts were not produced."
+            echo "::error::$TAG has no latest.json asset; the updater artifacts were not produced, so the beta channel cannot be pointed at this release."
             exit 1
           fi
           echo "----- beta latest.json -----"
           cat "$work/latest.json"
+          set -e
 
-          # Remove the previous pinned release AND its tag, ignoring "not found".
-          gh release delete beta-channel --yes --cleanup-tag || true
-          git push origin :refs/tags/beta-channel || true
+          # Create the pinned release only if it does not exist yet (first beta
+          # ever, or someone deleted it). `--prerelease` is load-bearing: without
+          # it this release, being the newest, would become `releases/latest` and
+          # serve the BETA manifest to every stable user and to the one-line
+          # installers.
+          if gh release view beta-channel >/dev/null 2>&1; then
+            echo "beta-channel release exists; replacing its manifest in place."
+          else
+            echo "Creating the beta-channel release."
+            gh release create beta-channel \
+              --title "Beta channel manifest" \
+              --notes "Update manifest for the newest beta release. Refreshed by the release pipeline on every beta publish; not a downloadable build." \
+              --prerelease \
+              --target "$RELEASE_SHA"
+          fi
 
-          gh release create beta-channel "$work/latest.json" \
-            --title "Beta channel manifest" \
-            --notes "Update manifest for the newest beta release ($TAG). Recreated by the release pipeline on every beta publish; not a downloadable build." \
-            --prerelease \
-            --target "${{ needs.gate.outputs.release_sha }}"
+          gh release upload beta-channel "$work/latest.json" --clobber
+          gh release edit beta-channel --prerelease \
+            --notes "Update manifest for the newest beta release ($TAG). Refreshed by the release pipeline on every beta publish; not a downloadable build."
           rm -rf "$work"

@@ -150,6 +150,35 @@ export class UpdateStore {
   }
 
   /**
+   * Discard whatever is in flight or staged and return to `idle`.
+   *
+   * Used when the RELEASE CHANNEL changes: a build staged from the old channel is
+   * no longer a candidate the user has opted into. Without this, switching Beta →
+   * Stable leaves a staged prerelease behind whose "Update ready — restart" pill
+   * still installs it — and the immediate re-check cannot clear it, because
+   * `decideCheckAction` only supersedes a staged version by finding a DIFFERENT
+   * one, while the common case (the user is already on the newest stable) finds
+   * nothing at all.
+   *
+   * Bumping `seq` invalidates any download still running, so its completion
+   * closes its own handle instead of committing `ready`. A download already
+   * `installing` is left alone: the app is seconds from relaunching into it and
+   * there is nothing left to cancel.
+   */
+  async discard(): Promise<void> {
+    if (this.status === 'installing') return;
+    const orphan = this.staged;
+    this.seq++;
+    this.staged = null;
+    this.status = 'idle';
+    this.version = null;
+    this.downloadedBytes = 0;
+    this.totalBytes = null;
+    this.lastError = null;
+    if (orphan) await closeUpdate(orphan);
+  }
+
+  /**
    * Re-check for an update and re-attempt its download — the action behind the
    * pill's "Update failed · retry" affordance. Only meaningful from `failed`;
    * delegates to the injected `recheck` so the store issues no `check()` IPC.
