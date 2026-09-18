@@ -21,7 +21,6 @@
   import { surfaceSlot } from '$lib/layout/surfaceSlot.svelte';
   import { focusTerminal, getTerminal, scrollTerminalToBottom } from '$lib/layout/terminals';
   import {
-    buildRoster,
     needsAttention,
     showContext,
     LANE_ORDER,
@@ -49,8 +48,9 @@
     archivedNavNeedsExpand,
     rowSub as rowSubText
   } from './inbox';
-  import { toRosterWorkspaces, toNavWorkspaces } from './rosterInputs';
-  import { noteStatus, runtimeMap } from './runtime';
+  import { toNavWorkspaces } from './rosterInputs';
+  import { runtimeMap } from './runtime';
+  import { roster } from './rosterStore.svelte';
   import { navigateTarget } from './navigate';
   import { focusAgent } from './focusAgent.svelte';
   import { focusRequest } from './focusRequest.svelte';
@@ -139,13 +139,10 @@
 
   // 1-second clock so working -> waiting flips as the PTY goes quiet (matches the
   // old Overview). Epoch ms to match the runtime registry.
-  let nowMs = $state(Date.now());
-  $effect(() => {
-    const id = setInterval(() => (nowMs = Date.now()), 1000);
-    return () => clearInterval(id);
-  });
-
-  const rosterWorkspaces = $derived(toRosterWorkspaces(workspace.workspaces));
+  // The clock and the agent rows come from the SHARED roster store (one derivation
+  // for the whole app); `start()` is ref-counted so the clock runs while mounted.
+  $effect(() => roster.start());
+  const nowMs = $derived(roster.nowMs);
   const navWorkspaces = $derived(toNavWorkspaces(workspace.workspaces));
 
   // Combined terminals placement (tasks-panel: "Terminals can be combined into the
@@ -167,17 +164,10 @@
   );
 
   const allRows = $derived.by(() => {
-    const runtime = runtimeMap();
-    const agents = buildRoster(
-      snapshots.byPane,
-      rosterWorkspaces,
-      runtime,
-      nowMs,
-      activity.bySession,
-      undefined,
-      events.activityMap()
-    );
-    return combinedTerminals ? [...agents, ...buildTerminalRows(terminalInputs, runtime, nowMs)] : agents;
+    const agents = roster.rows;
+    return combinedTerminals
+      ? [...agents, ...buildTerminalRows(terminalInputs, runtimeMap(), nowMs)]
+      : agents;
   });
   const terminalIds = $derived(new Set(allRows.filter(isTerminalRow).map((r) => r.paneId)));
 
@@ -198,16 +188,6 @@
     );
   });
 
-  $effect(() => {
-    for (const r of allRows) {
-      // Record each row's FINAL (post-override) status as the hysteresis memory for the
-      // next derivation: a pane shown `working` holds In flight through a brief silence
-      // instead of bouncing to `waiting` (see deriveStatus / IDLE_GRACE_MS). The runtime
-      // registry is non-reactive, so this write does not retrigger the roster recompute;
-      // `rowFor` reads the value recorded on the previous tick.
-      noteStatus(r.paneId, r.status);
-    }
-  });
   const rows = $derived(filterRowsByProject(allRows, projectFilter.selected));
 
   // Per-lane DISPLAY ORDER. Every bucket lists its agents most-recently-added-to-

@@ -23,7 +23,6 @@
   import { KeepAwakeDriver } from '$lib/settings/keepAwakeDriver';
   import { shellSettings } from '$lib/settings/shell.svelte';
   import { agentSettings } from '$lib/settings/agent.svelte';
-  import { isAgentProgram } from '$lib/agent/backends';
   import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
   import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
   import { titleSettings } from '$lib/settings/titles.svelte';
@@ -83,12 +82,13 @@
   // on the always-mounted route (the Inbox is mounted only in overview mode), so a
   // sound/desktop alert can fire whether the user is in the overview or driving an
   // agent in the grid. See design D7b/D7c.
-  import { buildRoster, isWorking } from '$lib/overview/roster';
-  import { toRosterWorkspaces, toNavWorkspaces } from '$lib/overview/rosterInputs';
+  import { isWorking } from '$lib/overview/roster';
+  import { toNavWorkspaces } from '$lib/overview/rosterInputs';
+  import { roster } from '$lib/overview/rosterStore.svelte';
+  import { allAgentPaneRefs, isLivePane, liveAgentPaneRefs } from '$lib/overview/paneRefs';
   import { activationIntent } from '$lib/overview/activate';
   import { focusRequest } from '$lib/overview/focusRequest.svelte';
   import { listen } from '@tauri-apps/api/event';
-  import { runtimeMap } from '$lib/overview/runtime';
   import { windowFocus } from '$lib/overview/windowFocus.svelte';
   import { focusAgent } from '$lib/overview/focusAgent.svelte';
   import { alerts } from '$lib/overview/alerts.svelte';
@@ -285,10 +285,10 @@
       unlistenSubagents = unlisten;
     });
 
-    // Prime TRANSCRIPT ACTIVITY once on mount (each claude pane's last message +
-    // any pending question, read from its transcript by cwd). Event-driven reads
-    // (below) keep it fresh, with a slow safety poll as the backstop.
-    void refreshActivity();
+    // Prime TRANSCRIPT ACTIVITY once on mount for EVERY agent pane — closed ones
+    // included, so an archived row shows its last summary — then event-driven
+    // reads (below) and the slow safety poll refresh only the LIVE panes.
+    void activity.refresh(currentPaneRefs()).then(() => refreshActivity());
 
     // Start the EVENT pipeline store: seed each pane's timeline (ring → durable
     // sink → transcript backfill, resolved in Rust), then subscribe to live
@@ -299,7 +299,7 @@
       if (triggersTranscriptRead(ev.hookEventName)) void refreshActivity();
     };
     let unlistenEvents: (() => void) | undefined;
-    void events.start(currentPaneRefs()).then((unlisten) => {
+    void events.start(livePaneRefs()).then((unlisten) => {
       unlistenEvents = unlisten;
     });
 
@@ -373,11 +373,14 @@
       // watcher `{cwd: null, program: '/bin/zsh'}` — silently dropping the watch
       // (and mislabelling a copilot pane) whenever the user switches session tabs.
       const sess = workspace.sessionAnywhere(paneId);
-      if (!sess) return null;
+      // A CLOSED (archived) agent resolves to null so it LEAVES the watched-set:
+      // its files never change, and every watched session costs the Rust
+      // watcher IO on each recompute (see paneRefs.ts).
+      if (!isLivePane(sess)) return null;
       // The ADOPTED worktree dir when there is one: the subagent reader locates a
       // session's sidecars purely by cwd, so a `--worktree` session lists none
       // unless we hand it the dir the session actually runs in.
-      return { cwd: sessionCwd(sess), program: sess.program };
+      return { cwd: sessionCwd(sess!), program: sess!.program };
     });
   }
 
@@ -422,28 +425,21 @@
   // transcript-activity command. Read straight from the workspace registry (NOT the
   // snapshot): each claude pane was spawned with `--session-id`, so we read its
   // EXACT transcript with no statusline/snapshot dependency and no cwd ambiguity.
+  /** EVERY agent pane (closed included) — for one-shot in-memory seeding only. */
   function currentPaneRefs(): PaneRef[] {
-    const refs: PaneRef[] = [];
-    for (const ws of workspace.workspaces) {
-      for (const [paneId, sess] of Object.entries(ws.registry)) {
-        if (isAgentProgram(sess.program) && sess.sessionId) {
-          refs.push({
-            paneId,
-            sessionId: sess.sessionId,
-            cwd: sessionCwd(sess),
-            program: sess.program
-          });
-        }
-      }
-    }
-    return refs;
+    return allAgentPaneRefs(workspace.workspaces);
+  }
+
+  /** The LIVE agent panes — what every clocked/IO-bound poller reads (see paneRefs.ts). */
+  function livePaneRefs(): PaneRef[] {
+    return liveAgentPaneRefs(workspace.workspaces);
   }
 
   // Refresh transcript activity, then ask the titles store to regenerate any
   // session title whose user-messages hash changed (gated + throttled in the store,
   // so this is cheap to call often).
   async function refreshActivity(): Promise<void> {
-    const refs = currentPaneRefs();
+    const refs = livePaneRefs();
     if (refs.length === 0) return;
     await activity.refresh(refs);
     titles.refresh(refs, (paneId) => activity.forPane(paneId).userHash, Date.now());
@@ -543,7 +539,7 @@
   // newly-launched agent's timeline (and any backfill) is available immediately.
   $effect(() => {
     void ourSessionIds; // re-run when the app's session set changes
-    void events.seed(currentPaneRefs());
+    void events.seed(livePaneRefs());
   });
 
   // SAFETY RE-SEED: the live `overview://event` listener can miss a push, and a
@@ -557,7 +553,7 @@
   // errors, so this is cheap, idempotent, and best-effort.
   const EVENT_RESEED_MS = 5000;
   $effect(() => {
-    const id = setInterval(() => void events.seed(currentPaneRefs()), EVENT_RESEED_MS);
+    const id = setInterval(() => void events.seed(livePaneRefs()), EVENT_RESEED_MS);
     return () => clearInterval(id);
   });
 
@@ -578,23 +574,14 @@
   // agents that JUST entered "Needs input" (each per its own mode). Driven ONLY here
   // (single source, always mounted) so no alert ever fires twice and alerts keep
   // working in grid view (the Inbox is mounted only in overview mode).
-  let alertNowMs = $state(Date.now());
-  $effect(() => {
-    const id = setInterval(() => (alertNowMs = Date.now()), 1000);
-    return () => clearInterval(id);
-  });
+  // The SHARED roster + its 1 s clock (rosterStore): one derivation serves the
+  // alerts driver, the keep-awake driver, and the Inbox.
+  $effect(() => roster.start());
+  const alertNowMs = $derived(roster.nowMs);
   // Track OS window focus + visibility while mounted (the route is the app root).
   $effect(() => windowFocus.start());
   const alertRows = $derived(
-    buildRoster(
-      snapshots.byPane,
-      toRosterWorkspaces(workspace.workspaces),
-      runtimeMap(),
-      alertNowMs,
-      activity.bySession,
-      undefined,
-      events.activityMap()
-    ).map((r) => {
+    roster.rows.map((r) => {
       // Enrich the row for its desktop notification: the TITLE reads
       // "<Project Name>: <Agent Title>". The Agent Title is the GENERATED session
       // title (the label on its card) when we have one, falling back to the

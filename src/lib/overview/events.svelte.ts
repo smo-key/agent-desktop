@@ -74,10 +74,26 @@ export class EventStore {
     return this.byPane[paneId] ?? [];
   }
 
+  /**
+   * Per-pane memo of the derived activity, keyed on the timeline array's identity
+   * (every ingest / seed installs a NEW array, so an unchanged pane keeps its
+   * reference) plus the `everPrompted` latch. The roster asks for every pane's
+   * activity on a 1 s clock; without this, each tick re-derived up to
+   * `EVENT_RING_CAP` events per pane whether or not anything changed.
+   */
+  private memo = new Map<string, { list: AgentEvent[] | undefined; everPrompted: boolean; value: EventActivity }>();
+
   /** The derived event activity (status + currentAction + question) for a pane. The
-   *  sticky `everPrompted` latch is overlaid so it survives ring eviction (see above). */
+   *  sticky `everPrompted` latch is overlaid so it survives ring eviction (see above).
+   *  Returns the SAME object while the pane's timeline is unchanged. */
   activityFor(paneId: string): EventActivity {
-    return deriveEventActivity(this.timeline(paneId), this.everPromptedPanes.has(paneId));
+    const list = this.byPane[paneId];
+    const everPrompted = this.everPromptedPanes.has(paneId);
+    const hit = this.memo.get(paneId);
+    if (hit && hit.list === list && hit.everPrompted === everPrompted) return hit.value;
+    const value = deriveEventActivity(list ?? [], everPrompted);
+    this.memo.set(paneId, { list, everPrompted, value });
+    return value;
   }
 
   /** The derived `paneId -> EventActivity` map for every pane with events, for the
@@ -185,8 +201,12 @@ export class EventStore {
         const existing = this.byPane[paneId] ?? [];
         const snapshotLastTs = clean[clean.length - 1].ts;
         const preserved = existing.filter((e) => e.ts > snapshotLastTs);
-        this.byPane[paneId] = preserved.length > 0 ? [...clean, ...preserved] : clean;
+        const merged = preserved.length > 0 ? [...clean, ...preserved] : clean;
         total += clean.length;
+        // The periodic safety re-seed usually returns exactly what we hold: skip
+        // the write so no derived value (roster, memoized activity) re-runs.
+        if (sameTimeline(existing, merged)) continue;
+        this.byPane[paneId] = merged;
       }
       return total;
     } catch (err) {
@@ -216,6 +236,21 @@ export class EventStore {
     await this.seed(panes);
     return this.listen();
   }
+}
+
+/**
+ * PURE: two timelines carry the same events (same length; each position has the
+ * same `ts`, hook name, and synthetic flag). Timestamps are monotonic per pane, so
+ * this is a sufficient identity for "the re-seed changed nothing".
+ */
+export function sameTimeline(a: ReadonlyArray<AgentEvent>, b: ReadonlyArray<AgentEvent>): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (x.ts !== y.ts || x.hookEventName !== y.hookEventName || x.synthetic !== y.synthetic) return false;
+  }
+  return true;
 }
 
 /** Singleton store, imported by the overviews + the route. */

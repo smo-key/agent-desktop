@@ -154,21 +154,39 @@ export class ActivityStore {
   }
 
   /**
-   * Refresh from the `activity_for(panes)` command for the given app panes and
-   * store the result. Called on mount and on the route's poll clock. A no-op
-   * reactive write when nothing changed (the runes proxy diffs structurally on
-   * assignment). On failure (e.g. outside Tauri) it logs once and leaves the map.
+   * Refresh from the `activity_for(panes)` command for the given panes and MERGE
+   * the result: a pane outside `panes` keeps whatever it holds (the pollers pass
+   * only the LIVE panes, so a closed agent keeps the summary it was seeded with),
+   * a requested pane whose activity is unchanged keeps its SAME object (no
+   * spurious reactive update downstream), and a requested pane the backend no
+   * longer resolves is dropped. On failure (e.g. outside Tauri) it logs once and
+   * leaves the map.
    */
   async refresh(panes: PaneRef[]): Promise<number> {
     try {
       const map = await invoke<ActivityMap>('activity_for', { panes });
-      this.bySession = normalizeActivity(map);
-      return Object.keys(this.bySession).length;
+      const fresh = normalizeActivity(map);
+      for (const p of panes) {
+        const next = fresh[p.paneId];
+        const cur = this.bySession[p.paneId];
+        if (!next) {
+          if (cur) delete this.bySession[p.paneId];
+          continue;
+        }
+        if (cur && sameActivity(cur, next)) continue;
+        this.bySession[p.paneId] = next;
+      }
+      return Object.keys(fresh).length;
     } catch (err) {
       console.warn('activity_for failed; no transcript activity:', err);
       return 0;
     }
   }
+}
+
+/** PURE: structural equality of two normalized activities (small, flat-ish). */
+export function sameActivity(a: Activity, b: Activity): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 /** Singleton store, imported by the overviews + the route. */
