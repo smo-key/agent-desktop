@@ -16,7 +16,8 @@
 // `statusLine.command` (verified, appendix A.1) so the wrapper knows which
 // snapshot file to write and where.
 
-import { backendFor } from '$lib/agent/backends';
+import { backendFor, capabilitiesFor, isAgentProgram } from '$lib/agent/backends';
+import { distroFor, isWslShell, toWslPath, wslInvocation } from '$lib/shell/wsl';
 
 /** Absolute paths resolved once from the `usage_paths` Tauri command. */
 export interface UsagePaths {
@@ -79,6 +80,29 @@ export interface SpawnOverrideInput {
    * session.
    */
   usagePaths: UsagePaths | null;
+  /**
+   * The pane's working directory. Needed here (rather than only at the
+   * `pty_spawn` call) because a WSL launch must translate it across the VM
+   * boundary and pass it INSIDE the distro. Echoed back unchanged otherwise.
+   */
+  cwd?: string | null;
+  /**
+   * The configured shell — the ONLY signal that routes this launch through WSL
+   * (`wsl-agent-launch`). Absent/non-WSL leaves every existing behavior intact.
+   */
+  shell?: string | null;
+  /**
+   * The executable to run for this agent: the user's preference, else what
+   * detection found, else the backend's bare program name. Absent falls back to
+   * the bare name, which is exactly today's behavior.
+   */
+  executable?: string | null;
+  /**
+   * Whether `node` exists where the session will run. Gates the statusline
+   * under WSL, which is invoked as `node "<path>"` (design D5). Defaults to
+   * true, preserving current behavior off the WSL path.
+   */
+  nodeAvailable?: boolean;
 }
 
 /**
@@ -90,6 +114,19 @@ export interface SpawnOverrideInput {
 export interface SpawnOverride {
   args: string[];
   env?: Array<[string, string]>;
+  /**
+   * The image to actually execute. Normally the pane's own program; under WSL
+   * the `wsl.exe` wrapper instead.
+   *
+   * This is DELIBERATELY not written back onto the pane: `backendForProgram` is
+   * a literal `=== 'claude'` check that layout persistence, `isAgentProgram`,
+   * status derivation and the subagent rows all key on, so a pane recording
+   * `wsl.exe` would launch fine and then stop being recognized as an agent —
+   * silently. The pane keeps the kind; only the spawn uses this.
+   */
+  program?: string;
+  /** The working directory to spawn in — translated for a WSL launch. */
+  cwd?: string | null;
 }
 
 /** The settings key we override for the per-session statusline. */
@@ -178,6 +215,37 @@ function toNodePath(scriptPath: string): string {
 export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
   const { program, args, paneId, sessionId, resume, usagePaths } = input;
 
+  // --- WSL launch context (`wsl-agent-launch`) ------------------------------
+  // The shell preference is the ONLY trigger. For every other launch `wsl` is
+  // false and everything below behaves exactly as it did before this capability
+  // existed.
+  const wsl = isAgentProgram(program) && isWslShell(input.shell);
+  const cwd = input.cwd;
+  // Applied to the app-managed script paths so a process inside the distro can
+  // reach them (`C:\Users\…` → `/mnt/c/Users/…`). Identity off the WSL path, so
+  // the non-WSL `--settings` blob is byte-for-byte what it was.
+  const xlate = (p: string) => (wsl ? toWslPath(p) : p);
+  // The statusline writes a FILE, so it survives the boundary — but it is run as
+  // `node "<path>"`, and under WSL that is the DISTRO's node. Verified absent on
+  // the machine this was written for, so this is a live case, not a hypothetical.
+  const caps = capabilitiesFor(backendFor(program === 'copilot' ? 'copilot' : 'claude'), {
+    wsl,
+    nodeAvailable: input.nodeAvailable !== false
+  });
+  /** Wrap the finished spawn in `wsl.exe` when this is a WSL launch. */
+  const wrap = (override: SpawnOverride, exeArgs: string[]): SpawnOverride => {
+    if (!wsl) return { ...override, program, cwd };
+    const invocation = wslInvocation({
+      distro: distroFor(input.shell, cwd),
+      cwd: cwd ?? '',
+      // The executable as named INSIDE the distro. Falls back to the bare
+      // backend name, which resolves via the login profile `-lc` sources.
+      exe: input.executable?.trim() || backendFor(program as 'claude' | 'copilot').program,
+      args: exeArgs
+    });
+    return { ...override, ...invocation };
+  };
+
   // Copilot panes get their backend's declared args (`--session-id`/`--no-remote`
   // fresh, `--resume` on restore) plus the pane env — and deliberately NO
   // `--settings`/hooks/statusline, which are Claude-only surfaces (session-launcher:
@@ -191,13 +259,16 @@ export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
         : backend.freshArgs(sessionId)
       : [];
     const env: Array<[string, string]> = [['AGENT_DESKTOP_PANE', paneId]];
-    if (usagePaths) env.push(['AGENT_DESKTOP_SNAPSHOT_DIR', usagePaths.snapshotDir]);
-    return { args: [...injected, ...args], env };
+    if (usagePaths) env.push(['AGENT_DESKTOP_SNAPSHOT_DIR', xlate(usagePaths.snapshotDir)]);
+    const finalArgs = [...injected, ...args];
+    return wrap({ args: finalArgs, env }, finalArgs);
   }
 
   // Only agent panes are wrapped; everything else (shells) spawns verbatim.
+  // A shell pane is NEVER routed through WSL here: the user's configured shell
+  // IS the WSL launcher, so it already runs inside the distro on its own.
   if (program !== 'claude') {
-    return { args: [...args] };
+    return { args: [...args], program, cwd };
   }
 
   const injected: string[] = [];
@@ -231,13 +302,26 @@ export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
 
   let env: Array<[string, string]> | undefined;
   if (usagePaths) {
+    // Under WSL the two observability pipelines fail for DIFFERENT reasons, so
+    // they are gated separately rather than collapsed into one switch:
+    //
+    //  - statusLine writes a FILE into AGENT_DESKTOP_SNAPSHOT_DIR, reachable
+    //    from inside the distro as /mnt/c/… — so it is kept, translated,
+    //    WHENEVER the distro has the `node` that runs it (caps.statusline).
+    //  - the hooks deliver over AGENT_DESKTOP_SOCKET_PATH, a \\.\pipe\… name no
+    //    Linux process can open. Emitting them would be worse than omitting
+    //    them: a hook that fails to run is silent, so the session would look
+    //    healthy while burning a node process per event (caps.hooks).
+
     // Both commands run through `node` (see nodeCommand) with the script path
     // shell-quoted: the scripts live under a SPACED app-data path, claude runs
     // these through a shell, and Windows honors no shebang.
-    settings.statusLine = {
-      type: STATUS_LINE_TYPE,
-      command: nodeCommand(usagePaths.wrapperPath)
-    };
+    if (caps.statusline) {
+      settings.statusLine = {
+        type: STATUS_LINE_TYPE,
+        command: nodeCommand(xlate(usagePaths.wrapperPath))
+      };
+    }
     // The single event hook is wired into the FULL lifecycle event set. Each
     // invocation normalizes its event and delivers one JSON line over the
     // app-hosted local socket (AGENT_DESKTOP_SOCKET_PATH), feeding the overview's
@@ -245,8 +329,8 @@ export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
     // (matcher '*') so every tool call produces a timeline entry; the pending
     // AskUserQuestion payload rides on its PreToolUse event (it is not in the
     // transcript until answered), replacing the old question.json sidecar.
-    const hookCmd = { type: 'command', command: nodeCommand(usagePaths.eventHookPath) };
-    settings.hooks = {
+    const hookCmd = { type: 'command', command: nodeCommand(xlate(usagePaths.eventHookPath)) };
+    if (caps.hooks) settings.hooks = {
       SessionStart: [{ hooks: [hookCmd] }],
       UserPromptSubmit: [{ hooks: [hookCmd] }],
       PreToolUse: [{ matcher: '*', hooks: [hookCmd] }],
@@ -258,13 +342,18 @@ export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
     };
     env = [
       ['AGENT_DESKTOP_PANE', paneId],
-      ['AGENT_DESKTOP_SNAPSHOT_DIR', usagePaths.snapshotDir],
-      ['AGENT_DESKTOP_SOCKET_PATH', usagePaths.socketPath]
+      ['AGENT_DESKTOP_SNAPSHOT_DIR', xlate(usagePaths.snapshotDir)]
     ];
+    // The socket address is meaningless inside the distro, so it is not passed
+    // at all rather than passed as an address that cannot be opened.
+    if (caps.hooks) env.push(['AGENT_DESKTOP_SOCKET_PATH', usagePaths.socketPath]);
   }
+  // `remoteControlAtStartup: false` and `disableAgentView: true` are always
+  // present, WSL or not: they are correctness settings, not observability.
   injected.push('--settings', JSON.stringify(settings));
 
-  return { args: [...injected, ...args], env };
+  const finalArgs = [...injected, ...args];
+  return wrap({ args: finalArgs, env }, finalArgs);
 }
 
 /**

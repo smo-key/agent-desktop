@@ -22,6 +22,8 @@
   import { keepAwake, shouldKeepAwake } from '$lib/settings/keepAwake.svelte';
   import { KeepAwakeDriver } from '$lib/settings/keepAwakeDriver';
   import { shellSettings } from '$lib/settings/shell.svelte';
+  import { agentPathsSettings } from '$lib/settings/agentPaths.svelte';
+  import { defaultShell } from '$lib/shell/defaultShell';
   import { agentSettings } from '$lib/settings/agent.svelte';
   import { subagentsVisible } from '$lib/settings/subagentsVisible.svelte';
   import { uiPrefs } from '$lib/settings/uiPrefs.svelte';
@@ -160,6 +162,13 @@
     // layout against it would rewrite every saved `pwsh` to `/bin/zsh` — spawning
     // dead panes AND persisting the mangled value back over the good one.
     const shellReady = shellSettings.load();
+    // Agent executables (`wsl-agent-launch`): probe where the configured shell
+    // implies — inside the WSL distro when it is a distro launcher, else the host
+    // PATH — and re-probe whenever the shell preference changes, so the settings
+    // placeholder can never show a path detected against a different shell.
+    // Chained onto `shellReady` because the probe target IS the resolved shell.
+    shellSettings.onShellChanged = (shell) => agentPathsSettings.redetect(shell);
+    void shellReady.then(() => agentPathsSettings.load(defaultShell()));
     // Load the agent-backend preference (Claude / Copilot for new sessions) and
     // probe whether the selected CLI is installed (agent-backends).
     void agentSettings.load();

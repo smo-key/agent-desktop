@@ -159,6 +159,18 @@ const ENFORCED_CAPABILITIES = new Set([
   // component test, WhatsNewModal.svelte.test.ts) are all headless-tested.
   'whats-new-dialog',
   'keep-awake',
+  // wsl-agent-launch: the launcher heuristic, the distro resolution, the path
+  // translation across the VM boundary and above all the ARGUMENT VECTOR are
+  // pure and unit-tested (wsl.test.ts); the executable resolution order and the
+  // settings placeholder are too (agentPaths.test.ts); the spawn seam — WSL
+  // wrapping, the hooks/statusline gating and the non-WSL regression guard —
+  // is covered in spawn.test.ts, the context-aware capabilities in
+  // backends.test.ts, the probe parse + timeout degradation in Rust
+  // (shell_path.rs), and the shell-change invalidation in
+  // agentPathsInvalidation.test.ts. Nothing here is headless-exempt: every
+  // scenario is pure enough to assert without a live distro. The end-to-end
+  // launch on real WSL is a task in the change, not a gate exemption.
+  'wsl-agent-launch',
 ]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by

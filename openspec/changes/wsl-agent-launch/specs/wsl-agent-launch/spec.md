@@ -146,7 +146,7 @@ A stored preference SHALL take effect for agent sessions launched afterwards.
 - **WHEN** the user clears a previously set executable
 - **THEN** the detected executable applies again
 
-#### Scenario: Preference survives a restart
+#### Scenario: Executable preference survives a restart
 
 - **WHEN** the user sets an executable and the application later restarts
 - **THEN** agent sessions launch the chosen executable

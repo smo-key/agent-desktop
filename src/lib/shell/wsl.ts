@@ -1,0 +1,239 @@
+// WSL launch mechanics (`wsl-agent-launch` capability). PURE and framework-free
+// (no Svelte/Tauri/DOM imports) so every load-bearing guarantee here is
+// unit-tested: the distro heuristic, the path translation across the VM
+// boundary, and above all the argument vector, which is the difference between
+// "a folder with a space in it works" and "a folder with a space in it injects
+// shell syntax".
+//
+// Why this module exists at all: an agent pane spawns its backend's program
+// (`claude`) as a WINDOWS image. When the user's shell is a WSL distro launcher
+// their project lives inside the distro and `claude` is on the LINUX PATH, so
+// `CreateProcessW` fails with `os error 2` (ERROR_FILE_NOT_FOUND — the image,
+// not the cwd, which would be error 3). No amount of Windows-side PATH seeding
+// can fix that; the executable is on the other side of a VM boundary. So the
+// launch itself has to cross it.
+//
+// The shell preference is the ONLY trigger. This module never goes looking for
+// distros on its own.
+
+/** The wrapper every WSL launch goes through. */
+const WSL_EXE = 'wsl.exe';
+
+/**
+ * The script run inside the distro. A FIXED constant — no caller input is ever
+ * interpolated into it (see `wslInvocation`).
+ *
+ * `cd "$1" || exit 1` rather than `cd "$1" && …`: a failed `cd` must ABORT. With
+ * `&&` the shell carries on parsing and the cost of getting it wrong is running
+ * the agent in the wrong directory, which is a silent, confusing failure rather
+ * than a loud one.
+ */
+const SCRIPT = 'cd "$1" || exit 1; shift; exec "$@"';
+
+/**
+ * The `$0` placeholder. POSIX assigns the FIRST operand after `sh -c <script>`
+ * to `$0`, not `$1` — so without this literal every parameter shifts by one:
+ * `cd "$1"` would target the executable and the cwd would be exec'd as the
+ * command. Easy to drop, and it fails in a way that looks like a WSL problem.
+ */
+const ARGV0 = 'sh';
+
+/**
+ * Distro launchers registered by the common distributions. An open set — a name
+ * missing here is a ONE-LINE fix, and the failure mode is benign: an
+ * unrecognized launcher means the app behaves exactly as it does today.
+ */
+const DISTRO_LAUNCHERS =
+  /^(ubuntu|debian|kali-linux|opensuse|suse|sles|oracle-linux|fedora|alpine|arch|mint|pengwin|whitewater|clearlinux)/i;
+
+/**
+ * Registered WSL entries that are NOT interactive distributions. Docker Desktop
+ * registers these on every machine it is installed on — VERIFIED on the
+ * reporting user's box, whose `wsl.exe -l -q` lists `Ubuntu` and
+ * `docker-desktop`. Launching an agent into one would be nonsense.
+ */
+const PSEUDO_DISTROS = new Set(['docker-desktop', 'docker-desktop-data']);
+
+/** Trim a program path down to its file name, for either path separator. */
+function basename(program: string): string {
+  const parts = program.split(/[\\/]/);
+  return parts[parts.length - 1] ?? '';
+}
+
+/** True when `name` is a registered WSL entry that is not a real distro. */
+export function isPseudoDistro(name: string | null | undefined): boolean {
+  if (typeof name !== 'string') return false;
+  return PSEUDO_DISTROS.has(name.trim().toLowerCase());
+}
+
+/**
+ * Whether the configured shell launches a WSL distro — the single signal that
+ * routes an agent pane through WSL.
+ *
+ * Covers the generic launchers (`wsl.exe`, and the `bash.exe` shim) and the
+ * per-distro App Execution Aliases (`ubuntu.exe`, `ubuntu-24.04.exe`,
+ * `debian.exe`, …), including the full `C:\Program Files\WindowsApps\…\ubuntu.exe`
+ * spelling the field report arrived with.
+ *
+ * Deliberately does NOT match a bare `bash` or `/bin/bash`: on Unix that is an
+ * ordinary shell, and treating it as a WSL launcher would reroute every Linux
+ * user's agent panes through a VM that does not exist.
+ */
+export function isWslShell(program: string | null | undefined): boolean {
+  if (typeof program !== 'string') return false;
+  const name = basename(program.trim()).toLowerCase();
+  if (!name) return false;
+  if (name === 'wsl' || name === 'wsl.exe') return true;
+  if (name === 'bash.exe') return true;
+  if (!name.endsWith('.exe')) return false;
+  return DISTRO_LAUNCHERS.test(name.slice(0, -'.exe'.length));
+}
+
+/**
+ * Normalize a Windows path's separators, so the UNC and drive matchers below
+ * only have to reason about forward slashes.
+ */
+function normalizeSeparators(p: string): string {
+  return p.replace(/\\/g, '/');
+}
+
+/** `//wsl.localhost/<distro>/rest` and the legacy `//wsl$/<distro>/rest`. */
+const WSL_UNC = /^\/\/(?:wsl\.localhost|wsl\$)\/([^/]+)(?:\/(.*))?$/i;
+/** `C:/rest` — a Windows drive path. */
+const WIN_DRIVE = /^([A-Za-z]):\/(.*)$/;
+
+/**
+ * The distro named by a working directory, or `null`. A distro-internal path
+ * names its distro unambiguously, which makes it the STRONGER of the two
+ * signals — stronger than pattern-matching a shell's file name.
+ *
+ * A pseudo-distro is never returned: it is not a launch target.
+ */
+export function distroFromCwd(cwd: string | null | undefined): string | null {
+  if (typeof cwd !== 'string') return null;
+  const m = WSL_UNC.exec(normalizeSeparators(cwd.trim()));
+  if (!m) return null;
+  const distro = m[1];
+  return isPseudoDistro(distro) ? null : distro;
+}
+
+/**
+ * The distro named by the shell launcher, or `null` for a generic launcher
+ * (`wsl.exe` / `bash.exe`), where the user's own default distro should apply.
+ *
+ * `ubuntu-24.04.exe` → `Ubuntu-24.04`: the alias name is the registered distro
+ * name lowercased, so only the first letter has to be restored.
+ */
+export function distroFromShell(program: string | null | undefined): string | null {
+  if (!isWslShell(program)) return null;
+  const name = basename((program as string).trim());
+  const lower = name.toLowerCase();
+  if (lower === 'wsl' || lower === 'wsl.exe' || lower === 'bash.exe') return null;
+  const stem = name.slice(0, -'.exe'.length);
+  if (!stem) return null;
+  if (isPseudoDistro(stem)) return null;
+  return stem.charAt(0).toUpperCase() + stem.slice(1);
+}
+
+/**
+ * The distro to launch into: the cwd when it names one (the stronger signal),
+ * else the shell, else `null`.
+ *
+ * `null` means "omit `-d`", so `wsl.exe` applies the user's default distro. We
+ * do NOT guess a name: a wrong `-d` fails outright. Note this fallback is
+ * genuinely last-resort — multi-distro installs are ordinary (Docker Desktop
+ * registers one on every machine), so which distro is default is not something
+ * to stake a launch on when either signal is available.
+ */
+export function distroFor(
+  shell: string | null | undefined,
+  cwd: string | null | undefined
+): string | null {
+  return distroFromCwd(cwd) ?? distroFromShell(shell);
+}
+
+/**
+ * Translate a Windows path to what the same location is called inside the distro.
+ *
+ *  - `\\wsl.localhost\Ubuntu\home\u` and legacy `\\wsl$\Ubuntu\home\u` → `/home/u`
+ *  - `C:\Users\u\x` → `/mnt/c/Users/u/x` (the drive letter is LOWERCASED —
+ *    `/mnt/C` does not exist)
+ *  - an already-POSIX path is returned unchanged
+ *
+ * A distro root translates to `/`, never the empty string: `cd ""` would fail
+ * and take the launch with it.
+ */
+export function toWslPath(p: string | null | undefined): string {
+  if (typeof p !== 'string') return '';
+  const s = normalizeSeparators(p.trim());
+  if (!s) return '';
+
+  const unc = WSL_UNC.exec(s);
+  if (unc) {
+    const rest = (unc[2] ?? '').replace(/\/+$/, '');
+    return rest ? `/${rest}` : '/';
+  }
+
+  const drive = WIN_DRIVE.exec(s);
+  if (drive) {
+    const rest = drive[2] ?? '';
+    return `/mnt/${drive[1].toLowerCase()}${rest ? `/${rest}` : ''}`;
+  }
+
+  return s;
+}
+
+/** What to run inside the distro. */
+export interface WslInvocationInput {
+  /** Target distro, or `null` to let `wsl.exe` use the user's default. */
+  distro: string | null;
+  /** Working directory — a Windows or POSIX path; translated here. */
+  cwd: string;
+  /** The executable, as named INSIDE the distro (a Linux path or a bare name). */
+  exe: string;
+  /** Arguments for the executable, passed through untouched. */
+  args: string[];
+}
+
+/** A program/args pair ready for `pty_spawn`. */
+export interface WslInvocation {
+  program: string;
+  args: string[];
+}
+
+/**
+ * Build the WSL-wrapped invocation:
+ *
+ *   wsl.exe [-d <distro>] -- sh -lc '<SCRIPT>' sh <cwd> <exe> <args…>
+ *
+ * Two deliberate choices, both load-bearing:
+ *
+ * **A login shell (`-lc`), not `wsl.exe --cd`.** `--cd` is the obvious way to set
+ * the directory, but `-l` sources the login profile — which is what puts
+ * `~/.local/bin` on PATH inside the distro, and that is exactly where the agent
+ * CLIs live (VERIFIED: `/home/v-patel/.local/bin/{claude,copilot}` on the
+ * reporting user's box). Without it a bare `claude` would not resolve, for the
+ * same reason `shell_path.rs` documents for macOS GUI launches. Profile ordering
+ * is in our favor: a login shell sources profiles BEFORE it runs the `-c` body,
+ * so our `cd` runs last and a profile that changes directory cannot defeat it.
+ * Using `-lc` also means this has no dependency on `--cd` being present.
+ *
+ * **`wsl.exe`, not the configured `<distro>.exe`.** Those App Execution Aliases
+ * have their own argument grammar (`ubuntu.exe run <cmd>`), vary between
+ * distros, and offer no working-directory control. `wsl.exe` ships with every
+ * WSL install and has one stable grammar. The shell setting is read as a signal,
+ * not used as the launcher.
+ *
+ * The cwd and every argument are passed as POSITIONAL PARAMETERS. Nothing the
+ * caller supplies is interpolated into the script text, so a folder name or a
+ * `--settings` JSON blob containing spaces, quotes or `;` cannot split the
+ * command or inject shell syntax.
+ */
+export function wslInvocation(input: WslInvocationInput): WslInvocation {
+  const { distro, cwd, exe, args } = input;
+  const target = distro && !isPseudoDistro(distro) ? ['-d', distro] : [];
+  return {
+    program: WSL_EXE,
+    args: [...target, '--', 'sh', '-lc', SCRIPT, ARGV0, toWslPath(cwd), exe, ...args]
+  };
+}

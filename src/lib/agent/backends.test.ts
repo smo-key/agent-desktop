@@ -3,6 +3,7 @@ import {
   AGENT_KINDS,
   backendFor,
   backendForProgram,
+  capabilitiesFor,
   copilotModelLabel,
   DEFAULT_AGENT_KIND,
   isAgentProgram,
@@ -96,5 +97,57 @@ describe('copilotModelLabel', () => {
   it('falls back to display name then em-dash', () => {
     expect(copilotModelLabel(null, 'Custom Model')).toBe('Custom Model');
     expect(copilotModelLabel('', null)).toBe('—');
+  });
+});
+
+// The `it(...)` titles are the EXACT `#### Scenario:` names from the
+// agent-backends delta in `wsl-agent-launch`.
+describe('capabilitiesFor — launch context', () => {
+  it('Capabilities without a launch context', () => {
+    // No context, or a non-WSL one: exactly the statically declared flags, so
+    // every existing caller's behavior is unchanged.
+    for (const ctx of [undefined, null, {}, { wsl: false }]) {
+      expect(capabilitiesFor(backendFor('claude'), ctx)).toEqual(
+        backendFor('claude').capabilities
+      );
+      expect(capabilitiesFor(backendFor('copilot'), ctx)).toEqual(
+        backendFor('copilot').capabilities
+      );
+    }
+  });
+
+  it('A capability unavailable in this launch context', () => {
+    // Claude supports hooks in general; a session inside a WSL distro cannot
+    // reach the \\.\pipe\ socket they deliver over, so for THAT session the
+    // flag is cleared and its surfaces degrade by omission.
+    const caps = capabilitiesFor(backendFor('claude'), { wsl: true, nodeAvailable: true });
+    expect(caps.hooks).toBe(false);
+    expect(caps.contextPct).toBe(false);
+    expect(caps.tasksDir).toBe(false);
+    // The statusline writes a file, so it survives when node is there.
+    expect(caps.statusline).toBe(true);
+    // The pane is still a first-class agent pane in every other respect.
+    expect(caps.subagents).toBe(true);
+    expect(caps.specialists).toBe(true);
+    expect(caps.askUserDriving).toBe(true);
+  });
+
+  it('clears the statusline when the distro has no node', () => {
+    const caps = capabilitiesFor(backendFor('claude'), { wsl: true, nodeAvailable: false });
+    expect(caps.statusline).toBe(false);
+    expect(caps.hooks).toBe(false);
+  });
+
+  it('never turns a capability ON', () => {
+    // Copilot declares no statusline; a launch context must not grant one.
+    const caps = capabilitiesFor(backendFor('copilot'), { wsl: true, nodeAvailable: true });
+    expect(caps.statusline).toBe(false);
+    expect(caps.hooks).toBe(false);
+  });
+
+  it('does not mutate the backend descriptor', () => {
+    const before = { ...backendFor('claude').capabilities };
+    capabilitiesFor(backendFor('claude'), { wsl: true, nodeAvailable: false });
+    expect(backendFor('claude').capabilities).toEqual(before);
   });
 });

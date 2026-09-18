@@ -303,6 +303,29 @@ fn default_shell() -> String {
     crate::shell_path::default_shell()
 }
 
+/// Where each agent CLI lives, probed where the configured shell implies
+/// (`wsl-agent-launch`): inside the distro when `wsl` is set, else the host
+/// `PATH`. ADVISORY — it fills the settings placeholder and supplies the default;
+/// an empty result never blocks a launch.
+///
+/// `wsl`/`distro` come from the frontend's tested `$lib/shell/wsl` module rather
+/// than being re-derived here, so the launcher heuristic has ONE implementation.
+#[tauri::command]
+fn detect_agent_executables(
+    wsl: bool,
+    distro: Option<String>,
+) -> crate::shell_path::AgentExecutables {
+    crate::shell_path::detect_agent_executables(wsl, distro)
+}
+
+/// Drop the cached agent-executable detection. Invoked when the shell preference
+/// changes, so a path detected under the previous shell is never presented as
+/// the current one.
+#[tauri::command]
+fn clear_agent_executable_cache() {
+    crate::shell_path::clear_agent_executable_cache();
+}
+
 /// Install an app-generated Copilot custom agent (`agent-specialists`): writes
 /// `~/.copilot/agents/<name>.agent.md` so a specialist launch can pass
 /// `--agent <name>`. Only app-prefixed safe names are accepted.
@@ -1693,6 +1716,8 @@ pub fn run() {
             open_path,
             installed_apps,
             default_shell,
+            detect_agent_executables,
+            clear_agent_executable_cache,
             program_on_path,
             copilot_watch,
             copilot_unwatch,

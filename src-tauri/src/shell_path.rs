@@ -16,6 +16,7 @@
 //! set of well-known bin dirs as a safety net. The result is cached for the
 //! process lifetime.
 
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -266,9 +267,295 @@ fn extract_sentinel_path(output: &str) -> Option<String> {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Agent-executable detection (`wsl-agent-launch`).
+// ---------------------------------------------------------------------------
+
+/// Programs we probe for. `node` is in the list because the statusline wrapper is
+/// invoked as `node "<path>"` — and under WSL that is the DISTRO's node, a
+/// different install from any Windows one. VERIFIED on the reporting user's box:
+/// `claude` and `copilot` resolve under `~/.local/bin` while `node` is absent
+/// entirely (the agent CLIs ship as self-contained binaries), so retaining the
+/// statusline there would have configured a command that silently never runs.
+const PROBED_PROGRAMS: [&str; 3] = ["claude", "copilot", "node"];
+
+/// Where each probed program was found, or `None` when it was not.
+///
+/// ADVISORY throughout: this fills the settings placeholder and supplies the
+/// default. A failed, timed-out or empty probe must never block a launch.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct AgentExecutables {
+    pub claude: Option<String>,
+    pub copilot: Option<String>,
+    pub node: Option<String>,
+}
+
+/// Cache keyed by the PROBE TARGET, not the process.
+///
+/// `resolved_path` can use a `OnceLock` because `PATH` cannot change under it.
+/// These paths CAN change: they are a function of the shell preference, and the
+/// requirement is that the settings placeholder shows the value detected "based
+/// on the shell". A process-lifetime cache would leave a Linux path on display
+/// after the user switched back to `pwsh`.
+static AGENT_EXES: OnceLock<std::sync::Mutex<HashMap<String, AgentExecutables>>> = OnceLock::new();
+
+fn agent_exe_cache() -> &'static std::sync::Mutex<HashMap<String, AgentExecutables>> {
+    AGENT_EXES.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// Detect each agent CLI where the configured shell implies: inside the distro
+/// when `wsl` is set, otherwise on the host `PATH`.
+///
+/// `wsl` and `distro` are computed by the frontend's `$lib/shell/wsl` module
+/// rather than re-derived here — the launcher heuristic is fiddly enough that
+/// having TWO implementations of it would guarantee they drift.
+pub fn detect_agent_executables(wsl: bool, distro: Option<String>) -> AgentExecutables {
+    let key = format!("{}:{}", wsl, distro.as_deref().unwrap_or(""));
+    if let Ok(cache) = agent_exe_cache().lock() {
+        if let Some(hit) = cache.get(&key) {
+            return hit.clone();
+        }
+    }
+    let found = if wsl {
+        probe_in_distro(distro.as_deref()).unwrap_or_default()
+    } else {
+        probe_on_host()
+    };
+    if let Ok(mut cache) = agent_exe_cache().lock() {
+        cache.insert(key, found.clone());
+    }
+    found
+}
+
+/// Drop every cached detection. Called when the shell preference changes, so a
+/// value detected under the previous shell is never presented as current.
+pub fn clear_agent_executable_cache() {
+    if let Ok(mut cache) = agent_exe_cache().lock() {
+        cache.clear();
+    }
+}
+
+/// Host probe: the seeded `PATH`, which already includes the recovery dirs.
+fn probe_on_host() -> AgentExecutables {
+    let find = |p: &str| which_on_path(p).map(|path| path.to_string_lossy().into_owned());
+    AgentExecutables {
+        claude: find("claude"),
+        copilot: find("copilot"),
+        node: find("node"),
+    }
+}
+
+/// The probe script. Emits one `name<TAB>path` line per program, with an EMPTY
+/// path when absent.
+///
+/// Labelling each line matters: a bare `command -v a; command -v b` prints only
+/// the hits, so with one missing you can only tell WHICH by assuming the order
+/// held — and `command -v` is free to print nothing at all. Labels make the
+/// parse unambiguous and let it ignore profile noise on the same stream.
+///
+/// `|| true` keeps a miss from ending the script under a shell that inherits
+/// `set -e` from a profile.
+fn probe_script() -> String {
+    let names = PROBED_PROGRAMS.join(" ");
+    format!(
+        "for p in {names}; do printf '{SENTINEL_START}%s\t%s{SENTINEL_END}\n' \"$p\" \"$(command -v \"$p\" 2>/dev/null || true)\"; done"
+    )
+}
+
+/// Run the probe inside the distro through a LOGIN shell.
+///
+/// `-lc` is not incidental: the agent CLIs install into `~/.local/bin`, which is
+/// on `PATH` only once the login profile has been sourced. A non-login probe
+/// would report "not installed" for a perfectly working install.
+///
+/// Bounded by `SHELL_TIMEOUT`, because probing a distro that is not running
+/// makes `wsl.exe` boot it first — exactly the blocking case that bound exists
+/// for. `None` on any failure; the caller degrades to "nothing detected".
+fn probe_in_distro(distro: Option<&str>) -> Option<AgentExecutables> {
+    let mut cmd = std::process::Command::new("wsl.exe");
+    if let Some(d) = distro {
+        if !d.is_empty() {
+            cmd.args(["-d", d]);
+        }
+    }
+    cmd.args(["--", "sh", "-lc", &probe_script()]);
+
+    let mut child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let deadline = Instant::now() + SHELL_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => return None,
+        }
+    }
+
+    use std::io::Read;
+    let mut out = String::new();
+    child.stdout.take()?.read_to_string(&mut out).ok()?;
+    Some(parse_agent_probe(&out))
+}
+
+/// PURE: parse the probe's labelled output into `AgentExecutables`.
+///
+/// Reads only sentinel-framed `name<TAB>path` records, so anything else a login
+/// profile prints to stdout (banners, motd, `fortune`) is ignored rather than
+/// mistaken for a path. An empty or whitespace-only path means "not found".
+pub fn parse_agent_probe(output: &str) -> AgentExecutables {
+    let mut found = AgentExecutables::default();
+    for raw in output.split(SENTINEL_START).skip(1) {
+        let Some(record) = raw.split(SENTINEL_END).next() else {
+            continue;
+        };
+        let Some((name, path)) = record.split_once('\t') else {
+            continue;
+        };
+        let path = path.trim();
+        if path.is_empty() {
+            continue;
+        }
+        let slot = match name.trim() {
+            "claude" => &mut found.claude,
+            "copilot" => &mut found.copilot,
+            "node" => &mut found.node,
+            _ => continue,
+        };
+        *slot = Some(path.to_string());
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- agent-executable probe parsing (`wsl-agent-launch`) ---------------
+
+    fn record(name: &str, path: &str) -> String {
+        format!("{SENTINEL_START}{name}\t{path}{SENTINEL_END}\n")
+    }
+
+    #[test]
+    fn detection_inside_the_distro() {
+        // The real shape from the reporting user's machine: both agent CLIs
+        // under ~/.local/bin (reachable only via the login profile), and NO
+        // node — which is what makes the statusline retention conditional.
+        let out = format!(
+            "{}{}{}",
+            record("claude", "/home/v-patel/.local/bin/claude"),
+            record("copilot", "/home/v-patel/.local/bin/copilot"),
+            record("node", "")
+        );
+        let found = parse_agent_probe(&out);
+        assert_eq!(
+            found.claude.as_deref(),
+            Some("/home/v-patel/.local/bin/claude")
+        );
+        assert_eq!(
+            found.copilot.as_deref(),
+            Some("/home/v-patel/.local/bin/copilot")
+        );
+        assert_eq!(found.node, None);
+    }
+
+    #[test]
+    fn detection_finds_nothing() {
+        // Every program absent: an empty result, not an error.
+        let out = format!(
+            "{}{}{}",
+            record("claude", ""),
+            record("copilot", ""),
+            record("node", "")
+        );
+        assert_eq!(parse_agent_probe(&out), AgentExecutables::default());
+        // And a completely empty stream is equally benign.
+        assert_eq!(parse_agent_probe(""), AgentExecutables::default());
+    }
+
+    #[test]
+    fn probe_parse_ignores_profile_noise() {
+        // A login shell may print a motd/banner. Sentinel framing means only
+        // real records are read — unframed text is never mistaken for a path.
+        let out = format!(
+            "Welcome to Ubuntu 24.04 LTS\n* Docs: https://help.ubuntu.com\n{}garbage\t/nope\n{}",
+            record("claude", "/usr/local/bin/claude"),
+            record("node", "/usr/bin/node")
+        );
+        let found = parse_agent_probe(&out);
+        assert_eq!(found.claude.as_deref(), Some("/usr/local/bin/claude"));
+        assert_eq!(found.node.as_deref(), Some("/usr/bin/node"));
+        assert_eq!(found.copilot, None);
+    }
+
+    #[test]
+    fn probe_parse_keeps_a_path_containing_spaces() {
+        // Tab-separated precisely so a spaced install dir survives the parse.
+        let out = record("claude", "/home/u/my tools/claude");
+        assert_eq!(
+            parse_agent_probe(&out).claude.as_deref(),
+            Some("/home/u/my tools/claude")
+        );
+    }
+
+    #[test]
+    fn probe_parse_trims_trailing_whitespace() {
+        let out = record("claude", "  /usr/bin/claude  ");
+        assert_eq!(
+            parse_agent_probe(&out).claude.as_deref(),
+            Some("/usr/bin/claude")
+        );
+        // Whitespace-only is "not found", not a path made of spaces.
+        assert_eq!(parse_agent_probe(&record("node", "   ")).node, None);
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn the_probe_does_not_return() {
+        // The degradation contract: when the probe cannot complete — no wsl.exe
+        // here, and on a real box a distro that never finishes booting within
+        // SHELL_TIMEOUT — detection yields NOTHING rather than hanging or
+        // erroring, and the caller falls through to the bare program name.
+        // Guarded off Windows, where a real WSL install would actually answer.
+        let found = detect_agent_executables(true, Some("no-such-distro".to_string()));
+        assert_eq!(found, AgentExecutables::default());
+    }
+
+    #[test]
+    fn detection_is_cached_per_target_and_clearable() {
+        // Keyed by target, NOT process-lifetime: the paths are a function of the
+        // shell preference, so a OnceLock would keep showing a Linux path after
+        // the user switched back to a host shell.
+        clear_agent_executable_cache();
+        let host = detect_agent_executables(false, None);
+        assert_eq!(host, detect_agent_executables(false, None), "cache hit differs");
+        clear_agent_executable_cache();
+        assert_eq!(host, detect_agent_executables(false, None), "recompute differs");
+    }
+
+    #[test]
+    fn probe_script_labels_every_probed_program() {
+        let script = probe_script();
+        for p in PROBED_PROGRAMS {
+            assert!(script.contains(p), "{p} missing from probe script");
+        }
+        // `node` specifically: the statusline depends on it inside the distro.
+        assert!(script.contains("node"));
+        assert!(script.contains("command -v"));
+    }
 
     #[test]
     fn merge_dedupes_preserving_first_seen_order() {

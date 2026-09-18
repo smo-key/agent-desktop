@@ -427,3 +427,250 @@ describe('buildSpawnOverride — copilot backend (agent-backends)', () => {
     expect(out.args).toContain('--settings');
   });
 });
+
+// ---------------------------------------------------------------------------
+// WSL launch (`wsl-agent-launch`). The `it(...)` titles are the EXACT
+// `#### Scenario:` names from that capability's spec.
+// ---------------------------------------------------------------------------
+
+/** Windows-shaped usage paths, as they'd be on the machine that reported this. */
+const WIN_PATHS: UsagePaths = {
+  wrapperPath: 'C:/Users/VedanshPatel/AppData/Roaming/com.arthur.agent-desktop/bin/statusline-wrapper.js',
+  snapshotDir: 'C:/Users/VedanshPatel/AppData/Roaming/com.arthur.agent-desktop/snapshots',
+  eventHookPath: 'C:/Users/VedanshPatel/AppData/Roaming/com.arthur.agent-desktop/bin/event-hook.js',
+  socketPath: '\\\\.\\pipe\\agent-desktop-events-1234',
+  adapterPath: 'C:/Users/VedanshPatel/AppData/Roaming/com.arthur.agent-desktop/bin/orchestration-mcp.js',
+  controlSocketPath: '\\\\.\\pipe\\agent-desktop-control-1234'
+};
+
+const WSL_SHELL =
+  'C:\\Program Files\\WindowsApps\\CanonicalGroupLimited.Ubuntu_2204\\ubuntu.exe';
+const WSL_CWD = '\\\\wsl.localhost\\Ubuntu\\home\\v-patel\\source\\data-flow-central';
+
+describe('buildSpawnOverride — WSL launch (wsl-agent-launch)', () => {
+  it('Agent session in a WSL project folder', () => {
+    // THE regression this capability exists to prevent: spawning a bare
+    // `claude` as a Windows image when it only exists inside the distro.
+    const out = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'p1',
+      sessionId: 'sid-1',
+      usagePaths: WIN_PATHS,
+      cwd: WSL_CWD,
+      shell: WSL_SHELL,
+      executable: '/home/v-patel/.local/bin/claude',
+      nodeAvailable: true
+    });
+
+    expect(out.program).toBe('wsl.exe');
+    expect(out.args.slice(0, 3)).toEqual(['-d', 'Ubuntu', '--']);
+    // The cwd is handed to the distro as a Linux path, not a UNC one.
+    expect(out.args).toContain('/home/v-patel/source/data-flow-central');
+    expect(out.args).toContain('/home/v-patel/.local/bin/claude');
+    // The agent's own flags survive intact, after the executable.
+    const exeIdx = out.args.indexOf('/home/v-patel/.local/bin/claude');
+    expect(out.args[exeIdx + 1]).toBe('--session-id');
+    expect(out.args[exeIdx + 2]).toBe('sid-1');
+  });
+
+  it('A WSL-launched pane is still an agent pane', () => {
+    // The pane's REGISTRY program must stay the kind: backendForProgram is a
+    // literal `=== 'claude'` check that persistence, status derivation and the
+    // subagent rows all key on. This assertion exists because breaking it
+    // fails SILENTLY — the session would launch and simply stop being an agent.
+    const out = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'p1',
+      sessionId: 'sid-1',
+      usagePaths: WIN_PATHS,
+      cwd: WSL_CWD,
+      shell: WSL_SHELL,
+      executable: '/home/v-patel/.local/bin/claude'
+    });
+    // `program` here is the SPAWN image, deliberately distinct from the pane's
+    // recorded kind — which the caller never overwrites.
+    expect(out.program).toBe('wsl.exe');
+    expect(out.program).not.toBe('claude');
+  });
+
+  it('Socket-delivered events are omitted, not broken', () => {
+    const out = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'p1',
+      sessionId: 'sid-1',
+      usagePaths: WIN_PATHS,
+      cwd: WSL_CWD,
+      shell: WSL_SHELL,
+      nodeAvailable: true
+    });
+    const settings = JSON.parse(out.args[out.args.indexOf('--settings') + 1]);
+    // No hooks at all — a hook that cannot reach its socket fails SILENTLY,
+    // which is worse than not being configured.
+    expect(settings.hooks).toBeUndefined();
+    // And the unreachable pipe address is not handed over either.
+    const envKeys = (out.env ?? []).map(([k]) => k);
+    expect(envKeys).not.toContain('AGENT_DESKTOP_SOCKET_PATH');
+  });
+
+  it('File-delivered status is retained', () => {
+    const out = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'p1',
+      sessionId: 'sid-1',
+      usagePaths: WIN_PATHS,
+      cwd: WSL_CWD,
+      shell: WSL_SHELL,
+      nodeAvailable: true
+    });
+    const settings = JSON.parse(out.args[out.args.indexOf('--settings') + 1]);
+    // Kept, with its path translated so the distro can actually reach it.
+    expect(settings.statusLine.command).toBe(
+      'node "/mnt/c/Users/VedanshPatel/AppData/Roaming/com.arthur.agent-desktop/bin/statusline-wrapper.js"'
+    );
+    const env = Object.fromEntries(out.env ?? []);
+    expect(env.AGENT_DESKTOP_SNAPSHOT_DIR).toBe(
+      '/mnt/c/Users/VedanshPatel/AppData/Roaming/com.arthur.agent-desktop/snapshots'
+    );
+  });
+
+  it('The distro lacks the required interpreter', () => {
+    // VERIFIED on the reporting user's box: no `node` in the distro. The
+    // statusline is then omitted too, rather than pointing at a command that
+    // cannot run.
+    const out = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'p1',
+      sessionId: 'sid-1',
+      usagePaths: WIN_PATHS,
+      cwd: WSL_CWD,
+      shell: WSL_SHELL,
+      nodeAvailable: false
+    });
+    const settings = JSON.parse(out.args[out.args.indexOf('--settings') + 1]);
+    expect(settings.statusLine).toBeUndefined();
+    expect(settings.hooks).toBeUndefined();
+    // The session still launches.
+    expect(out.program).toBe('wsl.exe');
+  });
+
+  it('Correctness settings are unconditional', () => {
+    const out = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'p1',
+      sessionId: 'sid-1',
+      usagePaths: WIN_PATHS,
+      cwd: WSL_CWD,
+      shell: WSL_SHELL,
+      nodeAvailable: false
+    });
+    const settings = JSON.parse(out.args[out.args.indexOf('--settings') + 1]);
+    // These keep the transcript local and stop an arrow key archiving the
+    // session. They are correctness, not observability — always applied.
+    expect(settings.remoteControlAtStartup).toBe(false);
+    expect(settings.disableAgentView).toBe(true);
+  });
+
+  it('A non-WSL shell is unaffected', () => {
+    // The regression guard: with a normal shell the output must be exactly what
+    // it was before this capability existed.
+    const base = {
+      program: 'claude' as const,
+      args: ['--extra'],
+      paneId: 'p1',
+      sessionId: 'sid-1',
+      usagePaths: PATHS
+    };
+    const before = buildSpawnOverride(base);
+    const after = buildSpawnOverride({
+      ...base,
+      cwd: '/Users/me/src',
+      shell: '/bin/zsh',
+      executable: 'claude',
+      nodeAvailable: true
+    });
+    expect(after.args).toEqual(before.args);
+    expect(after.env).toEqual(before.env);
+    expect(after.program).toBe('claude');
+    expect(after.cwd).toBe('/Users/me/src');
+    // The hooks are still fully wired off the WSL path.
+    const settings = JSON.parse(after.args[after.args.indexOf('--settings') + 1]);
+    expect(settings.hooks).toEqual(expectedHooks(PATHS.eventHookPath));
+  });
+
+  it('wraps a copilot pane the same way', () => {
+    const out = buildSpawnOverride({
+      program: 'copilot',
+      args: [],
+      paneId: 'p1',
+      sessionId: 'sid-2',
+      usagePaths: WIN_PATHS,
+      cwd: WSL_CWD,
+      shell: WSL_SHELL,
+      executable: '/home/v-patel/.local/bin/copilot'
+    });
+    expect(out.program).toBe('wsl.exe');
+    expect(out.args).toContain('/home/v-patel/.local/bin/copilot');
+    expect(out.args).toContain('--no-remote');
+  });
+
+  it('falls back to the bare program when nothing was detected', () => {
+    // Detection is ADVISORY: an empty probe must still produce a launch, with
+    // the bare name resolved by the login profile the `-lc` sources.
+    const out = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'p1',
+      sessionId: 'sid-1',
+      usagePaths: null,
+      cwd: WSL_CWD,
+      shell: WSL_SHELL,
+      executable: null
+    });
+    expect(out.program).toBe('wsl.exe');
+    expect(out.args).toContain('claude');
+  });
+
+  it('leaves a shell pane alone', () => {
+    // A shell pane's program IS the WSL launcher, so it already runs inside the
+    // distro. Double-wrapping it would be nonsense.
+    const out = buildSpawnOverride({
+      program: WSL_SHELL,
+      args: [],
+      paneId: 'p1',
+      usagePaths: WIN_PATHS,
+      cwd: WSL_CWD,
+      shell: WSL_SHELL
+    });
+    expect(out.program).toBe(WSL_SHELL);
+    expect(out.args).toEqual([]);
+  });
+});
+
+describe('wsl-agent-launch — restore', () => {
+  it('A restored WSL pane', () => {
+    // A restored pane resumes its transcript AND is still wrapped: the WSL
+    // decision is a property of the launch environment, not of how the pane
+    // came to exist, so it must hold on restore exactly as on first launch.
+    const out = buildSpawnOverride({
+      program: 'claude',
+      args: [],
+      paneId: 'p1',
+      sessionId: 'sid-1',
+      resume: true,
+      usagePaths: WIN_PATHS,
+      cwd: WSL_CWD,
+      shell: WSL_SHELL,
+      executable: '/home/v-patel/.local/bin/claude'
+    });
+    expect(out.program).toBe('wsl.exe');
+    const exeIdx = out.args.indexOf('/home/v-patel/.local/bin/claude');
+    expect(out.args[exeIdx + 1]).toBe('--resume');
+    expect(out.args[exeIdx + 2]).toBe('sid-1');
+  });
+});

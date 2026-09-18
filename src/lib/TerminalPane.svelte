@@ -17,7 +17,9 @@
     LaunchPromptReadiness
   } from './launcher/initialInput';
   import { LaunchSpinner, spinnerLabel } from './launcher/spinner';
-  import { backendFor, backendForProgram, isAgentProgram } from './agent/backends';
+  import { backendFor, backendForProgram, isAgentProgram, type AgentKind } from './agent/backends';
+  import { agentPathsSettings } from './settings/agentPaths.svelte';
+  import { defaultShell } from './shell/defaultShell';
   import { noteOutput, noteExit, noteBusy, noteResize, noteForeground, clearRuntime } from './overview/runtime';
   import { detectTerminalBusy } from './overview/terminalBusy';
   import {
@@ -677,22 +679,39 @@
       // resolves to null on failure, in which case `claude` spawns unwrapped.
       const usagePaths = isAgentProgram(program) ? await getUsagePaths() : null;
       if (disposed) return;
-      const { args: spawnArgs, env: spawnEnv } = buildSpawnOverride({
+      const {
+        args: spawnArgs,
+        env: spawnEnv,
+        program: spawnProgram,
+        cwd: spawnCwd
+      } = buildSpawnOverride({
         program,
         args,
         paneId,
         sessionId,
         resume,
-        usagePaths
+        usagePaths,
+        // `wsl-agent-launch`: the configured shell is what decides whether this
+        // agent runs inside a WSL distro, and the executable/node availability
+        // come from the detection the settings store performed against it.
+        cwd,
+        shell: defaultShell(),
+        executable: isAgentProgram(program)
+          ? agentPathsSettings.executableFor(program as AgentKind)
+          : null,
+        nodeAvailable: agentPathsSettings.nodeAvailable
       });
 
       // Spawn the PTY-backed process. Arg name `onEvent` is the camelCase of the
       // Rust param `on_event`; the command name stays verbatim. `env` is omitted
       // for shell panes (undefined → backend default empty), set only for claude.
+      // NOTE `spawnProgram`/`spawnCwd`, not `program`/`cwd`: a WSL launch
+      // executes `wsl.exe` with a translated directory. The pane's REGISTRY
+      // entry keeps the agent kind — see buildSpawnOverride's `program` doc.
       const id = await invoke<number>('pty_spawn', {
-        program,
+        program: spawnProgram ?? program,
         args: spawnArgs,
-        cwd,
+        cwd: spawnCwd ?? cwd,
         cols: term.cols,
         rows: term.rows,
         env: spawnEnv,

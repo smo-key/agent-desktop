@@ -155,6 +155,57 @@ const BACKENDS: Record<AgentKind, AgentBackend> = {
   copilot: COPILOT_BACKEND
 };
 
+/**
+ * Where a session is being launched. Capabilities are a function of this as well
+ * as of the backend kind: a pipeline the CLI supports in general may be unable
+ * to function for a particular session because of where that session runs.
+ */
+export interface LaunchContext {
+  /** Launched INSIDE a WSL distro (see `wsl-agent-launch`). */
+  wsl?: boolean;
+  /** Whether `node` exists where the session runs. The statusline wrapper is
+   *  invoked as `node "<path>"`, so without it that pipeline cannot run. */
+  nodeAvailable?: boolean;
+}
+
+/**
+ * The capabilities that actually apply for a launch, which is what the UI must
+ * gate on — `backend.capabilities` alone describes the CLI, not the session.
+ *
+ * With no context (or a non-WSL one) this returns the backend's declared
+ * capabilities unchanged, so every existing caller keeps its current behavior.
+ *
+ * Under WSL two flags are cleared, for DIFFERENT and specific reasons:
+ *
+ *  - `hooks` — the event hook delivers over `AGENT_DESKTOP_SOCKET_PATH`, which
+ *    on Windows is a `\\.\pipe\…` name. A process inside the distro cannot open
+ *    it. Configuring the hooks anyway would be worse than omitting them: a hook
+ *    that fails to run is SILENT, so the session would look healthy while
+ *    spawning a node process per lifecycle event to fail into the void.
+ *  - `statusline` — only when `node` is absent inside the distro. This pipeline
+ *    writes a FILE into a `/mnt/c/…`-reachable directory, so it does work across
+ *    the boundary — but it is invoked as `node "<path>"`, and that is the
+ *    distro's node. VERIFIED absent on the machine this was written for, where
+ *    the agent CLIs are self-contained binaries.
+ *
+ * `contextPct` and `tasksDir` follow the hooks: both are fed by the event
+ * pipeline and the host-side `~/.claude` tree, neither of which reaches a
+ * session running inside the distro.
+ */
+export function capabilitiesFor(
+  backend: AgentBackend,
+  context?: LaunchContext | null
+): AgentCapabilities {
+  if (!context?.wsl) return backend.capabilities;
+  return {
+    ...backend.capabilities,
+    hooks: false,
+    contextPct: false,
+    tasksDir: false,
+    statusline: backend.capabilities.statusline && context.nodeAvailable !== false
+  };
+}
+
 /** Look up a backend by kind. */
 export function backendFor(kind: AgentKind): AgentBackend {
   return BACKENDS[kind];

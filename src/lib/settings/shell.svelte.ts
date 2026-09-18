@@ -77,13 +77,29 @@ export class ShellStore {
     this.loaded = true;
   }
 
-  /** Set the shell program (empty string clears back to the platform default). */
+  /**
+   * Set the shell program (empty string clears back to the platform default).
+   *
+   * Also INVALIDATES the detected agent executables (`wsl-agent-launch`): the
+   * shell is the signal for where those live — inside a WSL distro versus on the
+   * host — so a value detected under the previous shell must never continue to
+   * be presented as the current one. The re-probe is fire-and-forget; the store
+   * clears its detected values first, so nothing stale is on display meanwhile.
+   */
   setProgram(program: string): void {
     const trimmed = typeof program === 'string' ? program.trim() : '';
     this.prefs = { ...this.prefs, program: trimmed };
     setShellPreference(trimmed || null);
     void this.save();
+    void this.onShellChanged?.(trimmed || platformDefaultShell());
   }
+
+  /**
+   * Called with the newly-effective shell whenever the preference changes.
+   * Injected rather than imported so this store keeps no dependency on the
+   * agent-paths store (which imports the shell resolver), avoiding a cycle.
+   */
+  onShellChanged?: (shell: string) => void | Promise<void>;
 
   /** Persist the current prefs as the `shell` slice, merging into the shared
    *  settings blob so sibling slices are preserved. */
