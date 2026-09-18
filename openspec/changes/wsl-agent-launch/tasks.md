@@ -161,6 +161,49 @@
   blocks up to 5s and was freezing the main thread.
 - [x] 7.9 W6 — a path detected in one distro is no longer handed to a launch
   targeting a different one.
+## 8. Adversarial re-review follow-ups (round 2)
+
+- [x] 8.1 CRITICAL — the executable preference was ignored for every RESTORED
+  pane. `agentPathsSettings.load()` probed BEFORE reading the preference, so its
+  promise resolved two IPCs late while the layout restore ran alongside it; every
+  restored agent pane spawned against empty prefs and got the bare program name.
+  Under WSL that is a dead pane on restart that works when reopened by hand.
+  Fixed: `load()` reads the preference first and returns; the probe it starts is
+  not awaited, and the restore is gated on the preference rather than on
+  detection, so a cold distro cannot delay startup.
+- [x] 8.2 W2 recorded as a limitation (below) — `sh -lc` sources `~/.profile`,
+  NOT `~/.bashrc`.
+- [x] 8.3 W3 — the fix for C1 had narrowed the distro NAME LIST as well as
+  anchoring it, rejecting real aliases (`Arch.exe`, `ubuntupreview.exe`,
+  `SLES-12-SP5.exe`, `kali.exe`) and codifying `ubuntupreview.exe` in a test as a
+  Git-Bash "lookalike". Anchoring alone is what stops the false positives, so the
+  list is broad again and the version tail must start with a separator or digit.
+- [x] 8.4 W4 — `distroFromShell` no longer guesses a versioned distro name
+  (`ubuntu2404` → `Ubuntu2404` is a spelling the registry never uses). A wrong
+  `-d` hard-fails while omitting it falls back to the user's default, so an
+  unreliable derivation now yields null.
+- [x] 8.5 W5 — the empty-cwd abort writes to stderr first; a bare `exit 1` gave a
+  pane showing only `[process exited (code 1)]`.
+- [x] 8.6 W6 — an empty-but-successful probe is no longer cached either, and
+  `redetect` now calls `clear_agent_executable_cache` (previously registered and
+  never called), so installing a CLI while the app runs is picked up.
+- [x] 8.7 W7 — `setProgram` notifies the RESOLVED shell, not the raw preference.
+  Typing `ubuntu.exe` on macOS had detection probing a distro while every spawn
+  used `/bin/zsh`, and the distro-match guard then discarded all detection.
+- [x] 8.8 W8 — removed the dead `nodeAvailable` input left on `SpawnOverrideInput`.
+- [ ] 8.9 W2 (NOT fixed, needs the Windows box) — `sh -lc` runs dash on
+  Debian/Ubuntu and sources `/etc/profile` + `~/.profile` only. Ubuntu's stock
+  `~/.profile` guards its `.bashrc` source on `[ -n "$BASH_VERSION" ]`, so a user
+  whose PATH additions live in `~/.bashrc` gets `claude: not found` AND an empty
+  detection result. The reporter's box is unaffected (stock `~/.profile` adds
+  `~/.local/bin`), and an explicit executable setting works around it. Decide
+  between probing with `bash -lc` where available or preferring the detected
+  absolute path at launch — both need verification.
+- [ ] 8.10 W4 follow-up — prefer an exact match against `wsl.exe -l -q` over any
+  string transform, which would also settle 7.11 (case sensitivity). NOTE:
+  `wsl.exe -l -q` emits UTF-16LE, so the parse is not the same as the in-distro
+  probe's; that is why it was not done blind.
+
 - [ ] 7.10 W8 (accepted, not fixed) — `probe_in_distro` waits for exit before
   draining stdout, so a login profile emitting more than the pipe buffer would
   deadlock until the timeout. This exactly mirrors the existing

@@ -1,6 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ShellStore } from './shell.svelte';
-import { setPlatformDefaultShell, UNIX_DEFAULT_SHELL } from '$lib/shell/defaultShell';
+import {
+  setHostIsWindows,
+  setPlatformDefaultShell,
+  UNIX_DEFAULT_SHELL
+} from '$lib/shell/defaultShell';
 import { isWslShell } from '$lib/shell/wsl';
 
 // The invalidation half of the `shell-selection` delta in `wsl-agent-launch`:
@@ -17,6 +21,29 @@ vi.mock('@tauri-apps/api/core', () => ({
 describe('shell-selection — agent executable invalidation', () => {
   beforeEach(() => {
     setPlatformDefaultShell(UNIX_DEFAULT_SHELL);
+    // A WSL shell is only launchable on a Windows host. The store notifies the
+    // RESOLVED shell (what spawns actually use), so without this the `.exe`
+    // values below would correctly resolve away to the platform default.
+    setHostIsWindows(true);
+  });
+
+  afterEach(() => setHostIsWindows(false));
+
+  it('notifies the shell that will actually be used, not the raw input', () => {
+    // On a non-Windows host `ubuntu.exe` is not launchable, and every spawn
+    // resolves it to the platform default. Notifying the raw string would have
+    // detection probing a distro while launches used /bin/zsh — and the
+    // distro-match guard would then discard every detected path, forever.
+    setHostIsWindows(false);
+    setPlatformDefaultShell('/bin/zsh');
+    const store = new ShellStore();
+    const seen: string[] = [];
+    store.onShellChanged = (shell) => void seen.push(shell);
+
+    store.setProgram('ubuntu.exe');
+
+    expect(seen).toEqual(['/bin/zsh']);
+    expect(isWslShell(seen[0])).toBe(false);
   });
 
   it('Switching to a WSL shell', () => {

@@ -47,6 +47,12 @@ describe('wsl-agent-launch', () => {
         'sles-15.exe',
         'oracle-linux-9.exe',
         'fedoraremix.exe',
+        // Real aliases an over-narrow list had rejected.
+        'ubuntupreview.exe',
+        'Arch.exe',
+        'SLES-12-SP5.exe',
+        'opensuse-leap-15.6.exe',
+        'kali.exe',
         // The real-world case from the field report: a full WindowsApps path.
         'C:\\Program Files\\WindowsApps\\CanonicalGroupLimited.Ubuntu_2204.1.7.0_x64__79rhkp1fndgsc\\ubuntu.exe',
         'C:/Program Files/WindowsApps/Canonical.../ubuntu.exe'
@@ -64,7 +70,6 @@ describe('wsl-agent-launch', () => {
         'mintty.exe',
         'C:\\Program Files\\Git\\usr\\bin\\mintty.exe',
         'archive.exe',
-        'ubuntupreview.exe',
         // Git Bash / MSYS2 / Cygwin: by far the most common bash.exe on Windows.
         'C:\\Program Files\\Git\\bin\\bash.exe',
         'C:\\msys64\\usr\\bin\\bash.exe',
@@ -140,7 +145,7 @@ describe('wsl-agent-launch', () => {
     });
 
     it('Only the shell names the distro', () => {
-      expect(distroFor('ubuntu-24.04.exe', 'C:\\src\\app')).toBe('Ubuntu-24.04');
+      expect(distroFor('ubuntu.exe', 'C:\\src\\app')).toBe('Ubuntu');
       expect(distroFromShell('debian.exe')).toBe('Debian');
       expect(
         distroFromShell(
@@ -156,6 +161,20 @@ describe('wsl-agent-launch', () => {
       expect(distroFromShell('wsl.exe')).toBe(null);
       expect(distroFromShell('bash.exe')).toBe(null);
       expect(distroFromCwd('C:\\src\\app')).toBe(null);
+    });
+
+    it('does not guess a versioned distro name', () => {
+      // `ubuntu2404` → `Ubuntu2404` is a name the registry never uses, and a
+      // WRONG `-d` hard-fails while omitting it falls back to the user's default
+      // distro. So an unreliable derivation yields null rather than a guess.
+      expect(distroFromShell('ubuntu-24.04.exe')).toBe(null);
+      expect(distroFromShell('ubuntu2404.exe')).toBe(null);
+      expect(distroFromShell('opensuse-leap-15.6.exe')).toBe(null);
+      // A project inside the distro is unaffected: its UNC path carries the
+      // true registered name and wins over the shell signal.
+      expect(distroFor('ubuntu-24.04.exe', '\\\\wsl.localhost\\Ubuntu-24.04\\home\\u')).toBe(
+        'Ubuntu-24.04'
+      );
     });
 
     it('never targets a pseudo-distro', () => {
@@ -186,7 +205,7 @@ describe('wsl-agent-launch', () => {
         '--',
         'sh',
         '-lc',
-        '[ -n "$1" ] || exit 1; cd "$1" || exit 1; shift; exec "$@"',
+        '[ -n "$1" ] || { echo "agent-desktop: no working directory" >&2; exit 1; }; cd "$1" || exit 1; shift; exec "$@"',
         'sh',
         '/home/u/app',
         'claude',
@@ -223,7 +242,7 @@ describe('wsl-agent-launch', () => {
         '--',
         'sh',
         '-lc',
-        '[ -n "$1" ] || exit 1; cd "$1" || exit 1; shift; exec "$@"',
+        '[ -n "$1" ] || { echo "agent-desktop: no working directory" >&2; exit 1; }; cd "$1" || exit 1; shift; exec "$@"',
         'sh',
         '/home/u/my project',
         'claude',
@@ -233,7 +252,7 @@ describe('wsl-agent-launch', () => {
       ]);
       // The script text is a FIXED constant: no input reaches it.
       const script = args[5];
-      expect(script).toBe('[ -n "$1" ] || exit 1; cd "$1" || exit 1; shift; exec "$@"');
+      expect(script).toBe('[ -n "$1" ] || { echo "agent-desktop: no working directory" >&2; exit 1; }; cd "$1" || exit 1; shift; exec "$@"');
       expect(script).not.toContain('my project');
     });
 
@@ -243,7 +262,7 @@ describe('wsl-agent-launch', () => {
       // empty cwd would start the agent in the distro's $HOME, which is exactly
       // the silent wrong-directory outcome `|| exit 1` exists to prevent.
       const { args } = wslInvocation({ distro: 'Ubuntu', cwd: '', exe: 'claude', args: [] });
-      expect(args).toContain('[ -n "$1" ] || exit 1; cd "$1" || exit 1; shift; exec "$@"');
+      expect(args).toContain('[ -n "$1" ] || { echo "agent-desktop: no working directory" >&2; exit 1; }; cd "$1" || exit 1; shift; exec "$@"');
     });
 
     it('omits -d when no distro is known', () => {
@@ -267,7 +286,7 @@ describe('wsl-agent-launch', () => {
         exe: 'claude',
         args: []
       });
-      const scriptIdx = args.indexOf('[ -n "$1" ] || exit 1; cd "$1" || exit 1; shift; exec "$@"');
+      const scriptIdx = args.indexOf('[ -n "$1" ] || { echo "agent-desktop: no working directory" >&2; exit 1; }; cd "$1" || exit 1; shift; exec "$@"');
       expect(args[scriptIdx + 1]).toBe('sh'); // $0
       expect(args[scriptIdx + 2]).toBe('/home/u'); // $1 — the cwd
       expect(args[scriptIdx + 3]).toBe('claude'); // $2 — the command

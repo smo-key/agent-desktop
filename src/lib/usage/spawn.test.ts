@@ -459,8 +459,7 @@ describe('buildSpawnOverride — WSL launch (wsl-agent-launch)', () => {
       usagePaths: WIN_PATHS,
       cwd: WSL_CWD,
       shell: WSL_SHELL,
-      executable: '/home/v-patel/.local/bin/claude',
-      nodeAvailable: true
+      executable: '/home/v-patel/.local/bin/claude'
     });
 
     expect(out.program).toBe('wsl.exe');

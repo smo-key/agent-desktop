@@ -323,11 +323,18 @@ pub fn detect_agent_executables(wsl: bool, distro: Option<String>) -> AgentExecu
         // boot and the placeholder shows nothing for the rest of the session,
         // with no user-reachable way to refresh short of restarting the app.
         match probe_in_distro(distro.as_deref()) {
-            Some(found) => (found, true),
+            // An EMPTY success is not cached either. It means the CLI is not
+            // installed yet, or the login profile did not expose it — both of
+            // which change while the app is running. Caching it reproduces the
+            // very "no way to refresh short of restarting" this avoids.
+            Some(found) if found != AgentExecutables::default() => (found, true),
+            Some(found) => (found, false),
             None => (AgentExecutables::default(), false),
         }
     } else {
-        (probe_on_host(), true)
+        let found = probe_on_host();
+        let cacheable = found != AgentExecutables::default();
+        (found, cacheable)
     };
     if cacheable {
         if let Ok(mut cache) = agent_exe_cache().lock() {

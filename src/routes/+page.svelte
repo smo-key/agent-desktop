@@ -168,7 +168,12 @@
     // placeholder can never show a path detected against a different shell.
     // Chained onto `shellReady` because the probe target IS the resolved shell.
     shellSettings.onShellChanged = (shell) => agentPathsSettings.redetect(shell);
-    void shellReady.then(() => agentPathsSettings.load(defaultShell()));
+    // The layout restore below AWAITS this (not just `shellReady`): a restored
+    // agent pane must spawn against the user's stored executable, not an empty
+    // preference set. `load` reads the preference and returns — the slow probe
+    // it starts is deliberately not awaited, so this costs one fast IPC and a
+    // cold distro cannot delay the restore.
+    const agentPathsReady = shellReady.then(() => agentPathsSettings.load(defaultShell()));
     // Load the agent-backend preference (Claude / Copilot for new sessions) and
     // probe whether the selected CLI is installed (agent-backends).
     void agentSettings.load();
@@ -272,9 +277,10 @@
       })
       .catch(() => {});
     let stopWatching: (() => void) | undefined;
-    // Gated on `shellReady` (never rejects) so pane programs resolve against the
-    // real platform default rather than the pre-hydration placeholder.
-    void shellReady
+    // Gated on `agentPathsReady` (which chains `shellReady`, and never rejects)
+    // so pane programs resolve against the real platform default rather than the
+    // pre-hydration placeholder, AND against the user's stored executable.
+    void agentPathsReady
       .then(restorePersistedLayout)
       // BEFORE `restored` flips: flipping it renders the panes, and a pane whose
       // adopted worktree dir was removed would spawn into the missing directory

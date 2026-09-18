@@ -32,8 +32,14 @@ const WSL_EXE = 'wsl.exe';
  * inherited), so an empty cwd would sail past a bare `cd "$1" || exit 1` and
  * start the agent in the distro's `$HOME`. That is exactly the silent
  * wrong-directory outcome the `|| exit 1` exists to prevent.
+ *
+ * It writes to stderr before exiting. A bare `exit 1` produces a pane showing
+ * `[process exited (code 1)]` and nothing else, which is not louder than landing
+ * in `$HOME` — just emptier.
  */
-const SCRIPT = '[ -n "$1" ] || exit 1; cd "$1" || exit 1; shift; exec "$@"';
+const SCRIPT =
+  '[ -n "$1" ] || { echo "agent-desktop: no working directory" >&2; exit 1; }; ' +
+  'cd "$1" || exit 1; shift; exec "$@"';
 
 /**
  * The `$0` placeholder. POSIX assigns the FIRST operand after `sh -c <script>`
@@ -48,16 +54,30 @@ const ARGV0 = 'sh';
  *
  * FULLY ANCHORED, and deliberately so. An earlier prefix-only form (`^(…|mint|arch)`)
  * matched `mintty.exe` — the Git Bash / Cygwin terminal — and `archive.exe`,
- * which would have rerouted a perfectly good shell through a VM. The optional
- * tail allows the real version suffixes (`ubuntu-24.04`, `ubuntu2404`,
- * `opensuse-leap-15.5`) without opening the prefix back up.
+ * which would have rerouted a perfectly good shell through a VM.
+ *
+ * Anchoring is what fixes that, so the NAME LIST stays broad: an over-narrow
+ * list silently rejects real distros (`Arch.exe`, `ubuntupreview.exe`,
+ * `SLES-12-SP5.exe`) and, worse, invites someone to "correct" it later by
+ * loosening the anchor again.
  *
  * An open set — a missing name is a ONE-LINE fix, and the failure mode is
  * benign: an unrecognized launcher means the app behaves exactly as it does
- * today. A FALSE POSITIVE is not benign, which is why this errs narrow.
+ * today. A FALSE POSITIVE is not benign, which is why the SHAPE errs narrow
+ * even though the list does not.
  */
-const DISTRO_LAUNCHERS =
-  /^(ubuntu|debian|kali-linux|opensuse(-(leap|tumbleweed))?|sles|oracle-linux|fedora(remix)?|alpine|archlinux|linuxmint|pengwin|whitewater|clear-linux)([-_]?[0-9][0-9.\-_]*)?$/i;
+const DISTRO_BASES =
+  'ubuntupreview|ubuntu|debian|kali-linux|kali|opensuse-leap|opensuse-tumbleweed|opensuse|suse|sles|oracle-linux|oraclelinux|fedoraremix|fedora|alpine|archlinux|arch|linuxmint|mint|clear-linux|clearlinux|pengwin|whitewater';
+/**
+ * A version tail must start with a SEPARATOR or a DIGIT. That is the whole
+ * anti-false-positive rule: `mint` + `ty` and `arch` + `ive` are rejected because
+ * letters cannot follow the base directly, while `ubuntu-24.04`, `ubuntu2404`,
+ * `sles-12-sp5` and `opensuse-leap-15.6` are all accepted.
+ */
+const DISTRO_LAUNCHERS = new RegExp(
+  `^(${DISTRO_BASES})([-_][0-9A-Za-z][0-9A-Za-z.\\-_]*|[0-9][0-9.\\-_]*)?$`,
+  'i'
+);
 
 /**
  * Registered WSL entries that are NOT interactive distributions. Docker Desktop
@@ -142,8 +162,10 @@ export function distroFromCwd(cwd: string | null | undefined): string | null {
  * The distro named by the shell launcher, or `null` for a generic launcher
  * (`wsl.exe` / the `bash.exe` shim), where the user's own default distro applies.
  *
- * `ubuntu-24.04.exe` → `Ubuntu-24.04`: the alias name is the registered distro
- * name lowercased, so only the first letter has to be restored.
+ * Derived ONLY for an unversioned alias (`ubuntu.exe` → `Ubuntu`), where
+ * capitalizing the first letter reliably reproduces the registered name. A
+ * versioned alias yields `null` — see the body for why guessing is worse than
+ * omitting `-d`.
  */
 export function distroFromShell(program: string | null | undefined): string | null {
   if (!isWslShell(program)) return null;
@@ -154,6 +176,19 @@ export function distroFromShell(program: string | null | undefined): string | nu
   const stem = name.slice(0, -'.exe'.length);
   if (!stem) return null;
   if (isPseudoDistro(stem)) return null;
+  // ONLY an unversioned stem. For `ubuntu.exe` → `Ubuntu` the transform is
+  // reliable; for a versioned alias it is a guess of a shape the registry does
+  // not use (`ubuntu2404` → `Ubuntu2404`, never the registered `Ubuntu-24.04`;
+  // `opensuse-leap-15.6` → `Opensuse-leap-15.6` vs. the registered
+  // `openSUSE-Leap-15.6`).
+  //
+  // The asymmetry decides it: a WRONG `-d` hard-fails ("There is no distribution
+  // with the supplied name") and the pane dies instantly, while omitting `-d`
+  // falls back to the user's default distro, which is right on the common box.
+  // So when the derivation cannot be trusted, we omit rather than guess — and a
+  // project INSIDE the distro is unaffected either way, because its UNC path
+  // carries the true registered name and wins over this signal.
+  if (/[-_0-9]/.test(stem)) return null;
   return stem.charAt(0).toUpperCase() + stem.slice(1);
 }
 
