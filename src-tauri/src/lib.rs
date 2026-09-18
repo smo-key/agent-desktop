@@ -18,6 +18,7 @@ pub mod specialists;
 pub mod subagents;
 pub mod task;
 pub mod transcribe;
+pub mod updates;
 pub mod usage;
 pub mod vad;
 pub mod voice_activation;
@@ -1520,12 +1521,20 @@ pub fn run() {
         // granted by `notification:default` in capabilities/default.json.
         .plugin(tauri_plugin_notification::init())
         // In-app auto-update (desktop-auto-update spec). The updater plugin
-        // checks the GitHub Release `latest.json` endpoint (configured in
-        // tauri.conf.json `plugins.updater`) and verifies bundles against the
-        // committed public key; the process plugin's `relaunch()` restarts the
-        // app after an update installs. The launch check + install prompt lives
-        // in the frontend (src/lib/updates). Scopes granted by `updater:default`
-        // + `process:default` in capabilities/default.json.
+        // verifies bundles against the committed public key and owns the
+        // download/progress/install path; the process plugin's `relaunch()`
+        // restarts the app after an update installs.
+        //
+        // The CHECK, however, is ours (`updates::updater_check`): the plugin picks
+        // the first endpoint that responds rather than the highest version, and
+        // exposes no runtime endpoint override, so it cannot follow a release
+        // channel. Our command builds the updater against the endpoint(s) for the
+        // selected channel (both `plugins.updater.endpoints` entries on beta,
+        // highest version wins) and hands back the plugin's own metadata shape, so
+        // everything after the check still runs through the plugin. The launch
+        // check, hourly poll and Settings check live in the frontend
+        // (src/lib/updates). Scopes granted by `updater:default` +
+        // `process:default` in capabilities/default.json.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         // Clipboard image write for drag-drop-onto-session (terminal-file-drop):
@@ -1739,7 +1748,8 @@ pub fn run() {
             whisper_server::voice_transcribe_partial,
             voice_bundled_model_path,
             voice_model_path,
-            copy_image_to_clipboard
+            copy_image_to_clipboard,
+            updates::updater_check
         ])
         .on_window_event(|window, event| {
             // Kill + reap every pane on app quit so no zombie/orphan processes

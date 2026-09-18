@@ -59,8 +59,18 @@ To run just the web frontend (without the Tauri shell), use `yarn dev:web`.
 ## Releases
 
 Releases are automated by [`.github/workflows/release.yml`](.github/workflows/release.yml).
-`package.json`'s `version` is the single source of truth: **bump it and push to
-`main`**, and CI does the rest.
+`package.json`'s `version` is the single source of truth: **bump it and push to a
+release branch**, and CI does the rest.
+
+There are two release branches, one per update channel:
+
+| Branch | Channel | Version form | GitHub Release |
+| --- | --- | --- | --- |
+| `main` | `stable` (the default) | `0.4.0` | normal — becomes `releases/latest` |
+| `beta` | `beta` (opt in from Settings) | `0.4.0-beta.1` | marked **prerelease** — never `releases/latest` |
+
+The steps below describe the stable lane; the beta lane is identical except for
+the branch and the prerelease version. See **Cutting a beta** below.
 
 1. Write the release notes: add a `## X.Y.Z — YYYY-MM-DD` section at the top of
    `CHANGELOG.md` (format in the file's header). The **Release** task in Agent
@@ -87,6 +97,38 @@ Releases are automated by [`.github/workflows/release.yml`](.github/workflows/re
 
 Pushing a commit that does **not** raise the version publishes nothing. You can
 also trigger a manual build from the Actions tab (`workflow_dispatch`).
+
+### Cutting a beta
+
+1. Merge or rebase what you want to ship onto the `beta` branch.
+2. Set `version` in `package.json` to a semver **prerelease** of the next stable
+   version — `0.4.0-beta.1`, then `0.4.0-beta.2`, and so on.
+3. Add the matching `## 0.4.0-beta.1 — YYYY-MM-DD` section to `CHANGELOG.md`; the
+   release fails without it, exactly as on the stable lane.
+4. Push `beta`.
+
+`scripts/release-gate.sh` partitions the tag space by channel, so the two lanes
+never interfere:
+
+- the **stable** lane compares only against suffix-free tags, so a live beta can
+  never stall a stable release;
+- a **beta** must outrank the highest tag on *either* lane, so a beta that a
+  shipped stable release already supersedes is refused;
+- a version whose form does not match its branch (a prerelease on `main`, a plain
+  version on `beta`) releases nothing and says so.
+
+After a beta publishes, the pipeline deletes and recreates a pinned
+`beta-channel` prerelease holding that release's `latest.json`. That is the
+stable URL the app's beta update endpoint points at — GitHub offers no "latest
+prerelease" download path. A stable release deliberately leaves it alone.
+
+### Update channels in the app
+
+Users pick their channel at the bottom of **Settings → Software update**. On
+`stable` only stable releases are considered. On `beta` the app checks **both**
+manifests and takes the **highest semantic version**, so a stable hotfix that
+outranks the current beta still reaches beta users. Switching back to `stable`
+never downgrades a running prerelease — it just stops offering new betas.
 
 Signing and notarization happen **only in CI** — there is no local signed-build
 path. Set these as repository secrets (Settings → Secrets and variables →

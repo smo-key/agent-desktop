@@ -73,6 +73,7 @@
   import { events } from '$lib/overview/events.svelte';
   import { executor } from '$lib/orchestration/executor.svelte';
   import { checkForUpdateOnLaunch, startUpdatePolling } from '$lib/updates/checkForUpdate';
+  import { releaseChannel } from '$lib/settings/releaseChannel.svelte';
   import { updateStore } from '$lib/updates/updateStore.svelte';
   import { titles } from '$lib/overview/titles.svelte';
   import { triggersTranscriptRead, SAFETY_POLL_MS } from '$lib/overview/poll';
@@ -127,7 +128,12 @@
     // non-blocking: when a newer version is published it downloads + stages in the
     // background with NO dialog, surfacing via the title-bar pill; a silent no-op
     // offline / outside the Tauri runtime.
-    void checkForUpdateOnLaunch();
+    //
+    // The release-channel preference is loaded FIRST and the launch check chained
+    // onto it: the check reads `releaseChannel.channel`, which reports the safe
+    // `stable` default until the slice resolves — so firing the check unchained
+    // would make a beta user's very first check of the session a stable one.
+    void releaseChannel.load().then(() => checkForUpdateOnLaunch());
     // Then keep re-checking once an hour for the lifetime of the session — same
     // background-staging path as launch, surfaced only via the title-bar pill. The
     // returned stop fn (a no-op outside Tauri) is cleared on teardown below.

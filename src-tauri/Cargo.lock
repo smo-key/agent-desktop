@@ -27,6 +27,7 @@ dependencies = [
  "once_cell",
  "portable-pty",
  "reqwest 0.12.28",
+ "semver",
  "serde",
  "serde_json",
  "tauri",
@@ -39,6 +40,7 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-updater",
  "tokio",
+ "url",
 ]
 
 [[package]]

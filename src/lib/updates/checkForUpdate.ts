@@ -1,7 +1,8 @@
 // In-app update orchestration (desktop-auto-update spec). On launch, and then on a
-// recurring hourly poll, we ask the Tauri updater whether a newer version is
-// published; if so we download + STAGE it in the background — with no dialog — and
-// the title-bar pill surfaces progress / "Restart to update". When there is no
+// recurring hourly poll, we ask the updater whether a newer version is published
+// ON THE SELECTED RELEASE CHANNEL (stable or beta); if so we download + STAGE it
+// in the background — with no dialog — and the title-bar pill surfaces progress /
+// "Restart to update". When there is no
 // update, the check fails (offline), or we're not under the Tauri runtime (e.g.
 // `vite dev` in a browser, or tests), we continue SILENTLY: never blocking startup,
 // never surfacing a header error. (A found update whose DOWNLOAD then fails is the
@@ -13,10 +14,11 @@
 // store's injected `recheck`), and the manual Settings check (which reads its
 // returned outcome).
 
-import { check } from '@tauri-apps/plugin-updater';
 import { decideCheckAction } from './decide';
 import { updateStore } from './updateStore.svelte';
 import { closeUpdate } from './resource';
+import { checkOnChannel } from './channelCheck';
+import { releaseChannel } from '$lib/settings/releaseChannel.svelte';
 
 /** Recurring background-check cadence: once per hour (spec: hourly re-check). */
 const POLL_INTERVAL_MS = 60 * 60 * 1000;
@@ -43,16 +45,21 @@ export type CheckOutcome =
   | 'unavailable'; // not running under the Tauri runtime
 
 /**
- * Run a single check→stage cycle. Best-effort and non-blocking: if an update is
- * found it is handed to `updateStore.beginDownload` (fire-and-forget — progress is
- * observed reactively via the store) and we return immediately. Any check failure
- * is swallowed and reported as `'error'` so the background callers stay silent
- * while the manual Settings check can surface it.
+ * Run a single check→stage cycle against the CURRENTLY SELECTED release channel.
+ * Best-effort and non-blocking: if an update is found it is handed to
+ * `updateStore.beginDownload` (fire-and-forget — progress is observed reactively
+ * via the store) and we return immediately. Any check failure is swallowed and
+ * reported as `'error'` so the background callers stay silent while the manual
+ * Settings check can surface it.
+ *
+ * The channel is READ here rather than passed in, so the launch check, the hourly
+ * poll, the store's retry seam and the Settings button all follow the preference
+ * with no signatures to thread it through.
  */
 export async function runUpdateCheck(): Promise<CheckOutcome> {
   if (!inTauri()) return 'unavailable';
   try {
-    const update = await check();
+    const update = await checkOnChannel(releaseChannel.channel);
     if (!update) return 'up-to-date';
     const action = decideCheckAction(update, updateStore.snapshot);
     if (action.kind === 'download') {

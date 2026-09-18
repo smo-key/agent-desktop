@@ -38,6 +38,12 @@
   import { updateStore } from '$lib/updates/updateStore.svelte';
   import { runUpdateCheck } from '$lib/updates/checkForUpdate';
   import {
+    releaseChannel,
+    RELEASE_CHANNELS,
+    RELEASE_CHANNEL_LABELS,
+    type ReleaseChannel
+  } from '$lib/settings/releaseChannel.svelte';
+  import {
     ensureModels,
     modelsStatus,
     modelsDiskUsage,
@@ -136,6 +142,10 @@
     { value: 'date', label: 'Date' },
     { value: 'none', label: 'None' }
   ];
+  const RELEASE_CHANNEL_OPTIONS: DropdownOption[] = RELEASE_CHANNELS.map((c) => ({
+    value: c,
+    label: RELEASE_CHANNEL_LABELS[c]
+  }));
   const QUALITY_OPTIONS: DropdownOption[] = [
     { value: 'accurate', label: 'Accurate (large-v3-turbo)' },
     { value: 'fast', label: 'Fast (small)' }
@@ -204,6 +214,14 @@
   $effect(() => {
     if (settingsModal.open) manualStatus = 'idle';
   });
+
+  // Switching the release channel re-checks IMMEDIATELY. Without this, opting into
+  // beta looks like it did nothing until the hourly background poll comes around.
+  // The check reads the store, which `setChannel` has already updated.
+  function onChannelChange(value: string) {
+    if (!releaseChannel.setChannel(value as ReleaseChannel)) return;
+    void checkForUpdates();
+  }
 
   function close() {
     settingsModal.close();
@@ -592,6 +610,25 @@
                 </button>
               {/if}
             </div>
+          </li>
+          <li class="row">
+            <span class="desc">Release channel</span>
+            <div class="control">
+              <Dropdown
+                value={releaseChannel.channel}
+                options={RELEASE_CHANNEL_OPTIONS}
+                onChange={onChannelChange}
+                ariaLabel="Release channel"
+                width={140}
+              />
+            </div>
+          </li>
+          <li class="row hint-row">
+            <span class="desc hint">
+              {releaseChannel.channel === 'beta'
+                ? 'Beta builds arrive first and get less testing. A newer stable release still wins, so you are never held back.'
+                : 'Only stable releases. Switch to Beta to try new features early.'}
+            </span>
           </li>
         </ul>
       </section>

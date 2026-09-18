@@ -1,18 +1,33 @@
 name: Release
 
-# Releases on a version bump to main: when package.json's version is higher than
-# the latest v* tag, the gate job syncs the manifests, extracts this version's
-# hand-written CHANGELOG.md section as the release notes (failing if it is
-# missing) and commits `chore(release): v<version> [skip ci]`. The build matrix
-# then produces signed installers for all four targets and uploads them to a
-# single draft GitHub Release whose body is that CHANGELOG section. Only once
-# EVERY target has built does `publish-release` create the annotated v<version>
-# tag on the sync commit and undraft the Release.
+# Releases on a version bump to a RELEASE BRANCH. There are two lanes:
+#
+#   main  -> the `stable` channel. package.json carries a plain version (0.4.0)
+#            and the GitHub Release is a normal release, so it becomes
+#            `releases/latest` — what stable installs and the one-line installers
+#            both resolve.
+#   beta  -> the `beta` channel. package.json carries a semver PRERELEASE
+#            (0.4.0-beta.1) and the GitHub Release is marked `prerelease: true`,
+#            which keeps it out of `releases/latest` entirely. After it
+#            publishes, its `latest.json` is republished as the sole asset of a
+#            pinned `beta-channel` prerelease — the stable URL the app's beta
+#            update endpoint points at, since GitHub offers no "latest
+#            prerelease" download path.
+#
+# scripts/release-gate.sh partitions the tag space by channel (stable ignores
+# prerelease tags; a beta must outrank BOTH lanes) so neither lane can stall the
+# other. When it says yes, the gate job syncs the manifests, extracts this
+# version's hand-written CHANGELOG.md section as the release notes (failing if it
+# is missing) and commits `chore(release): v<version> [skip ci]` to that branch.
+# The build matrix then produces signed installers for all four targets and
+# uploads them to a single draft GitHub Release whose body is that CHANGELOG
+# section. Only once EVERY target has built does `publish-release` create the
+# annotated v<version> tag on the sync commit and undraft the Release.
 #
 # The tag is deliberately the LAST thing the pipeline creates. It is the
 # idempotency marker release-gate.sh keys on, so a failed build leg must not
-# leave it behind: with no tag, the next push to main (or a manual dispatch)
-# simply retries the release for the same version instead of burning it.
+# leave it behind: with no tag, the next push to that release branch (or a manual
+# dispatch) simply retries the release for the same version instead of burning it.
 #
 # Manual workflow_dispatch inputs:
 #   bundle_test   — build the Windows installer end-to-end and upload it as a
@@ -27,7 +42,7 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches: [main, beta]
   workflow_dispatch:
     inputs:
       force_publish:
@@ -61,6 +76,9 @@ jobs:
       should_release: ${{ steps.decide.outputs.should_release }}
       version: ${{ steps.decide.outputs.version }}
       tag: ${{ steps.decide.outputs.tag }}
+      # `stable` (main) or `beta` (beta). Drives the Release's prerelease flag and
+      # the pinned `beta-channel` manifest refresh.
+      channel: ${{ steps.decide.outputs.channel }}
       # The commit every downstream job builds, releases, and finally tags.
       release_sha: ${{ steps.commit.outputs.release_sha }}
     steps:
@@ -107,12 +125,29 @@ jobs:
             exit 0
           fi
           bash scripts/release-gate.sh
-          # release-gate.sh has already written should_release/version/tag to
-          # $GITHUB_OUTPUT. Re-read them so we can apply the force override.
+          # release-gate.sh has already written should_release/version/tag/channel
+          # to $GITHUB_OUTPUT. Re-read them so we can apply the force override.
           SR="$(grep -E '^should_release=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)"
+          CH="$(grep -E '^channel=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)"
+          VER="$(grep -E '^version=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force_publish }}" = "true" ] && [ "$SR" != "true" ]; then
-            echo "force_publish set: overriding should_release=true"
-            echo "should_release=true" >>"$GITHUB_OUTPUT"
+            # force_publish overrides "no version bump" ONLY. It must never
+            # override the channel partition: forcing a prerelease onto the stable
+            # lane would publish it as `releases/latest` for every stable user, and
+            # forcing a plain version onto the beta lane would tag a stable version
+            # from a branch main has never seen. (The tag-already-exists guard
+            # inside release-gate.sh still applies either way.)
+            IS_PRE=no
+            case "$VER" in *-*) IS_PRE=yes ;; esac
+            FORM_OK=no
+            if [ "$CH" = "stable" ] && [ "$IS_PRE" = "no" ]; then FORM_OK=yes; fi
+            if [ "$CH" = "beta" ] && [ "$IS_PRE" = "yes" ]; then FORM_OK=yes; fi
+            if [ "$FORM_OK" = "yes" ]; then
+              echo "force_publish set: overriding should_release=true"
+              echo "should_release=true" >>"$GITHUB_OUTPUT"
+            else
+              echo "::warning::force_publish ignored: version '$VER' does not belong to the '$CH' channel."
+            fi
           fi
 
       - name: Sync version into manifests
@@ -140,6 +175,10 @@ jobs:
         env:
           VERSION: ${{ steps.decide.outputs.version }}
           TAG: ${{ steps.decide.outputs.tag }}
+          # The release branch this run was triggered from (`main` or `beta`).
+          # Hardcoding `main` here would push a beta run's sync commit onto the
+          # stable branch.
+          BRANCH: ${{ github.ref_name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -149,7 +188,7 @@ jobs:
           else
             git commit -m "chore(release): ${TAG} [skip ci]"
           fi
-          git push origin HEAD:main
+          git push origin "HEAD:${BRANCH}"
           echo "release_sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
           echo "release commit: $(git rev-parse HEAD)"
 
@@ -185,6 +224,7 @@ jobs:
         env:
           TAG: ${{ needs.gate.outputs.tag }}
           RELEASE_SHA: ${{ needs.gate.outputs.release_sha }}
+          CHANNEL: ${{ needs.gate.outputs.channel }}
         with:
           result-encoding: string
           script: |
@@ -221,7 +261,12 @@ jobs:
               name: tag,
               body,
               draft: true,
-              prerelease: false,
+              // Load-bearing: GitHub excludes prereleases from `releases/latest`,
+              // which is what keeps the STABLE updater endpoint — and the one-line
+              // installers, which also resolve `releases/latest` — pointing at
+              // stable builds only. A beta released without this flag would ship
+              // itself to every stable user.
+              prerelease: process.env.CHANNEL === 'beta',
             });
             return data.id;
 
@@ -620,3 +665,54 @@ jobs:
               release_id: Number(process.env.RELEASE_ID),
               draft: false,
             });
+
+      # -----------------------------------------------------------------------
+      # Beta lane only: point the beta update endpoint at THIS release.
+      #
+      # GitHub serves `releases/latest/download/<asset>` for the newest
+      # NON-prerelease release and offers nothing equivalent for prereleases, so
+      # the beta channel needs a fixed tag it can always fetch. We keep a pinned
+      # `beta-channel` prerelease holding a copy of the just-published
+      # `latest.json`.
+      #
+      # DELETE AND RECREATE rather than replacing the asset in place: a replaced
+      # asset can be served stale from the CDN, while a fresh release+asset id is
+      # a new URL path and cannot be. The tag itself is recreated too, so nothing
+      # accumulates.
+      #
+      # Ordering is load-bearing. `latest.json` gains one platform entry per build
+      # leg, so this must run AFTER the versioned Release is published (i.e. after
+      # all four legs finished) — copying it earlier would pin the beta channel to
+      # a partially populated manifest. A failed run never reaches this step, so a
+      # failed beta attempt leaves the previous beta's manifest serving.
+      #
+      # A STABLE release deliberately does not touch this: a stable build that
+      # outranks the current beta reaches beta users through the app's
+      # highest-version-wins comparison, not by rewriting the beta manifest.
+      # -----------------------------------------------------------------------
+      - name: Refresh the pinned beta-channel manifest
+        if: needs.gate.outputs.channel == 'beta'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.gate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          gh release download "$TAG" --pattern latest.json --dir "$work"
+          if [ ! -s "$work/latest.json" ]; then
+            echo "::error::$TAG has no latest.json asset; the updater artifacts were not produced."
+            exit 1
+          fi
+          echo "----- beta latest.json -----"
+          cat "$work/latest.json"
+
+          # Remove the previous pinned release AND its tag, ignoring "not found".
+          gh release delete beta-channel --yes --cleanup-tag || true
+          git push origin :refs/tags/beta-channel || true
+
+          gh release create beta-channel "$work/latest.json" \
+            --title "Beta channel manifest" \
+            --notes "Update manifest for the newest beta release ($TAG). Recreated by the release pipeline on every beta publish; not a downloadable build." \
+            --prerelease \
+            --target "${{ needs.gate.outputs.release_sha }}"
+          rm -rf "$work"

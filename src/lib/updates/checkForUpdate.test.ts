@@ -1,13 +1,25 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Orchestration tests for the launch check, the recurring hourly poll, and the
-// shared `runUpdateCheck`. The Tauri IPC (check/relaunch) is mocked, and
-// updateStore is mocked so we can assert beginDownload is invoked with the found
-// update without touching the real singleton. There is no dialog any more — both
-// launch and poll stage in the background, so nothing here mocks plugin-dialog.
+// shared `runUpdateCheck`. The channel-aware check seam (`checkOnChannel`, which
+// invokes the Rust `updater_check`) is mocked, and updateStore is mocked so we can
+// assert beginDownload is invoked with the found update without touching the real
+// singleton. There is no dialog any more — both launch and poll stage in the
+// background, so nothing here mocks plugin-dialog.
 const checkMock = vi.fn();
-vi.mock('@tauri-apps/plugin-updater', () => ({ check: () => checkMock() }));
+vi.mock('./channelCheck', () => ({ checkOnChannel: (channel: string) => checkMock(channel) }));
 vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: vi.fn(async () => {}) }));
+
+// The selected release channel, read lazily inside the factory's getter (like
+// `snapshot` below) so the hoisted vi.mock doesn't hit a TDZ on this binding.
+let channel: 'stable' | 'beta' = 'stable';
+vi.mock('$lib/settings/releaseChannel.svelte', () => ({
+  releaseChannel: {
+    get channel() {
+      return channel;
+    }
+  }
+}));
 
 const beginDownloadMock = vi.fn(async (..._a: unknown[]) => {});
 // Mutable snapshot so a test can simulate "this version is already staged".
@@ -32,6 +44,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   checkMock.mockReset();
   beginDownloadMock.mockClear();
+  channel = 'stable';
   snapshot = { status: 'idle', version: null };
   updateStore.recheck = null;
   vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
@@ -61,6 +74,21 @@ describe('checkForUpdateOnLaunch', () => {
     checkMock.mockRejectedValue(new Error('offline'));
     await checkForUpdateOnLaunch();
     expect(beginDownloadMock).not.toHaveBeenCalled();
+  });
+
+  // Scenario: Launch check follows the stored channel.
+  it('Launch check follows the stored channel', async () => {
+    channel = 'beta';
+    checkMock.mockResolvedValue({ version: '0.4.0-beta.2' });
+    await checkForUpdateOnLaunch();
+    expect(checkMock).toHaveBeenCalledWith('beta');
+    expect(beginDownloadMock).toHaveBeenCalledWith({ version: '0.4.0-beta.2' });
+  });
+
+  it('checks the stable channel by default', async () => {
+    checkMock.mockResolvedValue(null);
+    await checkForUpdateOnLaunch();
+    expect(checkMock).toHaveBeenCalledWith('stable');
   });
 
   // The launch check wires the store's retry seam to a fresh check cycle.
@@ -156,6 +184,19 @@ describe('startUpdatePolling', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(beginDownloadMock).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledOnce();
+    stop();
+  });
+
+  // A mid-session channel switch is picked up by the very next tick, because the
+  // channel is read inside runUpdateCheck rather than captured at poll start.
+  it('re-reads the channel on every tick', async () => {
+    checkMock.mockResolvedValue(null);
+    const stop = startUpdatePolling(1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(checkMock).toHaveBeenLastCalledWith('stable');
+    channel = 'beta';
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(checkMock).toHaveBeenLastCalledWith('beta');
     stop();
   });
 
