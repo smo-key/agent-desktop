@@ -24,7 +24,7 @@ The app spawns and watches every agent (`buildRoster` → `AgentRow.status`, `is
 The state is idempotent: `set(true)` twice acquires once; `set(false)` when not held is a no-op. Tests cover the state machine; the shims are thin:
 - macOS: spawn `caffeinate -i -s -w <app pid>` and keep the `Child`; release = kill the child. `-w` makes the OS reap the inhibitor if the app dies without running the release, so no zombie `caffeinate` can ever pin the machine awake after a crash.
 - Windows: a dedicated long-lived thread owns `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` and clears it with `ES_CONTINUOUS` on release. The state is per-thread and is dropped by the OS when the thread (i.e. the process) ends, so it cannot outlive the app either. Declared via a direct `extern "system"` on `kernel32` (no `windows-sys` dependency).
-- Linux: spawn `systemd-inhibit --what=sleep:idle --who=agent-desktop --why=... --mode=block sleep infinity`; if the binary is missing the call logs and succeeds as a no-op.
+- Linux: spawn `systemd-inhibit --what=sleep:idle --who=agent-desktop --why=... --mode=block tail --pid=<app pid> -f /dev/null`; `tail --pid` exits when the app dies (Linux does not kill children on parent exit, and an updater relaunch skips `CloseRequested`), so the block-mode lock cannot be orphaned. If the binary is missing the call logs and succeeds as a no-op.
 - Other targets: no-op.
 - *Alternative — `IOPMAssertionCreateWithName` via FFI:* more "native" but needs CoreFoundation string plumbing or a new crate; `caffeinate` is shipped with every macOS and already exposes the assertion. Rejected for now.
 

@@ -15,8 +15,12 @@
 - [x] 3.2 Hydrate `keepAwake.load()` in `src/routes/+page.svelte` and add an `$effect` next to the alerts driver that resolves `shouldKeepAwake(keepAwake.mode, alertRows.some(isWorking))` and invokes `keep_awake_set` only on transitions (release on teardown)
 - [x] 3.3 Add a **Power** section to `src/lib/ui/SettingsModal.svelte` with a "Keep computer awake" `Dropdown` (Never / While any agent is running / While the app is open)
 
-## 4. Gates + verify
+## 4. Adversarial-review finding
 
-- [x] 4.1 Add `'keep-awake'` to `ENFORCED_CAPABILITIES` in `tools/check-scenario-coverage.mjs`, and add the DOM-only "Keep-awake is configurable from Settings" scenario to its `MANUAL_SCENARIOS`
-- [x] 4.2 Run `yarn check`, `yarn test`, `yarn coverage`, `yarn lint:storage`, and `cargo test` in `src-tauri`; confirm all pass
-- [x] 4.3 Run `openspec validate add-keep-awake` and confirm the change is well-formed
+- [x] 4.1 Linux: tie the inhibitor to the app pid (`tail --pid=<pid> -f /dev/null` under `systemd-inhibit`) so an updater relaunch / crash / signal cannot orphan a block-mode sleep lock; document the invariant
+
+## 5. Gates + verify
+
+- [x] 5.1 Add `'keep-awake'` to `ENFORCED_CAPABILITIES` in `tools/check-scenario-coverage.mjs`, and add the DOM-only "Keep-awake is configurable from Settings" scenario to its `MANUAL_SCENARIOS`
+- [x] 5.2 Run `yarn check`, `yarn test`, `yarn coverage`, `yarn lint:storage`, and `cargo test` in `src-tauri`; confirm all pass
+- [x] 5.3 Run `openspec validate add-keep-awake` and confirm the change is well-formed

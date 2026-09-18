@@ -39,7 +39,7 @@ The application SHALL resolve a single "hold the sleep inhibitor" boolean from t
 
 ### Requirement: Platform sleep inhibitor is best-effort and never outlives the app
 
-The backend SHALL expose an idempotent acquire/release of a system idle-sleep inhibitor (`caffeinate -i -s -w <pid>` on macOS, `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` on Windows, `systemd-inhibit` on Linux when present, otherwise a no-op). Acquiring an already-held inhibitor or releasing an unheld one SHALL be a no-op. Failure to acquire SHALL be logged and SHALL NOT surface as an error to the UI. The inhibitor SHALL be released when the app window closes and SHALL NOT outlive the app process.
+The backend SHALL expose an idempotent acquire/release of a system idle-sleep inhibitor (`caffeinate -i -s -w <pid>` on macOS, `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` on Windows, `systemd-inhibit` wrapping `tail --pid=<pid> -f /dev/null` on Linux when present, otherwise a no-op). On every platform the inhibitor SHALL be tied to the app's process lifetime so that an exit without a close request (update relaunch, crash, signal) cannot leave it held. Acquiring an already-held inhibitor or releasing an unheld one SHALL be a no-op. Failure to acquire SHALL be logged and SHALL NOT surface as an error to the UI. The inhibitor SHALL be released when the app window closes and SHALL NOT outlive the app process.
 
 #### Scenario: Acquire and release are idempotent
 - **WHEN** acquire is requested twice, then release is requested twice

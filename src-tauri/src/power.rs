@@ -35,8 +35,11 @@
 //!   * Windows: `SetThreadExecutionState(ES_CONTINUOUS | ...)` is *per thread*
 //!     and is cleared by the OS when that thread ends; the thread is ours, so
 //!     process exit clears it unconditionally.
-//!   * Linux: `systemd-inhibit ... sleep infinity` is a child process holding the
-//!     lock; it is killed on release and, like any child, on our exit.
+//!   * Linux: `systemd-inhibit ... tail --pid=<our pid> -f /dev/null` holds the
+//!     lock only as long as our process exists — Linux does NOT kill children on
+//!     parent exit, so the `tail --pid` watch (the `caffeinate -w` equivalent) is
+//!     what guarantees an update relaunch, crash, or SIGTERM leaves no orphaned
+//!     block-mode inhibitor. It is killed on release.
 //!
 //! ## Best-effort
 //!
@@ -303,22 +306,29 @@ fn release(mut handle: PlatformHandle) {
     }
 }
 
-/// Linux: `systemd-inhibit` holds a sleep/idle lock while its child (`sleep
-/// infinity`) runs. Missing binary (non-systemd distro) is a quiet no-op.
+/// Linux: `systemd-inhibit` holds a sleep/idle lock while its child runs. That
+/// child is `tail --pid=<our pid> -f /dev/null` (coreutils), which exits by itself
+/// once our process is gone — Linux never kills children on parent exit, so
+/// without this an update relaunch (`process::exit`, no CloseRequested), a crash,
+/// or a SIGTERM would leave a block-mode inhibitor held until reboot. Missing
+/// binary (non-systemd distro) is a quiet no-op.
 #[cfg(target_os = "linux")]
 type PlatformHandle = std::process::Child;
 
 #[cfg(target_os = "linux")]
 fn acquire() -> Option<PlatformHandle> {
     use std::process::{Command, Stdio};
+    let pid_watch = format!("--pid={}", std::process::id());
     match Command::new("systemd-inhibit")
         .args([
             "--what=sleep:idle",
             "--who=agent-desktop",
             "--why=An agent is running",
             "--mode=block",
-            "sleep",
-            "infinity",
+            "tail",
+            &pid_watch,
+            "-f",
+            "/dev/null",
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
