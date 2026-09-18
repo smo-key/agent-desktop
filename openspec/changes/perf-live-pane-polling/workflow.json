@@ -1,0 +1,6 @@
+{
+  "provider": "local",
+  "taskRef": "perf-live-pane-polling",
+  "url": "",
+  "lastEvent": "started"
+}

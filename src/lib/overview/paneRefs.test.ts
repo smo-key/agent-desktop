@@ -24,7 +24,7 @@ describe('paneRefs (performance: closed panes leave the polling sets)', () => {
     expect(isLivePane(null)).toBe(false);
   });
 
-  it('liveAgentPaneRefs drops closed panes, shells, and panes without a session id', () => {
+  it('Closed agents leave the polling sets', () => {
     const ids = liveAgentPaneRefs(workspaces).map((r) => r.paneId);
     expect(ids).toEqual(['live', 'wt']);
   });

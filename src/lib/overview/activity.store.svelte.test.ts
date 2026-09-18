@@ -13,7 +13,7 @@ import { ActivityStore } from './activity.svelte';
 const panes = [{ paneId: 'p1', sessionId: 's1', cwd: '/a' }];
 
 describe('ActivityStore.refresh merges and preserves unchanged entries', () => {
-  it('keeps entries for panes not in the refreshed set', async () => {
+  it('Archived agents keep their seeded summary', async () => {
     const store = new ActivityStore();
     invokeMock.mockResolvedValueOnce({
       p1: { summary: 'one' },

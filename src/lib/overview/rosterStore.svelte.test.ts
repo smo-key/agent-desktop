@@ -11,7 +11,7 @@ describe('RosterStore', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('runs ONE clock shared by every consumer and stops with the last one', () => {
+  it('One shared roster clock serves every consumer', () => {
     const store = new RosterStore();
     expect(store.running).toBe(false);
     const stopA = store.start();

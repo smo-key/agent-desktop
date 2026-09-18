@@ -19,7 +19,7 @@ const ev = (paneId: string, hookEventName: string, ts: number, extra: Record<str
 });
 
 describe('EventStore memoizes derived activity per pane', () => {
-  it('activityFor returns the same object while the timeline is unchanged', () => {
+  it('Event activity is memoized per pane', () => {
     const store = new EventStore();
     store.ingest(ev('p1', 'UserPromptSubmit', 1));
     store.ingest(ev('p2', 'UserPromptSubmit', 1));
@@ -34,7 +34,7 @@ describe('EventStore memoizes derived activity per pane', () => {
     expect(store.activityFor('p2').status).toBe('working');
   });
 
-  it('seed skips the reactive write when the snapshot equals what is held', async () => {
+  it('An unchanged re-seed writes nothing', async () => {
     const store = new EventStore();
     store.ingest(ev('p1', 'UserPromptSubmit', 1));
     store.ingest(ev('p1', 'Stop', 2));
