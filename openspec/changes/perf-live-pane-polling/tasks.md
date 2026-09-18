@@ -14,3 +14,12 @@
 ## 3. Specs
 
 - [x] 3.1 Deltas for `agent-overview` and `activity-timeline`; scenario titles match the new Rust/Vitest test names (coverage gate)
+
+## 4. Adversarial review fixes
+
+- [x] 4.1 Prime the all-panes activity read AFTER layout restore (archived rows had no summary on a cold start)
+- [x] 4.2 Record the status hysteresis memo for combined-terminal rows in the Inbox (`noteStatus`), not only agent rows
+- [x] 4.3 Subagent span falls back to a whole-file scan when a window holds no stamped line (oversized first/last line)
+- [x] 4.4 Backfill cache keyed by `(transcript, pane_id)` so two panes on one transcript never share stamped events
+- [x] 4.5 `ActivityStore.retain` drops panes removed from every workspace (map no longer grows unbounded)
+- [x] 4.6 Accepted (WARNING): a `subagents_for` seed that races a watcher patch can return one stale session until its next fs event or seed — same window as before, now healed only by a matching-path event

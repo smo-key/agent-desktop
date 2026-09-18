@@ -49,7 +49,7 @@
     rowSub as rowSubText
   } from './inbox';
   import { toNavWorkspaces } from './rosterInputs';
-  import { runtimeMap } from './runtime';
+  import { noteStatus, runtimeMap } from './runtime';
   import { roster } from './rosterStore.svelte';
   import { navigateTarget } from './navigate';
   import { focusAgent } from './focusAgent.svelte';
@@ -165,9 +165,14 @@
 
   const allRows = $derived.by(() => {
     const agents = roster.rows;
-    return combinedTerminals
-      ? [...agents, ...buildTerminalRows(terminalInputs, runtimeMap(), nowMs)]
-      : agents;
+    if (!combinedTerminals) return agents;
+    const terminals = buildTerminalRows(terminalInputs, runtimeMap(), nowMs);
+    // Terminal rows are derived HERE (the shared roster holds only agents), so
+    // their status hysteresis memory is recorded here too — the same `noteStatus`
+    // write-back rosterStore does for agent rows (deriveTerminalStatus reads it
+    // as `prevStatus`; without it a quiet build would bounce working ↔ waiting).
+    for (const r of terminals) noteStatus(r.paneId, r.status);
+    return [...agents, ...terminals];
   });
   const terminalIds = $derived(new Set(allRows.filter(isTerminalRow).map((r) => r.paneId)));
 

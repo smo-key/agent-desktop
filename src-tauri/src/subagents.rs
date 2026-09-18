@@ -503,18 +503,42 @@ fn compute_jsonl_span(path: &Path, size: u64) -> Span {
     let Some(head) = read_range(path, 0, SPAN_WINDOW_BYTES) else {
         return (None, None);
     };
+    if size <= SPAN_WINDOW_BYTES {
+        return (
+            head.lines().find_map(line_timestamp),
+            head.lines().rev().find_map(line_timestamp),
+        );
+    }
     let first = head.lines().find_map(line_timestamp);
-    let last = if size <= SPAN_WINDOW_BYTES {
-        head.lines().rev().find_map(line_timestamp)
-    } else {
-        let start = size - SPAN_WINDOW_BYTES;
-        let Some(tail) = read_range(path, start, SPAN_WINDOW_BYTES) else {
-            return (first, first);
-        };
-        // The first tail line is (almost surely) cut mid-line; `line_timestamp`
-        // rejects it as unparsable, so no explicit skip is needed.
-        tail.lines().rev().find_map(line_timestamp).or(first)
+    // The first tail line is (almost surely) cut mid-line; `line_timestamp`
+    // rejects it as unparsable, so no explicit skip is needed.
+    let last = read_range(path, size - SPAN_WINDOW_BYTES, SPAN_WINDOW_BYTES)
+        .and_then(|tail| tail.lines().rev().find_map(line_timestamp));
+    match (first, last) {
+        (Some(f), Some(l)) => (Some(f), Some(l)),
+        // A window with no complete stamped line (a single line longer than the
+        // window — a huge pasted context or tool result): fall back to the exact
+        // whole-file scan rather than report an unknown start / zero duration.
+        _ => full_jsonl_span(path),
+    }
+}
+
+/// The exact first/last timestamps by scanning every line (the pre-cache
+/// behaviour); used only when the bounded windows hold no stamped line.
+fn full_jsonl_span(path: &Path) -> Span {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return (None, None);
     };
+    let mut first = None;
+    let mut last = None;
+    for line in text.lines() {
+        if let Some(ms) = line_timestamp(line) {
+            if first.is_none() {
+                first = Some(ms);
+            }
+            last = Some(ms);
+        }
+    }
     (first, last)
 }
 
@@ -1626,6 +1650,23 @@ mod tests {
         // Second call: served from the cache (same size + mtime), same answer.
         assert_eq!(jsonl_span(&path), (first, last));
         assert!(span_cache().lock().unwrap().contains_key(&path));
+    }
+
+    /// A single line longer than the window (a huge first user message, a huge
+    /// last tool result) leaves the bounded windows without a stamped line: the
+    /// span falls back to the exact whole-file scan instead of None / zero.
+    #[test]
+    fn jsonl_span_falls_back_to_a_full_scan_on_oversized_lines() {
+        let tmp = TempDir::new("span-long");
+        let path = tmp.path().join("agent-long.jsonl");
+        let huge = "y".repeat((SPAN_WINDOW_BYTES as usize) + 1024);
+        let body = format!(
+            "{{\"timestamp\":\"2025-01-01T00:00:00.000Z\",\"pad\":\"{huge}\"}}\n{{\"type\":\"noise\"}}\n{{\"timestamp\":\"2025-01-01T00:20:00.000Z\",\"pad\":\"{huge}\"}}\n"
+        );
+        std::fs::write(&path, body).unwrap();
+        let first = crate::activity::parse_iso_millis("2025-01-01T00:00:00.000Z");
+        let last = crate::activity::parse_iso_millis("2025-01-01T00:20:00.000Z");
+        assert_eq!(jsonl_span(&path), (first, last));
     }
 
     /// A small file (both windows overlap) still yields first/last correctly and a

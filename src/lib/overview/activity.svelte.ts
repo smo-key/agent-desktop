@@ -182,6 +182,14 @@ export class ActivityStore {
       return 0;
     }
   }
+
+  /** Drop every entry whose pane id is not in `liveIds` (a pane removed from all
+   *  workspaces). No reactive write when nothing is stale. */
+  retain(liveIds: Set<string>): void {
+    for (const paneId of Object.keys(this.bySession)) {
+      if (!liveIds.has(paneId)) delete this.bySession[paneId];
+    }
+  }
 }
 
 /** PURE: structural equality of two normalized activities (small, flat-ish). */

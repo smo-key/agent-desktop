@@ -265,6 +265,10 @@
         // the cards render their real titles immediately rather than flashing
         // their "Session N" fallback until the first (async) activity poll lands.
         titles.hydrate(currentPaneRefs());
+        // Prime TRANSCRIPT ACTIVITY once for EVERY restored agent pane — closed ones
+        // included, so an archived row shows its last summary — then refresh the
+        // LIVE panes. Must run AFTER restore: before it the registries are empty.
+        void activity.refresh(currentPaneRefs()).then(() => refreshActivity());
         stopWatching = watchAndPersist();
       });
 
@@ -285,10 +289,9 @@
       unlistenSubagents = unlisten;
     });
 
-    // Prime TRANSCRIPT ACTIVITY once on mount for EVERY agent pane — closed ones
-    // included, so an archived row shows its last summary — then event-driven
-    // reads (below) and the slow safety poll refresh only the LIVE panes.
-    void activity.refresh(currentPaneRefs()).then(() => refreshActivity());
+    // Transcript activity is primed once the layout has restored (above); from
+    // then on event-driven reads (below) and the slow safety poll refresh only
+    // the LIVE panes.
 
     // Start the EVENT pipeline store: seed each pane's timeline (ring → durable
     // sink → transcript backfill, resolved in Rust), then subscribe to live
@@ -565,7 +568,12 @@
   // `workspace.workspaces` (+ each registry) reactively, so this re-runs on every
   // such change; `retain` is a no-op (no reactive write) when nothing is stale.
   $effect(() => {
-    snapshots.retain(workspace.allPaneIds());
+    const live = workspace.allPaneIds();
+    snapshots.retain(live);
+    // The activity map merges per pane now (closed panes keep their seeded
+    // summary), so a pane REMOVED from every workspace must be dropped here or
+    // the map grows with every pane ever opened.
+    activity.retain(live);
   });
 
   // NEEDS-INPUT ALERTS driver (capability `needs-input-alerts`). Built off the same

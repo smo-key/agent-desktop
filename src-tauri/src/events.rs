@@ -124,7 +124,7 @@ pub struct EventState {
     /// `path -> (size+mtime, parsed events)` for the durable sink files and
     /// transcript backfills, so the periodic `events_for` re-seed never re-reads
     /// a file that has not changed (a closed session's whole transcript, say).
-    file_cache: Mutex<HashMap<PathBuf, (FileKey, Vec<AgentEvent>)>>,
+    file_cache: Mutex<HashMap<(PathBuf, String), (FileKey, Vec<AgentEvent>)>>,
 }
 
 /// A file's size + mtime: the same key means the same parsed contents.
@@ -187,7 +187,7 @@ impl EventState {
         let Some(path) = self.sink_path(session_id) else {
             return Vec::new();
         };
-        self.cached_file(&path, |p| {
+        self.cached_file(&path, "", |p| {
             let Ok(body) = std::fs::read_to_string(p) else {
                 return Vec::new();
             };
@@ -198,18 +198,26 @@ impl EventState {
     /// [`backfill_from_transcript`] served from the size+mtime cache, so an
     /// unchanged transcript (a closed session's, typically many MiB) is parsed once.
     pub fn backfill_cached(&self, transcript: &Path, pane_id: &str, session_id: &str) -> Vec<AgentEvent> {
-        self.cached_file(transcript, |p| backfill_from_transcript(p, pane_id, session_id))
+        // Keyed by pane too: the backfilled events are stamped with `pane_id`, so
+        // two panes resolving to one transcript must not share a cached list.
+        self.cached_file(transcript, pane_id, |p| backfill_from_transcript(p, pane_id, session_id))
     }
 
     /// Run `parse` over `path` unless the cache holds a result for its current
     /// size + mtime. A missing file yields an empty list and is never cached.
-    fn cached_file(&self, path: &Path, parse: impl FnOnce(&Path) -> Vec<AgentEvent>) -> Vec<AgentEvent> {
+    fn cached_file(
+        &self,
+        path: &Path,
+        pane_id: &str,
+        parse: impl FnOnce(&Path) -> Vec<AgentEvent>,
+    ) -> Vec<AgentEvent> {
         let Ok(meta) = std::fs::metadata(path) else {
             return Vec::new();
         };
         let key: FileKey = (meta.len(), meta.modified().ok());
+        let slot = (path.to_path_buf(), pane_id.to_string());
         if let Ok(cache) = self.file_cache.lock() {
-            if let Some((k, events)) = cache.get(path) {
+            if let Some((k, events)) = cache.get(&slot) {
                 if *k == key {
                     return events.clone();
                 }
@@ -220,7 +228,7 @@ impl EventState {
             if cache.len() >= FILE_CACHE_MAX {
                 cache.clear();
             }
-            cache.insert(path.to_path_buf(), (key, events.clone()));
+            cache.insert(slot, (key, events.clone()));
         }
         events
     }
@@ -931,8 +939,14 @@ mod tests {
         assert_eq!(state.cached_file_count(), 2);
         assert_eq!(state.backfill_cached(&transcript, "p1", "s1"), bf);
 
+        // Another pane resolving to the SAME transcript gets events stamped with ITS id.
+        let other = state.backfill_cached(&transcript, "p2", "s1");
+        assert_eq!(other.len(), bf.len());
+        assert!(other.iter().all(|e| e.pane_id == "p2"));
+        assert_eq!(state.cached_file_count(), 3);
+
         // A missing file is empty and never cached.
         assert!(state.backfill_cached(&tmp.path().join("nope.jsonl"), "p1", "s1").is_empty());
-        assert_eq!(state.cached_file_count(), 2);
+        assert_eq!(state.cached_file_count(), 3);
     }
 }
