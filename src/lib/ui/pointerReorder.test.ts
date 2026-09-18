@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ActionReturn } from 'svelte/action';
 import { pointerReorder, type PointerReorderOptions } from './pointerReorder';
 import { DRAG_THRESHOLD_PX } from './reorderGesture';
 
@@ -23,12 +24,15 @@ function setup(opts: Partial<PointerReorderOptions> = {}) {
   const onDrop = vi.fn();
   // Hit-test: whichever row the test has "placed" under the pointer.
   let under: Element | null = null;
+  // `Action`'s declared return is `void | ActionReturn`; `pointerReorder` always
+  // returns the teardown object, so narrow it here rather than guarding at every
+  // call site (`action.destroy` is otherwise a type error on the `void` arm).
   const action = pointerReorder(list, {
     onChange,
     onDrop,
     elementAt: () => under,
     ...opts
-  });
+  }) as ActionReturn<PointerReorderOptions>;
   return {
     list,
     rows,
