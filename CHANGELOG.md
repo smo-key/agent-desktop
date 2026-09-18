@@ -9,15 +9,17 @@ Format: short `### New` / `### Improved` / `### Fixed` / `### Removed` sections,
 bullets, one bold title per notable change —
 `- **Feature title**: a short, impactful description and use case.`
 
-## 0.4.0-beta.1 — 2026-09-18
+## 0.4.0-1 — 2026-09-18
 
 First build on the new **Beta** channel. Betas arrive before stable releases and
 get less testing; switch back to Stable any time in Settings → Software update.
+Betas are numbered `0.4.0-1`, `0.4.0-2`, and so on, leading up to `0.4.0`.
 
 ### New
 
 - **Beta release channel**: choose Stable or Beta at the bottom of Settings → Software update. On Beta you get new builds first, and a newer stable release still wins — so opting in never holds you back. Switching channels re-checks for updates straight away.
 - **Keep computer awake**: stop the machine sleeping never, while any agent is running, or for as long as the app is open.
+- **Agents run inside WSL**: on Windows, a project that lives in a WSL distro can launch its agent inside that distro, instead of failing to start because `claude` is installed on the Linux side of the VM boundary.
 
 ### Improved
 
