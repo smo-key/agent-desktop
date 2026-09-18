@@ -327,7 +327,10 @@ function gitStatusCached(snapshotDir, paneId, workspaceDir) {
     // no / unreadable prior snapshot -> compute fresh
   }
   const fresh = gitStatus(workspaceDir);
-  fresh.checked_at = now;
+  // Stamp (and so allow reuse of) only a status git actually answered: an
+  // all-null result from a timeout or index.lock contention must be retried on
+  // the very next tick, not served for the whole TTL.
+  if (fresh.branch !== null) fresh.checked_at = now;
   return fresh;
 }
 

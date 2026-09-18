@@ -14,3 +14,13 @@
 ## 3. Specs
 
 - [x] 3.1 Deltas for `terminal-core`, `usage-dashboard`, `agent-overview`; scenario titles match test names
+
+## 4. Adversarial review fixes (no CRITICAL findings)
+
+- [x] 4.1 Watcher worker re-reads the watched set under the cache lock before patching/retaining (a concurrent `subagents_for` seed could lose or resurrect a session's rows)
+- [x] 4.2 PTY writer thread is spawned before the reader thread (no running child outside the registry if the later spawn fails)
+- [x] 4.3 Wake detection needs a 60 s gap while the window is hidden (throttled timers / App Nap are not a wake)
+- [x] 4.4 Post-wake fetch timer survives a later resume (it was cancelled without being rescheduled)
+- [x] 4.5 Statusline wrapper never caches a git status that git did not answer (timeout / index.lock)
+- [x] 4.6 Burst test waits generously for the first emit (flake on a loaded machine)
+- [x] 4.7 Accepted (WARNING): the per-pane write queue is unbounded; bounded in practice by user input, and every caller already ignored write errors

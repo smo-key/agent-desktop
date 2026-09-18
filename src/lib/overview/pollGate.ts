@@ -25,9 +25,13 @@ export function shouldRunTick(tick: number, visible: boolean, hidden: HiddenPoli
 /** A heartbeat gap this much larger than its interval means the machine slept. */
 export const WAKE_GAP_MS = 10_000;
 
+/** While the window is HIDDEN the webview throttles timers (and App Nap can defer
+ *  them by many seconds), so only a much larger gap is taken as a real sleep. */
+export const WAKE_GAP_HIDDEN_MS = 60_000;
+
 /** Did the heartbeat skip enough time to have been asleep (not merely throttled)? */
-export function isWakeGap(prevMs: number, nowMs: number, intervalMs: number): boolean {
-  return nowMs - prevMs - intervalMs >= WAKE_GAP_MS;
+export function isWakeGap(prevMs: number, nowMs: number, intervalMs: number, visible = true): boolean {
+  return nowMs - prevMs - intervalMs >= (visible ? WAKE_GAP_MS : WAKE_GAP_HIDDEN_MS);
 }
 
 /** How long the remote fetch waits after a wake for the network to return. */

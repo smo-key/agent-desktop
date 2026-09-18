@@ -245,14 +245,9 @@ impl PtyManager {
 
         // Dedicated native thread for the blocking read loop. A blocked `read`
         // must never run on the async runtime.
-        let reader_handle = std::thread::Builder::new()
-            .name(format!("pty-reader-{id}"))
-            .spawn(move || {
-                read_loop(reader, child, sink);
-            })
-            .map_err(|e| format!("failed to spawn reader thread: {e}"))?;
-
-        // The writer thread owns the PTY writer and drains the ordered queue.
+        // The writer thread owns the PTY writer and drains the ordered queue. Spawned
+        // BEFORE the reader thread: the reader takes ownership of the live child, so a
+        // failure after it would leave a running child outside the registry.
         let (writer_tx, writer_rx) = std::sync::mpsc::channel::<Vec<u8>>();
         std::thread::Builder::new()
             .name(format!("pty-writer-{id}"))
@@ -265,6 +260,13 @@ impl PtyManager {
                 }
             })
             .map_err(|e| format!("failed to spawn writer thread: {e}"))?;
+
+        let reader_handle = std::thread::Builder::new()
+            .name(format!("pty-reader-{id}"))
+            .spawn(move || {
+                read_loop(reader, child, sink);
+            })
+            .map_err(|e| format!("failed to spawn reader thread: {e}"))?;
 
         let pane = Pane {
             master: pair.master,

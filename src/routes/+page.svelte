@@ -509,6 +509,10 @@
     void projectGit.fetchRemotes(paths).then(() => projectGit.refresh(paths));
   }
   $effect(() => appActivity.start());
+  let wakeFetchTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => () => {
+    if (wakeFetchTimer !== null) clearTimeout(wakeFetchTimer);
+  });
   // RESUME: the window became visible again, or the machine woke from sleep.
   // Everything that was deferred refreshes ONCE, now — instead of each interval
   // catching up on its own schedule — except the network fetch after a wake,
@@ -521,9 +525,15 @@
       void refreshActivity();
       void events.seed(livePaneRefs());
       void projectGit.refresh(projects.active.map((p) => p.path));
-      if (!inWakeFetchHold(appActivity.lastWakeMs, Date.now())) return;
-      const id = setTimeout(fetchProjectRemotes, WAKE_FETCH_DELAY_MS);
-      return () => clearTimeout(id);
+      // The post-wake fetch timer lives OUTSIDE this effect's cleanup: a later
+      // resume (the user bringing the window forward) must not cancel it, or the
+      // fetch the interval skipped during the hold would be lost entirely.
+      if (inWakeFetchHold(appActivity.lastWakeMs, Date.now()) && wakeFetchTimer === null) {
+        wakeFetchTimer = setTimeout(() => {
+          wakeFetchTimer = null;
+          fetchProjectRemotes();
+        }, WAKE_FETCH_DELAY_MS);
+      }
     });
   });
 

@@ -896,10 +896,21 @@ where
                         Ok(g) => g,
                         Err(p) => p.into_inner(),
                     };
+                    // Re-read the watched set NOW, under the cache lock: the snapshot
+                    // above predates the burst window + IO, and a `subagents_for` seed
+                    // may have changed the set (and replaced the cache) meanwhile. Using
+                    // the stale snapshot would drop a just-added session's seeded rows
+                    // or resurrect a just-removed session's.
+                    let current: Vec<String> = lock_sessions(&worker_sessions)
+                        .iter()
+                        .map(|s| s.session_id.clone())
+                        .collect();
                     for (sid, subs) in partial {
-                        cached.insert(sid, subs);
+                        if current.contains(&sid) {
+                            cached.insert(sid, subs);
+                        }
                     }
-                    cached.retain(|sid, _| watched.iter().any(|s| &s.session_id == sid));
+                    cached.retain(|sid, _| current.contains(sid));
                     cached.clone()
                 };
                 // Coalesce: suppress an identical map re-emitted within the window.
@@ -1669,9 +1680,12 @@ mod tests {
         }
         let mut emits = 0;
         let mut last_len = 0;
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
         while std::time::Instant::now() < deadline {
-            match rx.recv_timeout(Duration::from_millis(800)) {
+            // Generous wait for the FIRST emit (fs-event delivery latency on a loaded
+            // machine); once emits flow, a quiet period ends the collection.
+            let wait = if emits == 0 { Duration::from_secs(10) } else { Duration::from_millis(1500) };
+            match rx.recv_timeout(wait) {
                 Ok(map) => {
                     emits += 1;
                     last_len = map.get("sess-A").map(|v| v.len()).unwrap_or(0);

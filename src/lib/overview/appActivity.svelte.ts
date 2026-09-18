@@ -26,8 +26,8 @@ export class AppActivityStore {
   }
 
   /** Test seam: feed a heartbeat observation. Returns whether it was a wake. */
-  beat(prevMs: number, nowMs: number): boolean {
-    if (!isWakeGap(prevMs, nowMs, HEARTBEAT_MS)) return false;
+  beat(prevMs: number, nowMs: number, visible = true): boolean {
+    if (!isWakeGap(prevMs, nowMs, HEARTBEAT_MS, visible)) return false;
     this.lastWakeMs = nowMs;
     this.resumes++;
     return true;
@@ -38,7 +38,7 @@ export class AppActivityStore {
     let prev = Date.now();
     const timer = setInterval(() => {
       const now = Date.now();
-      this.beat(prev, now);
+      this.beat(prev, now, documentVisible());
       prev = now;
     }, HEARTBEAT_MS);
     const onVisibility = () => {

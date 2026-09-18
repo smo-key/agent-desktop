@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { WAKE_FETCH_DELAY_MS, WAKE_GAP_MS, inWakeFetchHold, isWakeGap, shouldRunTick } from './pollGate';
+import { WAKE_FETCH_DELAY_MS, WAKE_GAP_HIDDEN_MS, WAKE_GAP_MS, inWakeFetchHold, isWakeGap, shouldRunTick } from './pollGate';
 
 describe('pollGate', () => {
   it('Visual polls pause while the window is hidden', () => {
@@ -17,6 +17,9 @@ describe('pollGate', () => {
     expect(isWakeGap(0, 1_000, 1_000)).toBe(false); // on time
     expect(isWakeGap(0, 4_000, 1_000)).toBe(false); // throttled timer, not sleep
     expect(isWakeGap(0, 1_000 + WAKE_GAP_MS, 1_000)).toBe(true);
+    // Hidden: timers are throttled hard, so only a much larger gap counts.
+    expect(isWakeGap(0, 1_000 + WAKE_GAP_MS, 1_000, false)).toBe(false);
+    expect(isWakeGap(0, 1_000 + WAKE_GAP_HIDDEN_MS, 1_000, false)).toBe(true);
   });
 
   it('The remote fetch waits for the network after a wake', () => {
