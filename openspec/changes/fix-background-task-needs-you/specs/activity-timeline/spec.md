@@ -42,3 +42,22 @@ The system SHALL derive a session's status primarily from its hook events: `User
 #### Scenario: Fallback when no events
 - **WHEN** a session has produced no hook events yet
 - **THEN** status is derived from the PTY-byte activity heuristic
+
+### Requirement: User Interrupt Returns A Working Pane To Waiting
+Interrupting (Esc) a mid-tool pane aborts the in-flight tool, but Claude emits no `PostToolUse` for the aborted tool and no `Stop`, so the event-sourced status would otherwise stay pinned at `working`. The system SHALL record a SYNTHETIC turn-end for an interrupted working pane so the derived status returns to `waiting` and the in-flight action clears. That synthetic turn-end SHALL be MARKED as frontend-only (not a genuine hook event) so consumers that distinguish a real return-to-user from an interrupt — notably task auto-archive — do not treat it as a completed turn. Interrupting a pane that is not working SHALL be a no-op. A pane that reads `working` only because its last `Stop` still lists running background tasks (nothing in flight) SHALL also treat an interrupt as a no-op — the prompt is free and Esc aborts nothing. When a tool IS in flight and background tasks are still running, the synthetic turn-end SHALL carry the running background-task list forward so the pane stays `working` on that background work rather than flipping to `waiting`.
+
+#### Scenario: Interrupt returns a mid-tool working pane to waiting
+- **WHEN** the user interrupts a pane that is mid-tool (a `PreToolUse` with no matching `PostToolUse`)
+- **THEN** a synthetic turn-end is recorded, the derived status returns to `waiting`, the in-flight action clears, and the synthetic event is marked so task auto-archive does not treat it as a genuine return-to-user
+
+#### Scenario: Interrupt is a no-op when the pane is not working
+- **WHEN** the user interrupts a pane that is idle/waiting (no in-flight tool)
+- **THEN** no synthetic turn-end is added and the timeline is unchanged
+
+#### Scenario: Interrupt is a no-op while only background work is running
+- **WHEN** the user interrupts a pane whose most recent turn boundary is a `Stop` that still lists a running background task (no tool in flight)
+- **THEN** no synthetic turn-end is added and the pane stays `working` on the background work
+
+#### Scenario: Interrupt keeps background work In flight
+- **WHEN** the user interrupts a pane that is mid-tool while its last real `Stop` still lists a running background task
+- **THEN** the synthetic turn-end carries that running list, the aborted tool clears, and the pane stays `working` with the background work as its current action

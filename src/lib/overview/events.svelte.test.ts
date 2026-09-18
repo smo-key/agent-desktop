@@ -111,6 +111,48 @@ describe('EventStore', () => {
     expect(store.timeline('p1').at(-1)?.synthetic).toBe(true);
   });
 
+  it('Interrupt is a no-op while only background work is running', () => {
+    // fix-background-task-needs-you: a pane whose last Stop still lists a RUNNING
+    // background task reads `working` with NOTHING in flight — the prompt is free and
+    // Esc aborts nothing. A synthetic Stop (which carries no task list) would flip the
+    // row back to Needs-you, re-creating the false alert. So it must be a no-op.
+    const store = new EventStore();
+    const running = [{ id: 'a1', type: 'subagent', status: 'running', description: 'd' }];
+    store.ingest(ev('UserPromptSubmit'));
+    store.ingest(ev('PreToolUse', { toolName: 'Agent', summary: 'Agent' }));
+    store.ingest(ev('PostToolUse', { toolName: 'Agent' }));
+    store.ingest(ev('Stop', { backgroundTasks: running }));
+    expect(store.activityFor('p1').status).toBe('working');
+    const before = store.timeline('p1').length;
+
+    store.markInterrupt('p1');
+
+    expect(store.timeline('p1').length).toBe(before);
+    expect(store.activityFor('p1').status).toBe('working');
+    expect(store.activityFor('p1').currentAction).toBe('Background: d');
+  });
+
+  it('Interrupt keeps background work In flight', () => {
+    // Esc mid-tool while a background task is ALSO still running: the synthetic
+    // turn-end clears the aborted tool but carries the running list forward, so the
+    // row stays In flight on the background work instead of flipping to Needs-you.
+    const store = new EventStore();
+    const running = [{ id: 'a1', type: 'subagent', status: 'running', description: 'd' }];
+    store.ingest(ev('UserPromptSubmit'));
+    store.ingest(ev('Stop', { backgroundTasks: running }));
+    store.ingest(ev('UserPromptSubmit'));
+    store.ingest(ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:sleep 999' }));
+    expect(store.activityFor('p1').currentAction).toBe('Bash:sleep 999');
+
+    store.markInterrupt('p1');
+
+    const last = store.timeline('p1').at(-1);
+    expect(last?.synthetic).toBe(true);
+    expect(last?.backgroundTasks).toEqual(running);
+    expect(store.activityFor('p1').status).toBe('working');
+    expect(store.activityFor('p1').currentAction).toBe('Background: d');
+  });
+
   it('Seed merge preserves a synthetic interrupt Stop', async () => {
     // REGRESSION: seed re-runs on every session-set change. A wholesale per-pane replace
     // would clobber the frontend-only synthetic interrupt Stop (the Rust ring can't

@@ -18,6 +18,7 @@ import {
   appendBounded,
   deriveEventActivity,
   impliesEverPrompted,
+  runningBackgroundTasks,
   type AgentEvent,
   type EventActivity
 } from './events';
@@ -110,6 +111,30 @@ export class EventStore {
   markInterrupt(paneId: string): void {
     if (this.activityFor(paneId).status !== 'working') return;
     const prior = this.timeline(paneId);
+    // BACKGROUND WORK (fix-background-task-needs-you): a pane can read `working` with
+    // NOTHING in flight — its last real `Stop` still lists a running background task.
+    // The prompt is free, so Esc aborts nothing; a synthetic Stop (which carries no task
+    // list) would flip the row to Needs-you and re-create the false alert. If the last
+    // turn boundary is that Stop → no-op. Otherwise (a tool IS in flight) carry the
+    // running list forward onto the synthetic turn-end so the row stays In flight on the
+    // background work; the next real Stop restates the list either way.
+    let lastBoundary: AgentEvent | undefined;
+    for (let i = prior.length - 1; i >= 0; i--) {
+      if (prior[i].hookEventName !== 'SubagentStop') {
+        lastBoundary = prior[i];
+        break;
+      }
+    }
+    if (lastBoundary?.hookEventName === 'Stop') return;
+    let running: AgentEvent['backgroundTasks'] = undefined;
+    for (let i = prior.length - 1; i >= 0; i--) {
+      const e = prior[i];
+      if (e.hookEventName === 'Stop' && !e.synthetic) {
+        const r = runningBackgroundTasks(e);
+        if (r.length > 0) running = r;
+        break;
+      }
+    }
     // Stamp the synthetic Stop STRICTLY AFTER the last real event so the seed merge
     // can tell a still-valid interrupt (synthetic newest → preserved) from one the
     // agent superseded by working on (a later real event in the durable sink → the
@@ -119,7 +144,14 @@ export class EventStore {
     // `synthetic: true` marks this as a frontend-only interrupt turn-end (not a real
     // hook event): it clears the in-flight tool so the row shows Needs-input, but
     // consumers like task auto-archive must NOT read it as a genuine "returned to user".
-    this.ingest({ paneId, sessionId: '', hookEventName: 'Stop', ts, synthetic: true });
+    this.ingest({
+      paneId,
+      sessionId: '',
+      hookEventName: 'Stop',
+      ts,
+      synthetic: true,
+      ...(running ? { backgroundTasks: running } : {})
+    });
   }
 
   /**

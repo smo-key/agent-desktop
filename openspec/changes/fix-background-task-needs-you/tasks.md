@@ -10,8 +10,13 @@
 - [x] 2.2 Implement the `Stop` classification rule (running background task → `working` + `Background: <description>` / `N background tasks` current action) in `deriveEventActivity`
 - [x] 2.3 Confirm the existing "Trailing SubagentStop preserves a completed turn as waiting" and "The parent's own turn end still reads Needs input" tests still pass unchanged (no `backgroundTasks` → old behavior)
 
-## 3. Verify
+## 3. Interrupt interaction (review finding, TDD)
 
-- [ ] 3.1 Run `yarn check`, `yarn test`, `yarn coverage`, and `cargo test` in `src-tauri`; confirm all pass
-- [ ] 3.2 Live check: in the app, ask a session to launch a background Agent and end its turn; the row stays In flight (current action "Background: …") with no alert, then returns to Needs you once the subagent reports back
-- [ ] 3.3 Run `openspec validate fix-background-task-needs-you` and confirm the change is well-formed
+- [x] 3.1 Add failing tests in `src/lib/overview/events.svelte.test.ts` titled "Interrupt is a no-op while only background work is running" and "Interrupt keeps background work In flight"
+- [x] 3.2 Make `markInterrupt` a no-op when the last turn boundary is a `Stop` (nothing in flight), and carry the last real `Stop`'s running background-task list onto the synthetic turn-end otherwise
+
+## 4. Verify
+
+- [ ] 4.1 Run `yarn check`, `yarn test`, `yarn coverage`, and `cargo test` in `src-tauri`; confirm all pass
+- [ ] 4.2 Live check: in the app, ask a session to launch a background Agent and end its turn; the row stays In flight (current action "Background: …") with no alert, then returns to Needs you once the subagent reports back
+- [ ] 4.3 Run `openspec validate fix-background-task-needs-you` and confirm the change is well-formed
