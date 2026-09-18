@@ -158,11 +158,14 @@ const ENFORCED_CAPABILITIES = new Set([
   // the rendered modal's markup + Esc/backdrop/"Got it" dismissal (a jsdom
   // component test, WhatsNewModal.svelte.test.ts) are all headless-tested.
   'whats-new-dialog',
+  'keep-awake',
 ]);
 
 // Scenarios that cannot be tested headless (GPU / DOM / live TUI). Keyed by
 // capability -> set of snake_case scenario names. Reported as MANUAL, not failed.
 const MANUAL_SCENARIOS = {
+  // The Settings modal row is DOM-only (a Dropdown in SettingsModal.svelte).
+  'keep-awake': new Set(['keep_awake_is_configurable_from_settings']),
   'terminal-core': new Set([
     'webgl_loaded_for_a_visible_pane',
     'context_loss_falls_back_to_dom',

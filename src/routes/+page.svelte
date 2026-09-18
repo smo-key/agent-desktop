@@ -19,6 +19,8 @@
   import { autoAdvance } from '$lib/settings/autoAdvance.svelte';
   import { compactMode } from '$lib/settings/compactMode.svelte';
   import { sessionGrouping } from '$lib/settings/sessionGrouping.svelte';
+  import { keepAwake, shouldKeepAwake } from '$lib/settings/keepAwake.svelte';
+  import { KeepAwakeDriver } from '$lib/settings/keepAwakeDriver';
   import { shellSettings } from '$lib/settings/shell.svelte';
   import { agentSettings } from '$lib/settings/agent.svelte';
   import { isAgentProgram } from '$lib/agent/backends';
@@ -81,7 +83,7 @@
   // on the always-mounted route (the Inbox is mounted only in overview mode), so a
   // sound/desktop alert can fire whether the user is in the overview or driving an
   // agent in the grid. See design D7b/D7c.
-  import { buildRoster } from '$lib/overview/roster';
+  import { buildRoster, isWorking } from '$lib/overview/roster';
   import { toRosterWorkspaces, toNavWorkspaces } from '$lib/overview/rosterInputs';
   import { activationIntent } from '$lib/overview/activate';
   import { focusRequest } from '$lib/overview/focusRequest.svelte';
@@ -137,6 +139,8 @@
     void compactMode.load();
     // Load the sessions-panel grouping preference (defaults to status lanes).
     void sessionGrouping.load();
+    // Load the keep-computer-awake preference (defaults to never).
+    void keepAwake.load();
     // Resolve the platform default shell from the backend and load the user's
     // shell preference. The layout restore below AWAITS this: until it resolves,
     // `defaultShell()` still reports the Unix default, and restoring a Windows
@@ -631,6 +635,23 @@
     }
     alerts.process(alertRows, { appFocused: windowFocus.focused, viewedPaneId });
   });
+
+  // KEEP-AWAKE driver (capability `keep-awake`). Resolves the preference plus the same
+  // always-mounted roster the alerts use (so grid and overview views agree) into one
+  // "hold the sleep inhibitor" boolean, and asks the backend to acquire/release ONLY on
+  // a transition (never once per tick). Teardown releases whatever is held; the Rust
+  // close handler and the platform semantics (`caffeinate -w <pid>`, a thread-owned
+  // Windows execution state) are the further safety nets, so the inhibitor can never
+  // outlive the app.
+  const keepAwakeDriver = new KeepAwakeDriver((enabled) => {
+    void invoke('keep_awake_set', { enabled }).catch(() => {
+      /* best-effort: a missing backend (vite dev) or a failed spawn is not a UI error */
+    });
+  });
+  $effect(() => {
+    keepAwakeDriver.update(shouldKeepAwake(keepAwake.mode, alertRows.some(isWorking)));
+  });
+  $effect(() => () => keepAwakeDriver.release());
 
   // AUTO-ARCHIVE TASK AGENTS: a Claude session spawned by an agent task is meant to
   // be fire-and-forget. Once it FINISHES the turn it was launched for and returns to

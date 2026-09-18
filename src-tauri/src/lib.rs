@@ -9,6 +9,7 @@ pub mod no_window;
 pub mod notify_click;
 pub mod orchestration;
 pub mod polish;
+pub mod power;
 pub mod pr;
 pub mod project_store;
 pub mod pty;
@@ -1656,6 +1657,9 @@ pub fn run() {
         // `voice_transcribe_partial`). Managed so it lives for the app's lifetime
         // and the spawned sidecar is reaped on exit; keeps the tiny model resident.
         .manage(Arc::new(whisper_server::WhisperServer::default()))
+        // The keep-awake sleep inhibitor (driven by `keep_awake_set`). Managed
+        // so the window close handler can force-release it on quit.
+        .manage(power::PowerState::new())
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
             pty_write,
@@ -1711,6 +1715,7 @@ pub fn run() {
             events_for,
             orchestration_reply,
             notify_click::notify_agent,
+            power::keep_awake_set,
             transcribe::voice_transcribe_final,
             transcribe::voice_transcribe_stream,
             models::voice_download_models,
@@ -1732,6 +1737,9 @@ pub fn run() {
             if let WindowEvent::CloseRequested { .. } = event {
                 let manager = window.state::<Arc<PtyManager>>();
                 manager.kill_all();
+                // Drop the keep-awake assertion so the machine can sleep once
+                // the app is gone (the platform shims also die with the process).
+                window.state::<power::PowerState>().shutdown();
             }
         })
         .run(tauri::generate_context!())

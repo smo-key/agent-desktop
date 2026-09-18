@@ -24,6 +24,7 @@
   import ShortcutRecorder from './ShortcutRecorder.svelte';
   import { compactMode, type Density } from '$lib/settings/compactMode.svelte';
   import { sessionGrouping, type GroupingMode } from '$lib/settings/sessionGrouping.svelte';
+  import { keepAwake, type KeepAwakeMode } from '$lib/settings/keepAwake.svelte';
   import { uiPrefs, type TerminalsPlacement } from '$lib/settings/uiPrefs.svelte';
   import { shellSettings } from '$lib/settings/shell.svelte';
   import { agentSettings } from '$lib/settings/agent.svelte';
@@ -148,6 +149,11 @@
   const DESKTOP_OPTIONS: DropdownOption[] = [
     { value: 'off', label: 'Never' },
     { value: 'app-unfocused', label: 'When app is in the background' }
+  ];
+  const KEEP_AWAKE_OPTIONS: DropdownOption[] = [
+    { value: 'never', label: 'Never' },
+    { value: 'agent-running', label: 'While any agent is running' },
+    { value: 'app-open', label: 'While the app is open' }
   ];
 
   // Per-row: is the value a curated choice, or a custom name needing the text field?
@@ -504,6 +510,27 @@
                 }}
               />
             </div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="group">
+        <span class="label">Power</span>
+        <ul class="rows">
+          <li class="row">
+            <span class="desc">Keep computer awake</span>
+            <div class="control">
+              <Dropdown
+                value={keepAwake.mode}
+                options={KEEP_AWAKE_OPTIONS}
+                onChange={(v) => keepAwake.setMode(v as KeepAwakeMode)}
+                width={220}
+                ariaLabel="Keep computer awake"
+              />
+            </div>
+          </li>
+          <li class="row hint-row">
+            <span class="desc hint">Prevents idle sleep so agents' network connections don't drop. The display can still sleep.</span>
           </li>
         </ul>
       </section>
