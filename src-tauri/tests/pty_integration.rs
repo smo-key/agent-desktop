@@ -943,3 +943,61 @@ fn app_quit_kills_orphans_left_by_an_exited_child() {
     assert!(code.is_some(), "exited shell was not reaped / no Exit emitted");
     assert_eq!(manager.live_count(), 0, "panes remain after kill_all");
 }
+
+/// terminal-core: "Writes are queued per pane and never block the caller". A
+/// child that never reads its stdin lets the tty buffer fill; a direct blocking
+/// write would then hang the caller (the app's main thread) — and, under the
+/// registry lock, every other pane. With the per-pane writer queue every write
+/// returns at once, and an unrelated pane stays fully usable meanwhile.
+#[cfg(unix)]
+#[test]
+fn writes_are_queued_per_pane_and_never_block_the_caller() {
+    let manager = PtyManager::new();
+    let (tx, _rx) = mpsc::channel();
+    let stuck = manager
+        .spawn_with_sink(
+            SpawnConfig {
+                program: "/bin/sh".into(),
+                // Raw mode + no reader: nothing drains the tty input queue.
+                args: vec!["-c".into(), "stty raw -echo; sleep 20".into()],
+                cols: 80,
+                rows: 24,
+                ..Default::default()
+            },
+            move |ev| tx.send(ev).map_err(|_| ()),
+        )
+        .expect("spawn should succeed");
+    let (tx2, _rx2) = mpsc::channel();
+    let other = manager
+        .spawn_with_sink(
+            SpawnConfig {
+                program: "/bin/sh".into(),
+                args: vec!["-c".into(), "exec cat".into()],
+                cols: 80,
+                rows: 24,
+                ..Default::default()
+            },
+            move |ev| tx2.send(ev).map_err(|_| ()),
+        )
+        .expect("spawn should succeed");
+    std::thread::sleep(Duration::from_millis(300)); // let `stty raw` take effect
+
+    // 4 MiB into a pane nobody reads: far beyond any tty buffer.
+    let start = Instant::now();
+    for _ in 0..64 {
+        manager
+            .write(stuck, vec![b'x'; 64 * 1024])
+            .expect("enqueue must succeed");
+    }
+    // The other pane's registry operations are not held up by the stuck writer.
+    manager.write(other, b"hi\n".to_vec()).expect("other pane writable");
+    manager.resize(other, 100, 30).expect("other pane resizable");
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "writes must not block the caller (took {:?})",
+        start.elapsed()
+    );
+
+    let _ = manager.kill(stuck);
+    let _ = manager.kill(other);
+}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import PaneNode from '$lib/layout/PaneNode.svelte';
   import PaneContextMenu from '$lib/layout/PaneContextMenu.svelte';
   import SessionRail from '$lib/layout/SessionRail.svelte';
@@ -85,6 +85,13 @@
   import { isWorking } from '$lib/overview/roster';
   import { toNavWorkspaces } from '$lib/overview/rosterInputs';
   import { roster } from '$lib/overview/rosterStore.svelte';
+  import { appActivity } from '$lib/overview/appActivity.svelte';
+  import {
+    WAKE_FETCH_DELAY_MS,
+    inWakeFetchHold,
+    shouldRunTick,
+    type HiddenPolicy
+  } from '$lib/overview/pollGate';
   import { allAgentPaneRefs, isLivePane, liveAgentPaneRefs } from '$lib/overview/paneRefs';
   import { activationIntent } from '$lib/overview/activate';
   import { focusRequest } from '$lib/overview/focusRequest.svelte';
@@ -482,17 +489,50 @@
     void subagents.seed(currentSessionRefs());
   });
 
+  // ── Hidden-window + wake-from-sleep gating (policy: overview/pollGate.ts) ─────
+  // While the window is hidden the visual polls pause and the correctness
+  // backstops (transcript safety poll, event re-seed) run every Nth tick — never
+  // zero, so a needs-input alert still fires for a backgrounded app that missed a
+  // live push. Visibility is read IMPERATIVELY inside the interval, so hiding the
+  // window never re-runs (and re-arms) a poller's effect.
+  const HIDDEN_BACKSTOP_EVERY = 6; // 5 s polls -> every 30 s while hidden
+  function gatedInterval(fn: () => void, ms: number, hidden: HiddenPolicy): () => void {
+    let tick = 0;
+    const id = setInterval(() => {
+      tick++;
+      if (shouldRunTick(tick, appActivity.visible, hidden)) fn();
+    }, ms);
+    return () => clearInterval(id);
+  }
+  function fetchProjectRemotes(): void {
+    const paths = projects.active.map((p) => p.path);
+    void projectGit.fetchRemotes(paths).then(() => projectGit.refresh(paths));
+  }
+  $effect(() => appActivity.start());
+  // RESUME: the window became visible again, or the machine woke from sleep.
+  // Everything that was deferred refreshes ONCE, now — instead of each interval
+  // catching up on its own schedule — except the network fetch after a wake,
+  // which waits WAKE_FETCH_DELAY_MS for the network to come back.
+  $effect(() => {
+    if (appActivity.resumes === 0) return; // initial mount is handled by onMount
+    // `resumes` is the ONLY dependency: the refreshes read reactive stores
+    // (workspaces, projects), which must not re-run this effect when they change.
+    return untrack(() => {
+      void refreshActivity();
+      void events.seed(livePaneRefs());
+      void projectGit.refresh(projects.active.map((p) => p.path));
+      if (!inWakeFetchHold(appActivity.lastWakeMs, Date.now())) return;
+      const id = setTimeout(fetchProjectRemotes, WAKE_FETCH_DELAY_MS);
+      return () => clearTimeout(id);
+    });
+  });
+
   // SAFETY poll for TRANSCRIPT ACTIVITY. Event-driven reads (the `events.onEvent`
   // hook above) do the timely work now — on every tool completion / turn end — so
   // this is only a slow backstop that re-reads content if a triggering event never
   // arrived (e.g. the socket was briefly down). The old fixed 1.5s fast poll is
   // retired in favour of SAFETY_POLL_MS.
-  $effect(() => {
-    const id = setInterval(() => {
-      void refreshActivity();
-    }, SAFETY_POLL_MS);
-    return () => clearInterval(id);
-  });
+  $effect(() => gatedInterval(() => void refreshActivity(), SAFETY_POLL_MS, HIDDEN_BACKSTOP_EVERY));
 
   // PROJECT GIT poll. Each project's folder is probed for its branch + ahead/
   // behind/dirty (the `git_status_for` command) so the project pane shows its
@@ -505,10 +545,12 @@
   $effect(() => {
     const paths = projects.active.map((p) => p.path);
     void projectGit.refresh(paths);
-    const id = setInterval(() => {
-      void projectGit.refresh(projects.active.map((p) => p.path));
-    }, GIT_POLL_MS);
-    return () => clearInterval(id);
+    // Purely visual: paused while the window is hidden (refreshed on resume below).
+    return gatedInterval(
+      () => void projectGit.refresh(projects.active.map((p) => p.path)),
+      GIT_POLL_MS,
+      null
+    );
   });
 
   // PROJECT REMOTE FETCH (background). The fast poll above reads ahead/behind from
@@ -530,11 +572,16 @@
   // the list is still empty, so an initial fetch here would fetch nothing.
   const FETCH_POLL_MS = 180000;
   $effect(() => {
-    const id = setInterval(() => {
-      const paths = projects.active.map((p) => p.path);
-      void projectGit.fetchRemotes(paths).then(() => projectGit.refresh(paths));
-    }, FETCH_POLL_MS);
-    return () => clearInterval(id);
+    // Paused while hidden, and held back right after a wake from sleep (the resume
+    // effect below runs it once the network has had time to return).
+    return gatedInterval(
+      () => {
+        if (inWakeFetchHold(appActivity.lastWakeMs, Date.now())) return;
+        fetchProjectRemotes();
+      },
+      FETCH_POLL_MS,
+      null
+    );
   });
 
   // Keep the EVENT store's seeded set current: whenever the app's session set
@@ -556,8 +603,7 @@
   // errors, so this is cheap, idempotent, and best-effort.
   const EVENT_RESEED_MS = 5000;
   $effect(() => {
-    const id = setInterval(() => void events.seed(livePaneRefs()), EVENT_RESEED_MS);
-    return () => clearInterval(id);
+    return gatedInterval(() => void events.seed(livePaneRefs()), EVENT_RESEED_MS, HIDDEN_BACKSTOP_EVERY);
   });
 
   // Prune GHOST snapshots: whenever the set of open panes changes (a pane closes,
