@@ -99,6 +99,14 @@ curl -sI https://raw.githubusercontent.com/smo-key/agent-desktop/beta/beta-lates
 - Beta: `releases/latest` is **unchanged**, and `beta-latest.json` reports the
   new version with URLs under `/releases/download/v<version>/`.
 
+## Current state (2026-09-18)
+
+`0.4.0-1` is published, but **the beta channel is not reachable yet.** That build
+has the old, permanently-dead beta endpoint compiled in, so its beta channel
+correctly reports "up to date" and will not move until `0.4.0` stable outranks
+it. The `beta-latest.json` endpoint first ships in `0.4.0-2` — that build is what
+makes the beta channel real. Delete this section once it has shipped.
+
 ## Promoting a beta to stable
 
 On `main`, set the version to the plain `0.4.0` and **write a new

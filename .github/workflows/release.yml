@@ -775,8 +775,11 @@ jobs:
           # meanwhile does not lose the manifest.
           pushed=no
           for attempt in 1 2 3; do
+            # FETCH_HEAD, not origin/beta: this job checked out a detached SHA, so
+            # the remote-tracking ref for `beta` is not guaranteed to exist here.
+            # FETCH_HEAD always does.
             git fetch origin beta
-            git checkout -B __beta_manifest origin/beta
+            git checkout -B __beta_manifest FETCH_HEAD
             cp "$work/latest.json" beta-latest.json
             git add beta-latest.json
             if git diff --cached --quiet; then
