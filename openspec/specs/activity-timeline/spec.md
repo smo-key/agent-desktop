@@ -127,3 +127,4 @@ The system SHALL treat the statusline-wrapper snapshot as a non-critical source 
 - **WHEN** a snapshot is present
 - **THEN** the session's cost and model are read from it as before
 
+
