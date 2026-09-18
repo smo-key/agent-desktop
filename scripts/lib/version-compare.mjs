@@ -132,6 +132,41 @@ export function highestTag(tags, opts = {}) {
   return best;
 }
 
+/**
+ * The MSI bundler's ceiling for a prerelease identifier. WiX encodes the
+ * prerelease into a 16-bit field of the ProductVersion.
+ */
+const MSI_PRERELEASE_MAX = 65535;
+
+/**
+ * Whether `v`'s prerelease suffix is one the Windows MSI bundler will accept.
+ *
+ * This is not a style rule — it is a hard constraint of the release, discovered
+ * the expensive way. `tauri build` rejects `0.4.0-beta.1` with:
+ *
+ *     failed to bundle project `optional pre-release identifier in app version
+ *     must be numeric-only and cannot be greater than 65535 for msi target`
+ *
+ * and it does so only AFTER compiling the whole Rust binary, ~12 minutes into the
+ * Windows leg — with the other three platforms already built and uploaded. The
+ * gate therefore rejects such a version up front, in seconds.
+ *
+ * A version with no prerelease is trivially fine. A prerelease must be a SINGLE
+ * numeric identifier (`0.4.0-1`, `0.4.0-2`), which is also why the beta lane
+ * numbers its builds that way rather than as `-beta.N`.
+ *
+ * @param {string} v
+ * @returns {boolean}
+ */
+export function isMsiCompatibleVersion(v) {
+  const p = parseVersion(v);
+  if (!p) return false;
+  if (p.prerelease.length === 0) return true;
+  if (p.prerelease.length > 1) return false;
+  const id = p.prerelease[0];
+  return isNumericId(id) && Number(id) <= MSI_PRERELEASE_MAX;
+}
+
 /** The release channels, and which branch each one releases from. */
 export const CHANNELS = /** @type {const} */ (['stable', 'beta']);
 
@@ -215,7 +250,18 @@ export function decideRelease({ version, channel, tags }) {
     return {
       ...base,
       shouldRelease: false,
-      reason: `version ${v} has no prerelease suffix; the beta lane releases only prereleases such as ${v}-beta.1`
+      reason: `version ${v} has no prerelease suffix; the beta lane releases only prereleases such as ${v}-1`
+    };
+  }
+
+  // Refuse a prerelease the Windows MSI bundler will reject — in the gate, in
+  // seconds, rather than ~12 minutes into the Windows leg with the other three
+  // platforms already built and uploaded to a draft that then has to be binned.
+  if (!isMsiCompatibleVersion(v)) {
+    return {
+      ...base,
+      shouldRelease: false,
+      reason: `version ${v} has a prerelease identifier the Windows MSI bundler rejects; it must be a single number no greater than ${MSI_PRERELEASE_MAX} (use ${parsed.major}.${parsed.minor}.${parsed.patch}-1, not -beta.1)`
     };
   }
 

@@ -131,7 +131,27 @@ So the version math moves out of shell into `scripts/lib/version-compare.mjs`
 functions: `parseVersion`, `compareVersions` (full semver, numeric-vs-alphanumeric
 prerelease identifier rules), `isPrerelease`, `highestTag`, and `decideRelease`.
 `release-gate.sh` keeps its CLI contract (`should_release` / `version` / `tag` on
-`$GITHUB_OUTPUT`, exit 0 on a no-op) and gains a `channel` output.
+`$GITHUB_OUTPUT`, exit 0 on a no-op) and gains `channel` and `tag_exists` outputs.
+
+### 5b. The beta version scheme is dictated by WiX
+
+A beta is numbered `0.4.0-1`, `0.4.0-2`, … rather than `-beta.1`. That is not a
+style choice. `tauri build` rejects a non-numeric prerelease identifier:
+
+```
+failed to bundle project `optional pre-release identifier in app version must be
+numeric-only and cannot be greater than 65535 for msi target`
+```
+
+WiX encodes the prerelease into a 16-bit field of the MSI ProductVersion. The
+cost of learning this at build time is high and asymmetric: the check happens
+*after* the Rust binary is compiled, ~12 minutes into the Windows leg, with
+macOS and both Linux targets already built and uploaded to a draft that then has
+to be binned. So `isMsiCompatibleVersion` is part of the gate, and rejects the
+version in seconds with a message naming the correct form.
+
+(The tag is created only on full success, so a version rejected this way is not
+burned — the same version can be retried once fixed.)
 
 The channel/version-form cross-check is deliberately part of the gate rather than
 a workflow `if:`: it is version math, it is the thing that would otherwise let

@@ -94,9 +94,9 @@ against the app's own compiled version, so all four must agree.
 
 #### Scenario: Prerelease version is carried verbatim
 
-- **WHEN** a beta release runs for version `0.4.0-beta.1`
-- **THEN** `tauri.conf.json` and `Cargo.toml` are set to `0.4.0-beta.1` and the
-  tag created is `v0.4.0-beta.1`
+- **WHEN** a beta release runs for version `0.4.0-1`
+- **THEN** `tauri.conf.json` and `Cargo.toml` are set to `0.4.0-1` and the
+  tag created is `v0.4.0-1`
 
 #### Scenario: No tag when a target fails
 
@@ -164,6 +164,11 @@ The release gate SHALL partition the `v*` tag space by channel and compare versi
   SHALL release only when it is strictly greater than the highest existing tag on
   **either** lane — so a beta can never be published that is already superseded
   by a shipped stable release.
+- A prerelease identifier SHALL additionally be a **single number no greater than
+  65535**, the form the Windows MSI bundler accepts. The gate SHALL reject any
+  other prerelease form, because `tauri build` discovers it only after compiling
+  the binary — minutes into the Windows leg, with the other three platforms
+  already built and uploaded.
 - A version whose form does not match its branch's channel (a prerelease pushed
   to `main`, or a suffix-free version pushed to `beta`) SHALL NOT release, and
   the gate SHALL report the mismatch as its reason and still exit successfully.
@@ -175,14 +180,14 @@ to it, silently stopping the stable lane.
 
 #### Scenario: Consecutive betas both release
 
-- **WHEN** the beta lane has already tagged `v0.4.0-beta.1` and `package.json` on
-  `beta` is bumped to `0.4.0-beta.2`
-- **THEN** the gate decides to release, because `0.4.0-beta.2` is strictly
-  greater than `0.4.0-beta.1`
+- **WHEN** the beta lane has already tagged `v0.4.0-1` and `package.json` on
+  `beta` is bumped to `0.4.0-2`
+- **THEN** the gate decides to release, because `0.4.0-2` is strictly greater
+  than `0.4.0-1`
 
 #### Scenario: Stable lane ignores prerelease tags
 
-- **WHEN** tags `v0.3.2` and `v0.4.0-beta.5` exist and `package.json` on `main`
+- **WHEN** tags `v0.3.2` and `v0.4.0-5` exist and `package.json` on `main`
   is bumped to `0.4.0`
 - **THEN** the gate decides to release `0.4.0`, because the stable baseline is
   `v0.3.2` and the prerelease tag is not considered
@@ -190,9 +195,17 @@ to it, silently stopping the stable lane.
 #### Scenario: Beta must outrank the newest stable
 
 - **WHEN** stable `v0.5.0` has shipped and `package.json` on `beta` is set to
-  `0.4.0-beta.9`
+  `0.4.0-9`
 - **THEN** the gate declines to release, because the beta candidate does not
   exceed the highest existing tag
+
+#### Scenario: A prerelease the Windows bundler rejects never starts a build
+
+- **WHEN** a version whose prerelease identifier is not a single number no
+  greater than 65535 (such as `0.4.0-beta.1`) is pushed to `beta`
+- **THEN** the gate declines to release and its reason names the required form,
+  rather than the pipeline discovering it minutes into the Windows build with the
+  other three platforms already built and uploaded
 
 #### Scenario: Version form must match the branch
 

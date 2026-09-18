@@ -59,8 +59,7 @@ An update check SHALL consider only the release manifests that belong to the sel
   never offered to a user on the stable channel.
 - On `beta`, **both** the beta manifest and the stable manifest are considered,
   and the candidate with the **highest semantic version** wins. Semver ordering
-  applies, so `0.4.0` outranks `0.4.0-beta.3`, and `0.4.0-beta.4` outranks
-  `0.4.0-beta.3`.
+  applies, so `0.4.0` outranks `0.4.0-3`, and `0.4.0-4` outranks `0.4.0-3`.
 
 Selecting a candidate SHALL NOT downgrade: a candidate is offered only when its
 version is greater than the running app's version. A user who switches from
@@ -88,7 +87,7 @@ until a stable release exceeds it.
 
 #### Scenario: Switching back to stable does not downgrade
 
-- **WHEN** a user running prerelease `0.4.0-beta.3` switches to the `stable`
+- **WHEN** a user running prerelease `0.4.0-3` switches to the `stable`
   channel and the newest stable release is `0.3.2`
 - **THEN** no update is offered and the app is not rolled back
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseVersion,
   isPrerelease,
+  isMsiCompatibleVersion,
   compareVersions,
   highestTag,
   channelForBranch,
@@ -43,6 +44,35 @@ describe('isPrerelease', () => {
   });
 });
 
+describe('isMsiCompatibleVersion', () => {
+  // `tauri build` rejects a non-numeric prerelease identifier for the msi target,
+  // but only after compiling the whole binary — so the gate has to catch it.
+  it('accepts a plain version', () => {
+    expect(isMsiCompatibleVersion('0.4.0')).toBe(true);
+  });
+
+  it('accepts a single numeric prerelease identifier', () => {
+    expect(isMsiCompatibleVersion('0.4.0-1')).toBe(true);
+    expect(isMsiCompatibleVersion('0.4.0-65535')).toBe(true);
+  });
+
+  it('rejects a dotted or alphabetic prerelease identifier', () => {
+    // The literal version that failed the Windows leg.
+    expect(isMsiCompatibleVersion('0.4.0-beta.1')).toBe(false);
+    expect(isMsiCompatibleVersion('0.4.0-beta')).toBe(false);
+    expect(isMsiCompatibleVersion('0.4.0-rc.1')).toBe(false);
+    expect(isMsiCompatibleVersion('0.4.0-1.2')).toBe(false);
+  });
+
+  it('rejects a prerelease identifier above the 16-bit ceiling', () => {
+    expect(isMsiCompatibleVersion('0.4.0-65536')).toBe(false);
+  });
+
+  it('rejects an unparseable version', () => {
+    expect(isMsiCompatibleVersion('latest')).toBe(false);
+  });
+});
+
 describe('compareVersions', () => {
   // SemVer 2.0.0 §11 precedence, including the prerelease rules the gate's old
   // truncating shell compare could not express.
@@ -80,18 +110,18 @@ describe('compareVersions', () => {
 });
 
 describe('highestTag', () => {
-  const tags = ['v0.3.0', 'v0.3.2', 'v0.4.0-beta.1', 'v0.4.0-beta.10', 'v-old', 'nightly'];
+  const tags = ['v0.3.0', 'v0.3.2', 'v0.4.0-1', 'v0.4.0-10', 'v-old', 'nightly'];
 
   it('excludes prereleases for the stable baseline', () => {
     expect(highestTag(tags, { prerelease: 'exclude' })).toBe('v0.3.2');
   });
 
   it('considers every lane for the beta baseline', () => {
-    expect(highestTag(tags, { prerelease: 'any' })).toBe('v0.4.0-beta.10');
+    expect(highestTag(tags, { prerelease: 'any' })).toBe('v0.4.0-10');
   });
 
   it('considers only prereleases when asked', () => {
-    expect(highestTag(tags, { prerelease: 'only' })).toBe('v0.4.0-beta.10');
+    expect(highestTag(tags, { prerelease: 'only' })).toBe('v0.4.0-10');
   });
 
   it('ignores unparseable tags instead of letting them win', () => {
@@ -100,7 +130,7 @@ describe('highestTag', () => {
 
   it('returns null when nothing qualifies', () => {
     expect(highestTag([], { prerelease: 'exclude' })).toBeNull();
-    expect(highestTag(['v0.4.0-beta.1'], { prerelease: 'exclude' })).toBeNull();
+    expect(highestTag(['v0.4.0-1'], { prerelease: 'exclude' })).toBeNull();
   });
 });
 
@@ -116,20 +146,28 @@ describe('channelForBranch', () => {
 describe('decideRelease', () => {
   it('Consecutive betas both release', () => {
     const d = decideRelease({
-      version: '0.4.0-beta.2',
+      version: '0.4.0-2',
       channel: 'beta',
-      tags: ['v0.3.2', 'v0.4.0-beta.1']
+      tags: ['v0.3.2', 'v0.4.0-1']
     });
     expect(d.shouldRelease).toBe(true);
-    expect(d.tag).toBe('v0.4.0-beta.2');
-    expect(d.baseline).toBe('v0.4.0-beta.1');
+    expect(d.tag).toBe('v0.4.0-2');
+    expect(d.baseline).toBe('v0.4.0-1');
+  });
+
+  it('refuses a prerelease the Windows MSI bundler would reject', () => {
+    // Caught in the gate in seconds, instead of ~12 minutes into the Windows leg
+    // with macOS and both Linux targets already built and uploaded.
+    const d = decideRelease({ version: '0.4.0-beta.1', channel: 'beta', tags: ['v0.3.2'] });
+    expect(d.shouldRelease).toBe(false);
+    expect(d.reason).toMatch(/MSI bundler rejects/);
   });
 
   it('Stable lane ignores prerelease tags', () => {
     const d = decideRelease({
       version: '0.4.0',
       channel: 'stable',
-      tags: ['v0.3.2', 'v0.4.0-beta.5']
+      tags: ['v0.3.2', 'v0.4.0-5']
     });
     expect(d.shouldRelease).toBe(true);
     expect(d.baseline).toBe('v0.3.2');
@@ -137,9 +175,9 @@ describe('decideRelease', () => {
 
   it('Beta must outrank the newest stable', () => {
     const d = decideRelease({
-      version: '0.4.0-beta.9',
+      version: '0.4.0-9',
       channel: 'beta',
-      tags: ['v0.3.2', 'v0.5.0', 'v0.4.0-beta.8']
+      tags: ['v0.3.2', 'v0.5.0', 'v0.4.0-8']
     });
     expect(d.shouldRelease).toBe(false);
     expect(d.baseline).toBe('v0.5.0');
@@ -147,7 +185,7 @@ describe('decideRelease', () => {
 
   it('Version form must match the branch', () => {
     const onMain = decideRelease({
-      version: '0.4.0-beta.1',
+      version: '0.4.0-1',
       channel: 'stable',
       tags: ['v0.3.2']
     });
@@ -161,9 +199,9 @@ describe('decideRelease', () => {
 
   it('is idempotent once the tag exists', () => {
     const d = decideRelease({
-      version: '0.4.0-beta.1',
+      version: '0.4.0-1',
       channel: 'beta',
-      tags: ['v0.3.2', 'v0.4.0-beta.1']
+      tags: ['v0.3.2', 'v0.4.0-1']
     });
     expect(d.shouldRelease).toBe(false);
     expect(d.reason).toMatch(/already exists/);
