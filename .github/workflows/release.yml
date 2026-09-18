@@ -705,43 +705,52 @@ jobs:
       # -----------------------------------------------------------------------
       # Beta lane only: point the beta update endpoint at THIS release.
       #
-      # GitHub serves `releases/latest/download/<asset>` for the newest
-      # NON-prerelease release and offers nothing equivalent for prereleases, so
-      # the beta channel needs a fixed tag it can always fetch. We keep a pinned
-      # `beta-channel` prerelease holding a copy of the just-published
-      # `latest.json`.
+      # The beta channel needs ONE fixed URL that always serves the newest beta's
+      # `latest.json`. GitHub gives `releases/latest/download/<asset>` for the
+      # newest NON-prerelease release and nothing equivalent for prereleases, so
+      # that URL has to come from somewhere else. It is a file on the `beta`
+      # branch, served by raw.githubusercontent.
       #
-      # CREATE-IF-MISSING, THEN CLOBBER THE ASSET. An earlier draft of this step
-      # deleted and recreated the whole release to dodge any CDN staleness on a
-      # replaced asset. That trade was wrong: the delete opens a window in which
-      # the endpoint 404s for every beta user, and if the recreate then fails
-      # (transient 5xx, or a 422 because the just-deleted tag ref has not settled)
-      # the endpoint stays 404 with NO previous manifest to fall back on, and no
-      # automated recovery. A briefly-cached manifest is a beta that arrives a few
-      # minutes late; a 404 is a beta channel that is simply broken — and, because
-      # the plugin reports a missing manifest as a check ERROR, one that reports
-      # "Couldn't check" rather than "up to date". So: never delete.
+      # It is NOT a pinned "beta-channel" release, which is what this did first.
+      # Releases in this repo are IMMUTABLE, and immutability is stronger than it
+      # looks: assets cannot be added after publish ("HTTP 422: Cannot upload
+      # assets to an immutable release"), AND the tag name is burned permanently —
+      # after deleting both the release and its tag, recreating it still fails with
+      # "tag_name was used by an immutable release". A fixed release tag can
+      # therefore be published exactly once, so no rewritable pinned release is
+      # possible here at all.
       #
-      # `--clobber` replaces the asset in place, which is also what makes this step
-      # safe to re-run: with the tag step above now idempotent, "Re-run failed
-      # jobs" reaches it again and simply overwrites.
+      # The manifest's URLs still have to be repointed at this release's own tag.
+      # tauri-action writes every platform URL as `releases/latest/download/<asset>`,
+      # assuming the release it built becomes `releases/latest`. For a beta that is
+      # false BY CONSTRUCTION — it is a prerelease precisely so it does not become
+      # latest — so those URLs resolve to the newest STABLE release, which does not
+      # have the beta's assets, and 404. Verified on v0.4.0-1: the `latest` form
+      # 404s, the tagged form is 200. Left unfixed, every beta update would be
+      # found and then fail to download. scripts/beta-manifest.mjs rewrites them
+      # and FAILS if nothing matched, so a format change upstream cannot quietly
+      # ship a manifest of dead links.
       #
-      # Ordering is load-bearing. `latest.json` gains one platform entry per build
-      # leg, so this must run AFTER the versioned Release is published (i.e. after
-      # all four legs finished) — copying it earlier would pin the beta channel to
-      # a partially populated manifest. A failed run never reaches this step, so a
-      # failed beta attempt leaves the previous beta's manifest serving.
+      # raw.githubusercontent caches for ~5 minutes; the app re-checks hourly, so a
+      # beta arrives at worst a few minutes late. The commit carries [skip ci] so
+      # it does not start another run.
       #
-      # A STABLE release deliberately does not touch this: a stable build that
+      # Ordering is load-bearing: `latest.json` gains one platform entry per build
+      # leg, so this runs AFTER the versioned Release is published (i.e. after all
+      # four legs finished). A failed run never reaches this step, so a failed beta
+      # attempt leaves the previous beta's manifest serving.
+      #
+      # A STABLE release deliberately touches none of this: a stable build that
       # outranks the current beta reaches beta users through the app's
-      # highest-version-wins comparison, not by rewriting the beta manifest.
+      # highest-version-wins comparison, not by rewriting the beta manifest. The
+      # stable manifest also keeps its `releases/latest` URLs, which are correct
+      # there and are what let an older stable build resolve the newest one.
       # -----------------------------------------------------------------------
-      - name: Refresh the pinned beta-channel manifest
+      - name: Publish the beta update manifest
         if: needs.gate.outputs.channel == 'beta'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.gate.outputs.tag }}
-          RELEASE_SHA: ${{ needs.gate.outputs.release_sha }}
         run: |
           set -uo pipefail
           work="$(mktemp -d)"
@@ -752,34 +761,39 @@ jobs:
             echo "::error::$TAG has no latest.json asset; the updater artifacts were not produced, so the beta channel cannot be pointed at this release."
             exit 1
           fi
-          echo "----- beta latest.json -----"
-          cat "$work/latest.json"
           set -e
 
-          # Create the pinned release only if it does not exist yet (first beta
-          # ever, or someone deleted it). `--prerelease` is load-bearing: without
-          # it this release, being the newest, would become `releases/latest` and
-          # serve the BETA manifest to every stable user and to the one-line
-          # installers.
-          # `gh release view`'s exit code is the existence probe, but a network
-          # blip also reads as "missing" — which would send us into `gh release
-          # create` and a 422. So a failed create is NOT fatal here: fall through
-          # and let the upload be the thing that decides. If the release genuinely
-          # does not exist, the upload fails loudly, which is the right place for
-          # the job to stop.
-          if gh release view beta-channel >/dev/null 2>&1; then
-            echo "beta-channel release exists; replacing its manifest in place."
-          else
-            echo "beta-channel release not found; creating it."
-            gh release create beta-channel \
-              --title "Beta channel manifest" \
-              --notes "Update manifest for the newest beta release. Refreshed by the release pipeline on every beta publish; not a downloadable build." \
-              --prerelease \
-              --target "$RELEASE_SHA" \
-              || echo "::warning::gh release create beta-channel failed (it may already exist); continuing to the upload."
-          fi
+          node scripts/beta-manifest.mjs "$work/latest.json" "$TAG"
+          echo "----- beta-latest.json -----"
+          cat "$work/latest.json"
 
-          gh release upload beta-channel "$work/latest.json" --clobber
-          gh release edit beta-channel --prerelease \
-            --notes "Update manifest for the newest beta release ($TAG). Refreshed by the release pipeline on every beta publish; not a downloadable build."
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Commit onto the tip of `beta` (not the release sha, which may already
+          # be behind). Retried once against a re-fetched tip so a push that lands
+          # meanwhile does not lose the manifest.
+          pushed=no
+          for attempt in 1 2 3; do
+            git fetch origin beta
+            git checkout -B __beta_manifest origin/beta
+            cp "$work/latest.json" beta-latest.json
+            git add beta-latest.json
+            if git diff --cached --quiet; then
+              echo "beta-latest.json already up to date for $TAG."
+              pushed=yes
+              break
+            fi
+            git commit -m "chore(release): beta update manifest for $TAG [skip ci]"
+            if git push origin HEAD:beta; then
+              pushed=yes
+              break
+            fi
+            echo "::warning::attempt $attempt to push beta-latest.json failed; retrying."
+            sleep 5
+          done
+          if [ "$pushed" != "yes" ]; then
+            echo "::error::Could not publish beta-latest.json; the beta update endpoint is still serving the previous beta. Recover by hand: gh release download $TAG --pattern latest.json && node scripts/beta-manifest.mjs latest.json $TAG && cp latest.json beta-latest.json, then commit it to the beta branch."
+            exit 1
+          fi
           rm -rf "$work"
