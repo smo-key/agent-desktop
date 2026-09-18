@@ -28,13 +28,9 @@
   } from './overview/terminalActivity';
   import { events } from './overview/events.svelte';
 
-  // PtyEvent — the exact wire shape the Rust backend streams over the per-pane
-  // Channel (internally tagged on `event`):
-  //   { event: 'data', bytes: number[] }  -> raw output bytes (write to xterm)
-  //   { event: 'exit', code: number }     -> child exited and was reaped
-  type PtyEvent =
-    | { event: 'data'; bytes: number[] }
-    | { event: 'exit'; code: number };
+  // PtyEvent — the wire shape the Rust backend streams over the per-pane Channel
+  // (output bytes as base64); see ptyEvents.ts.
+  import { decodePtyBytes, type PtyEvent } from './ptyEvents';
 
   let {
     /** Stable identity for this pane. Caller keys usage on it (`{#key paneId}`). */
@@ -628,7 +624,7 @@
         if (!term) return;
         if (msg.event === 'data') {
           // Raw bytes, verbatim — xterm reassembles split codepoints / escapes.
-          term.write(new Uint8Array(msg.bytes));
+          term.write(decodePtyBytes(msg.b64));
           // Record PTY activity for the agent-overview status (working vs waiting)
           // and, on the first byte, deliver any pending initial prompt now that
           // claude's TUI has begun rendering.

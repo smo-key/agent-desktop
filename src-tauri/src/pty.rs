@@ -44,10 +44,23 @@ const READ_CHUNK: usize = 64 * 1024;
 pub enum PtyEvent {
     /// Raw, ordered output bytes read from the PTY master. Never UTF-8 decoded
     /// in Rust; the frontend writes them via `term.write(new Uint8Array(bytes))`.
-    Data { bytes: Vec<u8> },
+    ///
+    /// On the wire this is `{ "event": "data", "b64": "<base64>" }`: a JSON array
+    /// of numbers costs ~3.7 bytes per output byte to serialize, embed in the
+    /// eval'd channel message, and parse in the webview; base64 costs 1.33.
+    Data {
+        #[serde(rename = "b64", serialize_with = "serialize_b64")]
+        bytes: Vec<u8>,
+    },
     /// The child exited (observed as EOF on the master, then reaped via
     /// `child.wait()`); `code` is the process exit code.
     Exit { code: i32 },
+}
+
+/// Serialize raw PTY bytes as standard base64 (see [`PtyEvent::Data`]).
+fn serialize_b64<S: serde::Serializer>(bytes: &[u8], ser: S) -> Result<S::Ok, S::Error> {
+    use base64::Engine;
+    ser.serialize_str(&base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
 /// Parameters for spawning a pane's PTY-backed process.
@@ -75,8 +88,13 @@ pub struct SpawnConfig {
 struct Pane {
     /// Master side of the PTY; used for resize and to take the writer.
     master: Box<dyn MasterPty + Send>,
-    /// Writer into the PTY (slave stdin); raw bytes, no decoding.
-    writer: Box<dyn Write + Send>,
+    /// Ordered queue into this pane's dedicated `pty-writer-*` thread, which owns
+    /// the PTY writer (slave stdin; raw bytes, no decoding). Writes are ENQUEUED,
+    /// never performed on the caller's thread: `pty_write` runs on the main thread
+    /// (kept sync so keystrokes stay ordered), and a child that stopped draining
+    /// its tty would otherwise block the UI — and, under the registry lock, every
+    /// other pane. Dropping the sender ends the thread, which drops the writer.
+    writer_tx: std::sync::mpsc::Sender<Vec<u8>>,
     /// Killer cloned from the child so we can terminate it from any thread.
     /// Fallback only: the primary teardown path is [`process_tree::terminate`]
     /// on `pid`, which also reaches descendants the killer cannot see.
@@ -234,9 +252,23 @@ impl PtyManager {
             })
             .map_err(|e| format!("failed to spawn reader thread: {e}"))?;
 
+        // The writer thread owns the PTY writer and drains the ordered queue.
+        let (writer_tx, writer_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        std::thread::Builder::new()
+            .name(format!("pty-writer-{id}"))
+            .spawn(move || {
+                let mut writer = writer;
+                while let Ok(data) = writer_rx.recv() {
+                    if writer.write_all(&data).is_err() || writer.flush().is_err() {
+                        break; // child gone / tty closed: stop, dropping the writer.
+                    }
+                }
+            })
+            .map_err(|e| format!("failed to spawn writer thread: {e}"))?;
+
         let pane = Pane {
             master: pair.master,
-            writer,
+            writer_tx,
             killer,
             pid,
             reaped,
@@ -249,17 +281,18 @@ impl PtyManager {
     /// Forward raw input bytes to a pane's PTY writer. Errors (without panic) if
     /// the pane does not exist.
     pub fn write(&self, id: PaneId, data: Vec<u8>) -> Result<(), String> {
-        let mut panes = self.panes.lock().unwrap();
-        let pane = panes
-            .get_mut(&id)
-            .ok_or_else(|| format!("no live pane with id {id}"))?;
-        pane.writer
-            .write_all(&data)
-            .map_err(|e| format!("write failed: {e}"))?;
-        pane.writer
-            .flush()
-            .map_err(|e| format!("flush failed: {e}"))?;
-        Ok(())
+        // Clone the sender under the lock, enqueue outside it: never blocks, and
+        // per-pane order is the queue order.
+        let tx = {
+            let panes = self.panes.lock().unwrap();
+            panes
+                .get(&id)
+                .ok_or_else(|| format!("no live pane with id {id}"))?
+                .writer_tx
+                .clone()
+        };
+        tx.send(data)
+            .map_err(|_| format!("pane {id} writer has stopped"))
     }
 
     /// Resize a pane's PTY (delivers SIGWINCH to the child). Rejects 0×0 and a
@@ -1164,7 +1197,8 @@ mod tests {
         })
         .unwrap();
         assert_eq!(data["event"], "data");
-        assert_eq!(data["bytes"], serde_json::json!([1, 2, 255]));
+        assert_eq!(data["b64"], "AQL/", "bytes travel as base64, not a number array");
+        assert!(data.get("bytes").is_none());
 
         let exit = serde_json::to_value(PtyEvent::Exit { code: 0 }).unwrap();
         assert_eq!(exit["event"], "exit");

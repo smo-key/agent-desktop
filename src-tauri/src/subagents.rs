@@ -60,6 +60,10 @@ const PARENT_TAIL_BYTES: u64 = 1 << 20; // 1 MiB
 /// changes (see [`span_cache`]).
 const SPAN_WINDOW_BYTES: u64 = 64 * 1024;
 
+/// How long the recompute worker keeps draining fs events after the first one
+/// before recomputing the union of touched sessions once (burst coalescing).
+const BURST_WINDOW: Duration = Duration::from_millis(150);
+
 /// Upper bound on cached transcript spans before the cache is reset wholesale
 /// (a crude bound; the working set is the live sessions' subagent files).
 const SPAN_CACHE_MAX: usize = 8192;
@@ -848,7 +852,68 @@ where
         .map_err(|e| format!("create_dir_all {projects_base:?}: {e}"))?;
 
     let base_owned = projects_base.to_path_buf();
-    let emit = Mutex::new(EmitState::default());
+
+    // The notify callback does NO IO: it maps the event's paths to the watched
+    // sessions they belong to and hands those ids to a worker. The worker takes
+    // the first id, keeps draining for [`BURST_WINDOW`], then recomputes the UNION
+    // once — so a burst of fs events (a streaming transcript, or the backlog the
+    // OS replays after a wake from sleep) costs one recompute per session instead
+    // of one per event. The worker exits when the watcher (and so the sender) drops.
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<String>>();
+    let worker_sessions = sessions.clone();
+    std::thread::Builder::new()
+        .name("subagents-recompute".into())
+        .spawn(move || {
+            let mut emit = EmitState::default();
+            while let Ok(first) = rx.recv() {
+                let mut ids: Vec<String> = first;
+                let deadline = Instant::now() + BURST_WINDOW;
+                loop {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        break;
+                    }
+                    match rx.recv_timeout(left) {
+                        Ok(more) => ids.extend(more),
+                        Err(_) => break,
+                    }
+                }
+                ids.sort();
+                ids.dedup();
+                // Snapshot the watched set and RELEASE the lock before any IO.
+                let watched: Vec<SessionRef> = lock_sessions(&worker_sessions).clone();
+                let touched: Vec<SessionRef> = watched
+                    .iter()
+                    .filter(|s| ids.binary_search(&s.session_id).is_ok())
+                    .cloned()
+                    .collect();
+                if touched.is_empty() {
+                    continue;
+                }
+                let partial = subagents_for_sessions(&base_owned, &touched, launch_time_ms);
+                let map = {
+                    let mut cached = match cache.lock() {
+                        Ok(g) => g,
+                        Err(p) => p.into_inner(),
+                    };
+                    for (sid, subs) in partial {
+                        cached.insert(sid, subs);
+                    }
+                    cached.retain(|sid, _| watched.iter().any(|s| &s.session_id == sid));
+                    cached.clone()
+                };
+                // Coalesce: suppress an identical map re-emitted within the window.
+                let now = Instant::now();
+                if let Some((last, when)) = &emit.last_emit {
+                    if *last == map && now.duration_since(*when) < COALESCE_WINDOW {
+                        continue;
+                    }
+                }
+                emit.last_emit = Some((map.clone(), now));
+                on_change(map);
+            }
+        })
+        .map_err(|e| format!("spawn subagents-recompute: {e}"))?;
 
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         let Ok(event) = res else {
@@ -860,41 +925,15 @@ where
         ) {
             return;
         }
-        // Snapshot the shared session set, then recompute ONLY the sessions this
-        // batch of paths touched (a change elsewhere in the tree costs no IO), and
-        // patch the shared map so untouched sessions keep their last rows.
-        let sess = lock_sessions(&sessions);
-        let touched = sessions_touched(&sess, &event.paths);
-        if touched.is_empty() {
-            return;
+        // A change elsewhere in the (large, recursively watched) tree maps to no
+        // watched session and is dropped here, before any IO or thread hand-off.
+        let ids: Vec<String> = sessions_touched(&lock_sessions(&sessions), &event.paths)
+            .into_iter()
+            .map(|s| s.session_id)
+            .collect();
+        if !ids.is_empty() {
+            let _ = tx.send(ids);
         }
-        let partial = subagents_for_sessions(&base_owned, &touched, launch_time_ms);
-        let map = {
-            let mut cached = match cache.lock() {
-                Ok(g) => g,
-                Err(p) => p.into_inner(),
-            };
-            for (sid, subs) in partial {
-                cached.insert(sid, subs);
-            }
-            cached.retain(|sid, _| sess.iter().any(|s| &s.session_id == sid));
-            cached.clone()
-        };
-        drop(sess);
-        // Coalesce: suppress an identical map re-emitted within the window.
-        let mut guard = match emit.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        let now = Instant::now();
-        if let Some((last, when)) = &guard.last_emit {
-            if *last == map && now.duration_since(*when) < COALESCE_WINDOW {
-                return;
-            }
-        }
-        guard.last_emit = Some((map.clone(), now));
-        drop(guard);
-        on_change(map);
     })
     .map_err(|e| format!("recommended_watcher: {e}"))?;
 
@@ -1589,6 +1628,60 @@ mod tests {
         assert_eq!(map["sess-W"][0].usage.unwrap().tokens, Some(9));
 
         drop(watcher); // stops the watch cleanly.
+    }
+
+    /// A BURST of writes under one watched session (a streaming transcript, or the
+    /// fs-event backlog replayed after a wake) is coalesced: the worker recomputes
+    /// the session once per burst window, not once per event.
+    #[test]
+    fn watcher_coalesces_a_burst_of_events() {
+        let tmp = TempDir::new("watch-burst");
+        let base = tmp.path();
+        let proj = project_dir_for_cwd("/work/w");
+        let session = make_session(base, &proj, "sess-A");
+        let watched: WatchedSessions = Arc::new(Mutex::new(vec![SessionRef {
+            session_id: "sess-A".into(),
+            cwd: Some("/work/w".into()),
+            ..Default::default()
+        }]));
+        let (tx, rx) = mpsc::channel::<HashMap<String, Vec<Subagent>>>();
+        let watcher = start_subagents_watcher(
+            base,
+            watched,
+            Arc::new(Mutex::new(HashMap::new())),
+            0,
+            move |map| {
+                let _ = tx.send(map);
+            },
+        )
+        .expect("watcher starts");
+
+        // 30 distinct workflow records written back-to-back: every write changes
+        // the map, so without burst coalescing each would emit.
+        for i in 0..30 {
+            write_workflow(
+                &session,
+                &format!("wf_{i}"),
+                &format!(
+                    r#"[{{"type":"workflow_agent","label":"s","agentId":"a{i}","state":"done","tokens":1}}]"#
+                ),
+            );
+        }
+        let mut emits = 0;
+        let mut last_len = 0;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_millis(800)) {
+                Ok(map) => {
+                    emits += 1;
+                    last_len = map.get("sess-A").map(|v| v.len()).unwrap_or(0);
+                }
+                Err(_) => break,
+            }
+        }
+        assert_eq!(last_len, 30, "the final emit reflects every write");
+        assert!(emits < 15, "a burst must be coalesced, got {emits} emits for 30 writes");
+        drop(watcher);
     }
 
     // ── Incremental recompute (performance) ─────────────────────────────────
