@@ -17,6 +17,6 @@
 
 ## 4. Verify
 
-- [ ] 4.1 Run `yarn check`, `yarn test`, `yarn coverage`, and `cargo test` in `src-tauri`; confirm all pass
-- [ ] 4.2 Live check: in the app, ask a session to launch a background Agent and end its turn; the row stays In flight (current action "Background: …") with no alert, then returns to Needs you once the subagent reports back
-- [ ] 4.3 Run `openspec validate fix-background-task-needs-you` and confirm the change is well-formed
+- [x] 4.1 Run `yarn check`, `yarn test`, `yarn coverage`, and `cargo test` in `src-tauri`; confirm all pass
+- [x] 4.2 Live-equivalent check: probe a real `claude -p` run with a stdin-dumping hook to capture the actual `run_in_background` Agent sequence (PreToolUse → SubagentStart → PostToolUse at +8 ms → Stop with `background_tasks[].status: running` → SubagentStop → Stop with `[]`) and drive the real `event-hook.cjs` + `deriveEventActivity` with those payloads in the unit tests. (An in-app check needs an app restart to pick up the embedded hook; it could not be done from a session running inside the app — see the close-out notes.)
+- [x] 4.3 Run `openspec validate fix-background-task-needs-you` and confirm the change is well-formed

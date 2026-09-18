@@ -2,7 +2,7 @@
 
 ### Requirement: Keep-awake preference persists in settings
 
-The application SHALL offer a **Keep computer awake** preference with exactly three modes — `never` (default), `agent-running`, and `app-open` — persisted in the durable `keepAwake` slice of `settings.json` (never `localStorage`), loaded once on startup, and saved on every change without clobbering sibling slices.
+The application SHALL offer a **Keep computer awake** preference with exactly three modes — `never` (default), `agent-running`, and `app-open` — persisted in the durable `keepAwake` slice of `settings.json` (never `localStorage`), loaded once on startup, and saved on every change without clobbering sibling slices. The preference SHALL be configurable from the Settings modal.
 
 #### Scenario: Keep-awake preference persists in settings
 - **WHEN** the user selects a keep-awake mode
@@ -11,6 +11,10 @@ The application SHALL offer a **Keep computer awake** preference with exactly th
 #### Scenario: Malformed keep-awake preference falls back to never
 - **WHEN** the persisted `keepAwake` slice is missing, not an object, or carries an unknown mode
 - **THEN** the preference resolves to `never`
+
+#### Scenario: Keep-awake is configurable from Settings
+- **WHEN** the user opens Settings
+- **THEN** a **Keep computer awake** control offers Never / While any agent is running / While the app is open and reflects the current mode
 
 ### Requirement: Keep-awake resolves from mode and agent activity
 
@@ -44,7 +48,3 @@ The backend SHALL expose an idempotent acquire/release of a system idle-sleep in
 #### Scenario: Inhibitor is released when the app closes
 - **WHEN** the app window receives a close request while the inhibitor is held
 - **THEN** the inhibitor is released before the process exits
-
-#### Scenario: Keep-awake is configurable from Settings
-- **WHEN** the user opens Settings
-- **THEN** a **Keep computer awake** control offers Never / While any agent is running / While the app is open and reflects the current mode
