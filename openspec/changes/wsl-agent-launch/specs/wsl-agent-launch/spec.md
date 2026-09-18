@@ -158,7 +158,9 @@ A pipeline that delivers over a host-local socket address SHALL be omitted from 
 WSL-launched session's configuration, because a process inside the distro cannot
 reach it. A pipeline that delivers by writing to a file SHALL be RETAINED, with
 its paths translated, because the host filesystem is reachable from inside the
-distro.
+distro — but ONLY when the interpreter that pipeline's command requires is
+present inside the distro. Where it is not, that pipeline SHALL be omitted on the
+same terms as one that cannot reach its destination.
 
 Settings that govern correctness rather than observability SHALL be applied
 unconditionally.
@@ -173,9 +175,17 @@ unconditionally.
 
 #### Scenario: File-delivered status is retained
 
-- **WHEN** an agent session is launched inside a distro
+- **WHEN** an agent session is launched inside a distro that has the interpreter
+  the status pipeline's command requires
 - **THEN** the file-writing status pipeline is configured with translated paths
   and continues to function
+
+#### Scenario: The distro lacks the required interpreter
+
+- **WHEN** an agent session is launched inside a distro where the interpreter the
+  status pipeline requires is absent
+- **THEN** that pipeline is omitted rather than configured to fail silently
+- **AND** the session still launches
 
 #### Scenario: Correctness settings are unconditional
 

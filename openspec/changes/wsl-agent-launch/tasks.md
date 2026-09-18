@@ -13,9 +13,11 @@
 - [ ] 1.5 `toWslPath(p)`: UNC → `/…`; `C:\Users\X` and `C:/Users/X` →
   `/mnt/c/Users/X`; an already-POSIX path unchanged. Backslashes normalized.
 - [ ] 1.6 `wslInvocation({ distro, cwd, exe, args })` → `{ program, args }`
-  building `wsl.exe [-d D] -- sh -lc 'cd "$1" && shift && exec "$@"' _ <cwd> <exe> <args…>`
+  building
+  `wsl.exe [-d D] -- sh -lc 'cd "$1" || exit 1; shift; exec "$@"' sh <cwd> <exe> <args…>`
   (design D1/D2). Arguments are passed positionally — NEVER interpolated into the
-  script text.
+  script text. NOTE the literal `sh` placeholder: POSIX assigns the first operand
+  after the script to `$0`, so omitting it would shift every parameter by one.
 - [ ] 1.7 Unit tests in `src/lib/shell/wsl.test.ts`, with `it(...)` titles
   matching the `#### Scenario:` names from the `wsl-agent-launch` spec so the
   coverage gate can match them. Cover: spaces and quotes in the cwd, the legacy
@@ -25,8 +27,12 @@
 
 - [ ] 2.1 Add `detect_agent_executables(shell: String)` to
   `src-tauri/src/shell_path.rs`, returning one optional path per agent kind.
-- [ ] 2.2 WSL branch: run `wsl.exe [-d D] -- sh -lc 'command -v claude; command -v copilot'`
-  under the existing `SHELL_TIMEOUT` guard, parsing one path per line.
+- [ ] 2.2 WSL branch: run
+  `wsl.exe [-d D] -- sh -lc 'command -v claude; command -v copilot; command -v node'`
+  under the existing `SHELL_TIMEOUT` guard, parsing one path per line. `node` is
+  probed because the statusline wrapper is invoked as `node "<path>"` and that is
+  the DISTRO's node, not the Windows one — D5's retention of the statusline is
+  conditional on it.
 - [ ] 2.3 Non-WSL branch: probe the host `PATH` (`which`/`where`) for the same
   executables, so the placeholder is populated on every platform, not just WSL.
 - [ ] 2.4 Cache the result KEYED BY THE SHELL it was probed with — NOT a
@@ -61,8 +67,9 @@
 - [ ] 4.2 In `buildSpawnOverride`, when the shell is a WSL launcher and the
   program is an agent kind: resolve the executable, build the WSL invocation, and
   return the wrapper as `program` with the translated `cwd`.
-- [ ] 4.3 Omit the `hooks` key from `--settings` for a WSL launch; KEEP
-  `statusLine` with its script path translated via `toWslPath` (design D5).
+- [ ] 4.3 Omit the `hooks` key from `--settings` for a WSL launch. KEEP
+  `statusLine`, with its script path translated via `toWslPath`, ONLY when the
+  probe found `node` inside the distro; omit it too when it did not (design D5).
   `remoteControlAtStartup: false` and `disableAgentView: true` stay unconditional.
 - [ ] 4.4 Translate `AGENT_DESKTOP_SNAPSHOT_DIR` for a WSL launch; drop
   `AGENT_DESKTOP_SOCKET_PATH`, which cannot be reached from inside the distro.
@@ -92,7 +99,11 @@
   `wsl.exe -l -q` lists the distro; a session launches in a
   `\\wsl.localhost\<distro>\…` folder; the detected executable appears as the
   settings placeholder; an explicit override takes effect; and the statusline
-  snapshot file is written.
+  snapshot file is written. ALSO confirm the three assumptions this change could
+  not test from macOS: that the arg vector survives `wsl.exe` re-splitting the
+  Win32 command line intact (a cwd containing a space still lands correctly),
+  that `node` is present in the distro, and that a login profile which changes
+  directory does not defeat the `cd`.
 - [ ] 6.4 Run the `adversarial-code-review` skill over the implementation diff and
   resolve every CRITICAL finding (or prove it a false positive) before archiving.
 - [ ] 6.5 Run `openspec validate wsl-agent-launch` and reconcile any conversation

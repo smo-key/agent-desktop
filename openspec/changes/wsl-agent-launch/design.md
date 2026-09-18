@@ -47,7 +47,7 @@ verify the flag's presence on the user's build. The login-shell form needs no
 verification and solves a second problem at the same time:
 
 ```
-wsl.exe [-d <distro>] -- sh -lc 'cd "$1" && shift && exec "$@"' _ <cwd> <exe> <args…>
+wsl.exe [-d <distro>] -- sh -lc 'cd "$1" || exit 1; shift; exec "$@"' sh <cwd> <exe> <args…>
 ```
 
 `-l` sources the login profile, which is what puts `~/.local/bin` on `PATH`
@@ -56,6 +56,22 @@ the reason `shell_path.rs` documents for macOS GUI launches. `exec` replaces the
 shell so the process tree gains no extra layer, and the arguments ride in
 `"$@"` rather than being interpolated into the script text, so a path containing
 a space or a quote cannot break the command or inject shell syntax.
+
+The argument vector is easy to get subtly wrong, so it is worth spelling out.
+With `sh -c '<script>' a b c`, POSIX assigns the FIRST operand after the script
+to `$0`, not `$1`. Hence the literal `sh` placeholder: it takes `$0`, leaving
+`$1` = cwd and `$2…` = the command. After `shift`, `"$@"` is exactly the command
+and its arguments.
+
+`|| exit 1` rather than `&&`: a failed `cd` must abort. Chaining with `&&` leaves
+the exit status to carry the failure while the shell continues parsing, and the
+cost of getting that wrong is executing the agent in the wrong directory — a
+silent, confusing failure rather than a loud one.
+
+Profile ordering works in our favor here, and it is worth recording why. A login
+shell sources `/etc/profile` and `~/.profile` BEFORE it executes the `-c` command
+string, so a profile that changes directory cannot defeat the `cd` in our script:
+ours runs last and wins. (Were the order reversed, this form would be unusable.)
 
 Choosing this form means the change has no dependency on an unverified flag.
 
@@ -113,6 +129,21 @@ into one flag would discard a pipeline that still works.
 | --- | --- | --- |
 | Event hook | `AGENT_DESKTOP_SOCKET_PATH`, a `\\.\pipe\…` name | **Cannot work.** A Linux process cannot open a Windows named pipe. |
 | Statusline wrapper | Writes a file into `AGENT_DESKTOP_SNAPSHOT_DIR` | **Works**, once the path is translated to `/mnt/c/…`. |
+
+The statusline's survival depends on one thing that must be PROBED, not assumed:
+the wrapper is invoked as `node "<path>"`, and that is `node` **inside the
+distro** — a different install from any Windows one. So D5 is conditional:
+retain `statusLine` when `node` is present in the distro, and omit it like the
+hooks when it is not. Task 2.2's probe therefore covers `node` alongside the
+agent CLIs.
+
+What does NOT threaten it, having checked the wrapper's source: the delegation to
+the user's real `~/.claude/hooks/statusline.js` resolves against the LINUX home
+under WSL, where it will usually be absent. That is harmless. `delegate()` returns
+early when the hook is missing (`statusline-wrapper.cjs:113`) and `main()`
+documents the snapshot half as *"entirely independent of (a)"* — so a missing
+user statusline costs an empty in-pane bar, never the snapshot the dashboard
+reads.
 
 Emitting the hooks anyway would be worse than omitting them: `spawn.ts` already
 warns that a hook which fails to run is silent, so the session would *look*
