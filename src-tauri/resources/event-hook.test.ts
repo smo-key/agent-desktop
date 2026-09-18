@@ -122,6 +122,19 @@ describe('event-hook pure core', () => {
     expect(stop.reason).toBeUndefined();
   });
 
+  it('Subagent id carried on a subagent stop', () => {
+    // A SubagentStop names the finished agent (`agent_id`); forwarded as `agentId` so
+    // the overview can subtract it from the last Stop's running list.
+    const sub = hook.normalize(
+      { session_id: 's', hook_event_name: 'SubagentStop', agent_id: 'a4c1', agent_type: 'Explore' },
+      PANE_ID,
+      1
+    );
+    expect(sub.agentId).toBe('a4c1');
+    expect(hook.normalize({ session_id: 's', hook_event_name: 'SubagentStop' }, PANE_ID, 1).agentId).toBeUndefined();
+    expect(hook.normalize({ session_id: 's', hook_event_name: 'Stop', agent_id: 'x' }, PANE_ID, 1).agentId).toBeUndefined();
+  });
+
   it('Background tasks carried on a turn end', () => {
     // A `Stop` (and `SubagentStop`) hook input carries `background_tasks`: the session's
     // still-running background subagents/tasks. Forward a compact projection so the

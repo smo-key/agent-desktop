@@ -177,6 +177,11 @@ function normalize(evt, paneId, nowMs) {
     const tasks = compactBackgroundTasks(e.background_tasks);
     if (tasks) out.backgroundTasks = tasks;
   }
+  // A SubagentStop names the agent that finished; the overview subtracts it from the
+  // last Stop's running list (so an interrupt cannot carry a finished agent forward).
+  if (out.hookEventName === 'SubagentStop' && typeof e.agent_id === 'string' && e.agent_id) {
+    out.agentId = e.agent_id;
+  }
 
   // SessionEnd carries a `reason` (clear / logout / prompt_input_exit / other). Forward
   // it so the overview can tell a `/clear` (the process restarts in place) from a real

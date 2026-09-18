@@ -186,9 +186,9 @@ describe('deriveEventActivity', () => {
       ev('UserPromptSubmit'),
       ev('Stop', {
         backgroundTasks: [
-          { id: 'a1', status: 'running', description: 'one' },
-          { id: 'a2', status: 'done', description: 'finished' },
-          { id: 'a3', status: 'running' }
+          { id: 'a1', type: 'subagent', status: 'running', description: 'one' },
+          { id: 'a2', type: 'subagent', status: 'done', description: 'finished' },
+          { id: 'a3', type: 'workflow', status: 'running' }
         ]
       })
     ]);
@@ -196,7 +196,7 @@ describe('deriveEventActivity', () => {
     expect(b.currentAction).toBe('2 background tasks');
     const c = deriveEventActivity([
       ev('UserPromptSubmit'),
-      ev('Stop', { backgroundTasks: [{ status: 'running' }] })
+      ev('Stop', { backgroundTasks: [{ id: 'a9', type: 'subagent', status: 'running' }] })
     ]);
     expect(c.currentAction).toBe('Background task');
   });
@@ -232,6 +232,85 @@ describe('deriveEventActivity', () => {
       deriveEventActivity([...base, ev('Stop', { backgroundTasks: 'nope' as unknown as [] })]).status
     ).toBe('waiting');
     expect(deriveEventActivity([...base, ev('Stop', { backgroundTasks: null })]).status).toBe('waiting');
+  });
+
+  it('Only agent-like background tasks keep the session working', () => {
+    // claude lists EVERY backgrounded task on a Stop: subagents, workflows, teammates,
+    // cloud sessions — but also background shells (`npm run dev`), monitors, and
+    // housekeeping. A dev server never exits, so counting it would pin the row In flight
+    // forever. Only agent-like tasks (which wake the session and terminate) count.
+    const base = [ev('UserPromptSubmit')];
+    const shell = deriveEventActivity([
+      ...base,
+      ev('Stop', { backgroundTasks: [{ id: 's1', type: 'shell', status: 'running', description: 'npm run dev' }] })
+    ]);
+    expect(shell.status).toBe('waiting');
+    const monitor = deriveEventActivity([
+      ...base,
+      ev('Stop', { backgroundTasks: [{ id: 'm1', type: 'monitor', status: 'running' }, { id: 'd', type: 'dream', status: 'running' }] })
+    ]);
+    expect(monitor.status).toBe('waiting');
+    for (const type of ['subagent', 'workflow', 'teammate', 'cloud session']) {
+      const a = deriveEventActivity([...base, ev('Stop', { backgroundTasks: [{ id: 'x', type, status: 'running', description: 'd' }] })]);
+      expect(a.status, type).toBe('working');
+    }
+    // Mixed: the shell is ignored, the subagent counts — and the label names only it.
+    const mixed = deriveEventActivity([
+      ...base,
+      ev('Stop', {
+        backgroundTasks: [
+          { id: 's1', type: 'shell', status: 'running', description: 'npm run dev' },
+          { id: 'a1', type: 'subagent', status: 'running', description: 'Review PR' }
+        ]
+      })
+    ]);
+    expect(mixed.status).toBe('working');
+    expect(mixed.currentAction).toBe('Background: Review PR');
+    // An entry with no type at all is not trusted as an agent.
+    expect(deriveEventActivity([...base, ev('Stop', { backgroundTasks: [{ status: 'running' }] })]).status).toBe('waiting');
+  });
+
+  it('Pending background agents count as running', () => {
+    // A queued subagent (concurrency slot busy) is reported `pending`; no hook fires when
+    // it flips to running, so it must already count as in-flight work.
+    const a = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('Stop', { backgroundTasks: [{ id: 'a1', type: 'subagent', status: 'pending', description: 'd' }] })
+    ]);
+    expect(a.status).toBe('working');
+    expect(a.currentAction).toBe('Background: d');
+  });
+
+  it('Idle notification inherits running background work', () => {
+    // claude's idle-prompt Notification can fire while the prompt sits idle awaiting a
+    // background agent. It must not flip the row to Needs you: it inherits the preceding
+    // Stop's running list. A permission-style Notification with no such Stop is unchanged.
+    const running = [{ id: 'a1', type: 'subagent', status: 'running', description: 'd' }];
+    const a = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('Stop', { backgroundTasks: running }),
+      ev('Notification', { notification: 'Claude is waiting for your input' })
+    ]);
+    expect(a.status).toBe('working');
+    expect(a.currentAction).toBe('Background: d');
+    const b = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('Stop', { backgroundTasks: running }),
+      ev('SubagentStop', { agentId: 'zzz' }),
+      ev('Notification', { notification: 'x' })
+    ]);
+    expect(b.status).toBe('working');
+    expect(deriveEventActivity([ev('UserPromptSubmit'), ev('Stop'), ev('Notification')]).status).toBe('waiting');
+    expect(deriveEventActivity([ev('UserPromptSubmit'), ev('Notification')]).status).toBe('waiting');
+  });
+
+  it('Long background descriptions are clipped in the current action', () => {
+    const a = deriveEventActivity([
+      ev('UserPromptSubmit'),
+      ev('Stop', { backgroundTasks: [{ id: 'a1', type: 'subagent', status: 'running', description: 'x'.repeat(500) }] })
+    ]);
+    expect(a.currentAction!.length).toBeLessThanOrEqual(72);
+    expect(a.currentAction!.startsWith('Background: xxx')).toBe(true);
   });
 
   it('Fallback when no events', () => {

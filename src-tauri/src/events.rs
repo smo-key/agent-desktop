@@ -84,6 +84,10 @@ pub struct AgentEvent {
     /// `running` task In flight rather than flipping it to Needs you.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background_tasks: Option<Value>,
+    /// The finished agent's id on a `SubagentStop` (claude's `agent_id`), so the
+    /// frontend can subtract it from the last `Stop`'s running list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
 }
 
 /// Parse one socket payload (the hook writes exactly one newline-terminated JSON
@@ -423,6 +427,7 @@ pub fn backfill_from_transcript(transcript: &Path, pane_id: &str, session_id: &s
                         notification: None,
                         reason: None,
                         background_tasks: None,
+                        agent_id: None,
                     });
                 }
                 Some("tool_result") => {
@@ -437,6 +442,7 @@ pub fn backfill_from_transcript(transcript: &Path, pane_id: &str, session_id: &s
                         notification: None,
                         reason: None,
                         background_tasks: None,
+                        agent_id: None,
                     });
                 }
                 _ => {}
@@ -571,6 +577,7 @@ mod tests {
             notification: None,
             reason: None,
             background_tasks: None,
+            agent_id: None,
         }
     }
 

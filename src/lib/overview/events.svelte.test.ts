@@ -153,6 +153,41 @@ describe('EventStore', () => {
     expect(store.activityFor('p1').currentAction).toBe('Background: d');
   });
 
+  it('Interrupt after the background agent finished returns to waiting', () => {
+    // Stop{a1 running} → SubagentStop(a1) → the parent is woken (mid-tool) → Esc. The
+    // carried list must subtract a1 (it finished), so the synthetic Stop carries nothing
+    // and the row returns to waiting instead of being pinned on a phantom background task.
+    const store = new EventStore();
+    const running = [{ id: 'a1', type: 'subagent', status: 'running', description: 'd' }];
+    store.ingest(ev('UserPromptSubmit'));
+    store.ingest(ev('Stop', { backgroundTasks: running }));
+    store.ingest(ev('SubagentStop', { agentId: 'a1' }));
+    store.ingest(ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:x' }));
+    store.markInterrupt('p1');
+    expect(store.timeline('p1').at(-1)?.backgroundTasks).toBeUndefined();
+    expect(store.activityFor('p1').status).toBe('waiting');
+
+    // Same, but the parent has emitted NO hook yet when Esc lands (last boundary is the
+    // Stop): the no-op rule must see that a1 is gone and still inject the turn-end.
+    const s2 = new EventStore();
+    s2.ingest(ev('UserPromptSubmit'));
+    s2.ingest(ev('Stop', { backgroundTasks: running }));
+    s2.ingest(ev('SubagentStop', { agentId: 'a1' }));
+    expect(s2.activityFor('p1').status).toBe('working');
+    s2.markInterrupt('p1');
+    expect(s2.activityFor('p1').status).toBe('waiting');
+
+    // With a SECOND agent still out, only the finished one is dropped.
+    const s3 = new EventStore();
+    s3.ingest(ev('UserPromptSubmit'));
+    s3.ingest(ev('Stop', { backgroundTasks: [...running, { id: 'a2', type: 'subagent', status: 'running', description: 'e' }] }));
+    s3.ingest(ev('SubagentStop', { agentId: 'a1' }));
+    s3.ingest(ev('PreToolUse', { toolName: 'Bash', summary: 'Bash:x' }));
+    s3.markInterrupt('p1');
+    expect(s3.timeline('p1').at(-1)?.backgroundTasks).toEqual([{ id: 'a2', type: 'subagent', status: 'running', description: 'e' }]);
+    expect(s3.activityFor('p1').currentAction).toBe('Background: e');
+  });
+
   it('Seed merge preserves a synthetic interrupt Stop', async () => {
     // REGRESSION: seed re-runs on every session-set change. A wholesale per-pane replace
     // would clobber the frontend-only synthetic interrupt Stop (the Rust ring can't

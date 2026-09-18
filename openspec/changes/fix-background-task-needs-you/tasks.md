@@ -15,8 +15,14 @@
 - [x] 3.1 Add failing tests in `src/lib/overview/events.svelte.test.ts` titled "Interrupt is a no-op while only background work is running" and "Interrupt keeps background work In flight"
 - [x] 3.2 Make `markInterrupt` a no-op when the last turn boundary is a `Stop` (nothing in flight), and carry the last real `Stop`'s running background-task list onto the synthetic turn-end otherwise
 
-## 4. Verify
+## 4. Adversarial-review findings (TDD)
 
-- [x] 4.1 Run `yarn check`, `yarn test`, `yarn coverage`, and `cargo test` in `src-tauri`; confirm all pass
-- [x] 4.2 Live-equivalent check: probe a real `claude -p` run with a stdin-dumping hook to capture the actual `run_in_background` Agent sequence (PreToolUse → SubagentStart → PostToolUse at +8 ms → Stop with `background_tasks[].status: running` → SubagentStop → Stop with `[]`) and drive the real `event-hook.cjs` + `deriveEventActivity` with those payloads in the unit tests. (An in-app check needs an app restart to pick up the embedded hook; it could not be done from a session running inside the app — see the close-out notes.)
-- [x] 4.3 Run `openspec validate fix-background-task-needs-you` and confirm the change is well-formed
+- [x] 4.1 Only agent-like task types (`subagent`/`workflow`/`teammate`/`cloud session`) with `running`/`pending` status count; shells/monitors/housekeeping never pin a row — tests "Only agent-like background tasks keep the session working", "Pending background agents count as running"
+- [x] 4.2 Forward `agentId` on `SubagentStop` (hook + Rust `agent_id`) and make `markInterrupt` use `outstandingBackgroundTasks` (last real Stop's agents minus finished) — tests "Subagent id carried on a subagent stop", "Interrupt after the background agent finished returns to waiting"
+- [x] 4.3 A trailing `Notification` inherits the preceding Stop's running work; clip the background label — tests "Idle notification inherits running background work", "Long background descriptions are clipped in the current action"
+
+## 5. Verify
+
+- [x] 5.1 Run `yarn check`, `yarn test`, `yarn coverage`, and `cargo test` in `src-tauri`; confirm all pass
+- [x] 5.2 Live-equivalent check: probe a real `claude -p` run with a stdin-dumping hook to capture the actual `run_in_background` Agent sequence (PreToolUse → SubagentStart → PostToolUse at +8 ms → Stop with `background_tasks[].status: running` → SubagentStop → Stop with `[]`) and drive the real `event-hook.cjs` + `deriveEventActivity` with those payloads in the unit tests. (An in-app check needs an app restart to pick up the embedded hook; it could not be done from a session running inside the app — see the close-out notes.)
+- [x] 5.3 Run `openspec validate fix-background-task-needs-you` and confirm the change is well-formed

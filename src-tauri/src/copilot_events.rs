@@ -220,6 +220,7 @@ impl Translator {
             notification: None,
             reason: None,
             background_tasks: None,
+            agent_id: None,
         };
         match kind {
             "user.message" => {
