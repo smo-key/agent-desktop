@@ -137,9 +137,12 @@ export class EventStore {
     // still out → no-op. Otherwise inject the turn-end, carrying the outstanding list
     // so the row stays In flight on real background work (and only on that).
     const outstanding = outstandingBackgroundTasks(prior);
+    // (An idle-prompt `Notification` behind that Stop merely inherits its running work,
+    // so it counts as the same "nothing in flight" boundary.)
     let lastBoundary: AgentEvent | undefined;
     for (let i = prior.length - 1; i >= 0; i--) {
-      if (prior[i].hookEventName !== 'SubagentStop') {
+      const name = prior[i].hookEventName;
+      if (name !== 'SubagentStop' && name !== 'Notification') {
         lastBoundary = prior[i];
         break;
       }

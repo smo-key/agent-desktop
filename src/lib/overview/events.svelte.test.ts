@@ -130,6 +130,14 @@ describe('EventStore', () => {
     expect(store.timeline('p1').length).toBe(before);
     expect(store.activityFor('p1').status).toBe('working');
     expect(store.activityFor('p1').currentAction).toBe('Background: d');
+
+    // The same holds when the idle-prompt Notification is the last boundary: it merely
+    // inherits the Stop's running work, so Esc is still a no-op (no synthetic event).
+    store.ingest(ev('Notification', { notification: 'Claude is waiting for your input' }));
+    const before2 = store.timeline('p1').length;
+    store.markInterrupt('p1');
+    expect(store.timeline('p1').length).toBe(before2);
+    expect(store.activityFor('p1').status).toBe('working');
   });
 
   it('Interrupt keeps background work In flight', () => {
