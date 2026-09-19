@@ -9,6 +9,14 @@ Format: short `### New` / `### Improved` / `### Fixed` / `### Removed` sections,
 bullets, one bold title per notable change —
 `- **Feature title**: a short, impactful description and use case.`
 
+## 0.4.0-2 — 2026-09-19
+
+### Fixed
+
+- **Beta updates install again**: the Beta channel in `0.4.0-1` pointed at an update feed that no longer exists, so it always reported "up to date". This build fixes the feed, and from here on betas arrive on their own. If you are on `0.4.0-1`, install this one by hand — it cannot reach you any other way.
+- **Restored panes use your configured agent command**: on restart, agent panes spawned against the bare program name instead of the executable you set in Settings, because the preference was still loading. On WSL that meant a pane that died on startup but worked if you reopened it by hand.
+- **WSL distros with unusual names are detected**: `Arch`, `kali`, `SLES-12-SP5` and preview builds such as `ubuntupreview` are recognised again, and a distro is no longer launched under a guessed name the registry does not use — which failed outright instead of falling back to your default distro.
+
 ## 0.4.0-1 — 2026-09-18
 
 First build on the new **Beta** channel. Betas arrive before stable releases and
