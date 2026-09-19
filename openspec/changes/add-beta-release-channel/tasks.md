@@ -125,13 +125,39 @@ nothing was published, so the safe failure mode held.
 - [x] 9.3 Update the proposal, design, release-pipeline and release-channels
   specs, and the README, to the numeric scheme.
 
-## 10. Cut the first beta
+## 10. Publishing the first beta exposed two more defects
 
-- [ ] 10.1 Land the change on `main`.
-- [ ] 10.2 Create the `beta` branch at `main`'s HEAD.
-- [ ] 10.3 Bump `package.json` to `0.4.0-1` on `beta` and write its
+Neither was findable in a code review: both live in the PUBLISHED ARTIFACT.
+
+- [x] 10.1 The manifest's download URLs were dead. tauri-action writes
+  `releases/latest/download/<asset>`, which resolves to the newest STABLE release
+  and 404s for a prerelease's assets. Added `scripts/beta-manifest.mjs` (+ tests)
+  to repoint them at the release's own tag, failing loudly if nothing matched.
+- [x] 10.2 The pinned `beta-channel` release is impossible here. Releases are
+  IMMUTABLE: assets cannot be added after publish, and the tag name is burned
+  permanently — recreating it fails even after deleting both release and tag. The
+  beta endpoint is now `beta-latest.json` on the `beta` branch, served by
+  raw.githubusercontent.
+- [x] 10.3 Updated the endpoint in `tauri.conf.json`, the Rust coupling test, the
+  workflow step, and the README.
+
+## 11. Move the release procedure into a `/release` skill
+
+- [x] 11.1 New `.claude/skills/release/SKILL.md` covering both lanes: lane table,
+  the gate dry-run as the mandatory pre-flight, version rules, CHANGELOG rules,
+  beta-to-stable promotion, post-run verification, and the gate-refusal table.
+- [x] 11.2 Reduce the `Release` task in `.agent-desktop/tasks.json` to
+  "Use the release skill."
+- [x] 11.3 `release-changelog` delta spec for the moved requirement.
+- [x] 11.4 README points at the skill.
+
+## 12. Cut the first beta
+
+- [ ] 12.1 Land the change on `main`.
+- [ ] 12.2 Create the `beta` branch at `main`'s HEAD.
+- [ ] 12.3 Bump `package.json` to `0.4.0-1` on `beta` and write its
   `CHANGELOG.md` section (the pipeline hard-fails without one).
-- [ ] 10.4 Push `beta`; confirm the run gates, builds all four targets, publishes
+- [ ] 12.4 Push `beta`; confirm the run gates, builds all four targets, publishes
   a prerelease, and refreshes `beta-channel`.
-- [ ] 10.5 **Manual, not verifiable in-session:** install the beta build, switch a
+- [ ] 12.5 **Manual, not verifiable in-session:** install the beta build, switch a
   stable install to the beta channel, and confirm it picks the prerelease up.

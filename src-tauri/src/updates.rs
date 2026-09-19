@@ -337,8 +337,8 @@ mod tests {
         let idx = endpoint_indices_for(Channel::Beta);
         let beta = endpoints[idx[0]].as_str().unwrap();
         assert!(
-            beta.contains("/releases/download/beta-channel/"),
-            "endpoint 1 must be the pinned beta manifest, got {beta}"
+            beta.contains("raw.githubusercontent.com") && beta.ends_with("/beta/beta-latest.json"),
+            "endpoint 1 must be the beta manifest on the beta branch, got {beta}"
         );
         assert_eq!(
             endpoints[idx[1]].as_str().unwrap(),

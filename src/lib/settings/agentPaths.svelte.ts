@@ -61,13 +61,26 @@ export class AgentPathsStore {
   private generation = 0;
 
   /**
-   * Probe for the agent executables against `shell`, then load the persisted
-   * preferences. NEVER rejects: the layout restore in `+page.svelte` is chained
-   * onto the settings load, so a rejection here would leave the user with no
-   * restored panes at all. Call once on mount.
+   * Load the persisted preferences, then kick off detection.
+   *
+   * ORDER IS LOAD-BEARING. The preferences decide what is actually SPAWNED and
+   * cost one fast IPC; detection only fills a placeholder and a fallback, and
+   * costs a probe that takes SECONDS against a cold distro. Probing first made
+   * the returned promise resolve two IPCs later, and the layout restore — which
+   * runs alongside it — spawned every restored pane against empty preferences.
+   * The user's explicitly-set executable was then silently ignored for exactly
+   * the panes the app restores, i.e. most launches, while a pane opened by hand
+   * a moment later worked. "Dead on restart, fine if I reopen it."
+   *
+   * So detection is deliberately NOT awaited: a caller that awaits this gets the
+   * preferences, which is what correctness depends on. Until the probe lands,
+   * `executableFor` falls through to the bare program name — the advisory
+   * contract, and exactly the pre-change behavior.
+   *
+   * NEVER rejects: the layout restore is chained onto this, so a rejection would
+   * leave the user with no restored panes at all.
    */
   async load(shell: string): Promise<void> {
-    await this.redetect(shell);
     try {
       const settings = await loadSettings();
       this.prefs = parseAgentPaths(settings.agentPaths);
@@ -75,6 +88,7 @@ export class AgentPathsStore {
       // Keep the defaults — an unreadable slice must not break startup.
     }
     this.loaded = true;
+    void this.redetect(shell);
   }
 
   /**
@@ -95,6 +109,12 @@ export class AgentPathsStore {
     this.detectedForShell = shell;
     this.detectedForDistro = distro;
     try {
+      // Drop any cached result first, so a re-probe is genuinely fresh. Without
+      // this a probe that SUCCEEDED but found nothing — because the CLI was not
+      // installed yet, or the login profile did not expose it — stays cached for
+      // the process lifetime, and installing the CLI while the app runs leaves
+      // the placeholder wrong with no way to refresh short of restarting.
+      await invoke('clear_agent_executable_cache').catch(() => {});
       // The heuristic lives in ONE place (the tested `$lib/shell/wsl` module);
       // Rust just executes the probe it is told to.
       const found = await invoke<DetectResult>('detect_agent_executables', {

@@ -12,6 +12,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import {
   platformDefaultShell,
+  resolveProgram,
   setPlatformDefaultShell,
   setShellPreference
 } from '$lib/shell/defaultShell';
@@ -91,7 +92,12 @@ export class ShellStore {
     this.prefs = { ...this.prefs, program: trimmed };
     setShellPreference(trimmed || null);
     void this.save();
-    void this.onShellChanged?.(trimmed || platformDefaultShell());
+    // The RESOLVED shell, not the raw preference: `defaultShell()` — which every
+    // spawn uses — filters a value that is not launchable here, so notifying the
+    // raw string would have detection probing `ubuntu.exe` while launches used
+    // `/bin/zsh`. The two would then disagree about the distro forever, and the
+    // distro-match guard would discard every detected path.
+    void this.onShellChanged?.(resolveProgram(trimmed, platformDefaultShell()));
   }
 
   /**

@@ -72,11 +72,13 @@ There are two release branches, one per update channel:
 The steps below describe the stable lane; the beta lane is identical except for
 the branch and the prerelease version. See **Cutting a beta** below.
 
+The whole procedure for both lanes lives in the **`release` skill**
+(`.claude/skills/release/SKILL.md`) — run `/release`, or use the **Release** task
+in Agent Desktop, which just invokes it. The steps below are the summary.
+
 1. Write the release notes: add a `## X.Y.Z — YYYY-MM-DD` section at the top of
-   `CHANGELOG.md` (format in the file's header). The **Release** task in Agent
-   Desktop (`.agent-desktop/tasks.json`) does this for you — it runs the quality
-   gate, drafts the section from the commits since the last tag, bumps the
-   version, commits and pushes.
+   `CHANGELOG.md` (format in the file's header), covering everything since the
+   last release on that lane.
 2. Bump `version` in `package.json` (e.g. `0.1.0` → `0.1.1`) and push to `main`.
 3. The workflow detects the bump (the version is higher than the latest `v*`
    tag), syncs the version into `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`,
@@ -112,6 +114,10 @@ also trigger a manual build from the Actions tab (`workflow_dispatch`).
    exactly this.
 3. Add the matching `## 0.4.0-1 — YYYY-MM-DD` section to `CHANGELOG.md`; the
    release fails without it, exactly as on the stable lane.
+
+   Before committing any of this, prove the version is releasable:
+   `DRY_RUN=1 VERSION=0.4.0-1 CHANNEL=beta ./scripts/release-gate.sh`. That is
+   the same code CI runs, and its refusals name the correct form.
 4. Push `beta`.
 
 `scripts/release-gate.sh` partitions the tag space by channel, so the two lanes
@@ -124,10 +130,19 @@ never interfere:
 - a version whose form does not match its branch (a prerelease on `main`, a plain
   version on `beta`) releases nothing and says so.
 
-After a beta publishes, the pipeline deletes and recreates a pinned
-`beta-channel` prerelease holding that release's `latest.json`. That is the
-stable URL the app's beta update endpoint points at — GitHub offers no "latest
-prerelease" download path. A stable release deliberately leaves it alone.
+After a beta publishes, the pipeline repoints that release's `latest.json` at
+the release's own tag and commits it as `beta-latest.json` on the `beta` branch,
+which raw.githubusercontent serves as the beta update endpoint. A stable release
+deliberately leaves it alone.
+
+Two constraints forced that shape, both found by shipping a real beta:
+
+- tauri-action writes `releases/latest/download/<asset>` URLs into `latest.json`,
+  which 404 for a prerelease (GitHub resolves `releases/latest` to the newest
+  **stable** release). `scripts/beta-manifest.mjs` rewrites them.
+- Releases in this repo are **immutable**, and a tag used by one is burned
+  permanently — deleting the release and the tag does not free the name. So there
+  can be no rewritable "pinned release" holding the manifest.
 
 ### Update channels in the app
 

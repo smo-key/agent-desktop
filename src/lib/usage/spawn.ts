@@ -97,12 +97,6 @@ export interface SpawnOverrideInput {
    * the bare name, which is exactly today's behavior.
    */
   executable?: string | null;
-  /**
-   * Whether `node` exists where the session will run. Gates the statusline
-   * under WSL, which is invoked as `node "<path>"` (design D5). Defaults to
-   * true, preserving current behavior off the WSL path.
-   */
-  nodeAvailable?: boolean;
 }
 
 /**
