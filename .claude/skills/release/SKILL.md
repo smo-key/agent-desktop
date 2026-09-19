@@ -82,7 +82,8 @@ numeric-only prerelease identifier ≤ 65535, so betas are `-1`, `-2`, `-3`.
      version.
 
 8. **Watch the run** (`gh run list --workflow=release.yml --branch <branch>`).
-   It is not released until it is green. See "Verify after the run".
+   First confirm a run exists **for your head sha** — a push can be skipped
+   silently. It is not released until it is green. See "Verify after the run".
 
 ## What CI does after the push
 
@@ -105,14 +106,6 @@ curl -sI https://raw.githubusercontent.com/smo-key/agent-desktop/beta/beta-lates
 - Stable: `releases/latest` is the new tag.
 - Beta: `releases/latest` is **unchanged**, and `beta-latest.json` reports the
   new version with URLs under `/releases/download/v<version>/`.
-
-## Current state (2026-09-18)
-
-`0.4.0-1` is published, but **the beta channel is not reachable yet.** That build
-has the old, permanently-dead beta endpoint compiled in, so its beta channel
-correctly reports "up to date" and will not move until `0.4.0` stable outranks
-it. The `beta-latest.json` endpoint first ships in `0.4.0-2` — that build is what
-makes the beta channel real. Delete this section once it has shipped.
 
 ## Promoting a beta to stable
 
@@ -144,5 +137,11 @@ must outrank the new stable tag (after `0.4.0` ships, the next beta is `0.5.0-1`
 - **Assuming a published release is a working release.** On the beta lane the
   manifest step runs *after* publish; if it failed, the release exists and no one
   can receive it. Check the whole run is green, not just that the Release appeared.
+- **Writing the skip-CI token in a commit message — including the body.**
+  GitHub matches it anywhere in the head commit's message, so merely *quoting*
+  it while describing another commit suppresses the release. The failure is
+  silent: no run appears at all, which looks exactly like a slow queue. After
+  pushing, confirm a run **started** for your head sha, not just that the push
+  succeeded.
 - **Reusing a release tag name.** Releases here are immutable: a tag used by one
   is burned permanently, even after deleting the release and the tag.

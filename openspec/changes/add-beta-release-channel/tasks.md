@@ -153,11 +153,22 @@ Neither was findable in a code review: both live in the PUBLISHED ARTIFACT.
 
 ## 12. Cut the first beta
 
-- [ ] 12.1 Land the change on `main`.
-- [ ] 12.2 Create the `beta` branch at `main`'s HEAD.
-- [ ] 12.3 Bump `package.json` to `0.4.0-1` on `beta` and write its
+- [x] 12.1 Land the change on `main`.
+- [x] 12.2 Create the `beta` branch at `main`'s HEAD.
+- [x] 12.3 Bump `package.json` to `0.4.0-1` on `beta` and write its
   `CHANGELOG.md` section (the pipeline hard-fails without one).
-- [ ] 12.4 Push `beta`; confirm the run gates, builds all four targets, publishes
-  a prerelease, and refreshes `beta-channel`.
-- [ ] 12.5 **Manual, not verifiable in-session:** install the beta build, switch a
-  stable install to the beta channel, and confirm it picks the prerelease up.
+- [x] 12.4 Push `beta`; confirm the run gates, builds all four targets and
+  publishes a prerelease, then commits the tag-pinned `beta-latest.json` to the
+  `beta` branch. (Originally written as "refreshes `beta-channel`", the pinned
+  prerelease this change first designed. That is impossible here: releases are
+  immutable, and a tag used by one is burned permanently even after deleting
+  both — so the manifest moved to a file on the `beta` branch, served over
+  raw.githubusercontent.)
+- [x] 12.5 Cut `0.4.0-2`. `0.4.0-1` shipped with the old, permanently-dead
+  endpoint compiled in, so its own beta channel can never move; `0.4.0-2` is the
+  first build that carries the `beta-latest.json` endpoint and therefore the
+  first one the channel can actually deliver. Anyone already on `0.4.0-1` has to
+  install once by hand.
+- [ ] 12.6 **Manual, not verifiable in-session:** install the **`0.4.0-2`** build
+  (not `0.4.0-1`, whose endpoint is dead), switch a stable install to the beta
+  channel, and confirm it picks the prerelease up.
