@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { pinManifestToTag } from './beta-manifest.mjs';
 
 const BASE = 'https://github.com/smo-key/agent-desktop/releases';
@@ -12,6 +13,17 @@ function manifest(urls) {
     )
   };
 }
+
+describe('the module itself', () => {
+  it('starts with no shebang', () => {
+    // Windows CI checks out with CRLF. `#!/usr/bin/env node\r` makes the loader
+    // emit invalid JS, so THIS SUITE fails to load at all — which is how it
+    // failed: 150 files green, this one `SyntaxError: Invalid or unexpected
+    // token`, on Windows only. The file is always run as `node <path>`.
+    const src = readFileSync(new URL('./beta-manifest.mjs', import.meta.url), 'utf8');
+    expect(src.startsWith('#!')).toBe(false);
+  });
+});
 
 describe('pinManifestToTag', () => {
   it('pins a releases/latest URL to the release tag', () => {

@@ -1,0 +1,9 @@
+# Windows CI checks out with core.autocrlf=true, so every text file arrives with
+# CRLF. That is harmless for JS in general — but a module whose first line is a
+# shebang fails to parse once that line ends in CRLF, and the test suite that
+# imports it dies with `SyntaxError: Invalid or unexpected token`. It cost a full
+# release run on v0.4.0-2, on Windows only, after the gate had passed locally.
+#
+# The scripts here are run with `node <path>`, never by their shebang, so pinning
+# them to LF costs nothing and removes the whole class of failure.
+*.mjs text eol=lf

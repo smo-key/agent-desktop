@@ -1,4 +1,9 @@
-#!/usr/bin/env node
+// (Deliberately no shebang: this module is imported by beta-manifest.test.mjs,
+// and Windows CI checks out with core.autocrlf=true. A shebang whose line ends
+// in CRLF makes the loader emit invalid JS — `SyntaxError: Invalid or
+// unexpected token` — which failed the whole quality gate on v0.4.0-2. It is
+// always run as `node scripts/beta-manifest.mjs`, so it never needed one.)
+//
 // Rewrite a beta release's `latest.json` so its download URLs point at the
 // release's OWN tag.
 //
