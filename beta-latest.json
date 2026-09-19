@@ -1,0 +1,59 @@
+{
+  "version": "0.4.0-1",
+  "notes": "",
+  "pub_date": "2026-09-18T17:33:44.686Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRTWtuWDExWVptUlJ5R0h4TkUrUXIyNWJoUTZxeGtRUzB5VjNBTWNQcXFoNzFjYXRlRTBaNnJYSWJ0VjlOcmQvOHVXSXdjSXg5QWVQV3BtL0ozc2R5eGVheE5QUElwQWcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NzUxODcyCWZpbGU6QWdlbnQgRGVza3RvcC5hcHAudGFyLmd6CnRvU0xJTDcxdUZkdCs0MjRkQldrTStMVG1VajBvRmNQWHd5MFJBQTd0TTQwZmRVUTZaRGcvVEgvb3FsSVhlNWYrMDlzV2Fmcm5oNDBBaTdMcmk3QkRRPT0K",
+      "url": "https://github.com/smo-key/agent-desktop/releases/download/v0.4.0-1/Agent.Desktop_aarch64.app.tar.gz"
+    },
+    "darwin-aarch64-app": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRTWtuWDExWVptUlJ5R0h4TkUrUXIyNWJoUTZxeGtRUzB5VjNBTWNQcXFoNzFjYXRlRTBaNnJYSWJ0VjlOcmQvOHVXSXdjSXg5QWVQV3BtL0ozc2R5eGVheE5QUElwQWcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NzUxODcyCWZpbGU6QWdlbnQgRGVza3RvcC5hcHAudGFyLmd6CnRvU0xJTDcxdUZkdCs0MjRkQldrTStMVG1VajBvRmNQWHd5MFJBQTd0TTQwZmRVUTZaRGcvVEgvb3FsSVhlNWYrMDlzV2Fmcm5oNDBBaTdMcmk3QkRRPT0K",
+      "url": "https://github.com/smo-key/agent-desktop/releases/download/v0.4.0-1/Agent.Desktop_aarch64.app.tar.gz"
+    },
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRTWtuWDExWVptUlo2aW9ySmg2Q0UzdWFwek5wOU9RTHFBaysxRXhCTGJ6TjVNZDBEd1JULzREVi9CVU54YUZsczJXV1V4MDdxdmdZc1U4NmFlOE9MWEF2d3FUOVIwbHdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NzUyMTY3CWZpbGU6QWdlbnQgRGVza3RvcF8wLjQuMC0xX2FtZDY0LkFwcEltYWdlCkFlUnNHb1J2QjljdzRTV3lWNXFGdUVlbFNUZjF4cTdabnRoSEROMmlRd3VWRS85RlJ0dEQ5SmRPQ0Q5YUZCMzhLa3YvTmpBUm9peEFEbWkwaktDVkFRPT0K",
+      "url": "https://github.com/smo-key/agent-desktop/releases/download/v0.4.0-1/Agent.Desktop_0.4.0-1_amd64.AppImage"
+    },
+    "linux-x86_64-appimage": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRTWtuWDExWVptUlo2aW9ySmg2Q0UzdWFwek5wOU9RTHFBaysxRXhCTGJ6TjVNZDBEd1JULzREVi9CVU54YUZsczJXV1V4MDdxdmdZc1U4NmFlOE9MWEF2d3FUOVIwbHdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NzUyMTY3CWZpbGU6QWdlbnQgRGVza3RvcF8wLjQuMC0xX2FtZDY0LkFwcEltYWdlCkFlUnNHb1J2QjljdzRTV3lWNXFGdUVlbFNUZjF4cTdabnRoSEROMmlRd3VWRS85RlJ0dEQ5SmRPQ0Q5YUZCMzhLa3YvTmpBUm9peEFEbWkwaktDVkFRPT0K",
+      "url": "https://github.com/smo-key/agent-desktop/releases/download/v0.4.0-1/Agent.Desktop_0.4.0-1_amd64.AppImage"
+    },
+    "linux-x86_64-deb": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRTWtuWDExWVptUmFTQktETEtHMTcxSzBJdnl1NUZnNmZHcEdZQ3ZxdWx5WVlwdVF2bG5iSTVOaTFIUk1mWFNyV1dSb3dFNHJ2OTUzaE9nelh2RWtFVU0xNndJVkxjTFFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NzUyMTY3CWZpbGU6QWdlbnQgRGVza3RvcF8wLjQuMC0xX2FtZDY0LmRlYgp1R3RIVVowOXljMk13cVUySGxPS09VQkkxYUlFQy9sMEJweUdSYmFjcFUxUDN5TkFmM0ZrbTE2c01aVGIrU3IrZG5qa080R1FzMjgxL2hvR1lPU2lEQT09Cg==",
+      "url": "https://github.com/smo-key/agent-desktop/releases/download/v0.4.0-1/Agent.Desktop_0.4.0-1_amd64.deb"
+    },
+    "linux-x86_64-rpm": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRTWtuWDExWVptUmI5UDNvQjVkRnBlR2x4NlN0akhRYVUrZlQrYXdqNCsvQmsvSUlKRG9LUWhnLzlHdTdPemFTLzFzZi8zU3FETzcxdmRYY2JHR3EwQXNlQ3pRTDN0NVFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NzUyMTY3CWZpbGU6QWdlbnQgRGVza3RvcC0wLjQuMC0xLTEueDg2XzY0LnJwbQppRzhoc1Jickp0cFZ5TDFOYmtDZEV0VmZKbTZDTnI4TWYrcU9hbjI3dldhZ2V2ZXhwQ0htcExhYkhhRUtFUjEvV2d6a3VzVjk5L2MrY2VDdzBIY09Edz09Cg==",
+      "url": "https://github.com/smo-key/agent-desktop/releases/download/v0.4.0-1/Agent.Desktop-0.4.0-1-1.x86_64.rpm"
+    },
+    "linux-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRTWtuWDExWVptUlR3WWMzR0ppblNyZlJkWWhLRmhra0RLbE9lMDN1Z0RlaTRCNVhwc3RrQ0liSzhPMSs4cUxkQ09aOVh6c3dmMWNndlBFNFBoWHBIejhKK2hHKzZBSVFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NzUyMzUyCWZpbGU6QWdlbnQgRGVza3RvcF8wLjQuMC0xX2FhcmNoNjQuQXBwSW1hZ2UKaHBTR0pzbEw3S29jM3poTEdBQjZ4cS9WSms2eDF4WDVvZWV5aHkwQ1AyMWxJYVNZOUlsdTdFUWxDR21HR1lzTXpUbnp1TkpKRFB6ME5JQ1VHVW50QUE9PQo=",
+      "url": "https://github.com/smo-key/agent-desktop/releases/download/v0.4.0-1/Agent.Desktop_0.4.0-1_aarch64.AppImage"
+    },
+    "linux-aarch64-appimage": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRTWtuWDExWVptUlR3WWMzR0ppblNyZlJkWWhLRmhra0RLbE9lMDN1Z0RlaTRCNVhwc3RrQ0liSzhPMSs4cUxkQ09aOVh6c3dmMWNndlBFNFBoWHBIejhKK2hHKzZBSVFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NzUyMzUyCWZpbGU6QWdlbnQgRGVza3RvcF8wLjQuMC0xX2FhcmNoNjQuQXBwSW1hZ2UKaHBTR0pzbEw3S29jM3poTEdBQjZ4cS9WSms2eDF4WDVvZWV5aHkwQ1AyMWxJYVNZOUlsdTdFUWxDR21HR1lzTXpUbnp1TkpKRFB6ME5JQ1VHVW50QUE9PQo=",
+      "url": "https://github.com/smo-key/agent-desktop/releases/download/v0.4.0-1/Agent.Desktop_0.4.0-1_aarch64.AppImage"
+    },
+    "linux-aarch64-deb": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRTWtuWDExWVptUmYvekw1cXY0akpCakxNK0VqcDVlM3ljYXo4Sk5FUWlNbDRCYVVpdHZKN0RDdko5ZWZLRU1LcG9wZHJnUkoxQUcwNVAwdEZWTm1ZV2tveThPdWNWcFFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NzUyMzUxCWZpbGU6QWdlbnQgRGVza3RvcF8wLjQuMC0xX2FybTY0LmRlYgpQajNwQnErRHRZYmw2V2l0L1cySFQ0cElsVitNbWVOSFEyVXRlM2ZvOHQ3WW5OWlVkYmQ5bS9VajZXMmtyc0EyYWVBeVFvMTNKM2lUUU1ocWJWN2tBdz09Cg==",
+      "url": "https://github.com/smo-key/agent-desktop/releases/download/v0.4.0-1/Agent.Desktop_0.4.0-1_arm64.deb"
+    },
+    "linux-aarch64-rpm": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRTWtuWDExWVptUlQvZ29oRGxiSlpGRlE3RGdBL21kcFVtWEdTMW1XN284dTVXRGpySXQ0RWJSMkdBakJmMmNiM2xlYjBPaTZaWjFOd2NkUHZ4QSt2aDZnWmhKbDRkWFFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NzUyMzUyCWZpbGU6QWdlbnQgRGVza3RvcC0wLjQuMC0xLTEuYWFyY2g2NC5ycG0KSjFrWmpXQUk2VHZrOUZhTHJxQWdJTWx1UlBaZXhQc0RaK0lqa1Z3SnZoWExaN3dNTjdjT3QxVzhJQ2lZdlN0MUFQT1dnYlF6S1ZJZXZDcGhGVitDQVE9PQo=",
+      "url": "https://github.com/smo-key/agent-desktop/releases/download/v0.4.0-1/Agent.Desktop-0.4.0-1-1.aarch64.rpm"
+    },
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRTWtuWDExWVptUlQvWEdFbEFjcVJEaktoVHlqT1dUTGlHbWhwbXFEbitZbm4xREliaHNsYmNmK1FwQnk0UXF5SUhBbGpqam1nczhreU9xV0tsRFhRTUh5NVk4OCtScHdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NzUyODE0CWZpbGU6QWdlbnQgRGVza3RvcF8wLjQuMC0xX3g2NF9lbi1VUy5tc2kKQWRHdmt0SnI2ZU84emtLdWJyNHFPN3hJUzg4REVQNWJmYnlINU9CalExRmcxN0FNdFZ0ZzBTd3pNcDQ0ZVpUY2lQRWpNQjRod1gxeU9IQmEvMW85QlE9PQo=",
+      "url": "https://github.com/smo-key/agent-desktop/releases/download/v0.4.0-1/Agent.Desktop_0.4.0-1_x64_en-US.msi"
+    },
+    "windows-x86_64-msi": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRTWtuWDExWVptUlQvWEdFbEFjcVJEaktoVHlqT1dUTGlHbWhwbXFEbitZbm4xREliaHNsYmNmK1FwQnk0UXF5SUhBbGpqam1nczhreU9xV0tsRFhRTUh5NVk4OCtScHdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NzUyODE0CWZpbGU6QWdlbnQgRGVza3RvcF8wLjQuMC0xX3g2NF9lbi1VUy5tc2kKQWRHdmt0SnI2ZU84emtLdWJyNHFPN3hJUzg4REVQNWJmYnlINU9CalExRmcxN0FNdFZ0ZzBTd3pNcDQ0ZVpUY2lQRWpNQjRod1gxeU9IQmEvMW85QlE9PQo=",
+      "url": "https://github.com/smo-key/agent-desktop/releases/download/v0.4.0-1/Agent.Desktop_0.4.0-1_x64_en-US.msi"
+    },
+    "windows-x86_64-nsis": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRTWtuWDExWVptUlcwMlpNSi9XQlRyaXNyVmloLzFHRnZTNFFWY1JBTWVzZVZzWmJLc3pBU0hZc2VTdStiaitVOXZCYXZRblViYjBPczhDMmZZaWJsYytDYWxXVU5na2c0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NzUyODE0CWZpbGU6QWdlbnQgRGVza3RvcF8wLjQuMC0xX3g2NC1zZXR1cC5leGUKMHFEYndTZ21VMEJqa1hMV21DeG9WQnA1WG13MjBrYWk3V3RyNENTNTRMSDNZWWRoWVk5STQ1cWdLcTArN3ljNGh2VHFZcHZVejNqVnZKUGNQV2MwQmc9PQo=",
+      "url": "https://github.com/smo-key/agent-desktop/releases/download/v0.4.0-1/Agent.Desktop_0.4.0-1_x64-setup.exe"
+    }
+  }
+}
