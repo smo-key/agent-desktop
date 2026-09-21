@@ -3,6 +3,9 @@
 #
 # Usage:
 #   curl -fsSL https://smo-key.github.io/agent-desktop/install.sh | sh
+#   curl -fsSL https://smo-key.github.io/agent-desktop/install.sh | sh -s -- beta
+#
+# The optional argument picks the release train: stable (the default) or beta.
 #
 # What it does: detects your OS/CPU, downloads the matching latest release from
 # GitHub, verifies its sha256, and installs a ready-to-run app. It needs no
@@ -19,9 +22,15 @@ set -eu
 GITHUB_REPO="smo-key/agent-desktop"
 RELEASES_PAGE="https://github.com/$GITHUB_REPO/releases"
 API_LATEST="https://api.github.com/repos/$GITHUB_REPO/releases/latest"
+# The beta channel needs the full list (releases/latest EXCLUDES prereleases by
+# definition, which is exactly what keeps stable users off them).
+API_RELEASES="https://api.github.com/repos/$GITHUB_REPO/releases?per_page=30"
+API_TAG_PREFIX="https://api.github.com/repos/$GITHUB_REPO/releases/tags"
 APP_NAME="Agent Desktop"
 # The Windows one-liner, printed when this script is run under Git Bash / MSYS.
 PS_INSTALL_URL="https://smo-key.github.io/agent-desktop/install.ps1"
+# This script's own URL, quoted back when a beta is asked for but none exists.
+SH_INSTALL_URL="https://smo-key.github.io/agent-desktop/install.sh"
 
 # --- pure logic (unit-tested via docs/tests) --------------------------------
 
@@ -33,6 +42,60 @@ platform_key() {
     Linux:aarch64) echo "linux-arm64" ;;
     *) return 1 ;;
   esac
+}
+
+# parse_channel ARG -> echoes "stable" or "beta", or returns 1 if unrecognized.
+# An empty ARG is the documented `curl … | sh` form and means stable.
+#
+# An unknown value is REFUSED rather than defaulted: silently installing stable
+# because "beta" was misspelled hands the user a different release train than
+# the one they asked for, with nothing on screen to say so.
+parse_channel() {
+  case "$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')" in
+    "" | stable) echo "stable" ;;
+    beta) echo "beta" ;;
+    *) return 1 ;;
+  esac
+}
+
+# newest_prerelease_tag JSON_FILE -> the tag of the newest installable
+# prerelease in a GitHub `GET /releases` list, or returns 1 when there is none.
+#
+# The list arrives newest-first, and within each release object "tag_name"
+# precedes "draft" and "prerelease", so a single forward pass works: remember
+# each tag as it appears, drop it when the same object turns out to be a draft,
+# and take the first one whose object says prerelease.
+#
+# Drafts must be skipped even though they ARE prereleases: a release run that
+# fails after uploading some assets leaves a draft behind holding a partial set
+# (this repo had exactly that for v0.4.0-2), and installing from one would
+# download a half-published release.
+newest_prerelease_tag() {
+  tag=$(
+    awk '
+      function nameval(s) {
+        sub(/.*:[[:space:]]*"/, "", s); sub(/".*/, "", s); return s
+      }
+      /"tag_name"[[:space:]]*:/ { t = nameval($0); next }
+      /"draft"[[:space:]]*:[[:space:]]*true/ { t = ""; next }
+      /"prerelease"[[:space:]]*:[[:space:]]*true/ {
+        if (t != "") { print t; exit }
+      }
+    ' "$1"
+  )
+  [ -n "$tag" ] || return 1
+  printf '%s\n' "$tag"
+}
+
+# channel_hint CHANNEL -> closing guidance for that channel ("" for stable).
+#
+# Installing a beta BUILD does not put the app on the beta CHANNEL — that is a
+# separate in-app preference. Without this the user gets exactly one beta and
+# then never hears about another, with no way to guess why.
+channel_hint() {
+  [ "$1" = "beta" ] || return 0
+  printf 'You are on a beta build. To keep receiving betas, open %s\n' "$APP_NAME"
+  printf 'and choose Beta under Settings → Software update.\n'
 }
 
 # asset_suffix KEY -> echoes the trailing asset-name pattern, or returns 1.
@@ -226,6 +289,19 @@ fetch_latest_json() {
   curl -fsSL --proto '=https' --tlsv1.2 -o "$1" "$API_LATEST"
 }
 
+# fetch_releases_json DEST -> download the releases LIST (quiet). Unlike
+# releases/latest this includes prereleases, which is the whole point.
+fetch_releases_json() {
+  curl -fsSL --proto '=https' --tlsv1.2 -o "$1" "$API_RELEASES"
+}
+
+# fetch_release_by_tag TAG DEST -> download one release's metadata (quiet).
+# Returns the same single-release shape as releases/latest, so everything
+# downstream — asset matching, digest extraction, install — is shared.
+fetch_release_by_tag() {
+  curl -fsSL --proto '=https' --tlsv1.2 -o "$2" "$API_TAG_PREFIX/$1"
+}
+
 # download_file URL DEST -> download a release asset (with a progress bar).
 download_file() {
   curl -fSL -# --proto '=https' --tlsv1.2 -o "$2" "$1"
@@ -292,6 +368,14 @@ launch_app() {
 # --- entry point ------------------------------------------------------------
 
 main() {
+  # Parse the channel BEFORE anything else: a typo must fail as a typo, not as
+  # a confusing network error on a machine that happens to be offline.
+  channel=$(parse_channel "${1:-}") || {
+    err "Unknown channel: ${1:-}"
+    err "Use 'beta', or leave it out for the stable release."
+    return 1
+  }
+
   os=$(_uname_s)
   arch=$(_uname_m)
   key=$(platform_key "$os" "$arch") || {
@@ -303,16 +387,30 @@ main() {
 
   log "Agent Desktop installer"
   log "→ platform: $os $arch"
+  log "→ channel: ${channel}"
 
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT INT TERM
 
   json="$tmp/latest.json"
-  log "→ checking the latest release…"
-  fetch_latest_json "$json" || { err "Could not reach GitHub — check your connection."; return 1; }
+  if [ "$channel" = "beta" ]; then
+    list="$tmp/releases.json"
+    log "→ looking for the newest beta…"
+    fetch_releases_json "$list" || { err "Could not reach GitHub — check your connection."; return 1; }
+    tag=$(newest_prerelease_tag "$list") || {
+      err "No beta build has been published yet."
+      err "Install the stable release instead: curl -fsSL ${SH_INSTALL_URL} | sh"
+      return 1
+    }
+    log "→ newest beta: ${tag}"
+    fetch_release_by_tag "$tag" "$json" || { err "Could not fetch the ${tag} release."; return 1; }
+  else
+    log "→ checking the latest release…"
+    fetch_latest_json "$json" || { err "Could not reach GitHub — check your connection."; return 1; }
+  fi
 
   resolved=$(resolve_asset "$key" "$json") || {
-    err "Couldn't find a verifiable installer for $os/$arch in the latest release."
+    err "Couldn't find a verifiable installer for $os/$arch in the ${channel} release."
     err "Download one manually instead: $RELEASES_PAGE"
     return 1
   }
@@ -336,6 +434,7 @@ main() {
   esac
 
   log "✓ Installed: $INSTALLED_PATH"
+  channel_hint "$channel"
 
   if is_interactive && confirm "Launch $APP_NAME now? [Y/n]" yes; then
     launch_app "$INSTALLED_PATH" "$os"

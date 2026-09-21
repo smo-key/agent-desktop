@@ -1,0 +1,60 @@
+[
+  {
+    "id": 900,
+    "tag_name": "v0.5.0-1",
+    "name": "v0.5.0-1",
+    "draft": true,
+    "prerelease": true,
+    "created_at": "2026-09-20T10:00:00Z",
+    "published_at": null,
+    "assets": [
+      {
+        "name": "Agent.Desktop_0.5.0-1_aarch64.dmg",
+        "browser_download_url": "https://github.com/smo-key/agent-desktop/releases/download/v0.5.0-1/Agent.Desktop_0.5.0-1_aarch64.dmg",
+        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    ]
+  },
+  {
+    "id": 800,
+    "tag_name": "v0.3.2",
+    "name": "v0.3.2",
+    "draft": false,
+    "prerelease": false,
+    "created_at": "2026-09-19T10:00:00Z",
+    "published_at": "2026-09-19T10:05:00Z",
+    "assets": [
+      {
+        "name": "Agent.Desktop_0.3.2_aarch64.dmg",
+        "browser_download_url": "https://github.com/smo-key/agent-desktop/releases/download/v0.3.2/Agent.Desktop_0.3.2_aarch64.dmg",
+        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    ]
+  },
+  {
+    "id": 700,
+    "tag_name": "v0.4.0-2",
+    "name": "v0.4.0-2",
+    "draft": false,
+    "prerelease": true,
+    "created_at": "2026-09-19T09:00:00Z",
+    "published_at": "2026-09-19T09:05:00Z",
+    "assets": [
+      {
+        "name": "Agent.Desktop_0.4.0-2_aarch64.dmg",
+        "browser_download_url": "https://github.com/smo-key/agent-desktop/releases/download/v0.4.0-2/Agent.Desktop_0.4.0-2_aarch64.dmg",
+        "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    ]
+  },
+  {
+    "id": 600,
+    "tag_name": "v0.4.0-1",
+    "name": "v0.4.0-1",
+    "draft": false,
+    "prerelease": true,
+    "created_at": "2026-09-18T17:00:00Z",
+    "published_at": "2026-09-18T17:05:00Z",
+    "assets": []
+  }
+]

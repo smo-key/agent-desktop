@@ -24,7 +24,12 @@ describe('Release task', () => {
     const release = tasks.find((t) => t.name === 'Release');
     expect(release?.kind).toBe('agent');
     const prompt = release?.prompt ?? '';
-    expect(prompt.toLowerCase()).toContain('release skill');
+    // Either way of invoking it counts: naming the skill in prose, or the
+    // slash-command form. What matters is that the task DELEGATES — asserting
+    // one exact phrasing made `/release`, the shortest correct prompt, fail.
+    const invokesSkill =
+      prompt.toLowerCase().includes('release skill') || /(^|\s)\/release\b/.test(prompt);
+    expect(invokesSkill).toBe(true);
     // It delegates — it does not restate the procedure.
     expect(prompt).not.toContain('CHANGELOG.md');
     expect(prompt.length).toBeLessThan(120);

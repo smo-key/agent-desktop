@@ -253,3 +253,120 @@ assert_fail "last asset does not bind a digest from outside the array" -- asset_
 # not configured" when there is no controlling terminal (CI, piped runs).
 assert_ok   "tty_usable on an openable file"   -- _tty_usable /dev/null
 assert_fail "tty_usable on a missing device"   -- _tty_usable /no/such/tty-device
+
+# --- parse_channel ARG -> the release train to install ----------------------
+#
+# The default must stay "stable" for an ABSENT argument: the documented
+# `curl … | sh` one-liner passes none, and that path must not change.
+
+assert_eq "$(parse_channel '')"       "stable" "no argument defaults to stable"
+assert_eq "$(parse_channel stable)"   "stable" "stable stays stable"
+assert_eq "$(parse_channel beta)"     "beta"   "beta selects beta"
+assert_eq "$(parse_channel BETA)"     "beta"   "channel is case-insensitive"
+assert_eq "$(parse_channel Stable)"   "stable" "stable is case-insensitive too"
+
+# A typo must NOT quietly install stable — that would hand the user a different
+# train than the one they asked for, with no indication it happened.
+assert_fail "unknown channel is rejected"     -- parse_channel betaa
+assert_fail "a flag is not a channel"         -- parse_channel --beta
+assert_fail "latest is not a channel name"    -- parse_channel latest
+
+# --- newest_prerelease_tag JSON_FILE -> newest published prerelease tag -----
+
+RELFIX="$HERE/fixtures-releases.json"
+STABLEONLY="$HERE/fixtures-releases-stable-only.json"
+
+# The fixture is newest-first, as GitHub returns it:
+#   v0.5.0-1  draft prerelease   <- must be skipped
+#   v0.3.2    stable             <- must be skipped
+#   v0.4.0-2  prerelease         <- the answer
+#   v0.4.0-1  prerelease
+assert_eq "$(newest_prerelease_tag "$RELFIX")" "v0.4.0-2" "picks the newest published prerelease"
+
+# A failed release run leaves a DRAFT behind carrying partial assets — this repo
+# had exactly that for v0.4.0-2. Installing from one would download a
+# half-uploaded release, so a draft is skipped even though it is a prerelease.
+# Asserted on a fixture whose ONLY prerelease is a draft, so an implementation
+# that ignored `draft` would return v0.5.0-1 here instead of failing.
+DRAFTONLY="$HERE/fixtures-releases-draft-only.json"
+assert_fail "a draft-only list yields no installable prerelease" -- newest_prerelease_tag "$DRAFTONLY"
+
+# Nothing to install is a real state (before the first beta ships), and must be
+# reported rather than silently falling back to a stable build.
+assert_fail "no prerelease in the list is an error" -- newest_prerelease_tag "$STABLEONLY"
+
+# --- channel_hint CHANNEL -> closing guidance -------------------------------
+#
+# Installing a beta BUILD does not put the app on the beta CHANNEL: the channel
+# is a separate in-app preference. Without this the user gets one beta and then
+# never hears about another, with no clue why.
+assert_contains "$(channel_hint beta)" "Settings" "beta install names the Settings location"
+assert_contains "$(channel_hint beta)" "Beta"     "beta install names the Beta setting"
+assert_eq       "$(channel_hint stable)" ""       "stable install prints no extra guidance"
+
+# --- main rejects an unknown channel before touching the network ------------
+#
+# The platform here is SUPPORTED, so the only reason to exit is the bad channel.
+#
+# Every side effect is stubbed FIRST, and the stubs record that they ran. That
+# is not belt-and-braces: written without them, this test made `main` run the
+# whole stable path for real and copy an app into /Applications. A unit test
+# must never be able to install software, and asserting the stubs stayed
+# untouched is also the actual claim being made — that a typo fails before any
+# network call, so it reports "unknown channel" rather than "could not reach
+# GitHub" on a machine that is simply offline.
+SIDE_EFFECTS="$HERE/../../.tmp-install-test-side-effects"
+rm -f "$SIDE_EFFECTS"
+fetch_latest_json() { echo "fetch_latest_json" >> "$SIDE_EFFECTS"; return 1; }
+fetch_releases_json() { echo "fetch_releases_json" >> "$SIDE_EFFECTS"; return 1; }
+fetch_release_by_tag() { echo "fetch_release_by_tag" >> "$SIDE_EFFECTS"; return 1; }
+download_file() { echo "download_file" >> "$SIDE_EFFECTS"; return 1; }
+install_macos() { echo "install_macos" >> "$SIDE_EFFECTS"; return 1; }
+install_linux() { echo "install_linux" >> "$SIDE_EFFECTS"; return 1; }
+launch_app() { echo "launch_app" >> "$SIDE_EFFECTS"; return 1; }
+
+TESTS_RUN=$((TESTS_RUN + 1))
+CHANNEL_ERR=$(AGENT_DESKTOP_OS=Darwin AGENT_DESKTOP_ARCH=arm64 main nightly 2>&1 >/dev/null) && CHANNEL_RC=0 || CHANNEL_RC=1
+case "$CHANNEL_RC:$CHANNEL_ERR" in
+  1:*[Uu]nknown*channel*)
+    printf '  ok   main rejects an unknown channel\n' ;;
+  *)
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '  FAIL main rejects an unknown channel\n       rc=%s err=[%s]\n' "$CHANNEL_RC" "$CHANNEL_ERR" ;;
+esac
+
+assert_eq "$(cat "$SIDE_EFFECTS" 2>/dev/null || true)" "" "a bad channel touches nothing: no fetch, no download, no install"
+rm -f "$SIDE_EFFECTS"
+
+# --- main on the beta channel resolves the newest prerelease ----------------
+#
+# Every network call and install step is stubbed: the fetchers serve the local
+# fixtures, so this exercises the WIRING (which endpoint is consulted, which tag
+# is chosen, which release JSON is then read) with no network and nothing
+# written outside the temp dir.
+BETA_LOG="$HERE/../../.tmp-install-test-beta"
+rm -f "$BETA_LOG"
+fetch_latest_json() { echo "USED-LATEST-ENDPOINT" >> "$BETA_LOG"; cp "$HERE/fixtures-latest.json" "$1"; }
+fetch_releases_json() { echo "list" >> "$BETA_LOG"; cp "$HERE/fixtures-releases.json" "$1"; }
+fetch_release_by_tag() { echo "tag=$1" >> "$BETA_LOG"; cp "$HERE/fixtures-latest.json" "$2"; }
+download_file() { echo "download=$1" >> "$BETA_LOG"; : > "$2"; }
+verify_sha256() { return 0; }
+install_macos() { INSTALLED_PATH="/tmp/stub.app"; }
+launch_app() { :; }
+
+AGENT_DESKTOP_OS=Darwin AGENT_DESKTOP_ARCH=arm64 main beta >/dev/null 2>&1 || true
+BETA_TRACE=$(cat "$BETA_LOG" 2>/dev/null || true)
+
+# The beta lane must consult the LIST endpoint and then the chosen TAG. Using
+# releases/latest would silently install a stable build for a user who typed
+# `beta` — the exact bug this whole change exists to prevent.
+assert_contains "$BETA_TRACE" "tag=v0.4.0-2" "beta fetches the newest prerelease by tag"
+case "$BETA_TRACE" in
+  *USED-LATEST-ENDPOINT*)
+    TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
+    printf '  FAIL beta never consults the stable releases/latest endpoint\n' ;;
+  *)
+    TESTS_RUN=$((TESTS_RUN + 1))
+    printf '  ok   beta never consults the stable releases/latest endpoint\n' ;;
+esac
+rm -f "$BETA_LOG"

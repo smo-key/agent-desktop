@@ -135,6 +135,46 @@ $noAsset = Get-NoAssetMessage -Tag 'v0.2.4'
 Assert-True ($noAsset -like '*v0.2.4*') 'the no-asset message names the release'
 Assert-True ($noAsset -like '*github.com/smo-key/agent-desktop/releases*') 'the no-asset message links the releases page'
 
+Write-Host "`n# install.ps1 — channel selection"
+
+# The default must stay stable for an ABSENT argument: the documented
+# `irm … | iex` form passes none, and that path must not change.
+Assert-Eq (Get-ChannelName -Channel '')       'stable' 'no argument defaults to stable'
+Assert-Eq (Get-ChannelName -Channel $null)    'stable' 'a null channel defaults to stable'
+Assert-Eq (Get-ChannelName -Channel 'stable') 'stable' 'stable stays stable'
+Assert-Eq (Get-ChannelName -Channel 'beta')   'beta'   'beta selects beta'
+Assert-Eq (Get-ChannelName -Channel 'BETA')   'beta'   'channel is case-insensitive'
+
+# A typo must NOT quietly install stable — that hands the user a different
+# release train than the one they asked for, with nothing on screen to say so.
+Assert-Null (Get-ChannelName -Channel 'betaa')  'an unknown channel is rejected'
+Assert-Null (Get-ChannelName -Channel 'latest') 'latest is not a channel name'
+
+Write-Host "`n# install.ps1 — newest prerelease selection"
+
+# Newest-first, as GitHub returns it. Mirrors fixtures-releases.json.
+$releases = Get-Content (Join-Path $PSScriptRoot 'fixtures-releases.json') -Raw | ConvertFrom-Json
+Assert-Eq (Get-NewestPrereleaseTag -Releases $releases) 'v0.4.0-2' 'picks the newest published prerelease'
+
+# A failed release run leaves a DRAFT behind holding a partial set of assets —
+# this repo had exactly that for v0.4.0-2. Installing from one would download a
+# half-published release, so a draft is skipped even though it IS a prerelease.
+$draftOnly = Get-Content (Join-Path $PSScriptRoot 'fixtures-releases-draft-only.json') -Raw | ConvertFrom-Json
+Assert-Null (Get-NewestPrereleaseTag -Releases $draftOnly) 'a draft-only list yields no installable prerelease'
+
+$stableOnly = Get-Content (Join-Path $PSScriptRoot 'fixtures-releases-stable-only.json') -Raw | ConvertFrom-Json
+Assert-Null (Get-NewestPrereleaseTag -Releases $stableOnly) 'no prerelease in the list yields nothing'
+
+Write-Host "`n# install.ps1 — channel guidance"
+
+# Installing a beta BUILD does not put the app on the beta CHANNEL: that is a
+# separate in-app preference. Without this the user gets one beta and then never
+# hears about another, with no way to guess why.
+$hint = Get-ChannelHint -Channel 'beta'
+Assert-True ($hint -like '*Settings*') 'the beta hint names the Settings location'
+Assert-True ($hint -like '*Beta*')     'the beta hint names the Beta setting'
+Assert-Eq (Get-ChannelHint -Channel 'stable') '' 'a stable install prints no extra guidance'
+
 Write-Host "`n----"
 Write-Host "Total: $($script:Run) run, $($script:Failed) failed"
 if ($script:Failed -gt 0) { exit 1 }
