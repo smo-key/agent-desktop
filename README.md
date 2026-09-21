@@ -39,6 +39,34 @@ install on a mismatch.
 
 **Intel Mac**: Coming soon
 
+### Beta builds
+
+Add `beta` to either command to install the newest beta instead of the latest
+stable release:
+
+```sh
+curl -fsSL https://smo-key.github.io/agent-desktop/install.sh | sh -s -- beta
+```
+
+```powershell
+& ([scriptblock]::Create((irm https://smo-key.github.io/agent-desktop/install.ps1))) beta
+```
+
+The Windows line wraps the script in a scriptblock because `irm … | iex` cannot
+pass arguments; that is the only difference from the stable command above.
+
+Two things worth knowing:
+
+- **Installing a beta does not subscribe you to betas.** The release channel is
+  a separate setting inside the app, under *Settings → Software update*. Choose
+  **Beta** there to keep receiving them; the installer says so after it runs.
+- **`beta` installs the newest beta**, even if a stable release is newer. From
+  then on the app's Beta channel offers whichever version is highest, beta or
+  stable, so you are never held back by staying on it.
+
+Betas get less testing than stable releases. Switch back to Stable in the same
+place at any time.
+
 ## Getting Started
 
 Prerequisites: [Node.js](https://nodejs.org/), [Yarn](https://classic.yarnpkg.com/) (Classic / v1), and the [Rust toolchain](https://www.rust-lang.org/tools/install) (for Tauri).

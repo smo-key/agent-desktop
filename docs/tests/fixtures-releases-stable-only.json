@@ -1,0 +1,22 @@
+[
+  {
+    "id": 800,
+    "tag_name": "v0.3.2",
+    "name": "v0.3.2",
+    "draft": false,
+    "prerelease": false,
+    "created_at": "2026-09-19T10:00:00Z",
+    "published_at": "2026-09-19T10:05:00Z",
+    "assets": []
+  },
+  {
+    "id": 500,
+    "tag_name": "v0.3.1",
+    "name": "v0.3.1",
+    "draft": false,
+    "prerelease": false,
+    "created_at": "2026-07-23T03:00:00Z",
+    "published_at": "2026-07-23T03:05:00Z",
+    "assets": []
+  }
+]
