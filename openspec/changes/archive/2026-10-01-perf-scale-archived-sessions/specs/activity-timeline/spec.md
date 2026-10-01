@@ -20,7 +20,7 @@ Transcript-derived reads that run while agents work SHALL cost proportional to w
 - **THEN** the running/finished tool state matches a full parse of every line
 
 ### Requirement: Event-Driven Activity Refresh Is Coalesced
-The transcript activity refresh triggered by hook events (`Stop`, `PostToolUse`, `SubagentStop`) SHALL be coalesced: a burst of events from any agents SHALL produce one trailing refresh, and a refresh SHALL NOT start while a previous one is still in flight (a request arriving meanwhile runs once after it completes).
+The transcript activity refresh triggered by hook events (`Stop`, `PostToolUse`, `SubagentStop`) SHALL be coalesced (and the wake-from-sleep refresh and the slow safety poll SHALL go through the same coalesced runner): a burst of events from any agents SHALL produce one trailing refresh, and a refresh SHALL NOT start while a previous one is still in flight (a request arriving meanwhile runs once after it completes).
 
 #### Scenario: A burst of hook events triggers one activity refresh
 - **WHEN** many hook events arrive within the coalescing window

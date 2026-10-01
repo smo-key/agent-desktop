@@ -12,7 +12,7 @@ The subagents watched-set re-seed and the event-timeline re-seed SHALL be keyed 
 - **THEN** the session is found in its own workspace's registry via the id index, focused-node and per-workspace session lookups agree with it, and an unknown pane resolves to undefined
 
 ### Requirement: Roster Rows Are Identity-Stable Across Ticks
-The shared roster derivation SHALL reuse the previous tick's row object for every row whose fields are unchanged, and SHALL return the previous rows array itself when no row changed, so the 1 s clock does not invalidate downstream derivations and effects for archived or idle agents. Lane ordering SHALL use a precomputed per-lane rank rather than scanning the order list inside the sort comparator. An archived (closed) pane SHALL NOT mount a per-pane task badge timer.
+The shared roster derivation SHALL reuse the previous tick's row object for every row whose fields are unchanged, and SHALL return the previous rows array itself when no row changed, so the 1 s clock does not invalidate downstream derivations and effects for archived or idle agents. Lane ordering SHALL use a precomputed per-lane rank rather than scanning the order list inside the sort comparator. A per-pane task badge (with its own 1 s timer) SHALL be mounted only for a live pane of the active workspace — never for an archived (closed) pane or a pane in a hidden workspace.
 
 #### Scenario: Unchanged roster rows keep their identity across ticks
 - **WHEN** the roster is rebuilt and no row's fields changed
