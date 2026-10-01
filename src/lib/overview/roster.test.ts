@@ -991,4 +991,10 @@ describe('stabilizeRows', () => {
     expect(grown).toHaveLength(3);
     expect(stabilizeRows(undefined, prev)).toBe(prev);
   });
+
+  it('an optional key swapped for another is a change, not a match', () => {
+    const prev = [row('a', { worktree: undefined })];
+    const next = [row('a', { kind: 'terminal' })];
+    expect(stabilizeRows(prev, next)[0]).toBe(next[0]);
+  });
 });

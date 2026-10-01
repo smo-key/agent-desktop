@@ -524,6 +524,19 @@
     untrack(() => void subagents.seed(JSON.parse(key) as SessionRef[]));
   });
 
+  // SUBAGENTS safety re-seed. The re-seed above fires only when the watched refs
+  // change, and the Rust watcher depends on FSEvents, which can drop events under
+  // load or across sleep — so a slow backstop re-reads the watched sessions,
+  // healing a subagent stuck in a stale state within SUBAGENT_RESEED_MS.
+  const SUBAGENT_RESEED_MS = 15_000;
+  $effect(() => {
+    return gatedInterval(
+      () => void subagents.seed(currentSessionRefs()),
+      SUBAGENT_RESEED_MS,
+      HIDDEN_BACKSTOP_EVERY
+    );
+  });
+
   // ── Hidden-window + wake-from-sleep gating (policy: overview/pollGate.ts) ─────
   // While the window is hidden the visual polls pause and the correctness
   // backstops (transcript safety poll, event re-seed) run every Nth tick — never

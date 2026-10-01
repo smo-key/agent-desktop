@@ -15,4 +15,12 @@
 
 ## 3. Verify
 
-- [ ] 3.1 `cargo test`, `yarn check`, `yarn test`, `yarn coverage` green; `openspec validate perf-scale-archived-sessions`
+- [x] 3.1 `cargo test`, `yarn check`, `yarn test`, `yarn coverage` green; `openspec validate perf-scale-archived-sessions`
+
+## 4. Adversarial review follow-ups
+
+- [x] 4.1 Slow (15 s, hidden-gated) subagents safety re-seed — replaces the backstop the per-snapshot re-seed used to provide implicitly
+- [x] 4.2 `sameRow` treats a key present in one row but absent in the other as a change
+- [x] 4.3 Accepted (WARNING): incremental user-count cache treats an in-place same-inode rewrite larger than the offset as an append (Claude Code only appends transcripts)
+- [x] 4.4 Accepted (WARNING): `read_tail_events` is quadratic in the length of a single multi-chunk line (pathological input only; results correct)
+- [x] 4.5 Accepted (WARNING): `#byPane` resolves a pane to the first registry holding the KEY, where the old scan skipped falsy values (no writer stores `undefined`)

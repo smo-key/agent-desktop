@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Re-Seeds Track The Live Session Set Not Snapshot Rate
-The subagents watched-set re-seed and the event-timeline re-seed SHALL be keyed on a stable, value-comparable key of the app's session ids, so a statusline snapshot that does not change the set of session ids triggers no re-seed and no IPC. Per-snapshot work that resolves a pane to its session (the worktree-cwd adopt) SHALL use an indexed pane-to-session lookup rather than scanning every workspace registry.
+The subagents watched-set re-seed and the event-timeline re-seed SHALL be keyed on a stable, value-comparable key of the app's session ids, so a statusline snapshot that does not change the set of session ids triggers no re-seed and no IPC. Per-snapshot work that resolves a pane to its session (the worktree-cwd adopt) SHALL use an indexed pane-to-session lookup rather than scanning every workspace registry. Because the subagents re-seed no longer runs on every snapshot, a slow periodic subagents re-seed (about 15 s, gated while hidden) SHALL backstop filesystem events the watcher missed.
 
 #### Scenario: Session set key ignores snapshots that do not change the set
 - **WHEN** a new snapshot map is produced that carries the same session ids as before (a cost or context update)

@@ -760,6 +760,7 @@ function sameRow(a: AgentRow, b: AgentRow): boolean {
   const ka = Object.keys(a) as (keyof AgentRow)[];
   if (ka.length !== Object.keys(b).length) return false;
   for (const k of ka) {
+    if (!(k in b)) return false; // `{x: undefined}` vs `{y: …}`: same count, different keys
     const va = a[k];
     const vb = b[k];
     if (va === vb) continue;
