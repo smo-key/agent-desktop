@@ -665,6 +665,52 @@ fn strip_think_blocks(s: &str) -> String {
     out
 }
 
+/// A session's (user, assistant) prose messages, oldest first.
+type TitleMessages = (Vec<String>, Vec<String>);
+
+/// The (user, assistant) prose `session_focus` titles from: a copilot session's
+/// event log, or a claude session's transcript. `Ok(None)` when the session's
+/// log / transcript can't be found. Blocking (whole-file reads).
+fn read_title_messages(
+    session_id: String,
+    cwd: Option<String>,
+    program: Option<&str>,
+) -> Result<Option<TitleMessages>, String> {
+    if program == Some("copilot") {
+        let Some(base) = copilot_events::session_state_base() else {
+            return Ok(None);
+        };
+        let Some(path) = copilot_events::events_path(&base, &session_id) else {
+            return Ok(None);
+        };
+        let events = copilot_events::read_session_events(&path);
+        return Ok(Some((
+            copilot_events::user_messages(&events),
+            copilot_events::assistant_messages(&events),
+        )));
+    }
+    let projects_base =
+        activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
+    let pane = PaneRef {
+        pane_id: String::new(),
+        session_id: Some(session_id),
+        cwd,
+        program: None,
+    };
+    let Some(transcript) = activity::find_transcript(&projects_base, &pane) else {
+        return Ok(None);
+    };
+    // Title-specific view: drops skill/command/caveat scaffolding (isMeta
+    // preludes, slash-command markup, interrupt markers) that the small title
+    // model otherwise copies into the title. Distinct from `user_messages` so
+    // the auto-resume / empty-session gates reading `user_hash` /
+    // `user_message_count` are unaffected.
+    Ok(Some((
+        activity::title_user_messages(&transcript),
+        activity::assistant_messages(&transcript),
+    )))
+}
+
 /// Generate a short session FOCUS title from the user's messages. The PRIMARY path
 /// is the LOCAL model (the `llama-server` sidecar loading the Qwen3 polish model —
 /// see `polish.rs`): locate the session transcript, extract the user's prose
@@ -693,41 +739,16 @@ async fn session_focus(
     program: Option<String>,
 ) -> Result<Option<String>, String> {
     // Per-backend transcript text (`session-titles`): a copilot session's user /
-    // assistant prose comes from its event log; claude reads its transcript.
-    let (msgs, asst_msgs): (Vec<String>, Vec<String>) = if program.as_deref() == Some("copilot")
-    {
-        let Some(base) = copilot_events::session_state_base() else {
-            return Ok(None);
-        };
-        let Some(path) = copilot_events::events_path(&base, &session_id) else {
-            return Ok(None);
-        };
-        let events = copilot_events::read_session_events(&path);
-        (
-            copilot_events::user_messages(&events),
-            copilot_events::assistant_messages(&events),
-        )
-    } else {
-        let projects_base =
-            activity::projects_base().ok_or("HOME unset; cannot locate ~/.claude/projects")?;
-        let pane = PaneRef {
-            pane_id: String::new(),
-            session_id: Some(session_id),
-            cwd,
-            program: None,
-        };
-        let Some(transcript) = activity::find_transcript(&projects_base, &pane) else {
-            return Ok(None);
-        };
-        // Title-specific view: drops skill/command/caveat scaffolding (isMeta
-        // preludes, slash-command markup, interrupt markers) that the small title
-        // model otherwise copies into the title. Distinct from `user_messages` so
-        // the auto-resume / empty-session gates reading `user_hash` /
-        // `user_message_count` are unaffected.
-        (
-            activity::title_user_messages(&transcript),
-            activity::assistant_messages(&transcript),
-        )
+    // assistant prose comes from its event log; claude reads its transcript. These
+    // are WHOLE-file reads (transcripts reach tens of MB), so they run on the
+    // blocking pool rather than stalling an async worker.
+    let read = tauri::async_runtime::spawn_blocking(move || {
+        read_title_messages(session_id, cwd, program.as_deref())
+    })
+    .await
+    .map_err(|e| format!("session_focus read failed: {e}"))??;
+    let Some((msgs, asst_msgs)) = read else {
+        return Ok(None);
     };
     if msgs.is_empty() {
         return Ok(None);

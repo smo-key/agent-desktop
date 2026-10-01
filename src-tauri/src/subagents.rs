@@ -584,6 +584,14 @@ fn scan_parent_tool_state(session_dir: &Path, session_id: &str) -> ParentToolSta
         return state;
     };
     for line in text.lines() {
+        // Cheap prefilter: only a line carrying a `tool_use` / `tool_result` block can
+        // change the state, and its JSON necessarily holds that quoted type string —
+        // so skipping the rest (prose, thinking, attachments) never changes the result.
+        if !line.contains("\"tool_use\"") && !line.contains("\"tool_result\"") {
+            continue;
+        }
+        #[cfg(test)]
+        PARENT_SCAN_PARSES.with(|n| n.set(n.get() + 1));
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };
@@ -619,6 +627,12 @@ fn scan_parent_tool_state(session_dir: &Path, session_id: &str) -> ParentToolSta
         }
     }
     state
+}
+
+// How many lines [`scan_parent_tool_state`] JSON-parsed on this thread (tests).
+#[cfg(test)]
+thread_local! {
+    static PARENT_SCAN_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Read up to the last `max_bytes` of a file as a lossy UTF-8 string. `None` when
@@ -1861,5 +1875,35 @@ mod tests {
         assert!(!map.contains_key("sess-Z"), "unwatched sessions never appear");
 
         drop(watcher);
+    }
+
+    /// Prose / non-tool lines are skipped before JSON parsing, and the tool state
+    /// equals what a parse of every line yields: `Agent`/`Task` uses recorded,
+    /// results recorded, a non-subagent tool_use ignored.
+    #[test]
+    fn parent_tool_scan_ignores_lines_without_tool_blocks() {
+        let tmp = TempDir::new("prefilter");
+        let session = make_session(tmp.path(), "-Users-arthur-git-app", "sess-PF");
+        let prose_user = r#"{"type":"user","message":{"role":"user","content":"please spawn an agent"}}"#;
+        let prose_asst = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"on it"}]}}"#;
+        let other_tool = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":{}}]}}"#;
+        let a1 = agent_use_line("toolu_a1");
+        let a2 = task_use_line("toolu_a2");
+        let r1 = tool_result_line("toolu_a1");
+        let rr = tool_result_line("toolu_read");
+        write_parent_transcript(
+            &session,
+            "sess-PF",
+            &[prose_user, prose_asst, &a1, prose_asst, other_tool, &rr, &a2, prose_user, &r1, "not json"],
+        );
+
+        PARENT_SCAN_PARSES.with(|n| n.set(0));
+        let state = scan_parent_tool_state(&session, "sess-PF");
+        let task_uses: HashSet<String> = ["toolu_a1", "toolu_a2"].iter().map(|s| s.to_string()).collect();
+        let results: HashSet<String> = ["toolu_a1", "toolu_read"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(state.task_uses, task_uses);
+        assert_eq!(state.results, results);
+        // Only the five lines carrying a tool block were JSON-parsed.
+        assert_eq!(PARENT_SCAN_PARSES.with(|n| n.get()), 5);
     }
 }

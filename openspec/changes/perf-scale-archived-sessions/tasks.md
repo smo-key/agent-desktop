@@ -1,9 +1,9 @@
 ## 1. Rust
 
-- [ ] 1.1 `activity.rs`: incremental user-message count (per-path byte offset + count cache, reset on shrink/replace; parse only candidate lines)
-- [ ] 1.2 `events.rs`: sink read returns at most the ring-capacity tail
-- [ ] 1.3 `subagents.rs`: parent-tool scan skips lines without tool blocks before JSON parsing
-- [ ] 1.4 `lib.rs`: `session_focus` whole-transcript reads moved to `spawn_blocking`
+- [x] 1.1 `activity.rs`: incremental user-message count (per-path byte offset + count cache, reset on shrink/replace; parse only candidate lines)
+- [x] 1.2 `events.rs`: sink read returns at most the ring-capacity tail
+- [x] 1.3 `subagents.rs`: parent-tool scan skips lines without tool blocks before JSON parsing
+- [x] 1.4 `lib.rs`: `session_focus` whole-transcript reads moved to `spawn_blocking`
 
 ## 2. Frontend
 

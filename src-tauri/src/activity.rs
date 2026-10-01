@@ -427,20 +427,130 @@ fn is_title_noise(t: &str) -> bool {
 /// strictly-increasing count is a reliable "the user sent a new message" signal,
 /// which the windowed [`Activity::user_hash`] is NOT. Tolerant of malformed lines;
 /// `0` when none / unreadable.
+///
+/// INCREMENTAL: transcripts are append-only and reach tens of MB, so the count of
+/// the complete lines up to a byte offset is cached per path and only bytes
+/// appended since are read. A file that shrank, was replaced (inode changed), or
+/// whose mtime went backwards is recounted from the start. A trailing unterminated
+/// line is counted (as a full read would) but kept out of the cached prefix, so it
+/// is re-read — not double-counted — once it completes.
 pub fn user_message_count(path: &Path) -> usize {
-    let Ok(body) = std::fs::read_to_string(path) else {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
         return 0;
     };
-    body.lines()
-        .filter_map(|l| {
-            let t = l.trim();
-            if t.is_empty() {
-                return None;
+    let Ok(meta) = f.metadata() else {
+        return 0;
+    };
+    let len = meta.len();
+    let mtime = meta.modified().ok();
+    let ino = file_identity(&meta);
+    let cached = user_count_cache()
+        .lock()
+        .ok()
+        .and_then(|c| c.get(path).copied());
+    let (mut offset, mut count) = (0u64, 0usize);
+    if let Some(e) = cached {
+        let replaced = len < e.offset || e.ino != ino || mtime < e.mtime;
+        if !replaced {
+            if e.len == len && e.mtime == mtime {
+                return e.count + e.partial;
             }
-            serde_json::from_str::<Value>(t).ok()
-        })
-        .filter(|v| user_text(v).is_some())
-        .count()
+            offset = e.offset;
+            count = e.count;
+        }
+    }
+    let mut buf = Vec::new();
+    if f.seek(SeekFrom::Start(offset)).is_err() || f.read_to_end(&mut buf).is_err() {
+        return 0;
+    }
+    #[cfg(test)]
+    USER_COUNT_BYTES_READ.with(|n| n.set(n.get() + buf.len()));
+    // Complete lines end at the last newline; anything after it is a partial line.
+    let complete = buf.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+    count += buf[..complete]
+        .split(|&b| b == b'\n')
+        .filter(|l| is_user_message_line(l))
+        .count();
+    let partial = usize::from(is_user_message_line(&buf[complete..]));
+    if let Ok(mut c) = user_count_cache().lock() {
+        if c.len() >= USER_COUNT_CACHE_MAX {
+            c.clear();
+        }
+        c.insert(
+            path.to_path_buf(),
+            UserCountEntry {
+                offset: offset + complete as u64,
+                count,
+                partial,
+                len: offset + buf.len() as u64,
+                mtime,
+                ino,
+            },
+        );
+    }
+    count + partial
+}
+
+/// Whether one raw transcript line is a genuine user prose message (the
+/// [`user_text`] predicate). Only a line containing `"user"` — which every
+/// `"type":"user"` entry's JSON does — is JSON-parsed; assistant / tool / meta
+/// lines are rejected by that substring check alone. A non-UTF-8 line is skipped.
+fn is_user_message_line(line: &[u8]) -> bool {
+    let Ok(t) = std::str::from_utf8(line) else {
+        return false;
+    };
+    let t = t.trim();
+    if t.is_empty() || !t.contains("\"user\"") {
+        return false;
+    }
+    serde_json::from_str::<Value>(t)
+        .ok()
+        .is_some_and(|v| user_text(&v).is_some())
+}
+
+/// A file's identity across rewrites: the inode on Unix (a replace-by-rename
+/// changes it), `0` elsewhere (only the shrink / mtime checks apply).
+fn file_identity(meta: &std::fs::Metadata) -> u64 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        meta.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        0
+    }
+}
+
+/// One cached [`user_message_count`] prefix: `count` user messages in the
+/// complete lines before byte `offset`, plus `partial` (0/1) for the unterminated
+/// line after it, as of the file's `len` / `mtime` / `ino`.
+#[derive(Clone, Copy)]
+struct UserCountEntry {
+    offset: u64,
+    count: usize,
+    partial: usize,
+    len: u64,
+    mtime: Option<std::time::SystemTime>,
+    ino: u64,
+}
+
+/// Upper bound on cached user-message counts before the cache is reset wholesale.
+const USER_COUNT_CACHE_MAX: usize = 4096;
+
+/// Process-wide `transcript path -> UserCountEntry` cache for [`user_message_count`].
+fn user_count_cache() -> &'static std::sync::Mutex<HashMap<PathBuf, UserCountEntry>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<PathBuf, UserCountEntry>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+// How many transcript bytes [`user_message_count`] read on this thread (tests).
+#[cfg(test)]
+thread_local! {
+    static USER_COUNT_BYTES_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Every ASSISTANT text message in a transcript, in order (oldest first). Reads
@@ -1241,5 +1351,93 @@ mod tests {
         use std::io::Write;
         writeln!(f, "{}", assistant(serde_json::json!([{"type":"text","text":"second"}]))).unwrap();
         assert_eq!(summarize_transcript(&path).summary.as_deref(), Some("second"));
+    }
+
+    /// The pre-incremental full recount: every line parsed, every user prose
+    /// message counted. The incremental count must always equal it.
+    fn full_user_count(path: &Path) -> usize {
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l.trim()).ok())
+            .filter(|v| user_text(v).is_some())
+            .count()
+    }
+
+    fn append(path: &Path, text: &str) {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+        f.write_all(text.as_bytes()).unwrap();
+    }
+
+    fn user_line(text: &str) -> String {
+        serde_json::json!({"type":"user","message":{"role":"user","content":text}}).to_string()
+    }
+
+    /// Spec scenario: "User message count is incremental on append". A second read
+    /// after an append parses only the appended bytes and still equals a full
+    /// recount; a trailing partial line is counted once complete, never twice.
+    #[test]
+    fn user_message_count_is_incremental_on_append() {
+        let tmp = TempDir::new("ucount-append");
+        let path = write_transcript(
+            tmp.path(),
+            "proj",
+            "sess-UC",
+            &[
+                serde_json::json!({"type":"user","message":{"role":"user","content":"First"}}),
+                assistant(serde_json::json!([{"type":"text","text":"ok"}])),
+                // A tool_result-only user entry and a meta command are not messages.
+                serde_json::json!({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"x"}]}}),
+                serde_json::json!({"type":"user","message":{"role":"user","content":"exit"}}),
+            ],
+        );
+        assert_eq!(user_message_count(&path), 1);
+        assert_eq!(user_message_count(&path), full_user_count(&path));
+
+        // Append a user + assistant line: only those bytes are read.
+        let appended = format!(
+            "{}\n{}\n",
+            user_line("Second"),
+            assistant(serde_json::json!([{"type":"text","text":"done"}]))
+        );
+        append(&path, &appended);
+        USER_COUNT_BYTES_READ.with(|n| n.set(0));
+        assert_eq!(user_message_count(&path), 2);
+        assert_eq!(USER_COUNT_BYTES_READ.with(|n| n.get()), appended.len());
+        assert_eq!(user_message_count(&path), full_user_count(&path));
+
+        // A partial (unterminated) user line counts like a full read would…
+        let third = user_line("Third");
+        let (head, tail) = third.split_at(third.len() / 2);
+        append(&path, head);
+        assert_eq!(user_message_count(&path), full_user_count(&path));
+        append(&path, tail);
+        assert_eq!(user_message_count(&path), 3, "an unterminated last line still counts");
+        // …and once terminated, it is not counted twice.
+        append(&path, &format!("\n{}\n", user_line("Fourth")));
+        assert_eq!(user_message_count(&path), 4);
+        assert_eq!(user_message_count(&path), full_user_count(&path));
+    }
+
+    /// Spec scenario: "User message count resets when the file shrinks". A file
+    /// rewritten shorter than the cached offset is recounted from the start.
+    #[test]
+    fn user_message_count_resets_when_the_file_shrinks() {
+        let tmp = TempDir::new("ucount-shrink");
+        let lines: Vec<Value> = ["One", "Two", "Three"]
+            .iter()
+            .map(|t| serde_json::json!({"type":"user","message":{"role":"user","content":t}}))
+            .collect();
+        let path = write_transcript(tmp.path(), "proj", "sess-SH", &lines);
+        assert_eq!(user_message_count(&path), 3);
+
+        std::fs::write(&path, format!("{}\n", user_line("Only"))).unwrap();
+        assert_eq!(user_message_count(&path), full_user_count(&path));
+        assert_eq!(user_message_count(&path), 1);
+
+        // A missing file reads as 0.
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(user_message_count(&path), 0);
     }
 }
