@@ -138,6 +138,11 @@
              placeholder is the surface home / grid fallback. -->
         <div class="pane-closed">
           <span class="pc-label">{session?.closed ? 'Session closed' : 'Session paused'}</span>
+          {#if !session?.closed}
+            <!-- Grid-view way to open a dormant paused agent (the inbox wakes it on
+                 focus); it respawns with `claude --resume` and stays paused. -->
+            <button type="button" class="pc-open" onclick={() => workspace.wakePaused(node.paneId)}>Open</button>
+          {/if}
         </div>
       {:else}
         <TerminalPane
@@ -202,6 +207,20 @@
     font-size: 12px;
     letter-spacing: 0.04em;
     text-transform: uppercase;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .pc-open {
+    font: inherit;
+    color: var(--fg-2, #c9d1d9);
+    background: transparent;
+    border: 1px solid var(--space-600, #30363d);
+    border-radius: 6px;
+    padding: 4px 12px;
+    cursor: pointer;
+  }
+  .pc-open:hover {
+    border-color: var(--fg-4, #6b7280);
   }
   .leaf {
     position: relative;

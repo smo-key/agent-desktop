@@ -277,9 +277,15 @@ function canResume(s: PaneSession): boolean {
 
 /** The registry value for a PAUSED pane. A resumable one goes DORMANT (its PTY is
  *  stopped; the next spawn resumes the session); first-spawn-only `launchArgs` (the
- *  worktree flag) are dropped as on archive. A non-resumable pane keeps running. */
-function pausedSession(cur: PaneSession, userMsgCount: number | null): PaneSession {
-  if (!canResume(cur)) return { ...cur, paused: true, pausedCount: userMsgCount };
+ *  worktree flag) are dropped as on archive. A non-resumable pane — or one the caller
+ *  says must not stop (`stopProcess:false`: an EMPTY session, whose transcript does
+ *  not exist yet, so `--resume` would fail) — keeps running. */
+function pausedSession(
+  cur: PaneSession,
+  userMsgCount: number | null,
+  stopProcess: boolean
+): PaneSession {
+  if (!stopProcess || !canResume(cur)) return { ...cur, paused: true, pausedCount: userMsgCount };
   const { launchArgs: _la, ...rest } = cur;
   return { ...rest, paused: true, pausedCount: userMsgCount, dormant: true, resume: true };
 }
@@ -827,7 +833,9 @@ export class WorkspaceStore {
       // `launchArgs` (the worktree flag) is FIRST-SPAWN only: an archived pane that
       // is later previewed respawns with `--resume`, and must never create a
       // second worktree — drop it here, the one in-session path to a respawn.
-      const { preview: _pv, previewCount: _pc, launchArgs: _la, ...rest } = cur;
+      // `dormant` is dropped too: `closed` now owns "no process", and a later
+      // preview / restore must spawn it.
+      const { preview: _pv, previewCount: _pc, launchArgs: _la, dormant: _d, ...rest } = cur;
       entry.registry = { ...entry.registry, [paneId]: { ...rest, closed: true, resume: false } };
       return;
     }
@@ -877,14 +885,14 @@ export class WorkspaceStore {
    * the inbox captures it lazily from the first known reading. No-op when the pane is
    * gone.
    */
-  pauseAgent(paneId: string, userMsgCount: number | null): void {
+  pauseAgent(paneId: string, userMsgCount: number | null, stopProcess = true): void {
     for (const entry of this.workspaces) {
       if (!leafByPaneId(entry.ws.root, paneId)) continue;
       const cur = entry.registry[paneId];
       if (!cur) return;
       entry.registry = {
         ...entry.registry,
-        [paneId]: pausedSession(cur, userMsgCount)
+        [paneId]: pausedSession(cur, userMsgCount, stopProcess)
       };
       return;
     }
@@ -897,8 +905,9 @@ export class WorkspaceStore {
       if (!leafByPaneId(entry.ws.root, paneId)) continue;
       const cur = entry.registry[paneId];
       if (!cur || !cur.paused || !cur.dormant) return;
-      const { dormant: _d, ...rest } = cur;
-      entry.registry = { ...entry.registry, [paneId]: { ...rest, resume: true } };
+      // `dormant:false` (not absent) marks a WOKEN pane — the grace timer puts only
+      // these back to sleep; a never-dormant (non-resumable) paused pane has none.
+      entry.registry = { ...entry.registry, [paneId]: { ...cur, dormant: false, resume: true } };
       return;
     }
   }

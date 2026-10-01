@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Paused Agents Do Not Run Until Opened
-A paused agent that can be resumed (a claude-family program with a session id) SHALL NOT have a running process unless the user has opened it. Pausing such an agent SHALL terminate its process (asking for confirmation first when the agent is `working`) while keeping it in the Paused lane, and a paused agent SHALL restore DORMANT on app launch (not spawned). Opening a dormant paused agent SHALL respawn it with `claude --resume`, keeping it Paused until the user sends a new message or resumes it; a woken paused agent the user leaves SHALL return to dormant after the archived-preview grace period. A dormant pane SHALL be excluded from live polling, and orchestration SHALL refuse to message it. A paused pane that cannot be resumed (no session id) SHALL keep running. The dormant state is runtime-only and is never persisted.
+A paused agent that can be resumed (a claude-family program with a session id) SHALL NOT have a running process unless the user has opened it. Pausing such an agent SHALL terminate its process (asking for confirmation first when the agent is `working`) while keeping it in the Paused lane, and a paused agent SHALL restore DORMANT on app launch (not spawned). Opening a dormant paused agent SHALL respawn it with `claude --resume`, keeping it Paused until the user sends a new message or resumes it; a woken paused agent the user leaves SHALL return to dormant after the archived-preview grace period. A dormant pane SHALL be excluded from live polling, and orchestration SHALL refuse to message it. A paused pane that cannot be resumed (no session id) or whose session is still EMPTY (no user message yet, so no transcript exists to resume) SHALL keep running. Archiving a dormant paused agent SHALL clear its dormant state so a later preview or restore spawns it, and a dormant agent SHALL report `idle` rather than a stale pre-pause status. The dormant state is runtime-only and is never persisted.
 
 #### Scenario: Pausing an agent stops its process
 - **WHEN** a live claude agent with a session id is paused
@@ -10,6 +10,10 @@ A paused agent that can be resumed (a claude-family program with a session id) S
 #### Scenario: A paused agent without a session id keeps running
 - **WHEN** a pane that has no session id is paused
 - **THEN** it is paused but not dormant, so its process keeps running
+
+#### Scenario: Pausing an empty session keeps it running
+- **WHEN** a claude agent with a session id but no user message yet is paused
+- **THEN** it is paused but not dormant, since `claude --resume` would have no transcript to resume
 
 #### Scenario: A paused agent restores dormant
 - **WHEN** a layout holding a paused claude agent is serialized and restored

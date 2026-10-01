@@ -310,6 +310,24 @@ describe('workspace — paused agents do not run until opened', () => {
     expect(s.dormant).toBeFalsy();
   });
 
+  it('Pausing an empty session keeps it running', () => {
+    // A fresh claude pane has a session id before its transcript exists; stopping it
+    // would leave `claude --resume` nothing to resume, so it stays running.
+    const { store, paneId } = withPane('claude');
+    store.pauseAgent(paneId, null, false);
+    expect(store.session(paneId).paused).toBe(true);
+    expect(store.session(paneId).dormant).toBeFalsy();
+  });
+
+  it('archiving a dormant paused agent clears dormant so a preview or restore spawns', () => {
+    const { store, paneId } = withPane('claude');
+    store.pauseAgent(paneId, 1);
+    store.closeAgent(paneId);
+    expect(store.session(paneId).dormant).toBeFalsy();
+    store.previewArchived(paneId, 1);
+    expect(isLivePane(store.session(paneId))).toBe(true);
+  });
+
   it('Opening a paused agent resumes its session', () => {
     const { store, paneId } = withPane('claude');
     const sessionId = store.session(paneId).sessionId;

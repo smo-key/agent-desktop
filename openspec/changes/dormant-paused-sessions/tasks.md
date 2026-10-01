@@ -15,3 +15,13 @@
 ## 3. Verify
 
 - [x] 3.1 `yarn check`, `yarn test`, `yarn coverage` green; `openspec validate dormant-paused-sessions`
+
+## 4. Adversarial review follow-ups
+
+- [x] 4.1 CRITICAL: pausing an EMPTY session keeps it running (`pauseAgent(…, stopProcess)`; `--resume` of a never-written transcript fails)
+- [x] 4.2 `closeAgent` drops `dormant`, so preview / restore / `unarchive_agent` of an archived ex-paused agent spawns
+- [x] 4.3 A dormant pane reports `idle` (roster + orchestration), not the stale pre-pause `working`
+- [x] 4.4 Grid-view "Session paused" placeholder gets an Open button
+- [x] 4.5 `wakePaused` marks `dormant:false`; only woken panes are grace targets (no no-op timer for non-resumable paused panes)
+- [x] 4.6 Accepted (WARNING): a message sent < one poll before pausing can make the first post-open poll auto-resume the agent (pre-existing baseline race, now visible on open)
+- [x] 4.7 Accepted (WARNING): wake-on-focus and walk-away sleep run only in the Inbox view; a woken paused agent left in grid view keeps running until the Inbox is shown

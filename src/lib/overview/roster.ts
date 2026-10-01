@@ -418,8 +418,9 @@ export interface RosterPane {
    *  the agent when the live count strictly exceeds this (a new message was sent).
    *  `null`/absent until lazily established from the first known reading. */
   pausedCount?: number | null;
-  /** Whether this PAUSED agent is DORMANT: its process is stopped until the user
-   *  opens it (then `claude --resume`). Runtime-only. */
+  /** Whether this PAUSED agent is DORMANT: `true` — its process is stopped until the
+   *  user opens it (then `claude --resume`); `false` — a dormant agent the user has
+   *  woken (still paused); absent — never dormant. Runtime-only. */
   dormant?: boolean;
   /** Whether this agent is being PREVIEWED: an archived session re-opened with
    *  `claude --resume` so its transcript is live + interactive, yet still presented
@@ -667,6 +668,9 @@ function rowFor(
   ) {
     status = 'working';
   }
+  // A DORMANT paused agent has no process: it is never working / waiting on a stale
+  // event (pausing a working agent kills it before any Stop hook lands).
+  if (pane.dormant === true) status = 'idle';
   return {
     paneId: pane.paneId,
     workspaceId,
@@ -704,7 +708,7 @@ function rowFor(
     closed,
     paused: pane.paused === true,
     pausedCount: pane.pausedCount ?? null,
-    dormant: pane.dormant === true,
+    dormant: pane.dormant,
     preview: pane.preview === true,
     previewCount: pane.previewCount ?? null,
     everPrompted: event?.everPrompted === true

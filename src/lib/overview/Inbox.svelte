@@ -844,7 +844,13 @@
   function performPause(paneId: string) {
     advanceAfterDismiss(paneId);
     if (userSelected === paneId) userSelected = null;
-    workspace.pauseAgent(paneId, activity.forPane(paneId).userMsgCount ?? null);
+    // An EMPTY session keeps running: its transcript does not exist yet, so a later
+    // `claude --resume` would have nothing to resume.
+    workspace.pauseAgent(
+      paneId,
+      activity.forPane(paneId).userMsgCount ?? null,
+      !isEmptySession(paneId)
+    );
   }
 
   /** RESUME a paused agent (manual): clear paused and watch it. */

@@ -998,3 +998,17 @@ describe('stabilizeRows', () => {
     expect(stabilizeRows(prev, next)[0]).toBe(next[0]);
   });
 });
+
+describe('dormant paused rows', () => {
+  it('a dormant paused agent never reports a stale working status', () => {
+    const ws: RosterWorkspace[] = [
+      { id: 'w', name: 'W', panes: [{ paneId: 'p', cwd: null, isApp: true, paused: true, dormant: true }] }
+    ];
+    // A stale event says working (the agent was paused mid-turn and killed).
+    const rows = buildRoster({}, ws, {}, 1_000, {}, undefined, {
+      p: { status: 'working' } as never
+    });
+    expect(rows[0].status).toBe('idle');
+    expect(rows[0].dormant).toBe(true);
+  });
+});

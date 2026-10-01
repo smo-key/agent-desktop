@@ -483,6 +483,7 @@ function panesInProjectReal(projectId: string): LocatedPane[] {
 function statusOfReal(paneId: string): AgentStatus {
   const session = locateReal(paneId)?.session;
   if (session?.closed === true) return 'finished';
+  if (session?.dormant === true) return 'idle'; // paused, process stopped
   const runtime = getRuntime(paneId);
   const ptyStatus = deriveStatus(runtime, Date.now());
   if (runtime?.exited) return ptyStatus;
