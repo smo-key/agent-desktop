@@ -309,6 +309,10 @@ export class OrchestrationExecutor {
     const resolved = this.resolveTarget(args);
     if ('error' in resolved) return Promise.resolve(resolved);
     const paneId = resolved.pane.paneId;
+    // A DORMANT paused agent has no process to type into until the user opens it.
+    if (resolved.pane.session.dormant === true) {
+      return Promise.resolve({ error: `agent pane is paused and not running: ${paneId}` });
+    }
     const text = typeof args.text === 'string' ? args.text : '';
 
     return new Promise<OpResult>((resolve) => {
@@ -316,7 +320,7 @@ export class OrchestrationExecutor {
       const attempt = () => {
         // Re-check existence each attempt — the pane could close while we wait.
         const still = this.deps.locate(paneId);
-        if (!still || still.session.closed === true) {
+        if (!still || still.session.closed === true || still.session.dormant === true) {
           resolve({ error: `agent pane is no longer available: ${paneId}` });
           return;
         }

@@ -83,10 +83,18 @@ export interface PaneSession {
   closed?: boolean;
   /**
    * Set when the agent is PAUSED (deferred for later): it is moved to the Paused
-   * lane and out of attention, but stays LIVE (PTY keeps running) so you can resume
-   * it by sending a new message. Persisted, so a paused agent survives a restart.
+   * lane and out of attention. A resumable paused agent is also `dormant` (its PTY
+   * is stopped) until the user opens it; a new message or Resume returns it to live.
+   * Persisted, so a paused agent survives a restart.
    */
   paused?: boolean;
+  /**
+   * RUNTIME-ONLY: a PAUSED agent whose process is not running (no TerminalPane is
+   * mounted). Set by `pauseAgent` for a resumable pane and at restore; cleared by
+   * `wakePaused` (the user opened it -> `claude --resume`) and `resumeAgent`. Never
+   * persisted — a restart derives it from `paused`.
+   */
+  dormant?: boolean;
   /**
    * The user-message COUNT (`activity.userMsgCount`) captured when the agent was
    * paused. The inbox auto-resumes the agent once the live count strictly EXCEEDS
@@ -262,6 +270,20 @@ function makeEntry(
  * the ACTIVE workspace, so existing consumers (PaneNode/Gutter/route) keep
  * working unchanged against `workspace.root` / `workspace.focusedId`.
  */
+/** Whether a pane can resume its transcript on respawn (claude-family + session id). */
+function canResume(s: PaneSession): boolean {
+  return isAgentProgram(s.program) && !!s.sessionId;
+}
+
+/** The registry value for a PAUSED pane. A resumable one goes DORMANT (its PTY is
+ *  stopped; the next spawn resumes the session); first-spawn-only `launchArgs` (the
+ *  worktree flag) are dropped as on archive. A non-resumable pane keeps running. */
+function pausedSession(cur: PaneSession, userMsgCount: number | null): PaneSession {
+  if (!canResume(cur)) return { ...cur, paused: true, pausedCount: userMsgCount };
+  const { launchArgs: _la, ...rest } = cur;
+  return { ...rest, paused: true, pausedCount: userMsgCount, dormant: true, resume: true };
+}
+
 export class WorkspaceStore {
   /** All open workspaces, in rail order. Deep-reactive via the runes proxy. */
   workspaces = $state<WorkspaceEntry[]>([]);
@@ -862,8 +884,33 @@ export class WorkspaceStore {
       if (!cur) return;
       entry.registry = {
         ...entry.registry,
-        [paneId]: { ...cur, paused: true, pausedCount: userMsgCount }
+        [paneId]: pausedSession(cur, userMsgCount)
       };
+      return;
+    }
+  }
+
+  /** OPEN a dormant paused agent: spawn it (`claude --resume`) while it stays
+   *  Paused. No-op unless the pane is dormant and paused. */
+  wakePaused(paneId: string): void {
+    for (const entry of this.workspaces) {
+      if (!leafByPaneId(entry.ws.root, paneId)) continue;
+      const cur = entry.registry[paneId];
+      if (!cur || !cur.paused || !cur.dormant) return;
+      const { dormant: _d, ...rest } = cur;
+      entry.registry = { ...entry.registry, [paneId]: { ...rest, resume: true } };
+      return;
+    }
+  }
+
+  /** Put a woken paused agent back to sleep (its PTY terminates). No-op unless the
+   *  pane is still paused and resumable. */
+  sleepPaused(paneId: string): void {
+    for (const entry of this.workspaces) {
+      if (!leafByPaneId(entry.ws.root, paneId)) continue;
+      const cur = entry.registry[paneId];
+      if (!cur || !cur.paused || cur.dormant || !canResume(cur)) return;
+      entry.registry = { ...entry.registry, [paneId]: { ...cur, dormant: true, resume: true } };
       return;
     }
   }
@@ -878,7 +925,8 @@ export class WorkspaceStore {
       if (!leafByPaneId(entry.ws.root, paneId)) continue;
       const cur = entry.registry[paneId];
       if (!cur) return;
-      const { paused: _p, pausedCount: _c, ...rest } = cur;
+      // Clearing `dormant` (re)spawns a dormant agent; `resume` was set on pause.
+      const { paused: _p, pausedCount: _c, dormant: _d, ...rest } = cur;
       entry.registry = { ...entry.registry, [paneId]: rest };
       return;
     }

@@ -37,7 +37,8 @@ export type AgentStatus = 'working' | 'waiting' | 'finished' | 'error' | 'idle';
  * lanes, ordered top->bottom by how much they need you:
  *  - `attn`   — needs attention: waiting on YOU, or errored (the prominent lane).
  *  - `flight` — in flight: working on its own, or idle (these need you least).
- *  - `paused` — deferred by you for later (kept live; a new message resumes it).
+ *  - `paused` — deferred by you for later (process stopped until opened; a new
+ *    message resumes it).
  *  - `done`   — archived: the session is closed (restorable), or finished cleanly.
  */
 export type AgentLane = 'attn' | 'flight' | 'paused' | 'done';
@@ -417,6 +418,9 @@ export interface RosterPane {
    *  the agent when the live count strictly exceeds this (a new message was sent).
    *  `null`/absent until lazily established from the first known reading. */
   pausedCount?: number | null;
+  /** Whether this PAUSED agent is DORMANT: its process is stopped until the user
+   *  opens it (then `claude --resume`). Runtime-only. */
+  dormant?: boolean;
   /** Whether this agent is being PREVIEWED: an archived session re-opened with
    *  `claude --resume` so its transcript is live + interactive, yet still presented
    *  as Archived (pinned to `done`, out of attention) until the user sends a
@@ -516,6 +520,8 @@ export interface AgentRow {
    *  the live count strictly exceeds it (a new message arrived). Null when not yet
    *  established; undefined when not paused. */
   pausedCount?: number | null;
+  /** Whether this paused pane is DORMANT (no process). Optional; fixtures may omit. */
+  dormant?: boolean;
   /** Whether the agent is being PREVIEWED: an archived session resumed for viewing
    *  (live terminal), still pinned to the Archived lane and out of attention until a
    *  new message UNARCHIVES it. Optional; roster fixtures may omit it (not-preview). */
@@ -698,6 +704,7 @@ function rowFor(
     closed,
     paused: pane.paused === true,
     pausedCount: pane.pausedCount ?? null,
+    dormant: pane.dormant === true,
     preview: pane.preview === true,
     previewCount: pane.previewCount ?? null,
     everPrompted: event?.everPrompted === true

@@ -130,13 +130,14 @@
     oncontextmenu={openMenu}
   >
     {#key node.paneId}
-      {#if session?.closed}
-        <!-- CLOSED (Completed) session: no TerminalPane, so the PTY is terminated /
-             never spawned. Restoring it (closed=false) re-mounts TerminalPane,
+      {#if session?.closed || session?.dormant}
+        <!-- CLOSED (Completed) or DORMANT (paused, not opened) session: no
+             TerminalPane, so the PTY is terminated / never spawned. Waking a dormant
+             pane (dormant cleared) mounts TerminalPane with `claude --resume`. Restoring it (closed=false) re-mounts TerminalPane,
              spawning `claude --resume`. The inbox shows its own closed panel; this
              placeholder is the surface home / grid fallback. -->
         <div class="pane-closed">
-          <span class="pc-label">Session closed</span>
+          <span class="pc-label">{session?.closed ? 'Session closed' : 'Session paused'}</span>
         </div>
       {:else}
         <TerminalPane
@@ -158,7 +159,7 @@
          Mounted only for a LIVE pane of the ACTIVE workspace (performance): each
          badge runs its own 1 s clock and re-derives on every snapshot, and a
          closed pane or a hidden workspace never shows it anyway. -->
-    {#if activeWorkspace && !session?.closed}
+    {#if activeWorkspace && !session?.closed && !session?.dormant}
       <TaskBadge paneId={node.paneId} />
     {/if}
   </div>

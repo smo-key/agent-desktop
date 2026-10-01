@@ -71,11 +71,16 @@ export interface PersistedSession {
   closed?: boolean;
   /**
    * Set when the agent is PAUSED (deferred). Persisted, so a paused agent restores
-   * AS paused. Unlike `closed`, a paused pane stays LIVE (it re-spawns / resumes so
-   * you can keep messaging it); it is only moved to the Paused lane and out of
-   * attention until a new message resumes it.
+   * AS paused — and, when resumable, DORMANT (not spawned until opened; see
+   * `dormant`). It sits in the Paused lane, out of attention, until a new message
+   * or Resume returns it to live.
    */
   paused?: boolean;
+  /**
+   * RUNTIME-ONLY (never serialized): a paused, resumable agent whose process is NOT
+   * running. Derived from `paused` at restore; cleared when the user opens it.
+   */
+  dormant?: boolean;
   /**
    * The user-message COUNT captured when the agent was paused. Persisted alongside
    * `paused` so the resume-on-new-message baseline survives a restart (without it a
@@ -333,9 +338,10 @@ function sanitizeRegistry(
       // A closed (Archived) pane restores as closed: no spawn, no resume until the
       // user restores it (which sets resume:true then).
       const closed = raw.closed === true && isAgentProgram(program);
-      // A paused pane stays LIVE (it resumes), unlike closed — so the user can keep
-      // messaging it. It keeps its baseline count so it doesn't auto-resume at once;
-      // an absent/legacy count restores as null and is re-established lazily.
+      // A paused pane keeps its baseline count so it doesn't auto-resume at once; an
+      // absent/legacy count restores as null and is re-established lazily. A paused
+      // pane that can resume its transcript restores DORMANT: it is not spawned
+      // until the user opens it (then `claude --resume`).
       const paused = raw.paused === true && isAgentProgram(program) && !closed;
       const pausedCount =
         paused && typeof raw.pausedCount === 'number' && Number.isFinite(raw.pausedCount)
@@ -354,6 +360,7 @@ function sanitizeRegistry(
         ...(resume ? { resume: true } : {}),
         ...(closed ? { closed: true } : {}),
         ...(paused ? { paused: true, pausedCount } : {}),
+        ...(paused && resume ? { dormant: true } : {}),
         // Restore the specialist attribution + its composed CLI args (a resumed
         // specialist pane re-applies its persona via the `args` prop on respawn).
         ...(typeof raw.specialist === 'string' && raw.specialist

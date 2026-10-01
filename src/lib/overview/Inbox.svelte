@@ -45,6 +45,8 @@
     shouldAutoResume,
     deleteAllArchivedRequest,
     archiveWorkingConfirm,
+    pauseWorkingConfirm,
+    graceTargets,
     archivedNavNeedsExpand,
     rowSub as rowSubText
   } from './inbox';
@@ -729,11 +731,15 @@
     selectAgent(paneId);
   }
 
-  /** A roster row was clicked: an archived (closed) session resumes for preview;
-   *  everything else (live / paused / already-previewing) is just selected. */
+  /** A roster row was clicked: an archived (closed) session resumes for preview, a
+   *  dormant paused one is woken; everything else is just selected. */
   function onRowClick(r: AgentRow) {
     if (r.closed && !isTerminalRow(r)) startPreview(r.paneId);
-    else selectAgent(r.paneId);
+    else {
+      // Opening a DORMANT paused agent wakes it (`claude --resume`); it stays Paused.
+      if (r.paused && r.dormant) workspace.wakePaused(r.paneId);
+      selectAgent(r.paneId);
+    }
   }
 
   // --- Terminal rows (combined placement) ------------------------------------
@@ -825,10 +831,17 @@
     else performArchive(paneId);
   }
 
-  /** PAUSE (defer) an agent: keep it live but move it to the Paused lane, out of
-   *  attention. Records the current user-message COUNT so only a NEW message resumes
-   *  it. Drops the pin so focus advances. */
+  /** PAUSE (defer) an agent: move it to the Paused lane, out of attention, and stop
+   *  its process (it goes DORMANT until opened — `claude --resume`). Records the
+   *  current user-message COUNT so only a NEW message resumes it. A working agent
+   *  asks first (its turn would be cut). Drops the pin so focus advances. */
   function pauseAgent(paneId: string) {
+    const status = viewRows.find((r) => r.paneId === paneId)?.status ?? 'idle';
+    const req = pauseWorkingConfirm(status, () => performPause(paneId));
+    if (req) confirmModal.show(req);
+    else performPause(paneId);
+  }
+  function performPause(paneId: string) {
     advanceAfterDismiss(paneId);
     if (userSelected === paneId) userSelected = null;
     workspace.pauseAgent(paneId, activity.forPane(paneId).userMsgCount ?? null);
@@ -908,6 +921,20 @@
     }
   });
 
+  // Auto-wake a DORMANT paused agent when focus LANDS on it (keyboard, queue
+  // stepper, restored layout, a context-menu Open) — the paused counterpart of the
+  // auto-preview above. Only on a focus CHANGE: pausing the SHOWN agent (when focus
+  // has nowhere else to go) must leave it dormant, not respawn it at once; the
+  // header's Open button wakes it then. `prevFocusId` is a plain, untracked local.
+  let prevFocusId: string | null = null;
+  $effect(() => {
+    const f = focus;
+    const id = f?.paneId ?? null;
+    const changed = id !== prevFocusId;
+    prevFocusId = id;
+    if (changed && f && f.paused && f.dormant && !isTerminalRow(f)) workspace.wakePaused(f.paneId);
+  });
+
   // Auto-resume / auto-unarchive: a PAUSED agent returns to its live status, and a
   // PREVIEWING (resumed-from-Archived) agent unarchives, the moment the user sends a
   // new message — detected when the live user-message COUNT strictly exceeds the
@@ -973,26 +1000,26 @@
       previewTimers.delete(paneId);
     }
   }
+  // The same walk-away grace puts a WOKEN paused agent back to sleep (dormant: its
+  // PTY terminates; it stays Paused). `graceTargets` excludes the shown agent, so
+  // returning to its window cancels the countdown.
   $effect(() => {
-    const previewing = new Set(allRows.filter((r) => r.preview).map((r) => r.paneId));
-    // Drop timers for panes that stopped previewing (committed / deleted / closed).
+    const targets = graceTargets(allRows.filter((r) => !isTerminalRow(r)), shownId);
+    // Drop timers for panes that are no longer targets (shown again, committed,
+    // resumed, deleted, closed, or already asleep).
     for (const paneId of [...previewTimers.keys()]) {
-      if (!previewing.has(paneId)) cancelPreviewTimer(paneId);
+      if (!targets.has(paneId)) cancelPreviewTimer(paneId);
     }
-    for (const paneId of previewing) {
-      if (paneId === shownId) {
-        cancelPreviewTimer(paneId); // on its window — hold off
-      } else if (!previewTimers.has(paneId)) {
-        // Left its window — start the grace countdown (once; per-second roster reruns
-        // see the timer already pending and don't restart it).
-        previewTimers.set(
-          paneId,
-          setTimeout(() => {
-            previewTimers.delete(paneId);
-            workspace.closeAgent(paneId);
-          }, PREVIEW_GRACE_MS)
-        );
-      }
+    for (const [paneId, action] of targets) {
+      if (previewTimers.has(paneId)) continue; // pending — per-tick reruns don't restart it
+      previewTimers.set(
+        paneId,
+        setTimeout(() => {
+          previewTimers.delete(paneId);
+          if (action === 'archive') workspace.closeAgent(paneId);
+          else workspace.sleepPaused(paneId);
+        }, PREVIEW_GRACE_MS)
+      );
     }
   });
   // Clear every pending re-archive timer on teardown.
@@ -1500,6 +1527,10 @@
             <!-- Pause + Archive (non-empty) / Delete
                  (empty), routed through the same handlers — no longer delete-only. -->
             {#if focus.paused}
+              {#if focus.dormant}
+                <!-- Dormant: its process is stopped. Open respawns it (still Paused). -->
+                <button type="button" class="hbtn" onclick={() => workspace.wakePaused(focus.paneId)} use:tooltip={'Open (claude --resume) — stays paused until you send a message'}>Open</button>
+              {/if}
               <button type="button" class="hbtn" onclick={() => resumeAgent(focus.paneId)} use:tooltip={`Resume (${shortcuts.text('pauseSession')})`}>Resume</button>
             {:else}
               <button type="button" class="hbtn" onclick={() => pauseAgent(focus.paneId)} use:tooltip={`Pause / defer for later (${shortcuts.text('pauseSession')})`}>Pause</button>
