@@ -613,6 +613,21 @@ describe('Closed Sessions Persist As Closed', () => {
     expect(back.pausedCount).toBe(2);
   });
 
+  it('an empty paused session restores running, not dormant', () => {
+    // No user message when paused (count 0) or unknown (legacy null): its transcript
+    // may not exist, so `claude --resume` from dormant could not recover it.
+    const ws: Workspace = { version: 1, root: leaf('L1', 'p1'), focusedId: 'L1' };
+    for (const pausedCount of [0, null]) {
+      const reg: Record<string, PersistedSession> = {
+        p1: { program: 'claude', cwd: '/a', sessionId: 's1', paused: true, pausedCount }
+      };
+      const state = serializeState([{ id: 'ws-1', name: 'S', ws, registry: reg }], 'ws-1');
+      const back = restoreState(JSON.stringify(state), ids('n')).workspaces[0].registry.p1;
+      expect(back.paused).toBe(true);
+      expect(back.dormant).toBeFalsy();
+    }
+  });
+
   it('A previewing session persists as archived', () => {
     // Preview is RUNTIME-ONLY: a session resumed for viewing (closed:false, resume:true,
     // preview:true) must be written as ARCHIVED so an app restart never restores it live.

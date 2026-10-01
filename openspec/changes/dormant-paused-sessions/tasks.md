@@ -25,3 +25,6 @@
 - [x] 4.5 `wakePaused` marks `dormant:false`; only woken panes are grace targets (no no-op timer for non-resumable paused panes)
 - [x] 4.6 Accepted (WARNING): a message sent < one poll before pausing can make the first post-open poll auto-resume the agent (pre-existing baseline race, now visible on open)
 - [x] 4.7 Accepted (WARNING): wake-on-focus and walk-away sleep run only in the Inbox view; a woken paused agent left in grid view keeps running until the Inbox is shown
+- [x] 4.8 Restore makes a paused pane dormant only when its baseline count is a positive number (an empty / unknown session may have no transcript to resume)
+- [x] 4.9 The walk-away grace never puts a WORKING woken agent to sleep
+- [x] 4.10 Accepted (WARNING): a session judged empty at pause time (first message sent < one poll earlier) keeps running until restart

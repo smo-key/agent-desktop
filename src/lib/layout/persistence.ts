@@ -360,7 +360,12 @@ function sanitizeRegistry(
         ...(resume ? { resume: true } : {}),
         ...(closed ? { closed: true } : {}),
         ...(paused ? { paused: true, pausedCount } : {}),
-        ...(paused && resume ? { dormant: true } : {}),
+        // Only a session KNOWN to hold a user message goes dormant: an empty one (count
+        // 0) or one of unknown size (legacy null) may have no transcript yet, so
+        // `claude --resume` from dormant could not recover it — it runs as before.
+        ...(paused && resume && typeof pausedCount === 'number' && pausedCount > 0
+          ? { dormant: true }
+          : {}),
         // Restore the specialist attribution + its composed CLI args (a resumed
         // specialist pane re-applies its persona via the `args` prop on respawn).
         ...(typeof raw.specialist === 'string' && raw.specialist

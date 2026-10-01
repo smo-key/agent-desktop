@@ -295,7 +295,8 @@ export function graceTargets(
   for (const r of rows) {
     if (r.paneId === shownId) continue;
     if (r.preview) out.set(r.paneId, 'archive');
-    else if (r.paused && r.dormant === false) out.set(r.paneId, 'sleep');
+    // Never put a WORKING agent to sleep: that would cut its turn unconfirmed.
+    else if (r.paused && r.dormant === false && r.status !== 'working') out.set(r.paneId, 'sleep');
   }
   return out;
 }

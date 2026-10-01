@@ -656,4 +656,9 @@ describe('dormant paused agents', () => {
     expect(t.get('woken')).toBe('sleep'); // a woken paused agent goes dormant again
     expect(t.get('previewing')).toBe('archive'); // a preview re-archives, as before
   });
+
+  it('a woken paused agent that is working is not put back to sleep', () => {
+    const rows = [row('busy', 'working', { paused: true, dormant: false })];
+    expect(graceTargets(rows, null).has('busy')).toBe(false);
+  });
 });
