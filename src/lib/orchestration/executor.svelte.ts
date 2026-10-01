@@ -433,7 +433,7 @@ function asObject(v: unknown): Record<string, unknown> {
 
 /** Display name for a located pane: workspace name, else cwd leaf, else paneId. */
 function nameFor(pane: LocatedPane): string {
-  const entry = workspace.workspaces.find((w) => w.id === pane.workspaceId);
+  const entry = workspace.entry(pane.workspaceId);
   const wsName = entry?.name?.trim();
   if (wsName) return wsName;
   // The agent's REAL dir, so a worktree agent's fallback name is its worktree

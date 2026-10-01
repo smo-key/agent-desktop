@@ -183,21 +183,35 @@ export function orderRowsByLane(
   rows: AgentRow[],
   laneOrder: Record<AgentLane, ReadonlyArray<string>>
 ): AgentRow[] {
-  const rankOf = (r: AgentRow): number => {
-    const i = LANE_ORDER.indexOf(laneForRow(r));
-    return i < 0 ? LANE_ORDER.length : i;
-  };
-  const withinOf = (r: AgentRow): number => {
-    const order = laneOrder[laneForRow(r)] ?? [];
-    const i = order.indexOf(r.paneId);
-    return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+  // Precompute each lane's paneId -> position ONCE (performance): an `indexOf`
+  // inside the comparator rescanned the lane's order list (the done lane holds
+  // every archived agent) O(n log n) times — through a reactive proxy, every tick.
+  const within = new Map<AgentLane, Map<string, number>>();
+  const withinMap = (lane: AgentLane): Map<string, number> => {
+    let m = within.get(lane);
+    if (!m) {
+      m = new Map();
+      const order = laneOrder[lane] ?? [];
+      for (let i = 0; i < order.length; i++) if (!m.has(order[i])) m.set(order[i], i);
+      within.set(lane, m);
+    }
+    return m;
   };
   return rows
-    .map((r, idx) => ({ r, idx }))
+    .map((r, idx) => {
+      const lane = laneForRow(r);
+      const li = LANE_ORDER.indexOf(lane);
+      return {
+        r,
+        idx,
+        rank: li < 0 ? LANE_ORDER.length : li,
+        pos: withinMap(lane).get(r.paneId) ?? Number.MAX_SAFE_INTEGER
+      };
+    })
     .sort((a, b) => {
-      const dr = rankOf(a.r) - rankOf(b.r);
+      const dr = a.rank - b.rank;
       if (dr !== 0) return dr;
-      const dw = withinOf(a.r) - withinOf(b.r);
+      const dw = a.pos - b.pos;
       if (dw !== 0) return dw;
       return a.idx - b.idx; // stable: equal-keyed rows keep their incoming order
     })
@@ -738,4 +752,41 @@ export function buildRoster(
     }
   }
   return rows;
+}
+
+/** Field-wise equality of two rows: primitives by value, the (rare, small) nested
+ *  values — the pending-question list — structurally. */
+function sameRow(a: AgentRow, b: AgentRow): boolean {
+  const ka = Object.keys(a) as (keyof AgentRow)[];
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) {
+    const va = a[k];
+    const vb = b[k];
+    if (va === vb) continue;
+    if (typeof va !== 'object' || typeof vb !== 'object' || va === null || vb === null) return false;
+    if (JSON.stringify(va) !== JSON.stringify(vb)) return false;
+  }
+  return true;
+}
+
+/**
+ * PURE (performance): make a freshly built roster identity-stable against the
+ * previous one. Each row whose fields are unchanged is replaced by the PREVIOUS
+ * row object, and when every row is unchanged (same panes, same order) the
+ * previous ARRAY itself is returned. `buildRoster` runs on the 1 s clock and
+ * rebuilds every row — archived ones included — as new objects, so without this
+ * every tick invalidated the whole downstream chain (Inbox lanes, groups, queue,
+ * focus, alerts, their effects) even when nothing had changed.
+ */
+export function stabilizeRows(prev: readonly AgentRow[] | undefined, next: AgentRow[]): AgentRow[] {
+  if (!prev) return next;
+  const byPane = new Map(prev.map((r) => [r.paneId, r]));
+  let allSame = prev.length === next.length;
+  const out = next.map((r, i) => {
+    const old = byPane.get(r.paneId);
+    const keep = old !== undefined && sameRow(old, r) ? old : r;
+    if (keep !== prev[i]) allSame = false;
+    return keep;
+  });
+  return allSame ? (prev as AgentRow[]) : out;
 }

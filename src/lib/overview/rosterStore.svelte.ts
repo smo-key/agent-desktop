@@ -13,7 +13,7 @@ import { workspace } from '$lib/layout/workspace.svelte';
 import { snapshots } from '$lib/usage/snapshots.svelte';
 import { activity } from './activity.svelte';
 import { events } from './events.svelte';
-import { buildRoster, type AgentRow } from './roster';
+import { buildRoster, stabilizeRows, type AgentRow } from './roster';
 import { toRosterWorkspaces } from './rosterInputs';
 import { noteStatus, runtimeMap } from './runtime';
 
@@ -44,8 +44,16 @@ export class RosterStore {
     // The runtime registry is non-reactive, so this write never retriggers the
     // derivation; `rowFor` reads the value recorded on the previous tick.
     for (const r of rows) noteStatus(r.paneId, r.status);
-    return rows;
+    // Identity-stable against the previous tick (performance): unchanged rows keep
+    // their object, and an all-unchanged tick returns the previous array, so the
+    // `$derived` reports NO change and nothing downstream re-runs on the clock.
+    // `#prevRows` is a plain field — written here, never tracked.
+    const stable = stabilizeRows(this.#prevRows, rows);
+    this.#prevRows = stable;
+    return stable;
   });
+
+  #prevRows: AgentRow[] | undefined = undefined;
 
   /**
    * Start the clock for one consumer; returns the matching stop. Ref-counted:

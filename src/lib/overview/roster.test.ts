@@ -20,7 +20,8 @@ import {
   type AgentRow,
   type PaneRuntime,
   type RosterWorkspace,
-  type RuntimeMap
+  type RuntimeMap,
+  stabilizeRows
 } from './roster';
 import type { Snapshot, SnapshotMap } from '../usage/snapshots.svelte';
 import type { EventActivity } from './events';
@@ -937,5 +938,57 @@ describe('roster — worktree on the card', () => {
     expect(
       buildRoster({}, [ws('ws-1', 'A', [{ paneId: 'pane-d', cwd: '/p' }])], {}, 1000)[0].worktree
     ).toBeNull();
+  });
+});
+
+// "Roster Rows Are Identity-Stable Across Ticks" (agent-overview spec,
+// perf-scale-archived-sessions). Titles are the EXACT scenario names.
+describe('stabilizeRows', () => {
+  const row = (paneId: string, over: Partial<AgentRow> = {}): AgentRow => ({
+    paneId,
+    workspaceId: 'ws',
+    name: paneId,
+    cwd: null,
+    model: null,
+    modelId: null,
+    task: null,
+    summary: null,
+    question: null,
+    questions: null,
+    currentAction: null,
+    contextPct: null,
+    cost: null,
+    lastTs: null,
+    status: 'finished',
+    projectId: null,
+    ...over
+  });
+
+  it('Unchanged roster rows keep their identity across ticks', () => {
+    const q = [{ question: 'Pick one', options: [{ label: 'A' }, { label: 'B' }] }];
+    const prev = [row('a'), row('b', { status: 'waiting', questions: q as AgentRow['questions'] })];
+    // A fresh rebuild: new objects (and a structurally equal, new questions array).
+    const next = [row('a'), row('b', { status: 'waiting', questions: structuredClone(q) as AgentRow['questions'] })];
+    expect(stabilizeRows(prev, next)).toBe(prev);
+  });
+
+  it('A changed row is replaced while the others are reused', () => {
+    const prev = [row('a'), row('b'), row('c')];
+    const next = [row('a'), row('b', { status: 'working' }), row('c')];
+    const out = stabilizeRows(prev, next);
+    expect(out).not.toBe(prev);
+    expect(out[0]).toBe(prev[0]);
+    expect(out[1]).toBe(next[1]);
+    expect(out[2]).toBe(prev[2]);
+  });
+
+  it('a reordered, added or removed row yields a new array', () => {
+    const prev = [row('a'), row('b')];
+    expect(stabilizeRows(prev, [row('b'), row('a')])).not.toBe(prev);
+    expect(stabilizeRows(prev, [row('a')])).not.toBe(prev);
+    const grown = stabilizeRows(prev, [row('a'), row('b'), row('c')]);
+    expect(grown[0]).toBe(prev[0]);
+    expect(grown).toHaveLength(3);
+    expect(stabilizeRows(undefined, prev)).toBe(prev);
   });
 });

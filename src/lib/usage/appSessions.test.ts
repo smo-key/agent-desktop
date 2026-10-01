@@ -1,6 +1,6 @@
 import { isAgentProgram } from '$lib/agent/backends';
 import { describe, expect, it } from 'vitest';
-import { appSessionIds } from './appSessions';
+import { appSessionIds, appSessionKey } from './appSessions';
 import type { Snapshot, SnapshotMap } from './snapshots.svelte';
 
 // Tests for the PURE helper that extracts the app-launched session-id exclude-set
@@ -50,5 +50,20 @@ describe('agent-pane classification (usage-dashboard)', () => {
     expect(isAgentProgram('copilot')).toBe(true);
     expect(isAgentProgram('/bin/zsh')).toBe(false);
     expect(isAgentProgram('pwsh')).toBe(false);
+  });
+});
+
+describe('appSessionKey', () => {
+  it('session set key ignores snapshots that do not change the set', () => {
+    const before: SnapshotMap = { 'pane-a': snap('pane-a', 'sess-a'), 'pane-b': snap('pane-b', 'sess-b') };
+    // A cost/context update: a NEW map (and new snapshot objects), same session ids.
+    const after: SnapshotMap = { ...before, 'pane-a': { ...snap('pane-a', 'sess-a'), cost: 1.5, ts: 2 } };
+    expect(after).not.toBe(before);
+    expect(appSessionKey(after)).toBe(appSessionKey(before));
+    // Adding or removing a session id changes the key.
+    const added: SnapshotMap = { ...before, 'pane-c': snap('pane-c', 'sess-c') };
+    expect(appSessionKey(added)).not.toBe(appSessionKey(before));
+    const removed: SnapshotMap = { 'pane-a': snap('pane-a', 'sess-a') };
+    expect(appSessionKey(removed)).not.toBe(appSessionKey(before));
   });
 });

@@ -269,6 +269,26 @@ export class WorkspaceStore {
   /** The id of the active (rendered/interactive) workspace. */
   activeWorkspaceId = $state<string>('');
 
+  // O(1) lookup indexes (performance). Every workspace — archived ones included —
+  // stays in `workspaces`, and lookups by id/pane run per PaneNode, per snapshot
+  // and per roster row, so a linear `find` made them O(workspaces) each (O(n²)
+  // overall). The maps hold the live proxied entries, so an in-place registry or
+  // focus mutation is visible through them; they rebuild only when the list (or a
+  // registry's key set, for the pane index) changes.
+  readonly #byId = $derived(new Map(this.workspaces.map((w) => [w.id, w] as const)));
+  readonly #byPane = $derived.by(() => {
+    const m = new Map<string, WorkspaceEntry>();
+    for (const w of this.workspaces) {
+      for (const paneId of Object.keys(w.registry)) if (!m.has(paneId)) m.set(paneId, w);
+    }
+    return m;
+  });
+
+  /** The workspace entry with id `id` (indexed). */
+  entry(id: string): WorkspaceEntry | undefined {
+    return this.#byId.get(id);
+  }
+
   /** True while a gutter drag is in progress; panes defer xterm `fit()`. */
   dragging = $state(false);
 
@@ -284,7 +304,7 @@ export class WorkspaceStore {
 
   /** The active workspace entry, or `undefined` before `init`. */
   get active(): WorkspaceEntry | undefined {
-    return this.workspaces.find((w) => w.id === this.activeWorkspaceId);
+    return this.#byId.get(this.activeWorkspaceId);
   }
 
   /** The active workspace's live root node. */
@@ -326,16 +346,12 @@ export class WorkspaceStore {
    * silently do the wrong thing.
    */
   sessionAnywhere(paneId: string): PaneSession | null {
-    for (const entry of this.workspaces) {
-      const s = entry.registry[paneId];
-      if (s) return s;
-    }
-    return null;
+    return this.#byPane.get(paneId)?.registry[paneId] ?? null;
   }
 
   /** Whether a workspace has any panes whose PTY is presumed live. */
   hasPanes(id: string): boolean {
-    const entry = this.workspaces.find((w) => w.id === id);
+    const entry = this.#byId.get(id);
     return entry ? leavesInOrder(entry.ws.root).length > 0 : false;
   }
 
@@ -346,13 +362,13 @@ export class WorkspaceStore {
 
   /** The session for `paneId` within workspace `wsId` (default login shell). */
   sessionIn(wsId: string, paneId: string): PaneSession {
-    const entry = this.workspaces.find((w) => w.id === wsId);
+    const entry = this.#byId.get(wsId);
     return entry?.registry[paneId] ?? { program: loginShell(), cwd: null };
   }
 
   /** The focused leaf id within workspace `wsId` ('' if unknown). */
   focusedIdIn(wsId: string): string {
-    const entry = this.workspaces.find((w) => w.id === wsId);
+    const entry = this.#byId.get(wsId);
     return entry ? entry.ws.focusedId : '';
   }
 
@@ -363,7 +379,7 @@ export class WorkspaceStore {
    */
   setFocusIn(wsId: string, id: string) {
     if (wsId !== this.activeWorkspaceId) this.setActiveWorkspace(wsId);
-    const entry = this.workspaces.find((w) => w.id === wsId);
+    const entry = this.#byId.get(wsId);
     if (!entry) return;
     if (id === entry.ws.focusedId) return;
     if (!findLeaf(entry.ws.root, id)) return;
@@ -440,7 +456,7 @@ export class WorkspaceStore {
   renameWorkspace(id: string, name: string) {
     const trimmed = name.trim();
     if (!trimmed) return;
-    const entry = this.workspaces.find((w) => w.id === id);
+    const entry = this.#byId.get(id);
     if (entry) entry.name = trimmed;
   }
 
@@ -714,7 +730,7 @@ export class WorkspaceStore {
    * tree, so they target their own workspace by id rather than "the active one".
    */
   resizeIn(wsId: string, splitId: string, gutterIndex: number, deltaRatio: number) {
-    const entry = this.workspaces.find((w) => w.id === wsId);
+    const entry = this.#byId.get(wsId);
     if (!entry) return;
     const root = resizeAdjacent(entry.ws.root, splitId, gutterIndex, deltaRatio);
     entry.ws = { ...entry.ws, root };

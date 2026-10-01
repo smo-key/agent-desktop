@@ -154,8 +154,13 @@
       {/if}
     {/key}
     <!-- Subtle top-right task badge for this pane (pointer-events:none; hides when
-         there's no task). Reads the same per-pane snapshot the dashboard uses. -->
-    <TaskBadge paneId={node.paneId} />
+         there's no task). Reads the same per-pane snapshot the dashboard uses.
+         Mounted only for a LIVE pane of the ACTIVE workspace (performance): each
+         badge runs its own 1 s clock and re-derives on every snapshot, and a
+         closed pane or a hidden workspace never shows it anyway. -->
+    {#if activeWorkspace && !session?.closed}
+      <TaskBadge paneId={node.paneId} />
+    {/if}
   </div>
 {:else}
   <!-- A split. Flex row/col; each child is flex:0 0 ratio% with gutters between.

@@ -258,3 +258,30 @@ describe('workspace — an adopted worktree dir is kept', () => {
     expect(shellPane?.[1].cwd).toBe('/proj/.claude/worktrees/feature-x');
   });
 });
+
+describe('workspace — indexed lookups (perf-scale-archived-sessions)', () => {
+  it('Session lookup by pane resolves through the workspace index', () => {
+    const store = new WorkspaceStore();
+    const panes: { wsId: string; paneId: string }[] = [];
+    for (let i = 0; i < 50; i++) {
+      const wsId = store.newWorkspace('claude', `/proj-${i}`);
+      const entry = store.workspaces.find((w) => w.id === wsId)!;
+      panes.push({ wsId, paneId: leavesInOrder(entry.ws.root)[0].paneId });
+    }
+    for (const { wsId, paneId } of panes) {
+      const entry = store.workspaces.find((w) => w.id === wsId)!;
+      expect(store.sessionAnywhere(paneId)).toBe(entry.registry[paneId]);
+      expect(store.sessionIn(wsId, paneId)).toBe(entry.registry[paneId]);
+      expect(store.focusedIdIn(wsId)).toBe(entry.ws.focusedId);
+    }
+    expect(store.sessionAnywhere('pane-does-not-exist')).toBeNull();
+    expect(store.focusedIdIn('ws-does-not-exist')).toBe('');
+    // The index follows structural changes: a closed workspace's panes leave it.
+    const gone = panes[3];
+    store.closeWorkspace(gone.wsId);
+    expect(store.sessionAnywhere(gone.paneId)).toBeNull();
+    // ...and a newly launched pane joins it.
+    const fresh = store.launch({ program: 'claude', cwd: '/late', placement: 'tab' });
+    expect(store.sessionAnywhere(fresh)?.cwd).toBe('/late');
+  });
+});
