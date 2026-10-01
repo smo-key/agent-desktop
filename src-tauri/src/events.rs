@@ -182,17 +182,16 @@ impl EventState {
     }
 
     /// The persisted events for a session read from its durable sink (empty when
-    /// the file is absent). Malformed lines are skipped.
+    /// the file is absent): at most the most recent [`RING_CAP`] events, in order —
+    /// the same bound the ring (and the frontend store) holds. A long-lived session's
+    /// sink reaches tens of thousands of events; the file is read backwards from its
+    /// end only until `RING_CAP` well-formed events are found, so the re-seed never
+    /// parses (or ships over IPC) the whole history. Malformed lines are skipped.
     pub fn sink_for(&self, session_id: &str) -> Vec<AgentEvent> {
         let Some(path) = self.sink_path(session_id) else {
             return Vec::new();
         };
-        self.cached_file(&path, "", |p| {
-            let Ok(body) = std::fs::read_to_string(p) else {
-                return Vec::new();
-            };
-            body.lines().filter_map(parse_event).collect()
-        })
+        self.cached_file(&path, "", |p| read_tail_events(p, RING_CAP))
     }
 
     /// [`backfill_from_transcript`] served from the size+mtime cache, so an
@@ -270,6 +269,60 @@ impl EventState {
             }
         }
     }
+}
+
+/// Read chunk size for [`read_tail_events`].
+const TAIL_CHUNK: u64 = 64 * 1024;
+
+/// The last `cap` well-formed events of a JSONL file, oldest first — exactly
+/// `body.lines().filter_map(parse_event)`'s final `cap` items, but read backwards
+/// in [`TAIL_CHUNK`]s so only the needed tail is read and parsed. A line that is
+/// not valid UTF-8 is skipped (as a malformed line). Empty when unreadable.
+fn read_tail_events(path: &Path, cap: usize) -> Vec<AgentEvent> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let Ok(len) = f.metadata().map(|m| m.len()) else {
+        return Vec::new();
+    };
+    let mut newest_first: Vec<AgentEvent> = Vec::new();
+    // Bytes of the not-yet-complete line at the front of what has been read so far
+    // (its start lies in an earlier, still-unread chunk).
+    let mut carry: Vec<u8> = Vec::new();
+    let mut pos = len;
+    while newest_first.len() < cap {
+        if pos == 0 {
+            // Start of file: the carry is the first line, now complete.
+            if let Some(ev) = std::str::from_utf8(&carry).ok().and_then(parse_event) {
+                newest_first.push(ev);
+            }
+            break;
+        }
+        let start = pos.saturating_sub(TAIL_CHUNK);
+        let mut chunk = vec![0u8; (pos - start) as usize];
+        if f.seek(SeekFrom::Start(start)).is_err() || f.read_exact(&mut chunk).is_err() {
+            break;
+        }
+        pos = start;
+        chunk.extend_from_slice(&carry);
+        // Every segment after the first newline is a whole line; the first segment
+        // may continue into the previous chunk, so it becomes the next carry.
+        let mut segments = chunk.split(|&b| b == b'\n');
+        let head = segments.next().unwrap_or_default().to_vec();
+        let lines: Vec<&[u8]> = segments.collect();
+        for line in lines.iter().rev() {
+            if newest_first.len() >= cap {
+                break;
+            }
+            if let Some(ev) = std::str::from_utf8(line).ok().and_then(parse_event) {
+                newest_first.push(ev);
+            }
+        }
+        carry = head;
+    }
+    newest_first.reverse();
+    newest_first
 }
 
 /// Rewrite `path` keeping only its trailing lines that fit within `max` bytes
@@ -948,5 +1001,40 @@ mod tests {
         // A missing file is empty and never cached.
         assert!(state.backfill_cached(&tmp.path().join("nope.jsonl"), "p1", "s1").is_empty());
         assert_eq!(state.cached_file_count(), 3);
+    }
+
+    /// A sink holding more than [`RING_CAP`] events is served as only its most
+    /// recent `RING_CAP` events, in order — the same slice a full parse would end
+    /// with (malformed lines skipped, a final line without a newline still read).
+    #[test]
+    fn sink_read_returns_only_the_ring_cap_tail() {
+        let tmp = TempDir::new("tail");
+        let state = EventState::new(tmp.path().join("events"));
+        let path = state.sink_path("s1").unwrap();
+        let mut body = String::new();
+        let total = RING_CAP * 3 + 37;
+        for i in 0..total {
+            body.push_str(&serde_json::to_string(&ev("p1", "s1", "PostToolUse", i as i64)).unwrap());
+            body.push('\n');
+            if i % 50 == 0 {
+                body.push_str("not json\n\n");
+            }
+        }
+        // A final line without a trailing newline is still an event.
+        body.push_str(&serde_json::to_string(&ev("p1", "s1", "Stop", total as i64)).unwrap());
+        std::fs::write(&path, &body).unwrap();
+
+        let all: Vec<AgentEvent> = body.lines().filter_map(parse_event).collect();
+        assert_eq!(all.len(), total + 1);
+        let got = state.sink_for("s1");
+        assert_eq!(got.len(), RING_CAP);
+        assert_eq!(got, all[all.len() - RING_CAP..].to_vec());
+        assert_eq!(got.last().unwrap().hook_event_name, "Stop");
+        // Served from the cache on a re-read, unchanged.
+        assert_eq!(state.sink_for("s1"), got);
+
+        // A short sink is returned whole.
+        state.record(&ev("p2", "s2", "Stop", 1));
+        assert_eq!(state.sink_for("s2").len(), 1);
     }
 }

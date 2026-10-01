@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { WorkspaceStore, sessionCwd } from './workspace.svelte';
+import { isLivePane, liveAgentPaneRefs } from '$lib/overview/paneRefs';
 import { leavesInOrder } from './tree';
 
 // `@tauri-apps/api/core` is stubbed so any stray `invoke` from the store stays
@@ -256,5 +257,116 @@ describe('workspace — an adopted worktree dir is kept', () => {
     );
     expect(shellPane).toBeDefined();
     expect(shellPane?.[1].cwd).toBe('/proj/.claude/worktrees/feature-x');
+  });
+});
+
+describe('workspace — indexed lookups (perf-scale-archived-sessions)', () => {
+  it('Session lookup by pane resolves through the workspace index', () => {
+    const store = new WorkspaceStore();
+    const panes: { wsId: string; paneId: string }[] = [];
+    for (let i = 0; i < 50; i++) {
+      const wsId = store.newWorkspace('claude', `/proj-${i}`);
+      const entry = store.workspaces.find((w) => w.id === wsId)!;
+      panes.push({ wsId, paneId: leavesInOrder(entry.ws.root)[0].paneId });
+    }
+    for (const { wsId, paneId } of panes) {
+      const entry = store.workspaces.find((w) => w.id === wsId)!;
+      expect(store.sessionAnywhere(paneId)).toBe(entry.registry[paneId]);
+      expect(store.sessionIn(wsId, paneId)).toBe(entry.registry[paneId]);
+      expect(store.focusedIdIn(wsId)).toBe(entry.ws.focusedId);
+    }
+    expect(store.sessionAnywhere('pane-does-not-exist')).toBeNull();
+    expect(store.focusedIdIn('ws-does-not-exist')).toBe('');
+    // The index follows structural changes: a closed workspace's panes leave it.
+    const gone = panes[3];
+    store.closeWorkspace(gone.wsId);
+    expect(store.sessionAnywhere(gone.paneId)).toBeNull();
+    // ...and a newly launched pane joins it.
+    const fresh = store.launch({ program: 'claude', cwd: '/late', placement: 'tab' });
+    expect(store.sessionAnywhere(fresh)?.cwd).toBe('/late');
+  });
+});
+
+// "Paused Agents Do Not Run Until Opened" (agent-overview, dormant-paused-sessions).
+describe('workspace — paused agents do not run until opened', () => {
+  it('Pausing an agent stops its process', () => {
+    const { store, paneId } = withPane('claude');
+    store.pauseAgent(paneId, 3);
+    const s = store.session(paneId);
+    expect(s.paused).toBe(true);
+    expect(s.pausedCount).toBe(3);
+    expect(s.dormant).toBe(true); // PaneNode mounts no TerminalPane -> PTY torn down
+    expect(s.resume).toBe(true); // the next spawn resumes the same session
+    expect(s.launchArgs).toBeUndefined(); // first-spawn-only args never re-applied
+    expect(isLivePane(s)).toBe(false);
+    expect(liveAgentPaneRefs(store.workspaces).map((r) => r.paneId)).not.toContain(paneId);
+  });
+
+  it('A paused agent without a session id keeps running', () => {
+    const { store, paneId } = withPane('/bin/zsh'); // a shell pane: nothing to resume
+    store.pauseAgent(paneId, null);
+    const s = store.session(paneId);
+    expect(s.paused).toBe(true);
+    expect(s.dormant).toBeFalsy();
+  });
+
+  it('Pausing an empty session keeps it running', () => {
+    // A fresh claude pane has a session id before its transcript exists; stopping it
+    // would leave `claude --resume` nothing to resume, so it stays running.
+    const { store, paneId } = withPane('claude');
+    store.pauseAgent(paneId, null, false);
+    expect(store.session(paneId).paused).toBe(true);
+    expect(store.session(paneId).dormant).toBeFalsy();
+  });
+
+  it('archiving a dormant paused agent clears dormant so a preview or restore spawns', () => {
+    const { store, paneId } = withPane('claude');
+    store.pauseAgent(paneId, 1);
+    store.closeAgent(paneId);
+    expect(store.session(paneId).dormant).toBeFalsy();
+    store.previewArchived(paneId, 1);
+    expect(isLivePane(store.session(paneId))).toBe(true);
+  });
+
+  it('Opening a paused agent resumes its session', () => {
+    const { store, paneId } = withPane('claude');
+    const sessionId = store.session(paneId).sessionId;
+    store.pauseAgent(paneId, 3);
+    store.wakePaused(paneId);
+    const s = store.session(paneId);
+    expect(s.dormant).toBeFalsy();
+    expect(s.resume).toBe(true);
+    expect(s.paused).toBe(true); // stays Paused until a new message / Resume
+    expect(s.pausedCount).toBe(3);
+    expect(s.sessionId).toBe(sessionId);
+    expect(isLivePane(s)).toBe(true);
+    // Waking a pane that is not dormant-paused is a no-op.
+    const { store: other, paneId: live } = withPane('claude');
+    const before = other.session(live);
+    other.wakePaused(live);
+    expect(other.session(live)).toBe(before);
+  });
+
+  it('Resuming a paused agent wakes it', () => {
+    const { store, paneId } = withPane('claude');
+    store.pauseAgent(paneId, 1);
+    store.resumeAgent(paneId);
+    const s = store.session(paneId);
+    expect(s.paused).toBeFalsy();
+    expect(s.dormant).toBeFalsy();
+    expect(s.resume).toBe(true);
+  });
+
+  it('putting a woken paused agent to sleep makes it dormant again', () => {
+    const { store, paneId } = withPane('claude');
+    store.pauseAgent(paneId, 1);
+    store.wakePaused(paneId);
+    store.sleepPaused(paneId);
+    expect(store.session(paneId).dormant).toBe(true);
+    expect(store.session(paneId).paused).toBe(true);
+    // Never puts a resumed (no longer paused) agent to sleep.
+    store.resumeAgent(paneId);
+    store.sleepPaused(paneId);
+    expect(store.session(paneId).dormant).toBeFalsy();
   });
 });

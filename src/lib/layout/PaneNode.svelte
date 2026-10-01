@@ -130,13 +130,19 @@
     oncontextmenu={openMenu}
   >
     {#key node.paneId}
-      {#if session?.closed}
-        <!-- CLOSED (Completed) session: no TerminalPane, so the PTY is terminated /
-             never spawned. Restoring it (closed=false) re-mounts TerminalPane,
+      {#if session?.closed || session?.dormant}
+        <!-- CLOSED (Completed) or DORMANT (paused, not opened) session: no
+             TerminalPane, so the PTY is terminated / never spawned. Waking a dormant
+             pane (dormant cleared) mounts TerminalPane with `claude --resume`. Restoring it (closed=false) re-mounts TerminalPane,
              spawning `claude --resume`. The inbox shows its own closed panel; this
              placeholder is the surface home / grid fallback. -->
         <div class="pane-closed">
-          <span class="pc-label">Session closed</span>
+          <span class="pc-label">{session?.closed ? 'Session closed' : 'Session paused'}</span>
+          {#if !session?.closed}
+            <!-- Grid-view way to open a dormant paused agent (the inbox wakes it on
+                 focus); it respawns with `claude --resume` and stays paused. -->
+            <button type="button" class="pc-open" onclick={() => workspace.wakePaused(node.paneId)}>Open</button>
+          {/if}
         </div>
       {:else}
         <TerminalPane
@@ -154,8 +160,13 @@
       {/if}
     {/key}
     <!-- Subtle top-right task badge for this pane (pointer-events:none; hides when
-         there's no task). Reads the same per-pane snapshot the dashboard uses. -->
-    <TaskBadge paneId={node.paneId} />
+         there's no task). Reads the same per-pane snapshot the dashboard uses.
+         Mounted only for a LIVE pane of the ACTIVE workspace (performance): each
+         badge runs its own 1 s clock and re-derives on every snapshot, and a
+         closed pane or a hidden workspace never shows it anyway. -->
+    {#if activeWorkspace && !session?.closed && !session?.dormant}
+      <TaskBadge paneId={node.paneId} />
+    {/if}
   </div>
 {:else}
   <!-- A split. Flex row/col; each child is flex:0 0 ratio% with gutters between.
@@ -196,6 +207,20 @@
     font-size: 12px;
     letter-spacing: 0.04em;
     text-transform: uppercase;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .pc-open {
+    font: inherit;
+    color: var(--fg-2, #c9d1d9);
+    background: transparent;
+    border: 1px solid var(--space-600, #30363d);
+    border-radius: 6px;
+    padding: 4px 12px;
+    cursor: pointer;
+  }
+  .pc-open:hover {
+    border-color: var(--fg-4, #6b7280);
   }
   .leaf {
     position: relative;

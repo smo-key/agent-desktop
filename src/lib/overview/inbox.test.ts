@@ -13,6 +13,8 @@ import {
   shouldAutoResume,
   deleteAllArchivedRequest,
   archiveWorkingConfirm,
+  pauseWorkingConfirm,
+  graceTargets,
   rowSub,
   rowModelLabel,
   clipLine,
@@ -623,5 +625,40 @@ describe('archivedNavNeedsExpand — auto-expand the Archived lane on nav', () =
 
   it('is false when the lane is already showing all (monotonic — never loops)', () => {
     expect(archivedNavNeedsExpand('d', archived, PREVIEW, true)).toBe(false);
+  });
+});
+
+// "Paused Agents Do Not Run Until Opened" (agent-overview, dormant-paused-sessions).
+describe('dormant paused agents', () => {
+  it('Pausing a working agent asks for confirmation', () => {
+    let paused = 0;
+    const req = pauseWorkingConfirm('working', () => paused++);
+    expect(req).not.toBeNull();
+    expect(req!.confirmLabel).toBe('Pause anyway');
+    expect(paused).toBe(0); // only on confirm
+    req!.onConfirm();
+    expect(paused).toBe(1);
+    for (const status of ['waiting', 'finished', 'idle', 'error'] as AgentStatus[]) {
+      expect(pauseWorkingConfirm(status, () => {})).toBeNull();
+    }
+  });
+
+  it('A woken paused agent sleeps again after the user leaves', () => {
+    const rows = [
+      row('woken', 'waiting', { paused: true, dormant: false }),
+      row('shown', 'waiting', { paused: true, dormant: false }),
+      row('asleep', 'waiting', { paused: true, dormant: true }),
+      row('previewing', 'idle', { preview: true }),
+      row('live', 'working')
+    ];
+    const t = graceTargets(rows, 'shown');
+    expect([...t.keys()].sort()).toEqual(['previewing', 'woken']);
+    expect(t.get('woken')).toBe('sleep'); // a woken paused agent goes dormant again
+    expect(t.get('previewing')).toBe('archive'); // a preview re-archives, as before
+  });
+
+  it('a woken paused agent that is working is not put back to sleep', () => {
+    const rows = [row('busy', 'working', { paused: true, dormant: false })];
+    expect(graceTargets(rows, null).has('busy')).toBe(false);
   });
 });

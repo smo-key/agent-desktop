@@ -45,7 +45,8 @@
   import { rectsSnapshot } from '$lib/layout/rects.svelte';
   import { restorePersistedLayout, watchAndPersist } from '$lib/layout/store-backend.svelte';
   import { snapshots } from '$lib/usage/snapshots.svelte';
-  import { appSessionIds } from '$lib/usage/appSessions';
+  import { appSessionKey } from '$lib/usage/appSessions';
+  import { coalescedRunner } from '$lib/overview/coalesce';
   import AppFooter from '$lib/usage/AppFooter.svelte';
   import Inbox from '$lib/overview/Inbox.svelte';
   import { portal } from '$lib/layout/portal';
@@ -327,7 +328,7 @@
     // changed (a tool completing / a turn ending) triggers an immediate transcript
     // read — replacing the old fixed 1.5s poll.
     events.onEvent = (ev) => {
-      if (triggersTranscriptRead(ev.hookEventName)) void refreshActivity();
+      if (triggersTranscriptRead(ev.hookEventName)) requestActivityRefresh();
     };
     let unlistenEvents: (() => void) | undefined;
     void events.start(livePaneRefs()).then((unlisten) => {
@@ -476,9 +477,19 @@
     titles.refresh(refs, (paneId) => activity.forPane(paneId).userHash, Date.now());
   }
 
-  // The app's set of launched session ids (sorted, de-duped), used to keep the
-  // subagents watched-set current as panes come and go.
-  const ourSessionIds = $derived(appSessionIds(snapshots.byPane));
+  // Every trigger (hook events from ANY agent, wake, the safety poll) goes through
+  // one coalesced, single-flight runner: a burst of tool completions across busy
+  // agents becomes ONE trailing refresh, and refreshes never overlap (each reads
+  // every live transcript that changed).
+  const ACTIVITY_COALESCE_MS = 250;
+  const requestActivityRefresh = coalescedRunner(refreshActivity, ACTIVITY_COALESCE_MS);
+
+  // The app's set of launched session ids as a value-comparable STRING key, used
+  // to keep the subagents / events seeded sets current as panes come and go. A
+  // string (not the id array) because `$derived` compares by identity: the array
+  // was new on EVERY statusline snapshot, so each snapshot re-ran both re-seeds
+  // (two IPC round-trips + backend IO) even though the set had not changed.
+  const ourSessionKey = $derived(appSessionKey(snapshots.byPane));
 
   // ADOPT a worktree session's real working dir (session-launcher: "A worktree
   // session resumes in its worktree"). `claude --worktree` creates the worktree
@@ -505,9 +516,25 @@
   // change (a new app pane reports a session id, a cwd resolves, or one ends),
   // re-seed the Rust `subagents_for` watcher so it watches exactly our sessions.
   // Keyed on the session ids (sorted, stable) so it only fires on a real change.
+  // The refs are compared as a JSON key, so a snapshot or registry mutation that
+  // leaves them unchanged (a cost tick, a focus change) re-seeds nothing.
+  const subagentRefsKey = $derived(JSON.stringify(currentSessionRefs()));
   $effect(() => {
-    void ourSessionIds; // re-run when the app's session set changes
-    void subagents.seed(currentSessionRefs());
+    const key = subagentRefsKey; // re-run only when the watched refs change
+    untrack(() => void subagents.seed(JSON.parse(key) as SessionRef[]));
+  });
+
+  // SUBAGENTS safety re-seed. The re-seed above fires only when the watched refs
+  // change, and the Rust watcher depends on FSEvents, which can drop events under
+  // load or across sleep — so a slow backstop re-reads the watched sessions,
+  // healing a subagent stuck in a stale state within SUBAGENT_RESEED_MS.
+  const SUBAGENT_RESEED_MS = 15_000;
+  $effect(() => {
+    return gatedInterval(
+      () => void subagents.seed(currentSessionRefs()),
+      SUBAGENT_RESEED_MS,
+      HIDDEN_BACKSTOP_EVERY
+    );
   });
 
   // ── Hidden-window + wake-from-sleep gating (policy: overview/pollGate.ts) ─────
@@ -543,7 +570,7 @@
     // `resumes` is the ONLY dependency: the refreshes read reactive stores
     // (workspaces, projects), which must not re-run this effect when they change.
     return untrack(() => {
-      void refreshActivity();
+      requestActivityRefresh();
       void events.seed(livePaneRefs());
       void projectGit.refresh(projects.active.map((p) => p.path));
       // The post-wake fetch timer lives OUTSIDE this effect's cleanup: a later
@@ -563,7 +590,7 @@
   // this is only a slow backstop that re-reads content if a triggering event never
   // arrived (e.g. the socket was briefly down). The old fixed 1.5s fast poll is
   // retired in favour of SAFETY_POLL_MS.
-  $effect(() => gatedInterval(() => void refreshActivity(), SAFETY_POLL_MS, HIDDEN_BACKSTOP_EVERY));
+  $effect(() => gatedInterval(requestActivityRefresh, SAFETY_POLL_MS, HIDDEN_BACKSTOP_EVERY));
 
   // PROJECT GIT poll. Each project's folder is probed for its branch + ahead/
   // behind/dirty (the `git_status_for` command) so the project pane shows its
@@ -618,9 +645,12 @@
   // Keep the EVENT store's seeded set current: whenever the app's session set
   // changes (a pane launched/ended, a cwd resolved), re-seed `events_for` so a
   // newly-launched agent's timeline (and any backfill) is available immediately.
+  // Keyed like the subagents seed: the live refs as JSON plus the session-id set,
+  // so neither a snapshot nor an unrelated registry write re-seeds by itself.
+  const eventSeedKey = $derived(`${ourSessionKey}\u0000${JSON.stringify(livePaneRefs())}`);
   $effect(() => {
-    void ourSessionIds; // re-run when the app's session set changes
-    void events.seed(livePaneRefs());
+    void eventSeedKey; // re-run only when the session set or live refs change
+    untrack(() => void events.seed(livePaneRefs()));
   });
 
   // SAFETY RE-SEED: the live `overview://event` listener can miss a push, and a

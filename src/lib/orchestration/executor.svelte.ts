@@ -309,6 +309,10 @@ export class OrchestrationExecutor {
     const resolved = this.resolveTarget(args);
     if ('error' in resolved) return Promise.resolve(resolved);
     const paneId = resolved.pane.paneId;
+    // A DORMANT paused agent has no process to type into until the user opens it.
+    if (resolved.pane.session.dormant === true) {
+      return Promise.resolve({ error: `agent pane is paused and not running: ${paneId}` });
+    }
     const text = typeof args.text === 'string' ? args.text : '';
 
     return new Promise<OpResult>((resolve) => {
@@ -316,7 +320,7 @@ export class OrchestrationExecutor {
       const attempt = () => {
         // Re-check existence each attempt — the pane could close while we wait.
         const still = this.deps.locate(paneId);
-        if (!still || still.session.closed === true) {
+        if (!still || still.session.closed === true || still.session.dormant === true) {
           resolve({ error: `agent pane is no longer available: ${paneId}` });
           return;
         }
@@ -433,7 +437,7 @@ function asObject(v: unknown): Record<string, unknown> {
 
 /** Display name for a located pane: workspace name, else cwd leaf, else paneId. */
 function nameFor(pane: LocatedPane): string {
-  const entry = workspace.workspaces.find((w) => w.id === pane.workspaceId);
+  const entry = workspace.entry(pane.workspaceId);
   const wsName = entry?.name?.trim();
   if (wsName) return wsName;
   // The agent's REAL dir, so a worktree agent's fallback name is its worktree
@@ -479,6 +483,7 @@ function panesInProjectReal(projectId: string): LocatedPane[] {
 function statusOfReal(paneId: string): AgentStatus {
   const session = locateReal(paneId)?.session;
   if (session?.closed === true) return 'finished';
+  if (session?.dormant === true) return 'idle'; // paused, process stopped
   const runtime = getRuntime(paneId);
   const ptyStatus = deriveStatus(runtime, Date.now());
   if (runtime?.exited) return ptyStatus;

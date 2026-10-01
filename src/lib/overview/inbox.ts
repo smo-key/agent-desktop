@@ -259,6 +259,49 @@ export function archiveWorkingConfirm(
 }
 
 /**
+ * PURE: the confirmation request for PAUSING a working agent, or `null` when no
+ * confirmation is needed. Pausing a resumable agent stops its process (it goes
+ * dormant until opened), so — like archiving — a working agent's turn would be cut.
+ */
+export function pauseWorkingConfirm(
+  status: AgentStatus,
+  pause: () => void
+): ConfirmOptions | null {
+  if (status !== 'working') return null;
+  return {
+    title: 'Pause working session?',
+    message:
+      'This agent is currently working. Pausing will stop it. Open it later to pick up where it left off.',
+    confirmLabel: 'Pause anyway',
+    onConfirm: pause
+  };
+}
+
+/** What a grace timer does when it fires: re-archive a preview, or put a woken
+ *  paused agent back to sleep. */
+export type GraceAction = 'archive' | 'sleep';
+
+/**
+ * PURE: the panes that need a walk-away grace timer, keyed by paneId: an archived
+ * session open for PREVIEW (re-archived when it fires) and a woken PAUSED agent
+ * (`paused`, not `dormant` — put back to sleep when it fires). The SHOWN agent is
+ * never a target (the user is on it).
+ */
+export function graceTargets(
+  rows: ReadonlyArray<AgentRow>,
+  shownId: string | null
+): Map<string, GraceAction> {
+  const out = new Map<string, GraceAction>();
+  for (const r of rows) {
+    if (r.paneId === shownId) continue;
+    if (r.preview) out.set(r.paneId, 'archive');
+    // Never put a WORKING agent to sleep: that would cut its turn unconfirmed.
+    else if (r.paused && r.dormant === false && r.status !== 'working') out.set(r.paneId, 'sleep');
+  }
+  return out;
+}
+
+/**
  * PURE: build the confirmation request for "delete all archived agents", or `null`
  * when nothing is archived (so the caller hides the action). The returned
  * `onConfirm` deletes every archived pane (`archivedPaneIds`) via `deleteAgent`,

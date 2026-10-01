@@ -14,9 +14,12 @@ import { isAgentProgram } from '$lib/agent/backends';
 import { sessionCwd, type PaneSession, type WorkspaceEntry } from '$lib/layout/workspace.svelte';
 import type { PaneRef } from './activity.svelte';
 
-/** A pane is LIVE when it is not closed (archived). Pure. */
-export function isLivePane(session: Pick<PaneSession, 'closed'> | null | undefined): boolean {
-  return !!session && !session.closed;
+/** A pane is LIVE when it has a process: not closed (archived) and not a dormant
+ *  paused agent. Pure. */
+export function isLivePane(
+  session: Pick<PaneSession, 'closed' | 'dormant'> | null | undefined
+): boolean {
+  return !!session && !session.closed && !session.dormant;
 }
 
 function agentRef(paneId: string, sess: PaneSession): PaneRef | null {

@@ -589,10 +589,43 @@ describe('Closed Sessions Persist As Closed', () => {
     const back = restored.workspaces[0].registry.p1;
     expect(back.paused).toBe(true);
     expect(back.pausedCount).toBe(2); // baseline survives so it doesn't auto-resume on restart
-    // A paused pane is LIVE (unlike closed): it resumes its transcript so you can
-    // keep messaging it.
+    // A paused pane resumes its transcript when opened (unlike closed, which needs a
+    // restore); until then it is dormant (see "A paused agent restores dormant").
     expect(back.resume).toBe(true);
     expect(back.closed).toBeFalsy();
+  });
+
+  it('A paused agent restores dormant', () => {
+    // A paused resumable agent is NOT spawned on launch (dormant-paused-sessions):
+    // it restores dormant with resume set, so opening it runs `claude --resume`.
+    // `dormant` is runtime-only — a woken (non-dormant) paused pane is written the same.
+    const ws: Workspace = { version: 1, root: leaf('L1', 'p1'), focusedId: 'L1' };
+    const reg: Record<string, PersistedSession> = {
+      p1: { program: 'claude', cwd: '/a', sessionId: 's1', paused: true, pausedCount: 2, dormant: false }
+    };
+    const state = serializeState([{ id: 'ws-1', name: 'S', ws, registry: reg }], 'ws-1');
+    expect('dormant' in state.workspaces[0].registry.p1).toBe(false);
+
+    const back = restoreState(JSON.stringify(state), ids('n')).workspaces[0].registry.p1;
+    expect(back.paused).toBe(true);
+    expect(back.dormant).toBe(true);
+    expect(back.resume).toBe(true);
+    expect(back.pausedCount).toBe(2);
+  });
+
+  it('an empty paused session restores running, not dormant', () => {
+    // No user message when paused (count 0) or unknown (legacy null): its transcript
+    // may not exist, so `claude --resume` from dormant could not recover it.
+    const ws: Workspace = { version: 1, root: leaf('L1', 'p1'), focusedId: 'L1' };
+    for (const pausedCount of [0, null]) {
+      const reg: Record<string, PersistedSession> = {
+        p1: { program: 'claude', cwd: '/a', sessionId: 's1', paused: true, pausedCount }
+      };
+      const state = serializeState([{ id: 'ws-1', name: 'S', ws, registry: reg }], 'ws-1');
+      const back = restoreState(JSON.stringify(state), ids('n')).workspaces[0].registry.p1;
+      expect(back.paused).toBe(true);
+      expect(back.dormant).toBeFalsy();
+    }
   });
 
   it('A previewing session persists as archived', () => {

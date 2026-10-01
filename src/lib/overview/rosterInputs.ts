@@ -24,6 +24,7 @@ export function toRosterWorkspaces(entries: ReadonlyArray<WorkspaceEntry>): Rost
       closed: entry.registry[leaf.paneId]?.closed ?? false,
       paused: entry.registry[leaf.paneId]?.paused ?? false,
       pausedCount: entry.registry[leaf.paneId]?.pausedCount ?? null,
+      dormant: entry.registry[leaf.paneId]?.dormant,
       preview: entry.registry[leaf.paneId]?.preview ?? false,
       previewCount: entry.registry[leaf.paneId]?.previewCount ?? null
     }))

@@ -24,3 +24,13 @@ export function appSessionIds(map: SnapshotMap): string[] {
   }
   return [...ids].sort();
 }
+
+/**
+ * A value-comparable key for the app's session-id set (`appSessionIds` joined).
+ * `$derived` compares by identity, so the array form changes on EVERY snapshot
+ * (several per second per streaming agent); keying re-seed effects on this string
+ * makes them fire only when a session id is actually added or removed.
+ */
+export function appSessionKey(map: SnapshotMap): string {
+  return appSessionIds(map).join('\n');
+}
