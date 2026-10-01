@@ -9,6 +9,31 @@ Format: short `### New` / `### Improved` / `### Fixed` / `### Removed` sections,
 bullets, one bold title per notable change —
 `- **Feature title**: a short, impactful description and use case.`
 
+## 0.4.0 — 2026-10-01
+
+### New
+
+- **Beta release channel**: choose Stable or Beta at the bottom of Settings → Software update. On Beta you get new builds first, and a newer stable release still wins — so opting in never holds you back. Switching channels re-checks for updates straight away.
+- **Install a beta from scratch**: the install one-liners take an optional channel — `sh -s -- beta` on macOS/Linux, `-Channel beta` on Windows — so you can start on Beta without installing stable first.
+- **Keep computer awake**: stop the machine sleeping never, while any agent is running, or for as long as the app is open.
+- **Agents run inside WSL**: on Windows, a project that lives in a WSL distro can launch its agent inside that distro, instead of failing to start because `claude` is installed on the Linux side of the VM boundary.
+
+### Improved
+
+- **Paused agents stay asleep until you open them**: pausing an agent stops its process, paused agents are not respawned on launch, and opening one resumes it right where it left off. Pausing a working agent asks first.
+- **Stays fast with lots of sessions**: hundreds of archived sessions and long transcripts no longer slow the app down over time — transcripts are read incrementally, event history is fetched in bounded slices, and the overview stops rebuilding every row each second.
+- **Much lighter on the machine**: the overview polls only live panes, pauses entirely while the window is hidden, and shares one clock instead of a timer per row. Terminal output crosses to the UI in coalesced binary frames, and the subagents watcher updates incrementally rather than rescanning.
+- **Faster status line**: an agent's git status is reused for 10 seconds instead of re-running up to eight git commands per tick, per agent.
+- **Wakes up properly from sleep**: the app notices it was suspended and refreshes rather than sitting on stale state.
+
+### Fixed
+
+- **Restored panes use your configured agent command**: on restart, agent panes no longer spawn against the bare program name instead of the executable you set in Settings — on WSL that meant a pane that died on startup.
+- **WSL distros with unusual names are detected**: `Arch`, `kali`, `SLES-12-SP5` and preview builds such as `ubuntupreview` are recognised, and a distro is no longer launched under a guessed name the registry does not use.
+- **Long task prompts arrive whole**: an agent's initial prompt is delivered as a bracketed paste, so a long prompt is no longer truncated on the way in.
+- **"Needs you" is accurate again**: an agent with background work still running stays In flight, idle teammates never count, and pressing Esc behind an idle notification no longer flips a working pane to Needs you.
+- **Sleep inhibitor on Linux** is tied to the app's own process, so it is released when the app exits.
+
 ## 0.4.0-2 — 2026-09-19
 
 ### Fixed
