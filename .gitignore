@@ -21,3 +21,6 @@ src-tauri/target/
 
 # Logs
 *.log
+
+# Signing certificates (private keys)
+*.p12

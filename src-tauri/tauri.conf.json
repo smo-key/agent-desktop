@@ -65,7 +65,6 @@
       }
     },
     "macOS": {
-      "signingIdentity": "Apple Development: Artur Pachachura (V3AGLXZM85)",
       "hardenedRuntime": true,
       "entitlements": "entitlements.plist",
       "infoPlist": "Info.plist"
