@@ -9,6 +9,12 @@ Format: short `### New` / `### Improved` / `### Fixed` / `### Removed` sections,
 bullets, one bold title per notable change —
 `- **Feature title**: a short, impactful description and use case.`
 
+## 0.4.1 — 2026-10-05
+
+### Fixed
+
+- **Signed and notarized on macOS**: the Mac app is now signed with a Developer ID and notarized by Apple, so it opens without a Gatekeeper warning and macOS remembers screen-recording and microphone permissions across updates. You may be asked to grant them once more after this update.
+
 ## 0.4.0 — 2026-10-01
 
 ### New
