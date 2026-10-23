@@ -9,6 +9,12 @@ Format: short `### New` / `### Improved` / `### Fixed` / `### Removed` sections,
 bullets, one bold title per notable change —
 `- **Feature title**: a short, impactful description and use case.`
 
+## 0.4.2 — 2026-10-23
+
+### Fixed
+
+- **GitHub Copilot sessions**: Copilot sessions launch again with Copilot CLI 1.0.103 and later, which removed the `--no-remote` flag and refused to start when given it.
+
 ## 0.4.1 — 2026-10-05
 
 ### Fixed
