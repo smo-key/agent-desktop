@@ -120,8 +120,8 @@ const CLAUDE_BACKEND: AgentBackend = {
 /**
  * GitHub Copilot CLI backend (verified against 1.0.80, design S1–S4).
  * `--session-id <uuid>` sets the UUID for a NEW session (same contract as
- * claude); `--no-remote` keeps the session local (the analogue of claude's
- * `remoteControlAtStartup:false`). Observability comes from the
+ * claude). No remote-control flag: 1.0.103 removed `--no-remote` (it now errors
+ * at launch; remote is managed in-session via `/remote`). Observability comes from the
  * `~/.copilot/session-state/<uuid>/events.jsonl` tailer, not hooks — so
  * `busyMarkers` is deliberately EMPTY (copilot panes are always app-launched;
  * the events tailer is authoritative, and we don't guess unverified TUI
@@ -132,8 +132,8 @@ const COPILOT_BACKEND: AgentBackend = {
   program: 'copilot',
   displayName: 'GitHub Copilot',
   installHint: 'npm install -g @github/copilot',
-  freshArgs: (sessionId) => ['--session-id', sessionId, '--no-remote'],
-  resumeArgs: (sessionId) => ['--resume', sessionId, '--no-remote'],
+  freshArgs: (sessionId) => ['--session-id', sessionId],
+  resumeArgs: (sessionId) => ['--resume', sessionId],
   mcpConfigArgs: (configJson) => ['--additional-mcp-config', configJson],
   modelLabel: copilotModelLabel,
   readiness: { quietMs: 700, maxMs: 8000, submitDelayMs: 400 },

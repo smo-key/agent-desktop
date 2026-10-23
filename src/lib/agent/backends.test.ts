@@ -32,8 +32,8 @@ describe('agent backend registry', () => {
   it('Copilot backend descriptor', () => {
     const b = backendFor('copilot');
     expect(b.program).toBe('copilot');
-    expect(b.freshArgs('S2')).toEqual(['--session-id', 'S2', '--no-remote']);
-    expect(b.resumeArgs('S2')).toEqual(['--resume', 'S2', '--no-remote']);
+    expect(b.freshArgs('S2')).toEqual(['--session-id', 'S2']);
+    expect(b.resumeArgs('S2')).toEqual(['--resume', 'S2']);
     expect(b.mcpConfigArgs('{}')).toEqual(['--additional-mcp-config', '{}']);
     expect(b.capabilities).toMatchObject({
       hooks: false,

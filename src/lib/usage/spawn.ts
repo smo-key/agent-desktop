@@ -259,7 +259,7 @@ export function buildSpawnOverride(input: SpawnOverrideInput): SpawnOverride {
     return { ...override, ...invocation, cwd: undefined };
   };
 
-  // Copilot panes get their backend's declared args (`--session-id`/`--no-remote`
+  // Copilot panes get their backend's declared args (`--session-id`
   // fresh, `--resume` on restore) plus the pane env — and deliberately NO
   // `--settings`/hooks/statusline, which are Claude-only surfaces (session-launcher:
   // Copilot spawn is minimal and clean). Observability comes from the Rust

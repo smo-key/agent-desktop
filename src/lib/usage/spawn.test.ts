@@ -394,7 +394,7 @@ describe('buildSpawnOverride — copilot backend (agent-backends)', () => {
       sessionId: 'S1',
       usagePaths: paths
     });
-    expect(out.args).toEqual(['--session-id', 'S1', '--no-remote']);
+    expect(out.args).toEqual(['--session-id', 'S1']);
     expect(out.args.join(' ')).not.toContain('--settings');
     expect(out.env).toEqual([
       ['AGENT_DESKTOP_PANE', 'P1'],
@@ -411,7 +411,7 @@ describe('buildSpawnOverride — copilot backend (agent-backends)', () => {
       resume: true,
       usagePaths: null
     });
-    expect(out.args).toEqual(['--resume', 'S1', '--no-remote', '--extra']);
+    expect(out.args).toEqual(['--resume', 'S1', '--extra']);
     expect(out.env).toEqual([['AGENT_DESKTOP_PANE', 'P1']]);
   });
 
@@ -632,7 +632,8 @@ describe('buildSpawnOverride — WSL launch (wsl-agent-launch)', () => {
     });
     expect(out.program).toBe('wsl.exe');
     expect(out.args).toContain('/home/v-patel/.local/bin/copilot');
-    expect(out.args).toContain('--no-remote');
+    expect(out.args).toContain('--session-id');
+    expect(out.args).not.toContain('--no-remote');
   });
 
   it('falls back to the bare program when nothing was detected', () => {

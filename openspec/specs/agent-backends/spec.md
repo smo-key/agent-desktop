@@ -21,7 +21,7 @@ hard-coded program name.
 
 #### Scenario: Copilot backend descriptor
 - **WHEN** the backend registry resolves kind `copilot`
-- **THEN** it declares program `copilot`, fresh args carrying `--session-id <uuid>` and `--no-remote`, resume args carrying `--resume <uuid>`, and capability flags declaring no hooks, no statusline, no context percentage, and no tasks directory
+- **THEN** it declares program `copilot`, fresh args carrying `--session-id <uuid>` (and no `--no-remote`, which Copilot 1.0.103 removed), resume args carrying `--resume <uuid>`, and capability flags declaring no hooks, no statusline, no context percentage, and no tasks directory
 
 #### Scenario: Agent-pane checks consult the registry
 - **WHEN** app code needs to know whether a pane is an agent pane (vs a plain shell)

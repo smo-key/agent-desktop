@@ -80,7 +80,7 @@ Claude-specific `--settings`, hooks, or statusline configuration.
 #### Scenario: Copilot spawn is minimal and clean
 
 - **WHEN** the launcher spawns a `copilot` session for a chosen `cwd`
-- **THEN** the process is launched with the Copilot backend's declared args (`--session-id <uuid>`, `--no-remote`) plus the same pane env (`AGENT_DESKTOP_PANE`, `AGENT_DESKTOP_SNAPSHOT_DIR`, terminal env seeding)
+- **THEN** the process is launched with the Copilot backend's declared args (`--session-id <uuid>`, and no `--no-remote`, which Copilot 1.0.103 removed) plus the same pane env (`AGENT_DESKTOP_PANE`, `AGENT_DESKTOP_SNAPSHOT_DIR`, terminal env seeding)
 - **AND** no `--settings`, statusline, or hook configuration is injected, and the user's `~/.copilot` configuration is not mutated
 
 ### Requirement: Placement As New Tab Or Split Of Focused Pane
